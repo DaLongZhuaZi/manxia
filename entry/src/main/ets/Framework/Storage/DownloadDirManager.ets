@@ -9,8 +9,11 @@ import { picker, fileUri } from '@kit.CoreFileKit';
 import { common } from '@kit.AbilityKit';
 import fs from '@ohos.file.fs';
 import { logger } from '../../Utils/Logger';
+import { SettingsManager, SettingKeys } from '../Managers/SettingsManager';
 
 const TAG = 'DownloadDirManager';
+const DOWNLOAD_SYNC_DIR_PATH_KEY = 'downloadSyncDirPath';
+const DOWNLOAD_SYNC_DIR_URI_KEY = 'downloadSyncDirUri';
 
 /**
  * Download目录信息
@@ -48,6 +51,7 @@ export class DownloadDirManager {
    */
   public setContext(context: common.UIAbilityContext): void {
     this.context = context;
+    this.restorePersistedDirInfo();
     logger.info(TAG, '应用上下文已设置');
   }
 
@@ -66,7 +70,10 @@ export class DownloadDirManager {
    * 检查是否已初始化
    */
   public isReady(): boolean {
-    return this.isInitialized && this.downloadDirPath !== '';
+    if (this.isInitialized && this.downloadDirPath !== '') {
+      return true;
+    }
+    return this.restorePersistedDirInfo();
   }
 
   /**
@@ -86,11 +93,77 @@ export class DownloadDirManager {
   /**
    * 设置Download目录信息（从外部设置，如DataManagementPage）
    */
-  public setDirInfo(path: string, uri: string): void {
+  public setDirInfo(path: string, uri: string, persistToSettings: boolean = true): void {
+    if (path.length === 0) {
+      logger.warn(TAG, '忽略空Download目录路径');
+      return;
+    }
     this.downloadDirPath = path;
     this.downloadDirUri = uri;
     this.isInitialized = true;
+    AppStorage.setOrCreate(DOWNLOAD_SYNC_DIR_PATH_KEY, path);
+    if (uri.length > 0) {
+      AppStorage.setOrCreate(DOWNLOAD_SYNC_DIR_URI_KEY, uri);
+    }
+    if (persistToSettings) {
+      this.persistDirInfo(path, uri);
+    }
     logger.info(TAG, `Download目录已设置: ${path}`);
+  }
+
+  private persistDirInfo(path: string, uri: string): void {
+    void this.persistDirInfoAsync(path, uri);
+  }
+
+  private async persistDirInfoAsync(path: string, uri: string): Promise<void> {
+    try {
+      const settingsManager = SettingsManager.getInstance();
+      await settingsManager.setString(SettingKeys.DOWNLOAD_SYNC_DIR_PATH, path);
+      if (uri.length > 0) {
+        await settingsManager.setString(SettingKeys.DOWNLOAD_SYNC_DIR_URI, uri);
+      }
+      logger.info(TAG, 'Download目录设置已持久化');
+    } catch (error) {
+      logger.warn(TAG, `持久化Download目录设置失败: ${String(error)}`);
+    }
+  }
+
+  /**
+   * 从Download同步流程已持久化的目录恢复缓存管理访问状态
+   */
+  public restorePersistedDirInfo(): boolean {
+    if (this.isInitialized && this.downloadDirPath !== '') {
+      return true;
+    }
+
+    const savedPath = AppStorage.get<string>(DOWNLOAD_SYNC_DIR_PATH_KEY);
+    if (!savedPath || savedPath.length === 0) {
+      return false;
+    }
+
+    if (!this.canAccessDirectory(savedPath)) {
+      logger.warn(TAG, `已保存Download目录不可访问，等待用户重新连接: ${savedPath}`);
+      return false;
+    }
+
+    const savedUri = AppStorage.get<string>(DOWNLOAD_SYNC_DIR_URI_KEY);
+    this.setDirInfo(savedPath, savedUri ? savedUri : '', false);
+    logger.info(TAG, `已恢复Download目录访问状态: ${savedPath}`);
+    return true;
+  }
+
+  private canAccessDirectory(path: string): boolean {
+    if (path.length === 0) {
+      return false;
+    }
+
+    try {
+      const stat = SafeFileUtils.statSyncStrict(path);
+      return stat.isDirectory();
+    } catch (error) {
+      logger.warn(TAG, `校验Download目录失败: ${path}, ${String(error)}`);
+      return false;
+    }
   }
 
   /**
@@ -99,7 +172,7 @@ export class DownloadDirManager {
    */
   public async requestAccess(): Promise<boolean> {
     // 如果已经初始化，直接返回
-    if (this.isInitialized && this.downloadDirPath) {
+    if (this.isReady()) {
       return true;
     }
 
@@ -125,6 +198,10 @@ export class DownloadDirManager {
         return false;
       }
 
+      if (this.restorePersistedDirInfo()) {
+        return true;
+      }
+
       const documentViewPicker = new picker.DocumentViewPicker(this.context);
       const documentSaveOptions = new picker.DocumentSaveOptions();
       documentSaveOptions.pickerMode = picker.DocumentPickerMode.DOWNLOAD;
@@ -139,9 +216,7 @@ export class DownloadDirManager {
 
             // 保存目录路径和URI
             const uriObj = new fileUri.FileUri(uri);
-            this.downloadDirPath = uriObj.path;
-            this.downloadDirUri = uri;
-            this.isInitialized = true;
+            this.setDirInfo(uriObj.path, uri);
 
             // 创建初始化标记文件
             this.createInitFile();

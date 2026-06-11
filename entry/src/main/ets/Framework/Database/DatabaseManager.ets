@@ -60,6 +60,9 @@ import {
 } from './DatabaseTypes';
 
 const TAG = 'DatabaseManager';
+const SLOW_DATABASE_OPERATION_MS = 200;
+const LARGE_QUERY_RESULT_COUNT = 50;
+const SQL_LOG_PREVIEW_LENGTH = 180;
 
 // 数据库配置接口
 interface DatabaseConfigType {
@@ -185,6 +188,7 @@ export class DatabaseManager {
       'TRACK_RECORD',
       'TRACK_RECORD_UNIQUE_INDEX',
       'UNIFIED_ANNOTATION',
+      'CHAPTER_ORDER_OVERRIDE',
       'GLOBAL_SEARCH_INDEX',
       'GLOBAL_SEARCH_TOKEN_INDEX'
     ];
@@ -219,6 +223,7 @@ export class DatabaseManager {
       CREATE_TABLE_SQL.TRACK_RECORD as string,
       CREATE_TABLE_SQL.TRACK_RECORD_UNIQUE_INDEX as string,
       CREATE_TABLE_SQL.UNIFIED_ANNOTATION as string,
+      CREATE_TABLE_SQL.CHAPTER_ORDER_OVERRIDE as string,
       CREATE_TABLE_SQL.GLOBAL_SEARCH_INDEX as string,
       CREATE_TABLE_SQL.GLOBAL_SEARCH_TOKEN_INDEX as string
     ];
@@ -545,6 +550,7 @@ export class DatabaseManager {
   ): Promise<T[]> {
     try {
       const store = this.getStore();
+      const startTime = Date.now();
       
       // 构建SQL查询语句
       let sql = `SELECT ${columns ? columns.join(', ') : '*'} FROM ${tableName}`;
@@ -587,7 +593,7 @@ export class DatabaseManager {
       }
       
       resultSet.close();
-      logger.debug(TAG, `查询记录成功，表: ${tableName}, 结果数量: ${results.length}`);
+      this.logQuerySuccess('查询记录', sql, results.length, Date.now() - startTime);
       return results;
     } catch (error) {
       logger.error(TAG, `查询记录失败: ${String(error)}`);
@@ -605,6 +611,7 @@ export class DatabaseManager {
   ): Promise<T | null> {
     try {
       const store = this.getStore();
+      const startTime = Date.now();
       const resultSet = await store.querySql(sql, args);
       
       if (!resultSet.goToNextRow()) {
@@ -616,7 +623,7 @@ export class DatabaseManager {
       const result = await this.createAggregationResultFromResultSet<T>(resultSet);
       resultSet.close();
       
-      logger.debug(TAG, `聚合查询成功: ${JSON.stringify(result)}`);
+      this.logQuerySuccess('聚合查询', sql, 1, Date.now() - startTime);
       return result;
     } catch (error) {
       logger.error(TAG, `聚合查询失败: ${String(error)}`);
@@ -630,6 +637,7 @@ export class DatabaseManager {
   public async querySql(sql: string, args?: DatabaseValue[]): Promise<DatabaseRecord[]> {
     try {
       const store = this.getStore();
+      const startTime = Date.now();
       const resultSet = await store.querySql(sql, args);
       const results: DatabaseRecord[] = [];
       
@@ -657,7 +665,7 @@ export class DatabaseManager {
       }
       
       resultSet.close();
-      logger.debug(TAG, `SQL查询成功，结果数量: ${results.length}`);
+      this.logQuerySuccess('SQL查询', sql, results.length, Date.now() - startTime);
       return results;
     } catch (error) {
       logger.error(TAG, `SQL查询失败: ${String(error)}`);
@@ -671,14 +679,46 @@ export class DatabaseManager {
   public async executeSql(sql: string, args?: DatabaseValue[]): Promise<number> {
     try {
       const store = this.getStore();
+      const startTime = Date.now();
       await store.executeSql(sql, args);
-      logger.debug(TAG, `SQL执行成功: ${sql}`);
+      this.logSqlExecutionSuccess(sql, Date.now() - startTime);
       // HarmonyOS的executeSql不返回影响行数，返回1表示执行成功
       return 1;
     } catch (error) {
       logger.error(TAG, `SQL执行失败: ${sql}, 错误: ${String(error)}`);
       throw error as Error;
     }
+  }
+
+  private logQuerySuccess(operation: string, sql: string, resultCount: number, elapsedMs: number): void {
+    if (elapsedMs >= SLOW_DATABASE_OPERATION_MS) {
+      logger.warn(
+        TAG,
+        `${operation}耗时偏高: elapsed=${elapsedMs}ms, results=${resultCount}, sql=${this.compactSqlForLog(sql)}`
+      );
+      return;
+    }
+
+    if (resultCount >= LARGE_QUERY_RESULT_COUNT) {
+      logger.debug(
+        TAG,
+        `${operation}返回大量结果: elapsed=${elapsedMs}ms, results=${resultCount}, sql=${this.compactSqlForLog(sql)}`
+      );
+    }
+  }
+
+  private logSqlExecutionSuccess(sql: string, elapsedMs: number): void {
+    if (elapsedMs >= SLOW_DATABASE_OPERATION_MS) {
+      logger.warn(TAG, `SQL执行耗时偏高: elapsed=${elapsedMs}ms, sql=${this.compactSqlForLog(sql)}`);
+    }
+  }
+
+  private compactSqlForLog(sql: string): string {
+    const normalizedSql: string = sql.replace(/\s+/g, ' ').trim();
+    if (normalizedSql.length <= SQL_LOG_PREVIEW_LENGTH) {
+      return normalizedSql;
+    }
+    return `${normalizedSql.substring(0, SQL_LOG_PREVIEW_LENGTH)}...`;
   }
 
   /**
@@ -1200,6 +1240,10 @@ export class DatabaseManager {
     // unified_annotation fields
     m.set('contentType', (r: GenericQueryRecord, v: DatabaseValue): void => { r.contentType = v; });
     m.set('contentId', (r: GenericQueryRecord, v: DatabaseValue): void => { r.contentId = v; });
+    m.set('chapterStableKey', (r: GenericQueryRecord, v: DatabaseValue): void => { r.chapterStableKey = v; });
+    m.set('orderIndex', (r: GenericQueryRecord, v: DatabaseValue): void => { r.orderIndex = v; });
+    m.set('originalOrderIndex', (r: GenericQueryRecord, v: DatabaseValue): void => { r.originalOrderIndex = v; });
+    m.set('titleSnapshot', (r: GenericQueryRecord, v: DatabaseValue): void => { r.titleSnapshot = v; });
     m.set('annotationType', (r: GenericQueryRecord, v: DatabaseValue): void => { r.annotationType = v; });
     m.set('textContent', (r: GenericQueryRecord, v: DatabaseValue): void => { r.textContent = v; });
     m.set('quoteText', (r: GenericQueryRecord, v: DatabaseValue): void => { r.quoteText = v; });

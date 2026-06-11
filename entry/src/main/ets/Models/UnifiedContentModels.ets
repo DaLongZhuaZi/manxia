@@ -43,6 +43,59 @@ export interface UnifiedChapter {
   originalType: UnifiedContentType;
 }
 
+export enum ChapterOrderContentKind {
+  LOCAL_MANGA = 'local_manga',
+  ONLINE_MANGA = 'online_manga',
+  NOVEL = 'novel',
+  EBOOK = 'ebook'
+}
+
+export interface ChapterStableKey {
+  value: string;
+  source: string;
+}
+
+export interface ChapterOrderItem {
+  stableKey: string;
+  chapterId: string;
+  title: string;
+  oldIndex: number;
+  newIndex: number;
+  originalOrderIndex: number;
+}
+
+export interface ChapterOrderIndexRemap {
+  stableKey: string;
+  title: string;
+  oldIndex: number;
+  newIndex: number;
+}
+
+export interface ChapterOrderCacheRemapResult {
+  textCacheMoved: number;
+  audioCacheMoved: number;
+  remoteReadAloudCacheMoved: number;
+  failedKeys: string[];
+  warnings: string[];
+}
+
+export interface ChapterOrderPlan {
+  contentType: UnifiedContentType;
+  contentKind: ChapterOrderContentKind;
+  contentId: string;
+  sourceId: string;
+  items: ChapterOrderItem[];
+  remaps: ChapterOrderIndexRemap[];
+  movedCount: number;
+}
+
+export interface ChapterOrderPersistResult {
+  success: boolean;
+  message: string;
+  movedCount: number;
+  cacheResult: ChapterOrderCacheRemapResult;
+}
+
 export interface RemoteVerificationInfo {
   status: string;
   message: string;

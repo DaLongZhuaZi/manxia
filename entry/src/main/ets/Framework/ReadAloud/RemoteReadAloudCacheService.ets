@@ -5,7 +5,13 @@ import { util } from '@kit.ArkTS';
 import { preferences } from '@kit.ArkData';
 import { logger } from '../../Utils/Logger';
 import { uiContextManager } from '../Managers/UIContextManager';
-import { UnifiedChapter, UnifiedContent, UnifiedContentType } from '../../Models/UnifiedContentModels';
+import {
+  ChapterOrderCacheRemapResult,
+  ChapterOrderIndexRemap,
+  UnifiedChapter,
+  UnifiedContent,
+  UnifiedContentType
+} from '../../Models/UnifiedContentModels';
 import {
   DEFAULT_REMOTE_READ_ALOUD_SETTINGS,
   DEFAULT_TEXT_READER_SETTINGS,
@@ -78,6 +84,14 @@ interface RemoteTtsManifestRecord {
   audioFormat?: string;
   mergedFilePath?: string;
   segments: RemoteTtsManifestSegmentRecord[];
+}
+
+interface RemoteReadAloudChapterDirMove {
+  stableKey: string;
+  sourcePath: string;
+  tempPath: string;
+  targetPath: string;
+  newIndex: number;
 }
 
 interface RemoteReadAloudBookIdentity {
@@ -588,6 +602,143 @@ export class RemoteReadAloudCacheService {
 
   supportsContent(content: UnifiedContent | null): boolean {
     return this.resolveBookIdentity(content).supported;
+  }
+
+  remapChapterIndexCaches(bookIds: string[], remaps: ChapterOrderIndexRemap[]): ChapterOrderCacheRemapResult {
+    const result: ChapterOrderCacheRemapResult = {
+      textCacheMoved: 0,
+      audioCacheMoved: 0,
+      remoteReadAloudCacheMoved: 0,
+      failedKeys: [],
+      warnings: []
+    };
+    const normalizedBookIds = this.normalizeBookIdList(bookIds);
+    for (let index = 0; index < normalizedBookIds.length; index++) {
+      this.remapBookChapterCache(normalizedBookIds[index], remaps, result);
+    }
+    return result;
+  }
+
+  private normalizeBookIdList(bookIds: string[]): string[] {
+    const result: string[] = [];
+    for (let index = 0; index < bookIds.length; index++) {
+      const bookId = bookIds[index].trim();
+      if (bookId.length <= 0) {
+        continue;
+      }
+      if (!result.includes(bookId)) {
+        result.push(bookId);
+      }
+    }
+    return result;
+  }
+
+  private remapBookChapterCache(
+    bookId: string,
+    remaps: ChapterOrderIndexRemap[],
+    result: ChapterOrderCacheRemapResult
+  ): void {
+    const bookRootPath = this.buildBookRootPath(bookId);
+    if (!SafeFileUtils.accessSync(bookRootPath)) {
+      return;
+    }
+    const tempMoves: RemoteReadAloudChapterDirMove[] = [];
+    const now = Date.now();
+    for (let index = 0; index < remaps.length; index++) {
+      const remap = remaps[index];
+      if (remap.oldIndex === remap.newIndex) {
+        continue;
+      }
+      const sourcePath = `${bookRootPath}/chapter_${remap.oldIndex}`;
+      if (!SafeFileUtils.accessSync(sourcePath)) {
+        continue;
+      }
+      const tempPath = `${sourcePath}.order_tmp_${now}_${index}`;
+      const targetPath = `${bookRootPath}/chapter_${remap.newIndex}`;
+      try {
+        SafeFileUtils.renameSyncStrict(sourcePath, tempPath);
+        tempMoves.push({
+          stableKey: remap.stableKey,
+          sourcePath,
+          tempPath,
+          targetPath,
+          newIndex: remap.newIndex
+        } as RemoteReadAloudChapterDirMove);
+      } catch (error) {
+        this.appendUniqueFailure(result, remap.stableKey);
+        result.warnings.push(`远程听书缓存临时迁移失败: ${remap.title}, ${String(error)}`);
+      }
+    }
+
+    for (let index = 0; index < tempMoves.length; index++) {
+      const move = tempMoves[index];
+      try {
+        if (SafeFileUtils.accessSync(move.targetPath)) {
+          deleteDirRecursive(move.targetPath);
+        }
+        SafeFileUtils.renameSyncStrict(move.tempPath, move.targetPath);
+        this.rewriteManifestChapterIndex(move.targetPath, move.sourcePath, move.targetPath, move.newIndex, result, move.stableKey);
+        result.remoteReadAloudCacheMoved++;
+      } catch (error) {
+        this.appendUniqueFailure(result, move.stableKey);
+        result.warnings.push(`远程听书缓存落位失败: ${move.sourcePath} -> ${move.targetPath}, ${String(error)}`);
+      }
+    }
+  }
+
+  private rewriteManifestChapterIndex(
+    path: string,
+    oldChapterRoot: string,
+    newChapterRoot: string,
+    newIndex: number,
+    result: ChapterOrderCacheRemapResult,
+    stableKey: string
+  ): void {
+    if (!SafeFileUtils.accessSync(path)) {
+      return;
+    }
+    const stat = SafeFileUtils.statSync(path);
+    if (stat.isFile()) {
+      if (!path.endsWith('/manifest.json') && !path.endsWith('\\manifest.json')) {
+        return;
+      }
+      const manifest = safeReadJson<RemoteTtsManifestRecord>(path);
+      if (!manifest || !Array.isArray(manifest.segments)) {
+        this.appendUniqueFailure(result, stableKey);
+        result.warnings.push(`远程听书清单损坏，已跳过重写: ${path}`);
+        return;
+      }
+      manifest.chapterIndex = newIndex;
+      manifest.updatedAt = Date.now();
+      if (manifest.mergedFilePath && manifest.mergedFilePath.length > 0) {
+        manifest.mergedFilePath = this.replaceMovedChapterPath(manifest.mergedFilePath, oldChapterRoot, newChapterRoot);
+      }
+      for (let index = 0; index < manifest.segments.length; index++) {
+        const segment = manifest.segments[index];
+        if (segment.filePath && segment.filePath.length > 0) {
+          segment.filePath = this.replaceMovedChapterPath(segment.filePath, oldChapterRoot, newChapterRoot);
+        }
+      }
+      writeJsonFile(path, manifest as Object);
+      return;
+    }
+    const children = SafeFileUtils.listFileSync(path);
+    for (let index = 0; index < children.length; index++) {
+      this.rewriteManifestChapterIndex(`${path}/${children[index]}`, oldChapterRoot, newChapterRoot, newIndex, result, stableKey);
+    }
+  }
+
+  private replaceMovedChapterPath(path: string, oldChapterRoot: string, newChapterRoot: string): string {
+    if (path.startsWith(oldChapterRoot)) {
+      return `${newChapterRoot}${path.substring(oldChapterRoot.length)}`;
+    }
+    return path;
+  }
+
+  private appendUniqueFailure(result: ChapterOrderCacheRemapResult, stableKey: string): void {
+    if (!result.failedKeys.includes(stableKey)) {
+      result.failedKeys.push(stableKey);
+    }
   }
 
   async inspectBookCache(content: UnifiedContent | null): Promise<RemoteReadAloudCacheBookSummary> {

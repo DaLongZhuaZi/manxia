@@ -120,6 +120,28 @@ export class WindowManager {
   private static readonly FLOATING_WINDOW_VISIBLE_KEY = 'app_floating_window_visible';
   private static readonly FLOATING_WINDOW_ROUTE_KEY = 'app_floating_window_route';
 
+  private static getWindowLifecycleErrorMessage(error: BusinessError | Error): string {
+    const message = (error as Error).message ?? '';
+    if (message.length > 0) {
+      return message;
+    }
+    return String(error);
+  }
+
+  private static getWindowLifecycleErrorCode(error: BusinessError | Error): number {
+    return (error as BusinessError).code;
+  }
+
+  private static isWindowLifecycleAbnormalError(error: BusinessError | Error): boolean {
+    if (WindowManager.getWindowLifecycleErrorCode(error) === 1300002) {
+      return true;
+    }
+    const message = WindowManager.getWindowLifecycleErrorMessage(error);
+    return message.includes('window state is abnormal') ||
+      message.includes('not created or destroyed') ||
+      message.includes('Get top window failed');
+  }
+
   /**
    * 获取当前 Ability 的主窗口。
    * 优先复用 initialize()/registerWindowStageStateMonitor() 保存的 WindowStage，
@@ -289,6 +311,16 @@ export class WindowManager {
     targetWindow.setWindowPrivacyMode(shouldEnable).then((): void => {
       logger.info(WindowManager.TAG, `${windowLabel}后台隐私窗口模式已更新: enabled=${shouldEnable}, source=${source}`);
     }).catch((error: BusinessError): void => {
+      if (!shouldEnable && WindowManager.isWindowLifecycleAbnormalError(error)) {
+        logger.debug(
+          WindowManager.TAG,
+          `${windowLabel}后台隐私窗口模式关闭跳过: enabled=${shouldEnable}, source=${source}, ` +
+            `code=${WindowManager.getWindowLifecycleErrorCode(error)}, windowLifecycle=destroyed_or_detached, ` +
+            `reason=${WindowManager.getWindowLifecycleErrorMessage(error)}`
+        );
+        updateState(false);
+        return;
+      }
       logger.warn(
         WindowManager.TAG,
         `${windowLabel}后台隐私窗口模式更新失败: enabled=${shouldEnable}, source=${source}, reason=${JSON.stringify(error)}`
@@ -1087,7 +1119,10 @@ export class WindowManager {
     mainWindow: window.Window,
     delayMs: number = 96
   ): void {
-    WindowManager.storeSystemBarHeights(mainWindow);
+    const initialWindow = WindowManager.resolveSystemBarHeightWindow(mainWindow, 'mode_change_initial');
+    if (initialWindow) {
+      WindowManager.storeSystemBarHeights(initialWindow);
+    }
     const retryDelays: number[] = [
       Math.max(0, delayMs),
       Math.max(delayMs + 144, 240),
@@ -1095,9 +1130,58 @@ export class WindowManager {
     ];
     retryDelays.forEach((retryDelay: number) => {
       setTimeout(() => {
-        WindowManager.storeSystemBarHeights(mainWindow);
+        const retryWindow = WindowManager.resolveSystemBarHeightWindow(mainWindow, `mode_change_retry_${retryDelay}`);
+        if (!retryWindow) {
+          return;
+        }
+        WindowManager.storeSystemBarHeights(retryWindow);
       }, retryDelay);
     });
+  }
+
+  private static isWindowUsableForSystemBarHeights(targetWindow: window.Window, reason: string): boolean {
+    try {
+      targetWindow.getWindowProperties();
+      return true;
+    } catch (error) {
+      const lifecycleError = error as BusinessError;
+      if (WindowManager.isWindowLifecycleAbnormalError(lifecycleError)) {
+        logger.debug(
+          WindowManager.TAG,
+          `系统栏高度刷新跳过失效窗口: source=${reason}, ` +
+            `code=${WindowManager.getWindowLifecycleErrorCode(lifecycleError)}, ` +
+            `windowLifecycle=destroyed_or_detached, reason=${WindowManager.getWindowLifecycleErrorMessage(lifecycleError)}`
+        );
+        return false;
+      }
+      return true;
+    }
+  }
+
+  private static resolveSystemBarHeightWindow(
+    preferredWindow: window.Window,
+    reason: string
+  ): window.Window | null {
+    if (WindowManager.isWindowUsableForSystemBarHeights(preferredWindow, reason)) {
+      return preferredWindow;
+    }
+
+    const currentMainWindow = WindowManager.getMainWindowFromWindowStageRef(
+      `system bar height fallback: ${reason}`,
+      true
+    );
+    if (!currentMainWindow) {
+      logger.debug(
+        WindowManager.TAG,
+        `系统栏高度刷新跳过: source=${reason}, windowLifecycle=destroyed_or_detached, reason=no_active_main_window`
+      );
+      return null;
+    }
+
+    if (!WindowManager.isWindowUsableForSystemBarHeights(currentMainWindow, `${reason}_fallback`)) {
+      return null;
+    }
+    return currentMainWindow;
   }
 
   private static isStatusBarExpectedVisible(mode: DisplayMode): boolean {
@@ -1200,6 +1284,16 @@ export class WindowManager {
       );
 
     } catch (error) {
+      const lifecycleError = error as BusinessError;
+      if (WindowManager.isWindowLifecycleAbnormalError(lifecycleError)) {
+        logger.debug(
+          WindowManager.TAG,
+          `系统栏高度存储跳过: source=storeSystemBarHeights, ` +
+            `code=${WindowManager.getWindowLifecycleErrorCode(lifecycleError)}, ` +
+            `windowLifecycle=destroyed_or_detached, reason=${WindowManager.getWindowLifecycleErrorMessage(lifecycleError)}`
+        );
+        return;
+      }
       logger.error(WindowManager.TAG, `❌ 存储系统栏高度失败: ${(error as Error).message}`);
     }
   }
@@ -1256,14 +1350,33 @@ export class WindowManager {
     }
   }
 
-  private static getMainWindowFromWindowStageRef(reason: string = 'reapply display mode'): window.Window | null {
+  private static getMainWindowFromWindowStageRef(
+    reason: string = 'reapply display mode',
+    quietWhenUnavailable: boolean = false
+  ): window.Window | null {
     try {
       if (!WindowManager.windowStageRef) {
+        if (quietWhenUnavailable) {
+          logger.debug(
+            WindowManager.TAG,
+            `windowStageRef unavailable: ${reason}, windowLifecycle=destroyed_or_detached`
+          );
+          return null;
+        }
         logger.warn(WindowManager.TAG, `windowStageRef unavailable: ${reason}`);
         return null;
       }
       return WindowManager.windowStageRef.getMainWindowSync();
     } catch (error) {
+      const lifecycleError = error as BusinessError;
+      if (WindowManager.isWindowLifecycleAbnormalError(lifecycleError)) {
+        logger.debug(
+          WindowManager.TAG,
+          `获取主窗口跳过: source=${reason}, code=${WindowManager.getWindowLifecycleErrorCode(lifecycleError)}, ` +
+            `windowLifecycle=destroyed_or_detached, reason=${WindowManager.getWindowLifecycleErrorMessage(lifecycleError)}`
+        );
+        return null;
+      }
       logger.error(WindowManager.TAG, `Failed to get main window from WindowStage: ${(error as Error).message}, reason=${reason}`);
       return null;
     }

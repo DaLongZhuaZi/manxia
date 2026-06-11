@@ -286,6 +286,7 @@ export interface CreateTableSQLCollection {
   TRACK_RECORD?: string;
   TRACK_RECORD_UNIQUE_INDEX?: string;
   UNIFIED_ANNOTATION?: string;
+  CHAPTER_ORDER_OVERRIDE?: string;
   GLOBAL_SEARCH_INDEX?: string;
   GLOBAL_SEARCH_TOKEN_INDEX?: string;
 }
@@ -856,6 +857,22 @@ export const CREATE_TABLE_SQL: CreateTableSQLCollection = {
     )
   `,
 
+  CHAPTER_ORDER_OVERRIDE: `
+    CREATE TABLE IF NOT EXISTS chapter_order_override (
+      id TEXT PRIMARY KEY,
+      contentType TEXT NOT NULL,
+      contentId TEXT NOT NULL,
+      sourceId TEXT DEFAULT '',
+      chapterStableKey TEXT NOT NULL,
+      orderIndex INTEGER NOT NULL,
+      originalOrderIndex INTEGER NOT NULL,
+      titleSnapshot TEXT DEFAULT '',
+      createTime INTEGER NOT NULL,
+      updateTime INTEGER NOT NULL,
+      UNIQUE(contentType, contentId, sourceId, chapterStableKey)
+    )
+  `,
+
   GLOBAL_SEARCH_INDEX: `
     CREATE TABLE IF NOT EXISTS global_search_index (
       contentType TEXT NOT NULL,
@@ -918,6 +935,8 @@ export const CREATE_INDEX_SQL: string[] = [
   'CREATE INDEX IF NOT EXISTS idx_ebook_chapter_number ON ebook_chapter (bookId, chapterNumber)',
   'CREATE INDEX IF NOT EXISTS idx_ebook_progress_book ON ebook_reading_progress (bookId)',
   'CREATE INDEX IF NOT EXISTS idx_ebook_progress_user ON ebook_reading_progress (userId)',
+  'CREATE INDEX IF NOT EXISTS idx_chapter_order_content ON chapter_order_override (contentType, contentId, sourceId, orderIndex)',
+  'CREATE INDEX IF NOT EXISTS idx_chapter_order_key ON chapter_order_override (contentType, contentId, sourceId, chapterStableKey)',
   'CREATE INDEX IF NOT EXISTS idx_ebook_settings_book ON ebook_reading_settings (bookId)',
   'CREATE INDEX IF NOT EXISTS idx_ebook_settings_user ON ebook_reading_settings (userId)'
   ,

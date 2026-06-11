@@ -8,6 +8,7 @@
 
 import { logger } from '../../Utils/Logger';
 import { fileIo as fs, fileUri } from '@kit.CoreFileKit';
+import { DownloadDirManager } from '../Storage/DownloadDirManager';
 
 const TAG = 'DownloadSyncManager';
 
@@ -54,9 +55,7 @@ export class DownloadSyncManager {
       logger.info(TAG, `检查Download同步目录: ${downloadDirPath}`);
 
       // 检查目录是否存在
-      try {
-        SafeFileUtils.accessSync(downloadDirPath);
-      } catch (e) {
+      if (!SafeFileUtils.accessSync(downloadDirPath)) {
         logger.warn(TAG, `Download同步目录不存在或无法访问: ${downloadDirPath}`);
         this.initialized = true;
         return;
@@ -64,6 +63,10 @@ export class DownloadSyncManager {
 
       // 创建保留文件夹
       await this.createReservedFolders(downloadDirPath);
+
+      const downloadDirUri = AppStorage.get<string>('downloadSyncDirUri');
+      DownloadDirManager.getInstance().setDirInfo(downloadDirPath, downloadDirUri ? downloadDirUri : '', false);
+      logger.info(TAG, 'Download目录访问状态已同步到缓存管理器');
 
       this.initialized = true;
       logger.info(TAG, '✅ Download同步管理器初始化完成');

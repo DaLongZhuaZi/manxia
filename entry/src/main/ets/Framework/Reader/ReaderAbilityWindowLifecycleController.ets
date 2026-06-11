@@ -111,6 +111,28 @@ export class ReaderAbilityWindowLifecycleController {
     return AppStorage.get<boolean>('backgroundBlurEnabled') === true;
   }
 
+  private getWindowLifecycleErrorMessage(error: BusinessError | Error): string {
+    const message = (error as Error).message ?? '';
+    if (message.length > 0) {
+      return message;
+    }
+    return String(error);
+  }
+
+  private getWindowLifecycleErrorCode(error: BusinessError | Error): number {
+    return (error as BusinessError).code;
+  }
+
+  private isWindowLifecycleAbnormalError(error: BusinessError | Error): boolean {
+    if (this.getWindowLifecycleErrorCode(error) === 1300002) {
+      return true;
+    }
+    const message = this.getWindowLifecycleErrorMessage(error);
+    return message.includes('window state is abnormal') ||
+      message.includes('not created or destroyed') ||
+      message.includes('Get top window failed');
+  }
+
   private applyPrivacyMode(isInBackground: boolean, source: string): void {
     const shouldEnable = this.shouldEnablePrivacyMode(isInBackground);
     if (this.isPrivacyModeEnabled === shouldEnable) {
@@ -126,6 +148,16 @@ export class ReaderAbilityWindowLifecycleController {
     this.mainWindow.setWindowPrivacyMode(shouldEnable).then((): void => {
       logger.info(this.tag, `独立阅读器隐私窗口模式已更新: instanceId=${this.instanceId}, enabled=${shouldEnable}, source=${source}`);
     }).catch((error: BusinessError): void => {
+      if (source === 'detach' && !shouldEnable && this.isWindowLifecycleAbnormalError(error)) {
+        this.isPrivacyModeEnabled = false;
+        logger.debug(
+          this.tag,
+          `独立阅读器隐私窗口模式关闭跳过: instanceId=${this.instanceId}, enabled=${shouldEnable}, ` +
+            `source=${source}, code=${this.getWindowLifecycleErrorCode(error)}, ` +
+            `windowLifecycle=destroyed_or_detached, reason=${this.getWindowLifecycleErrorMessage(error)}`
+        );
+        return;
+      }
       logger.warn(this.tag, `独立阅读器隐私窗口模式更新失败: instanceId=${this.instanceId}, enabled=${shouldEnable}, source=${source}, reason=${JSON.stringify(error)}`);
       this.isPrivacyModeEnabled = !shouldEnable;
     });

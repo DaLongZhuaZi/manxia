@@ -86,7 +86,7 @@ export class GlobalSearchIndexManager {
     setTimeout(() => {
       void this.reconcileAll().then(() => {
         this.reconcileRunning = false;
-      }).catch((error) => {
+      }).catch((error: Error) => {
         this.reconcileRunning = false;
         logger.warn(TAG, `全局搜索索引后台回填失败: ${String(error)}`);
       });

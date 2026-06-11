@@ -73,6 +73,11 @@ interface MangaChapterPageStats {
   downloadedSize: number;
 }
 
+interface MangaChapterPageStatsResult {
+  statsMap: Map<string, MangaChapterPageStats>;
+  isReliable: boolean;
+}
+
 /**
  * 缓存状态服务类
  */
@@ -122,7 +127,8 @@ export class CacheStatusService {
       // 从数据库获取章节信息（使用已有的 getOnlineComicChapters 方法）
       const chapters = await this.dataManager.getOnlineComicChapters(mangaId);
       const totalChapterCount = chapters.length;
-      const pageStatsByChapterId = await this.getMangaChapterPageStats(mangaId);
+      const pageStatsResult = await this.getMangaChapterPageStats(mangaId);
+      const pageStatsByChapterId = pageStatsResult.statsMap;
       
       logger.info(TAG, `漫画 [${mangaTitle}] 章节数: ${totalChapterCount}`);
       
@@ -137,8 +143,8 @@ export class CacheStatusService {
         const pageStats = pageStatsByChapterId.get(chapter.id);
         let pages: OnlinePageInfo[] = [];
         let chapterTotalPages = Math.max(pageStats ? pageStats.totalPages : 0, chapter.pageCount || 0);
-        if (!pageStats) {
-          // 只有旧数据或聚合缺失时才读取章节页面列表，避免下载中频繁逐章查询。
+        if (!pageStats && !pageStatsResult.isReliable) {
+          // 只有批量聚合失败时才逐章回退扫描，避免对没有页表的章节反复空查询。
           pages = await this.dataManager.getOnlineChapterPages(chapter.id);
           chapterTotalPages = Math.max(pages.length, chapter.pageCount || 0);
         }
@@ -171,8 +177,10 @@ export class CacheStatusService {
         
         cachedPageCount += chapterCachedPages;
         
-        // 判断章节是否完全缓存
-        const isChapterCached = chapterTotalPages > 0 && chapterCachedPages === chapterTotalPages;
+        // 判断章节是否完全缓存。旧版本归档可能没有页表，归档存在时仍应认定章节已缓存。
+        const isChapterCached = hasArchive && chapterTotalPages <= 0
+          ? true
+          : chapterTotalPages > 0 && chapterCachedPages >= chapterTotalPages;
         if (isChapterCached) {
           cachedChapterCount++;
         }
@@ -221,7 +229,7 @@ export class CacheStatusService {
     }
   }
 
-  private async getMangaChapterPageStats(mangaId: string): Promise<Map<string, MangaChapterPageStats>> {
+  private async getMangaChapterPageStats(mangaId: string): Promise<MangaChapterPageStatsResult> {
     const statsMap: Map<string, MangaChapterPageStats> = new Map<string, MangaChapterPageStats>();
     try {
       const rows = await this.databaseManager.querySql(
@@ -250,8 +258,17 @@ export class CacheStatusService {
       logger.debug(TAG, `漫画缓存页统计批量查询完成: mangaId=${mangaId}, chapters=${statsMap.size}`);
     } catch (error) {
       logger.warn(TAG, `漫画缓存页统计批量查询失败，将回退旧扫描: mangaId=${mangaId}, ${String(error)}`);
+      const failedResult: MangaChapterPageStatsResult = {
+        statsMap: statsMap,
+        isReliable: false
+      };
+      return failedResult;
     }
-    return statsMap;
+    const result: MangaChapterPageStatsResult = {
+      statsMap: statsMap,
+      isReliable: true
+    };
+    return result;
   }
 
   private databaseValueToString(value: DatabaseValue | undefined): string {
@@ -705,8 +722,8 @@ export class CacheStatusService {
    */
   calculateProgress(stats: ContentCacheStats): number {
     if (stats.contentType === CacheContentType.MANGA) {
-      if (stats.totalPageCount === 0) return 0;
-      return Math.round((stats.cachedPageCount / stats.totalPageCount) * 100);
+      if (stats.totalChapterCount === 0) return 0;
+      return Math.round((stats.cachedChapterCount / stats.totalChapterCount) * 100);
     } else {
       if (stats.totalChapterCount === 0) return 0;
       return Math.round((stats.cachedChapterCount / stats.totalChapterCount) * 100);

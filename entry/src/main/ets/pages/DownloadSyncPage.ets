@@ -43,6 +43,7 @@ import { ensureGuideAnchorVisibleInScroller, resolveGuideHighlightRectInRoot } f
 import { AppGuideManager, AppGuidePageId, AppGuideStep } from '../Framework/Managers/AppGuideManager';
 import { BackgroundTaskManager, TaskType, TaskNotificationScene, TaskCancelSignal } from '../Framework/Task/BackgroundTaskManager';
 import { PdfImportResult } from '../Framework/Parsers/PdfToMangaImporter';
+import { DownloadDirManager } from '../Framework/Storage/DownloadDirManager';
 import { PdfImportService } from '../Framework/Services/PdfImportService';
 import { SettingsImmersiveTitleBar } from './settings/SettingsImmersiveTitleBar';
 import { SettingsImmersiveTitleActionItem, SettingsPageTitleBarManager } from './settings/SettingsPageTitleBarManager';
@@ -459,11 +460,16 @@ struct DownloadSyncPage {
         // 验证路径是否仍然有效
         try {
           const initFilePath = `${savedPath}/.manxia_init`;
-          const exists = SafeFileUtils.accessSync(initFilePath);
-          // accessSync返回undefined表示文件存在，抛出异常表示不存在
+          if (!SafeFileUtils.accessSync(initFilePath)) {
+            logger.info(TAG, '已保存的路径无效，需要重新连接');
+            AppStorage.delete('downloadSyncDirPath');
+            AppStorage.delete('downloadSyncDirUri');
+            return;
+          }
           logger.info(TAG, `检测到已初始化的Download目录: ${savedPath}`);
           this.downloadDirPath = savedPath;
           this.downloadDirUri = savedUri;
+          DownloadDirManager.getInstance().setDirInfo(savedPath, savedUri, false);
           await this.reloadDownloadImportState();
         } catch (accessError) {
           logger.info(TAG, '已保存的路径无效，需要重新连接');
@@ -690,6 +696,7 @@ A: 不会，原文件保持不变。`;
           // 保存路径到AppStorage以便下次自动加载
           AppStorage.setOrCreate('downloadSyncDirPath', this.downloadDirPath);
           AppStorage.setOrCreate('downloadSyncDirUri', this.downloadDirUri);
+          DownloadDirManager.getInstance().setDirInfo(this.downloadDirPath, this.downloadDirUri, false);
           
           // [新增] 持久化保存到数据库
           this.saveDownloadSyncSettings();

@@ -51,7 +51,9 @@ import {
   ChapterFilterType,
   ChapterSortOrder,
   ChapterDisplayMode,
-  OriginalBookInfo
+  OriginalBookInfo,
+  ChapterOrderPlan,
+  ChapterOrderPersistResult
 } from '../Models/UnifiedContentModels';
 
 import {
@@ -74,7 +76,7 @@ import { DuplicateDetectionDialog } from '../Framework/Components/DuplicateDetec
 import { OnlineEBookDetailPageParams } from './OnlineEBookDetailPage';
 
 // 数据管理器导入
-import { DataManager, ComicInfo, ChapterInfo, PageInfo, OnlineChapterInfo, OnlineComicInfo } from '../Framework/Data/DataManager';
+import { DataManager, ComicInfo, ChapterInfo, PageInfo, OnlineChapterInfo, OnlineComicInfo, OnlinePageInfo, OnlinePageInfoInput } from '../Framework/Data/DataManager';
 import { DatabaseRecord } from '../Framework/Database/DatabaseTypes';
 import { DataService } from '../Framework/Services/DataService';
 import { MangaDetailLoader, MangaDetailLoadParams, MangaDetailLoadResult, MangaLoadProgressCallback, ChapterProgressInfo } from '../Framework/Loaders/MangaDetailLoader';
@@ -84,10 +86,10 @@ import { EBookDataManager } from '../Framework/Data/EBookDataManager';
 import { SourceManager, SourceInfo } from '../Framework/Source/SourceManager';
 import { RemoteLibraryMangaBridge } from '../Framework/Source/RemoteLibraryMangaBridge';
 import { getRemoteLibraryShelfManager, RemoteLibraryShelfManager } from '../Framework/Source/RemoteLibraryShelfManager';
-import { MangaSourceEngine, EngineConfig } from '../Framework/WebView/MangaSourceEngine';
+import { MangaSourceEngine, EngineConfig, EngineResult } from '../Framework/WebView/MangaSourceEngine';
 import { WebViewSourceManager } from '../Framework/WebView/WebViewSourceManager';
 import { WebViewAuthManager } from '../Framework/WebView/WebViewAuthManager';
-import { AntiCrawlerConfig, PageRequestHeader } from '../Framework/WebView/MangaSourceTypes';
+import { AntiCrawlerConfig, PageRequestHeader, PageInfo as SourcePageInfo } from '../Framework/WebView/MangaSourceTypes';
 import { getNovelSourceManager } from '../Framework/Novel/NovelSourceManager';
 import { getNovelDataManager } from '../Framework/Novel/NovelDataManager';
 import { getNovelChapterCacheManager } from '../Framework/Novel/NovelChapterCacheManager';
@@ -97,6 +99,7 @@ import { NovelReplaceRuleManager, ReplaceScope, ReplaceRule } from '../Framework
 import { getLegadoMangaSourceBridge, LegadoMangaPageResult } from '../Framework/Novel/LegadoMangaSourceBridge';
 
 import { getCacheStatusService, CacheStatusService, ContentCacheStats, CacheContentType } from '../Framework/Services/CacheStatusService';
+import { getChapterOrderService, ChapterOrderService } from '../Framework/Services/ChapterOrderService';
 import {
   getUnifiedDownloadManager,
   UnifiedDownloadManager,
@@ -426,12 +429,17 @@ export struct UnifiedDetailPage {
     if (!this.content || !this.isOnlineManga() || cachePayload.mangaId !== this.content.id) {
       return;
     }
-    this.scheduleCacheStatusRefresh();
+    if (this.shouldRefreshCacheStatusImmediately(cachePayload.reason)) {
+      this.refreshCacheStatusImmediately(`manga_cache_event:${cachePayload.reason}`);
+    } else {
+      this.scheduleCacheStatusRefresh();
+    }
     logger.info(TAG, `收到漫画缓存更新事件，刷新详情页缓存状态: chapterId=${cachePayload.chapterId}, reason=${cachePayload.reason}`);
   };
   
   // 下载对话框状态（已提取至 DownloadDialogComponent）
   @State downloadDialogLoadSignal: number = 0;
+  @State downloadDialogCacheStateSignal: number = 0;
 
   // 分享链接对话框状态
   @State shareDialogLoadSignal: number = 0;
@@ -445,6 +453,7 @@ export struct UnifiedDetailPage {
   @State downloadCurrentChapterTitle: string = '';      // 当前正在下载的章节标题
   private downloadCallbackRegistered: boolean = false;  // 是否已注册下载回调
   private downloadCallback: UnifiedDownloadCallback | null = null;
+  private activeMangaDownloadTaskIds: Set<string> = new Set<string>();
   private cacheStatusRefreshTimer: number = -1;
   private cacheStatusLoadingInFlight: boolean = false;
   private cacheStatusRefreshPending: boolean = false;
@@ -469,6 +478,10 @@ export struct UnifiedDetailPage {
   @State chapterFilter: ChapterFilterType = ChapterFilterType.ALL;
   @State chapterSortOrder: ChapterSortOrder = ChapterSortOrder.ASCENDING;
   @State chapterDisplayMode: ChapterDisplayMode = ChapterDisplayMode.LIST;
+  @State isChapterOrderEditing: boolean = false;
+  @State isChapterOrderSaving: boolean = false;
+  @State chapterOrderDraft: UnifiedChapter[] = [];
+  @State chapterOrderStatusText: string = '';
   
   // 书架相关状态
   private typeShelfManager: TypeShelfManager = getTypeShelfManager();
@@ -506,6 +519,7 @@ export struct UnifiedDetailPage {
   private novelDataManager = getNovelDataManager();
   private subscriptionManager: SubscriptionManager = getSubscriptionManager();
   private novelCacheManager = getNovelChapterCacheManager();
+  private chapterOrderService: ChapterOrderService = getChapterOrderService();
   private coverGenerator = getNovelCoverGenerator();
 
   // 生成封面状态
@@ -1042,7 +1056,8 @@ export struct UnifiedDetailPage {
   }
 
   private isReadActionBusy(): boolean {
-    return this.isOpeningOnlineEBookDownloadDetail || this.isOnlineEBookRecoveryInProgress || this.isLoading || this.isChaptersLoading;
+    return this.isOpeningOnlineEBookDownloadDetail || this.isOnlineEBookRecoveryInProgress ||
+      this.isLoading || this.isChaptersLoading || this.isChapterOrderEditing || this.isChapterOrderSaving;
   }
 
   private clearOnlineEBookRecoveryTimer(): void {
@@ -1073,6 +1088,18 @@ export struct UnifiedDetailPage {
       }
       void this.loadCacheStatus();
     }, 800);
+  }
+
+  private shouldRefreshCacheStatusImmediately(reason: string): boolean {
+    return reason === 'download_complete' ||
+      reason === 'partial_archive_complete' ||
+      reason === 'manual_save_partial';
+  }
+
+  private refreshCacheStatusImmediately(reason: string): void {
+    this.clearCacheStatusRefreshTimer();
+    logger.info(TAG, `立即刷新缓存状态: ${reason}`);
+    void this.loadCacheStatus();
   }
 
   private buildOnlineEBookVerificationInfo(
@@ -1605,6 +1632,10 @@ export struct UnifiedDetailPage {
 
   private openCacheDialogFromDetail(trigger: string): void {
     if (!this.content) {
+      return;
+    }
+    if (this.isChapterOrderEditing || this.isChapterOrderSaving) {
+      this.getUIContext().getPromptAction().showToast({ message: '请先完成章节排序', duration: 1500 });
       return;
     }
     if (this.content.contentType === UnifiedContentType.NOVEL) {
@@ -2362,6 +2393,7 @@ export struct UnifiedDetailPage {
       }
 
       if (this.content) {
+        await this.applyStoredChapterOrderToCurrentContent();
         this.normalizeCurrentContentReadProgress();
         await this.syncCurrentSourceDisplayName();
       }
@@ -2773,6 +2805,11 @@ export struct UnifiedDetailPage {
       this.isRefreshing = false;
       return;
     }
+    if (this.isChapterOrderEditing || this.isChapterOrderSaving) {
+      this.getUIContext().getPromptAction().showToast({ message: '请先完成章节排序', duration: 1500 });
+      this.isRefreshing = false;
+      return;
+    }
     
     logger.info(TAG, `开始刷新: ${this.content.contentType}`);
     this.isRefreshing = true;
@@ -2791,6 +2828,7 @@ export struct UnifiedDetailPage {
           this.refreshProgress = '电子书无需刷新';
           break;
       }
+      await this.applyStoredChapterOrderToCurrentContent();
       
       this.refreshProgress = '刷新完成';
       logger.info(TAG, '刷新完成');
@@ -3878,6 +3916,9 @@ export struct UnifiedDetailPage {
    */
   private startReading(chapterIndex: number): void {
     if (!this.content || !this.pageParams) return;
+    if (this.isChapterOrderEditing || this.isChapterOrderSaving) {
+      return;
+    }
 
     const chapter = this.content.chapters[chapterIndex];
     if (!chapter) return;
@@ -3981,6 +4022,7 @@ export struct UnifiedDetailPage {
    */
   private continueReadAloud(): void {
     if (!this.content) return;
+    if (this.isReadActionBusy()) return;
 
     const lastIndex = this.content.lastReadChapterIndex;
     const targetChapterIndex = lastIndex >= 0 && lastIndex < this.content.chapters.length ? lastIndex : 0;
@@ -4739,10 +4781,190 @@ export struct UnifiedDetailPage {
   /**
    * 获取过滤后的章节列表
    */
+  private async applyStoredChapterOrderToCurrentContent(): Promise<void> {
+    if (!this.content) {
+      return;
+    }
+    try {
+      this.content = await this.chapterOrderService.applyStoredOrder(this.content);
+      if (this.isChapterOrderEditing) {
+        this.chapterOrderDraft = this.cloneChapterArray(this.content.chapters);
+      }
+    } catch (error) {
+      logger.error(TAG, `应用章节排序失败: ${String(error)}`);
+    }
+  }
+
+  private beginChapterOrderEditing(): void {
+    if (!this.content || this.isChaptersLoading || this.isChapterOrderSaving) {
+      return;
+    }
+    this.chapterOrderDraft = this.cloneChapterArray(this.content.chapters);
+    this.isChapterOrderEditing = true;
+    this.chapterOrderStatusText = '编辑模式会显示完整章节列表，保存后写入数据库';
+  }
+
+  private cancelChapterOrderEditing(): void {
+    if (this.isChapterOrderSaving) {
+      return;
+    }
+    this.isChapterOrderEditing = false;
+    this.chapterOrderDraft = [];
+    this.chapterOrderStatusText = '';
+  }
+
+  private async saveChapterOrderDraft(): Promise<void> {
+    if (!this.content || !this.isChapterOrderEditing || this.isChapterOrderSaving) {
+      return;
+    }
+    const plan = this.chapterOrderService.buildPlan(this.content, this.chapterOrderDraft);
+    if (plan.movedCount === 0) {
+      this.cancelChapterOrderEditing();
+      this.getUIContext().getPromptAction().showToast({ message: '章节顺序未变化', duration: 1500 });
+      return;
+    }
+
+    this.isChapterOrderSaving = true;
+    this.chapterOrderStatusText = '正在保存章节顺序...';
+    try {
+      const result: ChapterOrderPersistResult = await this.chapterOrderService.persistOrder(this.content, this.chapterOrderDraft);
+      this.chapterOrderStatusText = result.message;
+      if (!result.success) {
+        this.getUIContext().getPromptAction().showToast({ message: result.message, duration: 2200 });
+        return;
+      }
+
+      this.content = this.chapterOrderService.rebuildContentWithOrder(this.content, this.chapterOrderDraft);
+      this.normalizeCurrentContentReadProgress();
+      this.isChapterOrderEditing = false;
+      this.chapterOrderDraft = [];
+      await this.loadCacheStatus();
+      this.readAloudCacheLoadSignal++;
+      this.getUIContext().getPromptAction().showToast({ message: result.message, duration: 1800 });
+    } catch (error) {
+      const message = `保存章节排序失败: ${String(error)}`;
+      this.chapterOrderStatusText = message;
+      logger.error(TAG, message);
+      this.getUIContext().getPromptAction().showToast({ message: message, duration: 2200 });
+    } finally {
+      this.isChapterOrderSaving = false;
+    }
+  }
+
+  private async resetChapterOrderToSource(): Promise<void> {
+    if (!this.content || this.isChapterOrderSaving) {
+      return;
+    }
+    this.isChapterOrderSaving = true;
+    this.chapterOrderStatusText = '正在恢复来源顺序...';
+    try {
+      const result: ChapterOrderPersistResult = await this.chapterOrderService.resetOrder(this.content);
+      this.chapterOrderStatusText = result.message;
+      if (result.success) {
+        this.isChapterOrderEditing = false;
+        this.chapterOrderDraft = [];
+        await this.loadContent();
+      }
+      this.getUIContext().getPromptAction().showToast({ message: result.message, duration: 1800 });
+    } catch (error) {
+      const message = `恢复来源顺序失败: ${String(error)}`;
+      this.chapterOrderStatusText = message;
+      logger.error(TAG, message);
+      this.getUIContext().getPromptAction().showToast({ message: message, duration: 2200 });
+    } finally {
+      this.isChapterOrderSaving = false;
+    }
+  }
+
+  private moveChapterOrderDraftItem(fromIndex: number, targetIndex: number): void {
+    if (!this.isChapterOrderEditing || this.isChapterOrderSaving) {
+      return;
+    }
+    const count = this.chapterOrderDraft.length;
+    if (count <= 1 || fromIndex < 0 || fromIndex >= count) {
+      return;
+    }
+    let normalizedTarget = targetIndex;
+    if (normalizedTarget < 0) {
+      normalizedTarget = 0;
+    }
+    if (normalizedTarget >= count) {
+      normalizedTarget = count - 1;
+    }
+    if (normalizedTarget === fromIndex) {
+      return;
+    }
+
+    const moving = this.chapterOrderDraft[fromIndex];
+    const withoutMoving: UnifiedChapter[] = [];
+    for (let i = 0; i < count; i++) {
+      if (i !== fromIndex) {
+        withoutMoving.push(this.chapterOrderDraft[i]);
+      }
+    }
+
+    const nextDraft: UnifiedChapter[] = [];
+    for (let i = 0; i <= withoutMoving.length; i++) {
+      if (i === normalizedTarget) {
+        nextDraft.push(moving);
+      }
+      if (i < withoutMoving.length) {
+        nextDraft.push(withoutMoving[i]);
+      }
+    }
+    this.chapterOrderDraft = nextDraft;
+    this.chapterOrderStatusText = this.getChapterOrderSummaryText();
+  }
+
+  private cloneChapterArray(chapters: UnifiedChapter[]): UnifiedChapter[] {
+    const result: UnifiedChapter[] = [];
+    for (let i = 0; i < chapters.length; i++) {
+      result.push(chapters[i]);
+    }
+    return result;
+  }
+
+  private getChapterDisplayIndex(chapter: UnifiedChapter, listIndex: number): number {
+    if (this.isChapterOrderEditing) {
+      return listIndex;
+    }
+    return chapter.index;
+  }
+
+  private getChapterOrderSummaryText(): string {
+    if (!this.content || !this.isChapterOrderEditing) {
+      return '';
+    }
+    const plan: ChapterOrderPlan = this.chapterOrderService.buildPlan(this.content, this.chapterOrderDraft);
+    const readingText = this.isLastReadIndexRemapped(plan) ? '，阅读进度会重映射' : '';
+    return `移动 ${plan.movedCount} 章，缓存索引迁移 ${plan.remaps.length} 项${readingText}`;
+  }
+
+  private isLastReadIndexRemapped(plan: ChapterOrderPlan): boolean {
+    if (!this.content) {
+      return false;
+    }
+    const lastIndex = this.content.lastReadChapterIndex;
+    if (!Number.isFinite(lastIndex) || lastIndex < 0) {
+      return false;
+    }
+    const safeLastIndex = Math.floor(lastIndex);
+    for (let i = 0; i < plan.remaps.length; i++) {
+      if (plan.remaps[i].oldIndex === safeLastIndex) {
+        return true;
+      }
+    }
+    return false;
+  }
+
   private getFilteredChapters(): UnifiedChapter[] {
     if (!this.content) return [];
 
-    let chapters = [...this.content.chapters];
+    if (this.isChapterOrderEditing) {
+      return this.cloneChapterArray(this.chapterOrderDraft);
+    }
+
+    let chapters = this.cloneChapterArray(this.content.chapters);
 
     // 应用过滤
     switch (this.chapterFilter) {
@@ -4923,7 +5145,7 @@ export struct UnifiedDetailPage {
    */
   private createPageListFetcher(): PageListFetcher {
     const dataManager = this.dataManager;
-    const sourceIdText: string = this.normalizeTrackingText(this.content?.sourceId || this.pageParams?.sourceId);
+    const sourceIdText: string = this.normalizeTrackingText(this.pageParams?.sourceId || this.content?.sourceId);
     const sourceId: number = Number(sourceIdText);
     const fetcher: PageListFetcher = async (chapterId: string, mangaId: string): Promise<string[] | DownloadPageItem[]> => {
       if (sourceId > 0 && await getLegadoMangaSourceBridge().isLegadoMangaSourceId(sourceId)) {
@@ -4932,10 +5154,296 @@ export struct UnifiedDetailPage {
           return legadoItems;
         }
       }
-      const pages = await dataManager.getOnlineChapterPages(chapterId);
-      return pages.map(p => p.imageUrl);
+
+      const cachedPages: OnlinePageInfo[] = await dataManager.getOnlineChapterPages(chapterId);
+      const cachedItems: DownloadPageItem[] = this.buildDownloadItemsFromOnlinePages(cachedPages);
+      if (cachedItems.length > 0) {
+        logger.info(TAG, `漫画缓存页表命中: chapterId=${chapterId}, pages=${cachedItems.length}`);
+        return cachedItems;
+      }
+
+      if (sourceId <= 0) {
+        const errorMessage: string = `漫画缓存缺少图源ID，无法获取章节图片列表: mangaId=${mangaId}, chapterId=${chapterId}`;
+        logger.error(TAG, errorMessage);
+        throw new Error(errorMessage);
+      }
+
+      return await this.fetchWebViewMangaDownloadPages(sourceId, chapterId, mangaId);
     };
     return fetcher;
+  }
+
+  private buildDownloadItemsFromOnlinePages(pages: OnlinePageInfo[]): DownloadPageItem[] {
+    const items: DownloadPageItem[] = [];
+    for (let i = 0; i < pages.length; i++) {
+      const page = pages[i];
+      const imageUrl: string = page.imageUrl ? String(page.imageUrl).trim() : '';
+      if (!this.isUsableDownloadImageUrl(imageUrl)) {
+        continue;
+      }
+      const item: DownloadPageItem = {
+        url: imageUrl,
+        headers: this.buildDownloadHeaderRecordFromSerialized(page.requestHeaders)
+      };
+      items.push(item);
+    }
+    return items;
+  }
+
+  private async fetchWebViewMangaDownloadPages(
+    sourceId: number,
+    chapterId: string,
+    mangaId: string
+  ): Promise<DownloadPageItem[]> {
+    const identityInput = MangaIdentityResolver.getInstance().buildInput(
+      mangaId,
+      chapterId,
+      sourceId,
+      'OnlineUndownloaded',
+      'UnifiedDetailPage.fetchWebViewMangaDownloadPages'
+    );
+    const sourceName: string = await this.resolveDownloadMangaSourceName(sourceId);
+    identityInput.sourceName = sourceName;
+    identityInput.sourcePkg = this.resolvedSourcePkg;
+
+    const identityResult: MangaIdentityResolveResult = await MangaIdentityResolver.getInstance().resolve(identityInput);
+    const canonicalMangaId: string = identityResult.success && identityResult.canonicalMangaId.length > 0
+      ? identityResult.canonicalMangaId
+      : mangaId;
+    const canonicalChapterId: string = identityResult.success && identityResult.canonicalChapterId.length > 0
+      ? identityResult.canonicalChapterId
+      : chapterId;
+    const externalMangaId: string = await this.resolveDownloadExternalMangaId(canonicalMangaId, mangaId, identityResult);
+    const externalChapterId: string = await this.resolveDownloadExternalChapterId(canonicalChapterId, chapterId, identityResult);
+    const storageChapterId: string = await this.resolveDownloadStorageChapterId(chapterId, canonicalChapterId);
+
+    if (externalMangaId.length <= 0 || externalChapterId.length <= 0) {
+      const errorMessage: string =
+        `漫画缓存无法解析外部章节ID: manga=${mangaId}/${canonicalMangaId}/${externalMangaId}, ` +
+        `chapter=${chapterId}/${canonicalChapterId}/${externalChapterId}`;
+      logger.error(TAG, errorMessage);
+      throw new Error(errorMessage);
+    }
+
+    const mangaEngine: MangaSourceEngine = await this.webViewManager.getMangaEngine(sourceId, sourceName);
+    logger.info(
+      TAG,
+      `漫画缓存从图源拉取页表: sourceId=${sourceId}, manga=${canonicalMangaId}->${externalMangaId}, chapter=${canonicalChapterId}->${externalChapterId}`
+    );
+
+    const prefetchedPages: SourcePageInfo[] | null = MangaSourceEngine.getPrefetchedPages(sourceId, externalChapterId);
+    if (prefetchedPages && prefetchedPages.length > 0) {
+      const validPrefetchedPages: SourcePageInfo[] = this.filterDownloadSourcePages(prefetchedPages);
+      if (validPrefetchedPages.length > 0) {
+        await this.saveDownloadSourcePagesToDatabase(storageChapterId, validPrefetchedPages);
+        logger.info(
+          TAG,
+          `漫画缓存复用预取页表: taskChapter=${chapterId}, storageChapter=${storageChapterId}, pages=${validPrefetchedPages.length}`
+        );
+        return this.buildDownloadItemsFromSourcePages(validPrefetchedPages);
+      }
+      logger.warn(TAG, `漫画缓存预取页表无有效图片URL，继续请求图源: chapter=${canonicalChapterId}, raw=${prefetchedPages.length}`);
+    }
+
+    let pageResult: EngineResult<SourcePageInfo[]> = await mangaEngine.getPageList(externalChapterId, externalMangaId);
+    if (!pageResult.success || !pageResult.data || pageResult.data.length <= 0) {
+      const firstError: string = pageResult.error || 'empty_page_list';
+      logger.warn(TAG, `漫画缓存首次拉取页表失败，立即重试一次: chapter=${canonicalChapterId}, error=${firstError}`);
+      pageResult = await mangaEngine.getPageList(externalChapterId, externalMangaId);
+    }
+
+    const sourcePages: SourcePageInfo[] | undefined = pageResult.data;
+    if (!pageResult.success || !sourcePages || sourcePages.length <= 0) {
+      const errorMessage: string = pageResult.error || '图源返回页面列表为空';
+      logger.error(
+        TAG,
+        `漫画缓存图源页表拉取失败: manga=${externalMangaId}, chapter=${externalChapterId}, error=${errorMessage}`
+      );
+      throw new Error(`漫画缓存图源页表拉取失败: ${errorMessage}`);
+    }
+
+    const validPages: SourcePageInfo[] = this.filterDownloadSourcePages(sourcePages);
+    if (validPages.length <= 0) {
+      const errorMessage: string =
+        `漫画缓存图源页表无有效图片URL: manga=${externalMangaId}, chapter=${externalChapterId}, raw=${sourcePages.length}`;
+      logger.error(TAG, errorMessage);
+      throw new Error(errorMessage);
+    }
+
+    await this.saveDownloadSourcePagesToDatabase(storageChapterId, validPages);
+    logger.info(
+      TAG,
+      `漫画缓存图源页表拉取完成: taskChapter=${chapterId}, storageChapter=${storageChapterId}, externalChapter=${externalChapterId}, pages=${validPages.length}`
+    );
+    return this.buildDownloadItemsFromSourcePages(validPages);
+  }
+
+  private async resolveDownloadExternalMangaId(
+    canonicalMangaId: string,
+    originalMangaId: string,
+    identityResult: MangaIdentityResolveResult
+  ): Promise<string> {
+    const originalComicInfo: OnlineComicInfo | null = await this.dataManager.getOnlineComicInfoById(originalMangaId);
+    if (originalComicInfo && originalComicInfo.externalId.length > 0) {
+      return originalComicInfo.externalId;
+    }
+    if (identityResult.externalMangaId.length > 0) {
+      return identityResult.externalMangaId;
+    }
+    const comicInfo: OnlineComicInfo | null = await this.dataManager.getOnlineComicInfoById(canonicalMangaId);
+    if (comicInfo && comicInfo.externalId.length > 0) {
+      return comicInfo.externalId;
+    }
+    if (originalMangaId.length > 0 && !originalMangaId.startsWith('id_') && !originalMangaId.startsWith('local_')) {
+      return originalMangaId;
+    }
+    return canonicalMangaId.startsWith('id_') || canonicalMangaId.startsWith('local_') ? '' : canonicalMangaId;
+  }
+
+  private async resolveDownloadExternalChapterId(
+    canonicalChapterId: string,
+    originalChapterId: string,
+    identityResult: MangaIdentityResolveResult
+  ): Promise<string> {
+    const originalChapterInfo: OnlineChapterInfo | null = await this.dataManager.getOnlineChapterById(originalChapterId);
+    if (originalChapterInfo && originalChapterInfo.externalId.length > 0) {
+      return originalChapterInfo.externalId;
+    }
+    if (identityResult.externalChapterId.length > 0) {
+      return identityResult.externalChapterId;
+    }
+    const chapterInfo: OnlineChapterInfo | null = await this.dataManager.getOnlineChapterById(canonicalChapterId);
+    if (chapterInfo && chapterInfo.externalId.length > 0) {
+      return chapterInfo.externalId;
+    }
+    if (originalChapterId.length > 0 && !originalChapterId.startsWith('id_') && !originalChapterId.startsWith('local_')) {
+      return originalChapterId;
+    }
+    return canonicalChapterId.startsWith('id_') || canonicalChapterId.startsWith('local_') ? '' : canonicalChapterId;
+  }
+
+  private async resolveDownloadStorageChapterId(originalChapterId: string, canonicalChapterId: string): Promise<string> {
+    const originalChapterInfo: OnlineChapterInfo | null = await this.dataManager.getOnlineChapterById(originalChapterId);
+    if (originalChapterInfo) {
+      return originalChapterId;
+    }
+    const canonicalChapterInfo: OnlineChapterInfo | null = await this.dataManager.getOnlineChapterById(canonicalChapterId);
+    if (canonicalChapterInfo) {
+      return canonicalChapterId;
+    }
+    return originalChapterId.length > 0 ? originalChapterId : canonicalChapterId;
+  }
+
+  private async resolveDownloadMangaSourceName(sourceId: number): Promise<string> {
+    if (this.resolvedSourceName.length > 0) {
+      return this.resolvedSourceName;
+    }
+    if (this.content && this.content.sourceName && this.content.sourceName.length > 0) {
+      return this.content.sourceName;
+    }
+    await this.loadSourceName(sourceId);
+    if (this.currentSourceName.length > 0) {
+      return this.currentSourceName;
+    }
+    return '';
+  }
+
+  private filterDownloadSourcePages(pages: SourcePageInfo[]): SourcePageInfo[] {
+    const validPages: SourcePageInfo[] = [];
+    for (let i = 0; i < pages.length; i++) {
+      const page = pages[i];
+      if (!page) {
+        continue;
+      }
+      const imageUrl: string = page.imageUrl ? String(page.imageUrl).trim() : '';
+      if (!this.isUsableDownloadImageUrl(imageUrl)) {
+        continue;
+      }
+      validPages.push(page);
+    }
+    return validPages;
+  }
+
+  private buildDownloadItemsFromSourcePages(pages: SourcePageInfo[]): DownloadPageItem[] {
+    const items: DownloadPageItem[] = [];
+    for (let i = 0; i < pages.length; i++) {
+      const page = pages[i];
+      const imageUrl: string = page.imageUrl ? String(page.imageUrl).trim() : '';
+      if (!this.isUsableDownloadImageUrl(imageUrl)) {
+        continue;
+      }
+      const item: DownloadPageItem = {
+        url: imageUrl,
+        headers: this.buildDownloadHeaderRecord(page.requestHeaders)
+      };
+      items.push(item);
+    }
+    return items;
+  }
+
+  private async saveDownloadSourcePagesToDatabase(chapterId: string, pages: SourcePageInfo[]): Promise<void> {
+    if (pages.length <= 0) {
+      return;
+    }
+    const pageInputs: OnlinePageInfoInput[] = [];
+    for (let i = 0; i < pages.length; i++) {
+      const page = pages[i];
+      const pageNumber: number = page.page !== undefined && page.page !== null ? Number(page.page) : i;
+      const input: OnlinePageInfoInput = {
+        chapterId: chapterId,
+        pageNumber: isNaN(pageNumber) ? i : pageNumber,
+        imageUrl: page.imageUrl,
+        requestHeaders: this.serializeDownloadPageRequestHeaders(page.requestHeaders),
+        width: page.width || 0,
+        height: page.height || 0,
+        fileSize: 0
+      };
+      pageInputs.push(input);
+    }
+
+    await this.dataManager.deleteOnlineChapterPages(chapterId);
+    await this.dataManager.batchAddOnlinePages(chapterId, pageInputs);
+    logger.info(TAG, `漫画缓存页表已保存: chapterId=${chapterId}, pages=${pageInputs.length}`);
+  }
+
+  private serializeDownloadPageRequestHeaders(headers?: PageRequestHeader[]): string {
+    if (!headers || headers.length <= 0) {
+      return '';
+    }
+    const normalized: PageRequestHeader[] = [];
+    for (let i = 0; i < headers.length; i++) {
+      const header = headers[i];
+      if (!header) {
+        continue;
+      }
+      const name: string = String(header.name || '').trim();
+      const value: string = String(header.value || '').trim();
+      if (name.length <= 0 || value.length <= 0) {
+        continue;
+      }
+      const normalizedHeader: PageRequestHeader = {
+        name: name,
+        value: value
+      };
+      normalized.push(normalizedHeader);
+    }
+    if (normalized.length <= 0) {
+      return '';
+    }
+    return SafeUtils.stringifyJson(normalized, '');
+  }
+
+  private buildDownloadHeaderRecordFromSerialized(serializedHeaders?: string): Record<string, string> | undefined {
+    const rawHeaders: string = serializedHeaders ? serializedHeaders.trim() : '';
+    if (rawHeaders.length <= 0) {
+      return undefined;
+    }
+    const headers: PageRequestHeader[] = SafeUtils.parseArr<PageRequestHeader[]>(rawHeaders);
+    return this.buildDownloadHeaderRecord(headers);
+  }
+
+  private isUsableDownloadImageUrl(imageUrl: string): boolean {
+    return imageUrl.startsWith('http://') || imageUrl.startsWith('https://');
   }
 
   private async fetchLegadoMangaDownloadPages(
@@ -5233,15 +5741,96 @@ export struct UnifiedDetailPage {
    * 判断章节是否完全缓存
    */
   private isChapterFullyCached(chapterId: string): boolean {
-    if (this.cacheStats && this.cacheStats.chapterStats) {
-      const stat = this.cacheStats.chapterStats.find(s => s.chapterId === chapterId);
-      if (stat) {
-        return stat.isCached;
-      }
+    if (this.isChapterFullyCachedInStats(this.cacheStats, chapterId)) {
+      return true;
     }
     // 回退到 chapter.isDownloaded
     const chapter = this.content?.chapters.find(c => c.id === chapterId);
     return chapter?.isDownloaded || false;
+  }
+
+  private isChapterFullyCachedInStats(stats: ContentCacheStats | null, chapterId: string): boolean {
+    if (stats && stats.chapterStats) {
+      const stat = stats.chapterStats.find(s => s.chapterId === chapterId);
+      if (stat) {
+        return stat.isCached;
+      }
+    }
+    return false;
+  }
+
+  private syncMangaCacheStatsToChapters(cacheStats: ContentCacheStats): void {
+    if (!this.content || this.content.contentType !== UnifiedContentType.MANGA) {
+      return;
+    }
+    if (cacheStats.contentType !== CacheContentType.MANGA || cacheStats.contentId !== this.content.id) {
+      return;
+    }
+
+    const cachedChapterIds: Set<string> = new Set<string>();
+    for (let i = 0; i < cacheStats.chapterStats.length; i++) {
+      const chapterStat = cacheStats.chapterStats[i];
+      if (chapterStat.isCached) {
+        cachedChapterIds.add(chapterStat.chapterId);
+      }
+    }
+
+    const updatedChapters: UnifiedChapter[] = [];
+    let changed = false;
+    for (let i = 0; i < this.content.chapters.length; i++) {
+      const chapter = this.content.chapters[i];
+      const isDownloaded = cachedChapterIds.has(chapter.id);
+      if (chapter.isDownloaded !== isDownloaded) {
+        changed = true;
+      }
+      const updatedChapter: UnifiedChapter = {
+        id: chapter.id,
+        title: chapter.title,
+        index: chapter.index,
+        isRead: chapter.isRead,
+        isDownloaded: isDownloaded,
+        isBookmarked: chapter.isBookmarked,
+        originalData: chapter.originalData,
+        originalType: chapter.originalType
+      };
+      if (chapter.pageCount !== undefined) {
+        updatedChapter.pageCount = chapter.pageCount;
+      }
+      if (chapter.wordCount !== undefined) {
+        updatedChapter.wordCount = chapter.wordCount;
+      }
+      if (chapter.publishDate !== undefined) {
+        updatedChapter.publishDate = chapter.publishDate;
+      }
+      updatedChapters.push(updatedChapter);
+    }
+
+    if (changed) {
+      this.content.chapters = updatedChapters;
+      logger.info(TAG, `漫画章节缓存标记已同步: cached=${cacheStats.cachedChapterCount}/${cacheStats.totalChapterCount}`);
+    }
+    this.downloadDialogCacheStateSignal++;
+  }
+
+  private async loadFreshMangaCacheStatsForDownload(
+    sourceId: number,
+    contentId: string,
+    contentTitle: string
+  ): Promise<ContentCacheStats | null> {
+    try {
+      const cacheStats = await this.cacheStatusService.getMangaCacheStatus(sourceId, contentId, contentTitle);
+      this.cacheStats = cacheStats;
+      this.syncMangaCacheStatsToChapters(cacheStats);
+      this.showCacheStatusCard = true;
+      logger.info(
+        TAG,
+        `漫画下载前缓存状态刷新完成: cached=${cacheStats.cachedChapterCount}/${cacheStats.totalChapterCount}章, pages=${cacheStats.cachedPageCount}/${cacheStats.totalPageCount}`
+      );
+      return cacheStats;
+    } catch (error) {
+      logger.warn(TAG, `漫画下载前缓存状态刷新失败，将使用当前页面状态: ${String(error)}`);
+      return this.cacheStats;
+    }
   }
 
   /**
@@ -5278,6 +5867,39 @@ export struct UnifiedDetailPage {
       return this.cacheStats.chapterStats.some(s => s.isPartiallyCached === true);
     }
     return false;
+  }
+
+  private getMangaCachePageSummaryText(): string {
+    if (!this.cacheStats) {
+      return '0 页';
+    }
+    if (this.cacheStats.totalPageCount <= 0) {
+      return `${this.cacheStats.cachedPageCount} 页`;
+    }
+    return `${this.cacheStats.cachedPageCount}/已知${this.cacheStats.totalPageCount}`;
+  }
+
+  private resetActiveMangaDownloadTaskIds(): void {
+    this.activeMangaDownloadTaskIds = new Set<string>();
+  }
+
+  private setActiveMangaDownloadTaskIds(taskIds: string[]): void {
+    const nextTaskIds: Set<string> = new Set<string>();
+    for (let i = 0; i < taskIds.length; i++) {
+      nextTaskIds.add(taskIds[i]);
+    }
+    this.activeMangaDownloadTaskIds = nextTaskIds;
+  }
+
+  private getActiveMangaDownloadTaskIdList(fallbackTaskId: string): string[] {
+    const taskIds: string[] = [];
+    this.activeMangaDownloadTaskIds.forEach((taskId: string) => {
+      taskIds.push(taskId);
+    });
+    if (taskIds.length <= 0 && fallbackTaskId.length > 0) {
+      taskIds.push(fallbackTaskId);
+    }
+    return taskIds;
   }
 
   /**
@@ -5366,6 +5988,7 @@ export struct UnifiedDetailPage {
           );
           if (this.isCacheStatusLoadCurrent(loadVersion, contentId)) {
             this.cacheStats = cacheStats;
+            this.syncMangaCacheStatsToChapters(cacheStats);
             this.showCacheStatusCard = true;
             logger.info(TAG, `漫画缓存状态加载完成: ${cacheStats.cachedChapterCount}/${cacheStats.totalChapterCount}章`);
           }
@@ -5406,7 +6029,10 @@ export struct UnifiedDetailPage {
       this.cacheStatusLoadingInFlight = false;
       if (this.cacheStatusRefreshPending) {
         this.cacheStatusRefreshPending = false;
-        this.scheduleCacheStatusRefresh();
+        const mergedCount = this.cacheStatusRefreshMergedCount;
+        this.cacheStatusRefreshMergedCount = 0;
+        logger.info(TAG, `立即执行合并的缓存状态刷新: merged=${mergedCount}`);
+        void this.loadCacheStatus();
       }
     }
   }
@@ -7266,7 +7892,7 @@ export struct UnifiedDetailPage {
             .padding({ left: 16, right: 16 })
             .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('comp_background_tertiary', this.themeState.currentTheme))
             .borderRadius(18)
-            .enabled(!this.isRefetchingManga)
+            .enabled(!this.isRefetchingManga && !this.isChapterOrderEditing && !this.isChapterOrderSaving)
             .onClick(() => {
               void this.refetchOnlineMangaInfo();
             })
@@ -7624,12 +8250,12 @@ export struct UnifiedDetailPage {
 
             Column({ space: 4 }) {
               if (this.cacheStats.contentType === CacheContentType.MANGA) {
-                Text(`${this.cacheStats.cachedPageCount}/${this.cacheStats.totalPageCount}`)
+                Text(this.getMangaCachePageSummaryText())
                   .fontSize(20)
                   .fontWeight(FontWeight.Bold)
                   .fontFamily(this.appFontFamily)
                   .fontColor(ThemeAwareHelper.getTestManagementThemedColor('accent_blue', this.themeState.currentTheme))
-                Text('已缓存页面')
+                Text('已知缓存页面')
                   .fontSize(11)
                   .fontFamily(this.appFontFamily)
                   .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_muted', this.themeState.currentTheme))
@@ -8170,19 +8796,85 @@ export struct UnifiedDetailPage {
 
             Row({ space: 8 }) {
               if (!this.isChaptersLoading) {
-                Button() {
-                  SymbolGlyph(this.chapterSortOrder === ChapterSortOrder.ASCENDING
-                    ? $r('sys.symbol.arrow_up')
-                    : $r('sys.symbol.arrow_down'))
-                    .fontSize(16)
-                    .fontColor([ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme)])
+                if (this.isChapterOrderEditing) {
+                  Button() {
+                    Text('取消')
+                      .fontSize(12)
+                      .fontFamily(this.appFontFamily)
+                      .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
+                  }
+                  .height(32)
+                  .padding({ left: 10, right: 10 })
+                  .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('comp_background_tertiary', this.themeState.currentTheme))
+                  .borderRadius(14)
+                  .enabled(!this.isChapterOrderSaving)
+                  .onClick(() => this.cancelChapterOrderEditing())
+
+                  Button() {
+                    Text('来源顺序')
+                      .fontSize(12)
+                      .fontFamily(this.appFontFamily)
+                      .fontColor(ThemeAwareHelper.getTestManagementThemedColor('accent_orange', this.themeState.currentTheme))
+                  }
+                  .height(32)
+                  .padding({ left: 10, right: 10 })
+                  .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('accent_orange', this.themeState.currentTheme) + '15')
+                  .borderRadius(14)
+                  .enabled(!this.isChapterOrderSaving)
+                  .onClick(() => {
+                    void this.resetChapterOrderToSource();
+                  })
+
+                  Button() {
+                    Row({ space: 4 }) {
+                      if (this.isChapterOrderSaving) {
+                        LoadingProgress()
+                          .width(12)
+                          .height(12)
+                          .color(Color.White)
+                      }
+                      Text(this.isChapterOrderSaving ? '保存中' : '保存')
+                        .fontSize(12)
+                        .fontFamily(this.appFontFamily)
+                        .fontColor(Color.White)
+                    }
+                  }
+                  .height(32)
+                  .padding({ left: 12, right: 12 })
+                  .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme))
+                  .borderRadius(14)
+                  .enabled(!this.isChapterOrderSaving)
+                  .onClick(() => {
+                    void this.saveChapterOrderDraft();
+                  })
+                } else {
+                  Button() {
+                    SymbolGlyph(this.chapterSortOrder === ChapterSortOrder.ASCENDING
+                      ? $r('sys.symbol.arrow_up')
+                      : $r('sys.symbol.arrow_down'))
+                      .fontSize(16)
+                      .fontColor([ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme)])
+                  }
+                  .width(32)
+                  .height(32)
+                  .backgroundColor(Color.Transparent)
+                  .onClick(() => {
+                    this.toggleGlobalChapterSortOrder();
+                  })
+
+                  Button() {
+                    Text('排序')
+                      .fontSize(12)
+                      .fontFamily(this.appFontFamily)
+                      .fontColor(ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme))
+                  }
+                  .height(32)
+                  .padding({ left: 10, right: 10 })
+                  .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme) + '15')
+                  .borderRadius(14)
+                  .enabled(!this.isChapterOrderSaving)
+                  .onClick(() => this.beginChapterOrderEditing())
                 }
-                .width(32)
-                .height(32)
-                .backgroundColor(Color.Transparent)
-                .onClick(() => {
-                  this.toggleGlobalChapterSortOrder();
-                })
               }
 
               Button() {
@@ -8209,6 +8901,14 @@ export struct UnifiedDetailPage {
             }
           }
           .width('100%')
+
+          if (this.isChapterOrderEditing && this.isChapterListExpanded) {
+            Text(this.chapterOrderStatusText || this.getChapterOrderSummaryText())
+              .fontSize(12)
+              .fontFamily(this.appFontFamily)
+              .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
+              .width('100%')
+          }
 
           if (this.isChapterListExpanded) {
             Column() {
@@ -8349,6 +9049,10 @@ export struct UnifiedDetailPage {
     if (!this.content || !this.pageParams || !this.isOnlineManga()) {
       return;
     }
+    if (this.isChapterOrderEditing || this.isChapterOrderSaving) {
+      this.getUIContext().getPromptAction().showToast({ message: '请先完成章节排序', duration: 1500 });
+      return;
+    }
 
     const mangaId = this.pageParams.contentId;
     const sourceId = this.pageParams.sourceId;
@@ -8441,6 +9145,7 @@ export struct UnifiedDetailPage {
                 this.resolvedSourceName,
                 this.resolvedSourcePkg
               );
+              void this.applyStoredChapterOrderToCurrentContent();
             }
           }
         },
@@ -8574,6 +9279,10 @@ export struct UnifiedDetailPage {
     if (!this.content || selectedIndexes.length === 0) {
       return;
     }
+    if (this.isChapterOrderEditing || this.isChapterOrderSaving) {
+      this.getUIContext().getPromptAction().showToast({ message: '请先完成章节排序', duration: 1500 });
+      return;
+    }
 
     if (this.content.contentType === UnifiedContentType.NOVEL) {
       await this.downloadSelectedNovelChapters(selectedIndexes);
@@ -8660,9 +9369,29 @@ export struct UnifiedDetailPage {
       return;
     }
 
-    const chaptersToDownload = selectedIndexes
-      .filter((idx: number) => idx >= 0 && idx < content.chapters.length && !this.isChapterFullyCached(content.chapters[idx].id))
-      .map((idx: number) => content.chapters[idx]);
+    const freshCacheStats = await this.loadFreshMangaCacheStatsForDownload(sourceId, content.id, content.title);
+    const chaptersToDownload: UnifiedChapter[] = [];
+    let skippedCachedCount = 0;
+    let invalidIndexCount = 0;
+    for (let i = 0; i < selectedIndexes.length; i++) {
+      const idx = selectedIndexes[i];
+      if (idx < 0 || idx >= content.chapters.length) {
+        invalidIndexCount++;
+        continue;
+      }
+      const chapter = content.chapters[idx];
+      const isCached = this.isChapterFullyCachedInStats(freshCacheStats, chapter.id) || chapter.isDownloaded === true;
+      if (isCached) {
+        skippedCachedCount++;
+        continue;
+      }
+      chaptersToDownload.push(chapter);
+    }
+
+    logger.info(
+      TAG,
+      `漫画批量缓存过滤完成: selected=${selectedIndexes.length}, submit=${chaptersToDownload.length}, skippedCached=${skippedCachedCount}, invalid=${invalidIndexCount}`
+    );
 
     if (chaptersToDownload.length === 0) {
       this.getUIContext().getPromptAction().showToast({ message: '选中的章节已全部缓存' });
@@ -8674,8 +9403,12 @@ export struct UnifiedDetailPage {
     this.downloadProgressCurrent = 0;
     this.downloadProgressTotal = chaptersToDownload.length;
     this.downloadCurrentChapterTitle = '';
+    this.resetActiveMangaDownloadTaskIds();
 
-    this.getUIContext().getPromptAction().showToast({ message: `开始缓存 ${chaptersToDownload.length} 章...` });
+    const startMessage = skippedCachedCount > 0
+      ? `开始缓存 ${chaptersToDownload.length} 章，已跳过 ${skippedCachedCount} 章`
+      : `开始缓存 ${chaptersToDownload.length} 章...`;
+    this.getUIContext().getPromptAction().showToast({ message: startMessage });
 
     try {
       const downloadChapters: MangaChapterDownloadItem[] = [];
@@ -8695,6 +9428,7 @@ export struct UnifiedDetailPage {
         sourceId,
         downloadChapters
       );
+      this.setActiveMangaDownloadTaskIds(batchResult.taskIds);
       if (batchResult.createdCount <= 0) {
         const failureReason = batchResult.failedChapters.length > 0 ? batchResult.failedChapters[0].reason : '没有章节任务创建成功';
         this.getUIContext().getPromptAction().showToast({ message: `缓存任务创建失败: ${failureReason}` });
@@ -8702,6 +9436,7 @@ export struct UnifiedDetailPage {
         this.downloadProgressCurrent = 0;
         this.downloadProgressTotal = 0;
         this.downloadCurrentChapterTitle = '';
+        this.resetActiveMangaDownloadTaskIds();
         logger.error(TAG, `漫画缓存批量任务全部创建失败: manga=${content.title}, failed=${batchResult.failedCount}`);
         return;
       }
@@ -8723,18 +9458,33 @@ export struct UnifiedDetailPage {
       this.isDownloading = false;
       this.downloadProgressCurrent = 0;
       this.downloadProgressTotal = 0;
+      this.resetActiveMangaDownloadTaskIds();
     }
   }
 
   private applyMangaDownloadAggregate(task: UnifiedDownloadTask, refreshOnProgress: boolean): ContentDownloadAggregate {
-    const aggregate = this.unifiedDownloadManager.getContentDownloadAggregate(task.contentId, UnifiedDownloadType.MANGA);
-    const previousDownloaded = this.downloadProgressCurrent;
+    const activeTaskIds = this.getActiveMangaDownloadTaskIdList(task.id);
+    const aggregate = this.unifiedDownloadManager.getContentDownloadAggregate(
+      task.contentId,
+      UnifiedDownloadType.MANGA,
+      activeTaskIds
+    );
     const fallbackTotal = aggregate.activeCount + aggregate.completedCount + aggregate.failedCount;
-    this.downloadProgressCurrent = aggregate.downloadedCount;
-    this.downloadProgressTotal = aggregate.totalCount > 0 ? aggregate.totalCount : fallbackTotal;
-    this.downloadCurrentChapterTitle = aggregate.currentTitle.length > 0 ? aggregate.currentTitle : (task.chapterTitle || '');
+    const taskTotal = aggregate.taskCount > 0 ? aggregate.taskCount : fallbackTotal;
+    this.downloadProgressCurrent = aggregate.finishedCount;
+    this.downloadProgressTotal = taskTotal;
+    if (aggregate.currentTitle.length > 0) {
+      const pageText = aggregate.currentTotalCount > 0
+        ? ` · 当前 ${aggregate.currentDownloadedCount}/${aggregate.currentTotalCount} 页`
+        : ' · 正在获取页表';
+      this.downloadCurrentChapterTitle = `${aggregate.currentTitle}${pageText}`;
+    } else if (aggregate.failedCount > 0) {
+      this.downloadCurrentChapterTitle = `已完成 ${aggregate.completedCount} 章，失败 ${aggregate.failedCount} 章`;
+    } else {
+      this.downloadCurrentChapterTitle = task.chapterTitle || '';
+    }
     this.isDownloading = aggregate.activeCount > 0;
-    if (refreshOnProgress && aggregate.downloadedCount > 0 && aggregate.downloadedCount !== previousDownloaded) {
+    if (refreshOnProgress && task.downloadedCount > 0) {
       this.scheduleCacheStatusRefresh();
     }
     return aggregate;
@@ -8771,6 +9521,7 @@ export struct UnifiedDetailPage {
               this.downloadProgressCurrent = 0;
               this.downloadProgressTotal = 0;
               this.downloadCurrentChapterTitle = '';
+              this.resetActiveMangaDownloadTaskIds();
             }
           } else {
             this.isDownloading = false;
@@ -8778,8 +9529,7 @@ export struct UnifiedDetailPage {
             this.downloadProgressTotal = 0;
             this.downloadCurrentChapterTitle = '';
           }
-          this.clearCacheStatusRefreshTimer();
-          this.scheduleCacheStatusRefresh();
+          this.refreshCacheStatusImmediately(`download_callback_complete:${task.chapterId || task.id}`);
           logger.info(TAG, `缓存完成: ${task.contentTitle}`);
         }
       },
@@ -8790,6 +9540,7 @@ export struct UnifiedDetailPage {
             if (aggregate.activeCount <= 0) {
               this.isDownloading = false;
               this.downloadCurrentChapterTitle = '';
+              this.resetActiveMangaDownloadTaskIds();
             }
           } else {
             this.isDownloading = false;
@@ -8924,15 +9675,75 @@ export struct UnifiedDetailPage {
     return '未知';
   }
 
+  @Builder
+  buildChapterOrderControls(draftIndex: number) {
+    Row({ space: 4 }) {
+      Button() {
+        Text('顶')
+          .fontSize(10)
+          .fontFamily(this.appFontFamily)
+          .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
+      }
+      .width(28)
+      .height(28)
+      .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('comp_background_tertiary', this.themeState.currentTheme))
+      .borderRadius(8)
+      .enabled(!this.isChapterOrderSaving && draftIndex > 0)
+      .onClick(() => this.moveChapterOrderDraftItem(draftIndex, 0))
+
+      Button() {
+        SymbolGlyph($r('sys.symbol.arrow_up'))
+          .fontSize(12)
+          .fontColor([ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme)])
+      }
+      .width(28)
+      .height(28)
+      .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('comp_background_tertiary', this.themeState.currentTheme))
+      .borderRadius(8)
+      .enabled(!this.isChapterOrderSaving && draftIndex > 0)
+      .onClick(() => this.moveChapterOrderDraftItem(draftIndex, draftIndex - 1))
+
+      Button() {
+        SymbolGlyph($r('sys.symbol.arrow_down'))
+          .fontSize(12)
+          .fontColor([ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme)])
+      }
+      .width(28)
+      .height(28)
+      .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('comp_background_tertiary', this.themeState.currentTheme))
+      .borderRadius(8)
+      .enabled(!this.isChapterOrderSaving && draftIndex < this.chapterOrderDraft.length - 1)
+      .onClick(() => this.moveChapterOrderDraftItem(draftIndex, draftIndex + 1))
+
+      Button() {
+        Text('底')
+          .fontSize(10)
+          .fontFamily(this.appFontFamily)
+          .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
+      }
+      .width(28)
+      .height(28)
+      .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('comp_background_tertiary', this.themeState.currentTheme))
+      .borderRadius(8)
+      .enabled(!this.isChapterOrderSaving && draftIndex < this.chapterOrderDraft.length - 1)
+      .onClick(() => this.moveChapterOrderDraftItem(draftIndex, this.chapterOrderDraft.length - 1))
+    }
+    .flexShrink(0)
+  }
+
   /**
    * 漫画章节列表（显示图片数量、阅读进度、更新时间等）
    */
   @Builder
   buildMangaChapterList() {
     List() {
-      ForEach(this.getFilteredChapters(), (chapter: UnifiedChapter) => {
+      ForEach(this.getFilteredChapters(), (chapter: UnifiedChapter, draftIndex: number) => {
         ListItem() {
           Row({ space: 12 }) {
+            if (this.isChapterOrderEditing) {
+              this.buildChapterOrderControls(draftIndex)
+            }
+
             // 左侧：已读指示器
             Column() {
               if (chapter.isRead) {
@@ -8957,7 +9768,7 @@ export struct UnifiedDetailPage {
               // 章节号 + 清理后的标题
               Row({ space: 6 }) {
                 // 固定的章节号前缀
-                Text(this.cleanChapterTitle(chapter.title, chapter.index)[0])
+                Text(this.cleanChapterTitle(chapter.title, this.getChapterDisplayIndex(chapter, draftIndex))[0])
                   .fontSize(13)
                   .fontFamily(this.appFontFamily)
                   .fontWeight(FontWeight.Medium)
@@ -8967,7 +9778,7 @@ export struct UnifiedDetailPage {
                   .flexShrink(0)
                 
                 // 清理后的真实标题
-                Text(this.cleanChapterTitle(chapter.title, chapter.index)[1])
+                Text(this.cleanChapterTitle(chapter.title, this.getChapterDisplayIndex(chapter, draftIndex))[1])
                   .fontSize(12)
                   .fontFamily(this.appFontFamily)
                   .fontWeight(chapter.isRead ? FontWeight.Normal : FontWeight.Medium)
@@ -9031,9 +9842,13 @@ export struct UnifiedDetailPage {
           }
           .width('100%')
           .padding({ top: 12, bottom: 12 })
-          .onClick(() => this.startReading(chapter.index))
+          .onClick(() => {
+            if (!this.isChapterOrderEditing && !this.isChapterOrderSaving) {
+              this.startReading(chapter.index);
+            }
+          })
         }
-      }, (chapter: UnifiedChapter) => chapter.id)
+      }, (chapter: UnifiedChapter) => `${chapter.id}_${chapter.index}_${chapter.title}`)
     }
     .width('100%')
     .layoutWeight(1)
@@ -9048,12 +9863,16 @@ export struct UnifiedDetailPage {
   @Builder
   buildNovelChapterList() {
     List() {
-      ForEach(this.getFilteredChapters(), (chapter: UnifiedChapter) => {
+      ForEach(this.getFilteredChapters(), (chapter: UnifiedChapter, draftIndex: number) => {
         ListItem() {
           Row({ space: 12 }) {
+            if (this.isChapterOrderEditing) {
+              this.buildChapterOrderControls(draftIndex)
+            }
+
             // 左侧：章节序号和已读状态
             Column() {
-              Text(`${chapter.index + 1}`)
+              Text(`${this.getChapterDisplayIndex(chapter, draftIndex) + 1}`)
                 .fontSize(12)
                 .fontFamily(this.appFontFamily)
                 .fontColor(this.isNovelChapterReadForDisplay(chapter)
@@ -9118,9 +9937,13 @@ export struct UnifiedDetailPage {
           }
           .width('100%')
           .padding({ top: 10, bottom: 10 })
-          .onClick(() => this.startReading(chapter.index))
+          .onClick(() => {
+            if (!this.isChapterOrderEditing && !this.isChapterOrderSaving) {
+              this.startReading(chapter.index);
+            }
+          })
         }
-      }, (chapter: UnifiedChapter) => chapter.id)
+      }, (chapter: UnifiedChapter) => `${chapter.id}_${chapter.index}_${chapter.title}`)
     }
     .width('100%')
     .layoutWeight(1)
@@ -9134,9 +9957,13 @@ export struct UnifiedDetailPage {
   @Builder
   buildEBookChapterList() {
     List() {
-      ForEach(this.getFilteredChapters(), (chapter: UnifiedChapter) => {
+      ForEach(this.getFilteredChapters(), (chapter: UnifiedChapter, draftIndex: number) => {
         ListItem() {
           Row({ space: 12 }) {
+            if (this.isChapterOrderEditing) {
+              this.buildChapterOrderControls(draftIndex)
+            }
+
             // 左侧：章节信息
             Column({ space: 4 }) {
               // 章节标题
@@ -9182,9 +10009,13 @@ export struct UnifiedDetailPage {
           }
           .width('100%')
           .padding({ top: 12, bottom: 12 })
-          .onClick(() => this.startReading(chapter.index))
+          .onClick(() => {
+            if (!this.isChapterOrderEditing && !this.isChapterOrderSaving) {
+              this.startReading(chapter.index);
+            }
+          })
         }
-      }, (chapter: UnifiedChapter) => chapter.id)
+      }, (chapter: UnifiedChapter) => `${chapter.id}_${chapter.index}_${chapter.title}`)
     }
     .width('100%')
     .layoutWeight(1)
@@ -9933,12 +10764,25 @@ export struct UnifiedDetailPage {
     .edgeEffect(EdgeEffect.Spring)
   }
 
+  private shouldExpandTrackingStatusByDefault(state: ContentTrackingCardState): boolean {
+    return !state.isLoading && state.supported && state.hasRule && state.enabled && !state.autoCreatedThisSession;
+  }
+
+  private getTrackingStatusContentKey(): string {
+    if (!this.content) {
+      return '';
+    }
+    return `${this.content.contentType}:${this.content.id}`;
+  }
+
   @Builder
   buildTrackingStatusSection() {
     if (this.content && !this.isCurrentLocalImportedContent() && this.trackingCardState !== null && this.trackingCardCallbacks !== null) {
       Stack({ alignContent: Alignment.TopStart }) {
         this.buildGlassSectionChrome()
         ContentTrackingStatusCard({
+          contentKey: this.getTrackingStatusContentKey(),
+          defaultExpanded: this.shouldExpandTrackingStatusByDefault(this.trackingCardState),
           state: this.trackingCardState,
           themeState: this.themeState,
           appFontFamily: this.appFontFamily,
@@ -10273,6 +11117,7 @@ export struct UnifiedDetailPage {
           content: this.content,
           themeState: this.themeState,
           loadSignal: this.downloadDialogLoadSignal,
+          cacheStateSignal: this.downloadDialogCacheStateSignal,
           isDownloading: this.isDownloading,
           downloadProgressCurrent: this.downloadProgressCurrent,
           downloadProgressTotal: this.downloadProgressTotal,
