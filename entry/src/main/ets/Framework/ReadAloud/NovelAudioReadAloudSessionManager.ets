@@ -11,6 +11,18 @@ import { loadGlobalReadAloudSettings } from './ReadAloudSettingsStore';
 import { SettingsManager } from '../Managers/SettingsManager';
 import { ReadAloudMediaCommandListener, ReadAloudMediaSession } from './ReadAloudMediaSession';
 import { ReadAloudPlaybackState, ReadAloudSessionContext, ReadAloudStateSnapshot } from './ReadAloudTypes';
+import { ReadAloudFlowMonitor } from './ReadAloudFlowMonitor';
+import {
+  ReadAloudFlowEventType,
+  ReadAloudFlowMode,
+  ReadAloudFlowSessionInfo,
+  ReadAloudFlowSeverity
+} from './ReadAloudFlowTypes';
+import { DetailOpenFlowMonitor } from '../Reader/DetailOpenFlowMonitor';
+import {
+  DetailOpenFlowEventType,
+  DetailOpenFlowTargetKind
+} from '../Reader/DetailOpenFlowTypes';
 
 const TAG = 'NovelAudioSessionManager';
 const CHAPTER_LIST_CACHE_MAX_AGE_HOURS: number = 48;
@@ -35,6 +47,7 @@ export interface NovelAudioReadAloudLaunchParams {
   author?: string;
   coverUrl?: string;
   autoStartReadAloud?: boolean;
+  readerOpenFlowId?: string;
 }
 
 export interface NovelAudioReadAloudSnapshot {
@@ -149,6 +162,8 @@ export class NovelAudioReadAloudSessionManager {
   private pendingResumePositionMs: number = 0;
   private mediaPlaybackState: ReadAloudPlaybackState = ReadAloudPlaybackState.IDLE;
   private lastProgressPersistTime: number = 0;
+  private readerOpenFlowId: string = '';
+  private readAloudFlowId: string = '';
 
   private audioPlayer: media.AVPlayer | null = null;
   private audioStateChangeHandler: ((state: media.AVPlayerState, reason: media.StateChangeReason) => void) | null = null;
@@ -236,7 +251,101 @@ export class NovelAudioReadAloudSessionManager {
     };
   }
 
+  private ensureAudioReadAloudFlowSession(reason: string): void {
+    if (this.sourceId.length <= 0 || this.bookUrl.length <= 0) {
+      return;
+    }
+    if (this.readAloudFlowId.length > 0) {
+      return;
+    }
+    const info = new ReadAloudFlowSessionInfo();
+    info.readerOpenFlowId = this.readerOpenFlowId;
+    info.mode = ReadAloudFlowMode.AUDIO_SOURCE;
+    info.sourceId = this.sourceId;
+    info.bookId = this.bookId;
+    info.bookTitle = this.bookName;
+    info.chapterId = this.chapterUrl;
+    info.chapterTitle = this.chapterTitle;
+    info.chapterIndex = this.currentChapterIndex;
+    info.totalChapters = this.totalChapters;
+    info.engineType = 'audio_source';
+    this.readAloudFlowId = ReadAloudFlowMonitor.getInstance().startSession(info);
+    this.recordAudioReadAloudFlowEvent(ReadAloudFlowEventType.AUDIO_SESSION_STARTED, reason, 0, true, '');
+  }
+
+  private recordAudioReadAloudFlowEvent(
+    eventType: ReadAloudFlowEventType,
+    reason: string,
+    elapsedMs: number,
+    success: boolean,
+    detail: string,
+    playerOperation: string = '',
+    cacheKind: string = ''
+  ): void {
+    this.ensureAudioReadAloudFlowSession(reason);
+    if (this.readAloudFlowId.length <= 0) {
+      return;
+    }
+    const event = ReadAloudFlowMonitor.getInstance().createEvent(
+      this.readAloudFlowId,
+      eventType,
+      ReadAloudFlowMode.AUDIO_SOURCE,
+      this.bookId,
+      this.currentChapterIndex,
+      reason
+    );
+    event.readerOpenFlowId = this.readerOpenFlowId;
+    event.sourceId = this.sourceId;
+    event.chapterId = this.chapterUrl;
+    event.chapterTitle = this.chapterTitle;
+    event.totalChapters = this.totalChapters;
+    event.positionMs = this.audioPositionMs;
+    event.durationMs = this.audioDurationMs;
+    event.engineType = 'audio_source';
+    event.playerOperation = playerOperation;
+    event.cacheKind = cacheKind;
+    event.elapsedMs = Math.max(0, elapsedMs);
+    event.success = success;
+    event.detail = detail;
+    if (!success) {
+      event.severity = ReadAloudFlowSeverity.ERROR;
+      event.errorMessage = detail;
+    }
+    if (event.elapsedMs > 0) {
+      event.metricName = `audio_read_aloud.${eventType}`;
+      event.metricValue = event.elapsedMs;
+      event.metricUnit = 'ms';
+    }
+    ReadAloudFlowMonitor.getInstance().record(event);
+  }
+
+  private markDetailOpenAudioReady(reason: string, success: boolean, detail: string): void {
+    if (this.readerOpenFlowId.length <= 0) {
+      return;
+    }
+    const event = DetailOpenFlowMonitor.getInstance().createEvent(
+      this.readerOpenFlowId,
+      success ? DetailOpenFlowEventType.READER_READY : DetailOpenFlowEventType.READER_FAILED,
+      this.bookId,
+      this.chapterUrl,
+      this.currentChapterIndex,
+      reason
+    );
+    event.targetKind = DetailOpenFlowTargetKind.READ_ALOUD;
+    event.routeName = 'ReadAloudPlayerPage';
+    event.chapterTitle = this.chapterTitle;
+    event.elapsedMs = DetailOpenFlowMonitor.getInstance().getSessionElapsedMs(this.readerOpenFlowId);
+    event.success = success;
+    event.detail = detail;
+    if (!success) {
+      event.errorMessage = detail;
+    }
+    DetailOpenFlowMonitor.getInstance().record(event);
+    DetailOpenFlowMonitor.getInstance().endSession(this.readerOpenFlowId, reason);
+  }
+
   async startSession(params: NovelAudioReadAloudLaunchParams): Promise<boolean> {
+    const sessionStartedAt = Date.now();
     if (!params.sourceId || !params.bookUrl) {
       this.loadErrorMessage = '听书会话启动参数缺失';
       this.publishState();
@@ -255,6 +364,7 @@ export class NovelAudioReadAloudSessionManager {
 
     this.sourceId = params.sourceId;
     this.bookUrl = params.bookUrl;
+    this.readerOpenFlowId = params.readerOpenFlowId || '';
     this.bookName = params.bookName || this.bookName;
     this.author = params.author || this.author;
     this.coverUrl = params.coverUrl || this.coverUrl;
@@ -264,6 +374,11 @@ export class NovelAudioReadAloudSessionManager {
     this.totalChapters = Math.max(0, params.totalChapters);
     this.currentChapterIndex = Math.max(0, params.chapterIndex);
     this.bookId = `${params.sourceId}_${encodeURIComponent(params.bookUrl)}`;
+    if (!sameSession && this.readAloudFlowId.length > 0) {
+      ReadAloudFlowMonitor.getInstance().endSession(this.readAloudFlowId, 'new_audio_session');
+      this.readAloudFlowId = '';
+    }
+    this.ensureAudioReadAloudFlowSession('start_session');
     this.applyPersistedProgressForLaunch(params.chapterIndex, sameSession);
     this.loadErrorMessage = '';
     this.isLoading = true;
@@ -275,12 +390,28 @@ export class NovelAudioReadAloudSessionManager {
     this.publishState();
 
     try {
+      const chapterListStartedAt = Date.now();
       await this.loadChapterList(token);
+      this.recordAudioReadAloudFlowEvent(
+        ReadAloudFlowEventType.AUDIO_CONTENT_READY,
+        'chapter_list_ready',
+        Math.max(0, Date.now() - chapterListStartedAt),
+        this.chapterList.length > 0,
+        `chapters=${this.chapterList.length}`
+      );
       if (!this.isTokenValid(token)) {
         logger.warn(TAG, `听书会话初始化被新会话覆盖（目录阶段）: 请求令牌=${token}, 当前令牌=${this.sessionToken}`);
         return this.hasActiveSession();
       }
+      const chapterContentStartedAt = Date.now();
       const loaded = await this.loadChapterContent(this.currentChapterIndex, token);
+      this.recordAudioReadAloudFlowEvent(
+        ReadAloudFlowEventType.AUDIO_CONTENT_READY,
+        loaded ? 'audio_content_ready' : 'audio_content_failed',
+        Math.max(0, Date.now() - chapterContentStartedAt),
+        loaded,
+        `audioSource=${this.audioSourceUrl.length > 0}, cached=${this.audioChapterCached === true}`
+      );
       if (!this.isTokenValid(token)) {
         logger.warn(TAG, `听书会话初始化被新会话覆盖（章节阶段）: 请求令牌=${token}, 当前令牌=${this.sessionToken}`);
         return this.hasActiveSession();
@@ -294,6 +425,7 @@ export class NovelAudioReadAloudSessionManager {
           `听书会话初始化中止: 章节内容加载返回false, 章节索引=${this.currentChapterIndex}, 章节地址=${this.chapterUrl.substring(0, 180)}, 错误=${this.loadErrorMessage}`
         );
         this.publishState();
+        this.markDetailOpenAudioReady('audio_content_load_failed', false, this.loadErrorMessage);
         return false;
       }
       this.isLoading = false;
@@ -303,6 +435,14 @@ export class NovelAudioReadAloudSessionManager {
       }
       this.publishState();
       logger.info(TAG, `听书会话初始化完成: 书籍标识=${this.bookId}, 章节索引=${this.currentChapterIndex}, 已解析音频地址=${this.audioSourceUrl.length > 0}`);
+      this.recordAudioReadAloudFlowEvent(
+        ReadAloudFlowEventType.AUDIO_SESSION_STARTED,
+        'start_session_loaded',
+        Math.max(0, Date.now() - sessionStartedAt),
+        true,
+        `autoStart=${params.autoStartReadAloud === true}`
+      );
+      this.markDetailOpenAudioReady('audio_session_ready', true, '');
       if (params.autoStartReadAloud === true) {
         const started = await this.play();
         logger.info(TAG, `听书会话自动播放结果: 成功=${started}, 章节索引=${this.currentChapterIndex}`);
@@ -314,6 +454,14 @@ export class NovelAudioReadAloudSessionManager {
       this.loadErrorMessage = `听书会话初始化失败: ${String(error)}`;
       this.updateMediaPlaybackState(ReadAloudPlaybackState.STOPPED, 'start_session_error');
       logger.error(TAG, this.loadErrorMessage);
+      this.recordAudioReadAloudFlowEvent(
+        ReadAloudFlowEventType.ERROR,
+        'start_session_error',
+        Math.max(0, Date.now() - sessionStartedAt),
+        false,
+        String(error)
+      );
+      this.markDetailOpenAudioReady('audio_session_failed', false, String(error));
       this.publishState();
       return false;
     }
@@ -331,8 +479,11 @@ export class NovelAudioReadAloudSessionManager {
     if (!this.audioSourceUrl || this.audioSourceUrl.length <= 0) {
       this.loadErrorMessage = '当前章节没有可播放的音频地址';
       this.publishState();
+      this.recordAudioReadAloudFlowEvent(ReadAloudFlowEventType.START_REQUESTED, 'play_without_audio_source', 0, false, this.loadErrorMessage);
       return false;
     }
+    const playStartedAt = Date.now();
+    this.recordAudioReadAloudFlowEvent(ReadAloudFlowEventType.START_REQUESTED, 'play', 0, true, '');
     try {
       const player = await this.ensureAudioPlayer();
       const state = player.state;
@@ -384,6 +535,14 @@ export class NovelAudioReadAloudSessionManager {
         this.updateMediaPlaybackState(ReadAloudPlaybackState.PLAYING, 'play_success');
       }
       this.publishState();
+      this.recordAudioReadAloudFlowEvent(
+        ReadAloudFlowEventType.AUDIO_PLAYER_OPERATION,
+        'play',
+        Math.max(0, Date.now() - playStartedAt),
+        this.isPlaying,
+        `state=${player.state}`,
+        'play'
+      );
       return this.isPlaying;
     } catch (error) {
       this.isPlaying = false;
@@ -391,15 +550,26 @@ export class NovelAudioReadAloudSessionManager {
       this.updateMediaPlaybackState(ReadAloudPlaybackState.PAUSED, 'play_failed');
       logger.warn(TAG, this.loadErrorMessage);
       this.publishState();
+      this.recordAudioReadAloudFlowEvent(
+        ReadAloudFlowEventType.AUDIO_PLAYER_OPERATION,
+        'play_failed',
+        Math.max(0, Date.now() - playStartedAt),
+        false,
+        String(error),
+        'play'
+      );
       return false;
     }
   }
 
   async pause(): Promise<void> {
+    const pauseStartedAt = Date.now();
+    this.recordAudioReadAloudFlowEvent(ReadAloudFlowEventType.PAUSE_REQUESTED, 'pause', 0, true, '');
     if (!this.audioPlayer) {
       this.isPlaying = false;
       this.updateMediaPlaybackState(ReadAloudPlaybackState.PAUSED, 'pause_without_player');
       this.publishState();
+      this.recordAudioReadAloudFlowEvent(ReadAloudFlowEventType.AUDIO_PLAYER_OPERATION, 'pause_without_player', 0, true, '', 'pause');
       return;
     }
     if (this.audioPlayer.state === 'playing') {
@@ -409,15 +579,26 @@ export class NovelAudioReadAloudSessionManager {
     this.isPlaying = false;
     this.updateMediaPlaybackState(ReadAloudPlaybackState.PAUSED, 'pause_success');
     this.publishState();
+    this.recordAudioReadAloudFlowEvent(
+      ReadAloudFlowEventType.AUDIO_PLAYER_OPERATION,
+      'pause_success',
+      Math.max(0, Date.now() - pauseStartedAt),
+      true,
+      '',
+      'pause'
+    );
   }
 
   async stop(): Promise<void> {
+    const stopStartedAt = Date.now();
+    this.recordAudioReadAloudFlowEvent(ReadAloudFlowEventType.STOP_REQUESTED, 'stop', 0, true, '');
     if (!this.audioPlayer) {
       this.isPlaying = false;
       this.audioPositionMs = 0;
       this.pendingResumePositionMs = 0;
       this.updateMediaPlaybackState(ReadAloudPlaybackState.STOPPED, 'stop_without_player');
       this.publishState();
+      this.recordAudioReadAloudFlowEvent(ReadAloudFlowEventType.AUDIO_PLAYER_OPERATION, 'stop_without_player', 0, true, '', 'stop');
       return;
     }
     try {
@@ -432,6 +613,14 @@ export class NovelAudioReadAloudSessionManager {
     this.pendingResumePositionMs = 0;
     this.updateMediaPlaybackState(ReadAloudPlaybackState.STOPPED, 'stop_success');
     this.publishState();
+    this.recordAudioReadAloudFlowEvent(
+      ReadAloudFlowEventType.AUDIO_PLAYER_OPERATION,
+      'stop_success',
+      Math.max(0, Date.now() - stopStartedAt),
+      true,
+      '',
+      'stop'
+    );
   }
 
   handlePageHide(isInBackground: boolean): void {
@@ -447,8 +636,11 @@ export class NovelAudioReadAloudSessionManager {
 
   async seekToPosition(positionMs: number, reason: string = 'manual_seek'): Promise<boolean> {
     if (!this.audioPlayer) {
+      this.recordAudioReadAloudFlowEvent(ReadAloudFlowEventType.SEEK_REQUESTED, reason, 0, false, 'audio_player_missing');
       return false;
     }
+    const seekStartedAt = Date.now();
+    this.recordAudioReadAloudFlowEvent(ReadAloudFlowEventType.SEEK_REQUESTED, reason, 0, true, `positionMs=${positionMs}`);
     const safePositionMs = Math.max(0, Math.floor(positionMs));
     await this.seekAudioPlayer(this.audioPlayer, safePositionMs);
     this.syncAudioProgressFromPlayer();
@@ -457,6 +649,14 @@ export class NovelAudioReadAloudSessionManager {
     }
     logger.info(TAG, `音频定位完成: 原因=${reason}, 位置毫秒=${this.audioPositionMs}, 章节=${this.currentChapterIndex + 1}`);
     this.publishState();
+    this.recordAudioReadAloudFlowEvent(
+      ReadAloudFlowEventType.AUDIO_PLAYER_OPERATION,
+      `seek_${reason}`,
+      Math.max(0, Date.now() - seekStartedAt),
+      true,
+      `positionMs=${this.audioPositionMs}`,
+      'seek'
+    );
     return true;
   }
 
@@ -537,6 +737,11 @@ export class NovelAudioReadAloudSessionManager {
     this.lastProgressPersistTime = 0;
     this.sessionToken += 1;
     this.updateMediaPlaybackState(ReadAloudPlaybackState.IDLE, 'release_session');
+    if (this.readAloudFlowId.length > 0) {
+      ReadAloudFlowMonitor.getInstance().endSession(this.readAloudFlowId, reason);
+      this.readAloudFlowId = '';
+    }
+    this.readerOpenFlowId = '';
     this.publishState();
     this.mediaSession.release();
   }
@@ -726,8 +931,26 @@ export class NovelAudioReadAloudSessionManager {
     }
     if (cachedChapters && cachedChapters.length > 0) {
       this.applyResolvedChapterList(cachedChapters);
+      this.recordAudioReadAloudFlowEvent(
+        ReadAloudFlowEventType.CACHE_HIT,
+        'chapter_list_cache_hit',
+        0,
+        true,
+        `chapters=${cachedChapters.length}`,
+        '',
+        'chapter_list'
+      );
       return;
     }
+    this.recordAudioReadAloudFlowEvent(
+      ReadAloudFlowEventType.CACHE_MISS,
+      'chapter_list_cache_miss',
+      0,
+      true,
+      '',
+      '',
+      'chapter_list'
+    );
 
     const book: LegadoBook = {
       id: resolvedBook ? resolvedBook.id : '',
@@ -782,6 +1005,15 @@ export class NovelAudioReadAloudSessionManager {
         this.audioSourceUrl = this.toAudioPlayerSourceUrl(cachedAudioPath);
         this.audioChapterCached = true;
         logger.info(TAG, `章节命中本地音频缓存: 章节=${safeIndex + 1}, 路径=${cachedAudioPath}`);
+        this.recordAudioReadAloudFlowEvent(
+          ReadAloudFlowEventType.CACHE_HIT,
+          'audio_chapter_cache_hit',
+          0,
+          true,
+          `path=${cachedAudioPath}`,
+          '',
+          'audio_chapter'
+        );
         this.syncAudioProgressFromPlayer();
         this.publishState();
         return true;
@@ -789,6 +1021,15 @@ export class NovelAudioReadAloudSessionManager {
     } catch (error) {
       logger.warn(TAG, `读取本地音频缓存失败，回退网络解析: 章节=${safeIndex}, 错误=${String(error)}`);
     }
+    this.recordAudioReadAloudFlowEvent(
+      ReadAloudFlowEventType.CACHE_MISS,
+      'audio_chapter_cache_miss',
+      0,
+      true,
+      `chapter=${safeIndex + 1}`,
+      '',
+      'audio_chapter'
+    );
 
     let rawContent = await this.resolveChapterTextCacheWithLegacyFallback(safeIndex);
     if ((!rawContent || rawContent.length <= 0) && this.sourceId.length > 0 && this.chapterUrl.length > 0) {
@@ -810,6 +1051,15 @@ export class NovelAudioReadAloudSessionManager {
       }
     } else if (rawContent && rawContent.length > 0) {
       logger.debug(TAG, `命中文本章节缓存: 章节=${safeIndex + 1}, 内容长度=${rawContent.length}`);
+      this.recordAudioReadAloudFlowEvent(
+        ReadAloudFlowEventType.CACHE_HIT,
+        'text_chapter_cache_hit',
+        0,
+        true,
+        `contentLength=${rawContent.length}`,
+        '',
+        'text_chapter'
+      );
     }
     if (!this.isTokenValid(token)) {
       return false;
@@ -1218,6 +1468,7 @@ export class NovelAudioReadAloudSessionManager {
     timeoutMs: number,
     operation: () => Promise<void>
   ): Promise<void> {
+    const operationStartedAt = Date.now();
     return await new Promise<void>((resolve, reject) => {
       let settled = false;
       let timerId: number = -1;
@@ -1231,9 +1482,25 @@ export class NovelAudioReadAloudSessionManager {
           timerId = -1;
         }
         if (error) {
+          this.recordAudioReadAloudFlowEvent(
+            ReadAloudFlowEventType.AUDIO_PLAYER_OPERATION,
+            label,
+            Math.max(0, Date.now() - operationStartedAt),
+            false,
+            String(error),
+            label
+          );
           reject(error as Error);
           return;
         }
+        this.recordAudioReadAloudFlowEvent(
+          ReadAloudFlowEventType.AUDIO_PLAYER_OPERATION,
+          label,
+          Math.max(0, Date.now() - operationStartedAt),
+          true,
+          '',
+          label
+        );
         resolve();
       };
       timerId = setTimeout(() => {
@@ -1307,6 +1574,13 @@ export class NovelAudioReadAloudSessionManager {
       this.loadErrorMessage = `音频播放失败: ${String(error)}`;
       this.updateMediaPlaybackState(ReadAloudPlaybackState.PAUSED, 'player_error');
       logger.warn(TAG, `音频播放器错误: ${String(error)}`);
+      this.recordAudioReadAloudFlowEvent(
+        ReadAloudFlowEventType.ERROR,
+        'player_error',
+        0,
+        false,
+        String(error)
+      );
       this.publishState();
     };
     player.on('stateChange', this.audioStateChangeHandler);
@@ -1497,6 +1771,13 @@ export class NovelAudioReadAloudSessionManager {
       return;
     }
     logger.debug(TAG, `媒体会话播放状态切换: ${this.mediaPlaybackState} -> ${nextState}, 原因=${reason}`);
+    this.recordAudioReadAloudFlowEvent(
+      ReadAloudFlowEventType.PLAYBACK_STATE_CHANGED,
+      reason,
+      0,
+      true,
+      `${this.mediaPlaybackState}->${nextState}`
+    );
     this.mediaPlaybackState = nextState;
   }
 
@@ -1532,7 +1813,10 @@ export class NovelAudioReadAloudSessionManager {
       coverUrl: this.coverUrl,
       content: content,
       pageIndex: 0,
-      resumeCharIndex: content.length > 0 ? this.resolveMediaCurrentCharIndex(content.length) : undefined
+      resumeCharIndex: content.length > 0 ? this.resolveMediaCurrentCharIndex(content.length) : undefined,
+      readerOpenFlowId: this.readerOpenFlowId,
+      sourceId: this.sourceId,
+      totalChapters: this.totalChapters
     };
   }
 

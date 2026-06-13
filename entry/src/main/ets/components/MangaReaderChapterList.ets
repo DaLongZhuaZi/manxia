@@ -39,6 +39,7 @@ export struct MangaReaderChapterList {
   @Prop chapters: MangaChapter[];
   @Prop currentChapterId: string;
   @Prop isVisible: boolean;
+  @Prop pageCountSignal: number = 0;
   @Prop callbacks: MangaReaderChapterListCallbacks;
 
   // 内部状态
@@ -243,6 +244,16 @@ export struct MangaReaderChapterList {
     }, 500);
   }
 
+  private getChapterPageCountLabel(chapter: MangaChapter): string {
+    const pageCount = chapter.totalPages && chapter.totalPages > 0
+      ? chapter.totalPages
+      : (chapter.pages && chapter.pages.length > 0 ? chapter.pages.length : 0);
+    if (pageCount <= 0 && this.pageCountSignal >= 0) {
+      return '暂未获取页面数量';
+    }
+    return `${pageCount}页`;
+  }
+
   /**
    * 构建章节列表项
    */
@@ -267,10 +278,12 @@ export struct MangaReaderChapterList {
               .margin({ right: 8 })
           }
           
-          // [懒加载优化] 优先使用totalPages（骨架模式），其次使用pages.length（已加载模式）
-          Text(`${chapter.totalPages || chapter.pages.length}页`)
+          // [懒加载优化] 优先使用totalPages；拿不到时明确标记未知，避免误显示0页。
+          Text(this.getChapterPageCountLabel(chapter))
             .fontSize(12)
             .fontColor($r('app.color.text_secondary'))
+            .maxLines(1)
+            .textOverflow({ overflow: TextOverflow.Ellipsis })
         }
         .margin({ top: 4 })
       }

@@ -285,6 +285,27 @@ export interface EpubRuntimeBlankSpineInfo {
   bodyHtmlLength: number;
 }
 
+export enum EpubWebComponentFlowEventName {
+  WEBVIEW_LOAD_START = 'webview_load_start',
+  WEBVIEW_LOAD_END = 'webview_load_end',
+  WEBVIEW_ERROR = 'webview_error',
+  JS_EXECUTED = 'js_executed',
+  JS_FAILED = 'js_failed',
+  PAGINATION_CHANGED = 'pagination_changed'
+}
+
+export class EpubWebComponentFlowEvent {
+  public eventName: EpubWebComponentFlowEventName = EpubWebComponentFlowEventName.WEBVIEW_LOAD_START;
+  public reason: string = '';
+  public success: boolean = true;
+  public elapsedMs: number = 0;
+  public url: string = '';
+  public pageIndex: number = -1;
+  public pageCount: number = 0;
+  public errorMessage: string = '';
+  public detail: string = '';
+}
+
 export enum EpubWebPageChangeSource {
   DEFAULT = 'default',
   READ_ALOUD_FOLLOW = 'read_aloud_follow'
@@ -304,6 +325,7 @@ export interface EpubWebViewReaderCallbacks {
   onAddHighlightWithThought?: (snapshot: EpubWebSelectionSnapshot) => void;
   onUpdateHighlightStyle?: (highlightId: string, lineType: HighlightLineType, color: string) => void;
   onUpdateHighlightThought?: (highlightId: string, thoughtText: string) => void;
+  onFlowEvent?: (event: EpubWebComponentFlowEvent) => void;
 }
 
 export interface EpubWebViewReaderParams {
@@ -564,6 +586,7 @@ export struct EpubWebViewReaderComponent {
   private epubCurlReleaseAnimating: boolean = false;
   private epubCurlReleaseComplete: boolean = false;
   private readerSwipeSuppressedUntil: number = 0;
+  private webViewLoadStartedAt: number = 0;
   private epubCurlEffectConfig: PageCurlConfigV2 = {
     stripCount: 24,
     maxCurlHeight: 100,
@@ -734,19 +757,72 @@ export struct EpubWebViewReaderComponent {
     }
   }
 
+  private emitFlowEvent(
+    eventName: EpubWebComponentFlowEventName,
+    reason: string,
+    success: boolean,
+    elapsedMs: number,
+    url: string,
+    errorMessage: string,
+    detail: string
+  ): void {
+    if (!this.params.callbacks.onFlowEvent) {
+      return;
+    }
+    const event = new EpubWebComponentFlowEvent();
+    event.eventName = eventName;
+    event.reason = reason;
+    event.success = success;
+    event.elapsedMs = Math.max(0, elapsedMs);
+    event.url = url;
+    event.pageIndex = this.currentPage;
+    event.pageCount = this.currentPageCount;
+    event.errorMessage = errorMessage;
+    event.detail = detail;
+    this.params.callbacks.onFlowEvent(event);
+  }
+
   private runJs(code: string, onResult?: (result: string) => void): void {
+    const jsStartedAt = Date.now();
     try {
       this.webviewController.runJavaScript(code, (error: BusinessError | null, result: string) => {
         if (error) {
           logger.warn(TAG, `runJavaScript failed: ${error.message}`);
+          this.emitFlowEvent(
+            EpubWebComponentFlowEventName.JS_FAILED,
+            'run_javascript_callback_error',
+            false,
+            Math.max(0, Date.now() - jsStartedAt),
+            this.lastLoadedFileUrl,
+            error.message,
+            `codeLength=${code.length}`
+          );
           return;
         }
+        this.emitFlowEvent(
+          EpubWebComponentFlowEventName.JS_EXECUTED,
+          'run_javascript_success',
+          true,
+          Math.max(0, Date.now() - jsStartedAt),
+          this.lastLoadedFileUrl,
+          '',
+          `codeLength=${code.length}`
+        );
         if (onResult) {
           onResult(result);
         }
       });
     } catch (error) {
       logger.warn(TAG, `runJavaScript threw: ${String(error)}`);
+      this.emitFlowEvent(
+        EpubWebComponentFlowEventName.JS_FAILED,
+        'run_javascript_throw',
+        false,
+        Math.max(0, Date.now() - jsStartedAt),
+        this.lastLoadedFileUrl,
+        String(error),
+        `codeLength=${code.length}`
+      );
     }
   }
 
@@ -2570,6 +2646,15 @@ export struct EpubWebViewReaderComponent {
       this.resetEpubCurlState(false);
       this.finishPageTurnAnimation();
       logger.error(TAG, `loadUrl failed: ${msg}`);
+      this.emitFlowEvent(
+        EpubWebComponentFlowEventName.WEBVIEW_ERROR,
+        'load_url_failed',
+        false,
+        0,
+        spineFilePath,
+        msg,
+        ''
+      );
       this.params.callbacks.onError(`加载失败: ${msg}`);
     }
   }
@@ -3692,6 +3777,15 @@ export struct EpubWebViewReaderComponent {
     if (this.ready && isNativeScrollUpdate) {
       this.handleContinuousBoundaryUpdate(payload, previousOffset);
     }
+    this.emitFlowEvent(
+      EpubWebComponentFlowEventName.PAGINATION_CHANGED,
+      payloadSource.length > 0 ? payloadSource : 'pagination_changed',
+      true,
+      0,
+      this.lastLoadedFileUrl,
+      '',
+      `page=${this.currentPage + 1}/${this.currentPageCount}, offset=${this.lastPaginationOffset}`
+    );
   }
 
   private handleReaderTap(payloadJson: string): void {
@@ -5014,7 +5108,17 @@ export struct EpubWebViewReaderComponent {
         .opacity(this.hideWebViewForEpubCurlCapture ? 0 : this.viewportOpacity)
         .onPageBegin((event) => {
           const beginUrl: string = event?.url ? event.url : '';
+          this.webViewLoadStartedAt = Date.now();
           logger.debug(TAG, `WebView spine 开始加载: url=${beginUrl || 'empty'}, target=${this.lastLoadedFileUrl || 'none'}`);
+          this.emitFlowEvent(
+            EpubWebComponentFlowEventName.WEBVIEW_LOAD_START,
+            'page_begin',
+            true,
+            0,
+            beginUrl,
+            '',
+            `target=${this.lastLoadedFileUrl || 'none'}`
+          );
         })
         .onPageEnd((event) => {
           const loadedUrl: string = event?.url ? event.url : '';
@@ -5025,6 +5129,15 @@ export struct EpubWebViewReaderComponent {
           this.aboutBlankReloadCount = 0;
           this.clearApplySettingsTimer();
           this.clearPageTurnPhaseTimer();
+          this.emitFlowEvent(
+            EpubWebComponentFlowEventName.WEBVIEW_LOAD_END,
+            'page_end',
+            true,
+            this.webViewLoadStartedAt > 0 ? Math.max(0, Date.now() - this.webViewLoadStartedAt) : 0,
+            loadedUrl,
+            '',
+            `fixedLayout=${this.params.isFixedLayout === true}`
+          );
           if (this.pendingSpineTransition === null) {
             this.finishPageTurnAnimation();
           }
@@ -5082,9 +5195,19 @@ export struct EpubWebViewReaderComponent {
         })
         .onErrorReceive((event) => {
           if (event) {
+            const errorText = event.error.getErrorInfo();
             logger.warn(
               TAG,
-              `WebView load error: ${event.error.getErrorInfo()}, url=${this.lastLoadedFileUrl || 'none'}, accessRoots=${this.universalAccessRootSignature || 'none'}`
+              `WebView load error: ${errorText}, url=${this.lastLoadedFileUrl || 'none'}, accessRoots=${this.universalAccessRootSignature || 'none'}`
+            );
+            this.emitFlowEvent(
+              EpubWebComponentFlowEventName.WEBVIEW_ERROR,
+              'on_error_receive',
+              false,
+              this.webViewLoadStartedAt > 0 ? Math.max(0, Date.now() - this.webViewLoadStartedAt) : 0,
+              this.lastLoadedFileUrl,
+              errorText,
+              `accessRoots=${this.universalAccessRootSignature || 'none'}`
             );
           }
         })

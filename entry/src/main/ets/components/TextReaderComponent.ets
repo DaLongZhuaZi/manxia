@@ -117,6 +117,25 @@ export enum PaginationMode {
   ONLINE = 'ONLINE'
 }
 
+export enum TextReaderFlowEventName {
+  PAGINATION_STARTED = 'pagination_started',
+  PAGINATION_CACHE_HIT = 'pagination_cache_hit',
+  PAGINATION_COMPLETED = 'pagination_completed',
+  PAGINATION_FAILED = 'pagination_failed'
+}
+
+export class TextReaderFlowEvent {
+  public eventName: TextReaderFlowEventName = TextReaderFlowEventName.PAGINATION_STARTED;
+  public chapterIndex: number = -1;
+  public pageIndex: number = -1;
+  public pageCount: number = 0;
+  public elapsedMs: number = 0;
+  public reason: string = '';
+  public success: boolean = true;
+  public errorMessage: string = '';
+  public detail: string = '';
+}
+
 /**
  * 文本阅读器组件
   */
@@ -154,6 +173,8 @@ export struct TextReaderComponent {
   private lastRenderSignature: string = '';
   /** 分页完成后是否跳转到最后一页（用于返回上一章节时） */
   private shouldJumpToLastPage: boolean = false;
+  private activePaginationStartedAt: number = 0;
+  private activePaginationFailed: boolean = false;
   
   // ========== 回调函数 ==========
   onPageChange: (pageIndex: number, totalPages: number) => void = () => {};
@@ -178,6 +199,7 @@ export struct TextReaderComponent {
   onAddThought: (selectedText: string, globalStart: number, globalEnd: number) => void = () => {};
   onUpdateHighlightStyle: (highlightId: string, lineType: HighlightLineType, color: string) => void = () => {};
   onUpdateHighlightThought: (highlightId: string, thoughtText: string) => void = () => {};
+  onFlowEvent: (event: TextReaderFlowEvent) => void = () => {};
   
   // ========== 文本选择状态 ==========
   /** 当前选中的文本 */
@@ -455,6 +477,27 @@ export struct TextReaderComponent {
   /**
   * 异步分页，避免阻塞主线程
   */
+  private emitFlowEvent(
+    eventName: TextReaderFlowEventName,
+    reason: string,
+    success: boolean,
+    elapsedMs: number,
+    errorMessage: string,
+    detail: string
+  ): void {
+    const event = new TextReaderFlowEvent();
+    event.eventName = eventName;
+    event.chapterIndex = this.currentChapterIndex;
+    event.pageIndex = this.currentPageIndex;
+    event.pageCount = this.totalPages;
+    event.elapsedMs = elapsedMs;
+    event.reason = reason;
+    event.success = success;
+    event.errorMessage = errorMessage;
+    event.detail = detail;
+    this.onFlowEvent(event);
+  }
+
   private paginateContentAsync(): void {
     // 如果已经在分页，记录日志并等待下一帧
     this.paginationVersion++;
@@ -472,6 +515,14 @@ export struct TextReaderComponent {
     if (!this.content || this.content.length === 0) {
       this.isLoading = false;
       this.finishPendingRelayoutIfNeeded();
+      this.emitFlowEvent(
+        TextReaderFlowEventName.PAGINATION_FAILED,
+        'empty_content',
+        false,
+        0,
+        'content_empty',
+        ''
+      );
       return;
     }
     
@@ -483,6 +534,14 @@ export struct TextReaderComponent {
         this.isLoading = false;
         this.paginationRetryCount = 0;
         this.finishPendingRelayoutIfNeeded();
+        this.emitFlowEvent(
+          TextReaderFlowEventName.PAGINATION_FAILED,
+          'layout_retry_exceeded',
+          false,
+          0,
+          'content_area_unavailable',
+          `width=${this.contentAreaWidth}, height=${this.contentAreaHeight}`
+        );
         return;
       }
       logger.info(TAG, `组件尺寸未初始化，延迟分页(重试${this.paginationRetryCount}/${TextReaderComponent.MAX_PAGINATION_RETRIES})`);
@@ -497,6 +556,17 @@ export struct TextReaderComponent {
     
     // 使用 setTimeout 延迟执行，让 UI 有机会更新
     this.paginationRetryCount = 0;
+    this.activePaginationStartedAt = Date.now();
+    this.activePaginationFailed = false;
+    this.activePaginationFailed = false;
+    this.emitFlowEvent(
+      TextReaderFlowEventName.PAGINATION_STARTED,
+      'paginate_async',
+      true,
+      0,
+      '',
+      `contentLength=${this.content.length}`
+    );
     
       // 检查版本号，如果不匹配则取消
     setTimeout(() => {
@@ -510,7 +580,17 @@ export struct TextReaderComponent {
         this.isPaginating = true;
         this.paginateContent();
       } catch (error) {
-        logger.error(TAG, `分页失败: ${error instanceof Error ? error.message : String(error)}`);
+        const errorText = String(error);
+        this.activePaginationFailed = true;
+        logger.error(TAG, `分页失败: ${errorText}`);
+        this.emitFlowEvent(
+          TextReaderFlowEventName.PAGINATION_FAILED,
+          'paginate_exception',
+          false,
+          this.activePaginationStartedAt > 0 ? Math.max(0, Date.now() - this.activePaginationStartedAt) : 0,
+          errorText,
+          ''
+        );
       } finally {
         this.isPaginating = false;
         this.isLoading = false;
@@ -952,6 +1032,16 @@ export struct TextReaderComponent {
     this.cacheCurrentChapterPagination();
     this.notifyPageChange();
     this.finishScrollModeChapterTransition();
+    if (!this.activePaginationFailed) {
+      this.emitFlowEvent(
+        TextReaderFlowEventName.PAGINATION_COMPLETED,
+        reason,
+        true,
+        this.activePaginationStartedAt > 0 ? Math.max(0, Date.now() - this.activePaginationStartedAt) : 0,
+        '',
+        `pages=${this.totalPages}`
+      );
+    }
     this.onReady();
     this.finishPendingRelayoutIfNeeded();
     this.scheduleAdjacentChapterPaginationPreload(`post_paginate:${reason}`);
@@ -966,6 +1056,15 @@ export struct TextReaderComponent {
     logger.info(
       TAG,
       `命中章节分页预缓存: chapterIndex=${cachedEntry.chapterIndex}, pages=${cachedEntry.pageCount}, wordCount=${cachedEntry.wordCount}`
+    );
+    this.activePaginationStartedAt = Date.now();
+    this.emitFlowEvent(
+      TextReaderFlowEventName.PAGINATION_CACHE_HIT,
+      'cache_hit',
+      true,
+      0,
+      '',
+      `pages=${cachedEntry.pageCount}, wordCount=${cachedEntry.wordCount}`
     );
     this.applyPostPaginationState('cache_hit');
     return true;

@@ -16,6 +16,9 @@ export interface ReadAloudSessionContext {
   content: string;
   pageIndex: number;
   resumeCharIndex?: number;
+  readerOpenFlowId?: string;
+  sourceId?: string;
+  totalChapters?: number;
 }
 
 export class ReadAloudProgressSnapshot {

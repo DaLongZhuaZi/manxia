@@ -5355,6 +5355,10 @@ export class DataManager {
             pageId, chapterId, p.pageNumber, p.imageUrl, p.requestHeaders || '', p.width, p.height, p.fileSize, now
           ]);
         }
+        await this.databaseManager.executeSql(
+          'UPDATE online_chapter SET pageCount = ?, updateTime = ? WHERE id = ?',
+          [pages.length, now, chapterId]
+        );
         await this.databaseManager.commit();
         logger.debug(TAG, `批量保存在线页面完成: chapterId=${chapterId}, count=${pages.length}`);
       } catch (txError) {
@@ -6055,10 +6059,12 @@ export class DataManager {
         FROM online_comic_info oci
         INNER JOIN online_chapter oc ON oc.comicId = oci.id
         LEFT JOIN online_page op ON op.chapterId = oc.id
+        LEFT JOIN online_chapter_cache_state occs ON occs.chapterId = oc.id
         WHERE oci.sourceId = ? 
           AND (
             (op.localPath IS NOT NULL AND op.localPath != '')
             OR (oc.downloadPath IS NOT NULL AND oc.downloadPath != '')
+            OR occs.cacheStatus IN ('complete', 'partial')
           )
         GROUP BY oci.id
       `;
@@ -6067,11 +6073,11 @@ export class DataManager {
       const cachedMangas: CachedMangaInfo[] = [];
       
       for (const record of result) {
-        const obj = record as Record<string, DatabaseValue>;
+        const obj = record as GenericQueryRecord;
         const info: CachedMangaInfo = {
-          mangaId: String(obj['mangaId'] || ''),
-          mangaTitle: String(obj['mangaTitle'] || ''),
-          sourceId: Number(obj['sourceId'] || 0)
+          mangaId: String(obj.mangaId || ''),
+          mangaTitle: String(obj.mangaTitle || ''),
+          sourceId: Number(obj.sourceId || 0)
         };
         cachedMangas.push(info);
       }
@@ -6124,8 +6130,10 @@ export class DataManager {
         FROM online_comic_info oci
         INNER JOIN online_chapter oc ON oc.comicId = oci.id
         LEFT JOIN online_page op ON op.chapterId = oc.id
+        LEFT JOIN online_chapter_cache_state occs ON occs.chapterId = oc.id
         WHERE (op.localPath IS NOT NULL AND op.localPath != '')
           OR (oc.downloadPath IS NOT NULL AND oc.downloadPath != '')
+          OR occs.cacheStatus IN ('complete', 'partial')
         GROUP BY oci.id
       `;
       
@@ -6135,12 +6143,12 @@ export class DataManager {
       logger.debug(TAG, `查询结果原始数据: ${JSON.stringify(result)}`);
       
       for (const record of result) {
-        const obj = record as Record<string, DatabaseValue>;
+        const obj = record as GenericQueryRecord;
         // 使用原始字段名
         const info: CachedMangaInfo = {
-          mangaId: String(obj['id'] || ''),
-          mangaTitle: String(obj['title'] || ''),
-          sourceId: Number(obj['sourceId'] || 0)
+          mangaId: String(obj.id || ''),
+          mangaTitle: String(obj.title || ''),
+          sourceId: Number(obj.sourceId || 0)
         };
         logger.debug(TAG, `解析漫画: id=${info.mangaId}, title=${info.mangaTitle}, sourceId=${info.sourceId}`);
         cachedMangas.push(info);

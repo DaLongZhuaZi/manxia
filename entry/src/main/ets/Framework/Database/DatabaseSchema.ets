@@ -91,6 +91,27 @@ export interface PageTable {
   createTime: number;           // 创建时间
 }
 
+// 在线漫画章节缓存状态表
+export interface OnlineChapterCacheStateTable {
+  chapterId: string;            // 主键，关联 online_chapter.id
+  comicId: string;              // 在线漫画ID
+  sourceId: string;             // 图源ID
+  sourceName: string;           // 图源名称
+  sourcePkg: string;            // 图源包名
+  archivePath: string;          // CBZ归档路径
+  cacheStatus: string;          // none、partial、complete、stale
+  storageType: string;          // cbz、legacy_pages、none
+  cachedPageCount: number;      // 已缓存页数
+  totalPageCount: number;       // 章节总页数
+  archiveSize: number;          // 归档大小
+  imageEntryCount: number;      // CBZ内图片条目数
+  hasComicInfo: boolean;        // 是否包含ComicInfo.xml
+  failedPageIndexes: string;    // 缺失页索引，逗号分隔
+  lastScanTime: number;         // 最近扫描时间
+  createTime: number;           // 创建时间
+  updateTime: number;           // 更新时间
+}
+
 // 用户收藏表
 export interface FavoriteTable {
   id: string;                   // 主键，使用UUID
@@ -281,6 +302,7 @@ export interface CreateTableSQLCollection {
   ONLINE_COMIC_UNIQUE_INDEX?: string;
   ONLINE_CHAPTER?: string;
   ONLINE_CHAPTER_UNIQUE_INDEX?: string;
+  ONLINE_CHAPTER_CACHE_STATE?: string;
   ONLINE_PAGE?: string;
   ONLINE_READ_HISTORY?: string;
   TRACK_RECORD?: string;
@@ -477,6 +499,30 @@ export const CREATE_TABLE_SQL: CreateTableSQLCollection = {
   ONLINE_CHAPTER_UNIQUE_INDEX: `
     CREATE UNIQUE INDEX IF NOT EXISTS idx_online_chapter_unique 
     ON online_chapter(comicId, externalId)
+  `,
+
+  ONLINE_CHAPTER_CACHE_STATE: `
+    CREATE TABLE IF NOT EXISTS online_chapter_cache_state (
+      chapterId TEXT PRIMARY KEY,
+      comicId TEXT NOT NULL,
+      sourceId TEXT DEFAULT '',
+      sourceName TEXT DEFAULT '',
+      sourcePkg TEXT DEFAULT '',
+      archivePath TEXT DEFAULT '',
+      cacheStatus TEXT NOT NULL DEFAULT 'none',
+      storageType TEXT NOT NULL DEFAULT 'none',
+      cachedPageCount INTEGER DEFAULT 0,
+      totalPageCount INTEGER DEFAULT 0,
+      archiveSize INTEGER DEFAULT 0,
+      imageEntryCount INTEGER DEFAULT 0,
+      hasComicInfo INTEGER DEFAULT 0,
+      failedPageIndexes TEXT DEFAULT '',
+      lastScanTime INTEGER DEFAULT 0,
+      createTime INTEGER NOT NULL,
+      updateTime INTEGER NOT NULL,
+      FOREIGN KEY (chapterId) REFERENCES online_chapter (id),
+      FOREIGN KEY (comicId) REFERENCES online_comic_info (id)
+    )
   `,
 
   ONLINE_PAGE: `
@@ -944,6 +990,9 @@ export const CREATE_INDEX_SQL: string[] = [
   'CREATE INDEX IF NOT EXISTS idx_online_comic_external ON online_comic_info (sourceId, externalId)',
   'CREATE INDEX IF NOT EXISTS idx_online_chapter_comic ON online_chapter (comicId)',
   'CREATE INDEX IF NOT EXISTS idx_online_chapter_external ON online_chapter (comicId, externalId)',
+  'CREATE INDEX IF NOT EXISTS idx_online_chapter_cache_comic ON online_chapter_cache_state (comicId, cacheStatus)',
+  'CREATE INDEX IF NOT EXISTS idx_online_chapter_cache_source ON online_chapter_cache_state (sourceId, cacheStatus)',
+  'CREATE INDEX IF NOT EXISTS idx_online_chapter_cache_status ON online_chapter_cache_state (cacheStatus)',
   'CREATE INDEX IF NOT EXISTS idx_online_page_chapter ON online_page (chapterId)',
   'CREATE INDEX IF NOT EXISTS idx_online_page_number ON online_page (chapterId, pageNumber)',
   'CREATE INDEX IF NOT EXISTS idx_online_page_image_url ON online_page (imageUrl)'

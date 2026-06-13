@@ -9,6 +9,12 @@ import {
   GlobalSearchTaskKind,
   GlobalSearchTimeoutResult
 } from './GlobalSearchSessionTypes';
+import { GlobalSearchFlowMonitor, getGlobalSearchFlowMonitor } from './GlobalSearchFlowMonitor';
+import {
+  GlobalSearchFlowEvent,
+  GlobalSearchFlowEventType,
+  GlobalSearchFlowSeverity
+} from './GlobalSearchFlowTypes';
 
 const TAG = 'GlobalSearchScheduler';
 const DEFAULT_YIELD_MS: number = 10;
@@ -18,12 +24,14 @@ export interface GlobalSearchSchedulerConfig {
   networkConcurrency: number;
   webViewConcurrency: number;
   suwayomiConcurrency: number;
+  flowSessionId?: string;
 }
 
 export interface GlobalSearchQueuedTask {
   taskId: string;
   taskName: string;
   kind: GlobalSearchTaskKind;
+  flowSessionId?: string;
   run: () => Promise<void>;
 }
 
@@ -37,12 +45,14 @@ interface GlobalSearchTaskQueues {
 
 export class GlobalSearchScheduler {
   private config: GlobalSearchSchedulerConfig;
+  private flowMonitor: GlobalSearchFlowMonitor = getGlobalSearchFlowMonitor();
 
   constructor(config: GlobalSearchSchedulerConfig) {
     this.config = config;
   }
 
   async run(tasks: GlobalSearchQueuedTask[], signal: GlobalSearchCancelSignal): Promise<void> {
+    const startedAt: number = Date.now();
     const queues: GlobalSearchTaskQueues = this.classify(tasks);
     const networkTasks: GlobalSearchQueuedTask[] = [];
     for (const task of queues.mangaHttp) {
@@ -56,13 +66,36 @@ export class GlobalSearchScheduler {
       TAG,
       `搜索任务入队: local=${queues.local.length}, network=${networkTasks.length}, webView=${queues.mangaWebView.length}, suwayomi=${queues.suwayomi.length}`
     );
+    this.recordSchedulerEvent(
+      GlobalSearchFlowEventType.QUEUE_STARTED,
+      'scheduler',
+      tasks.length,
+      0,
+      `local=${queues.local.length}, network=${networkTasks.length}, webView=${queues.mangaWebView.length}, suwayomi=${queues.suwayomi.length}, concurrency=${this.config.localConcurrency}/${this.config.networkConcurrency}/${this.config.webViewConcurrency}/${this.config.suwayomiConcurrency}`,
+      true,
+      ''
+    );
 
     await Promise.all([
-      this.runQueue(queues.local, this.config.localConcurrency, signal),
-      this.runQueue(networkTasks, this.config.networkConcurrency, signal),
-      this.runQueue(queues.mangaWebView, this.config.webViewConcurrency, signal),
-      this.runQueue(queues.suwayomi, this.config.suwayomiConcurrency, signal)
+      this.runQueue('local', queues.local, this.config.localConcurrency, signal),
+      this.runQueue('network', networkTasks, this.config.networkConcurrency, signal),
+      this.runQueue('webView', queues.mangaWebView, this.config.webViewConcurrency, signal),
+      this.runQueue('suwayomi', queues.suwayomi, this.config.suwayomiConcurrency, signal)
     ]);
+    const completedEvent: GlobalSearchFlowEvent = this.createSchedulerEvent(
+      GlobalSearchFlowEventType.QUEUE_COMPLETED,
+      'scheduler',
+      tasks.length,
+      tasks.length,
+      'scheduler_run_completed',
+      true,
+      ''
+    );
+    completedEvent.elapsedMs = Date.now() - startedAt;
+    completedEvent.metricName = 'global_search_scheduler_duration';
+    completedEvent.metricValue = completedEvent.elapsedMs;
+    completedEvent.metricUnit = 'ms';
+    this.flowMonitor.record(completedEvent);
   }
 
   async waitWithTimeout<T>(
@@ -150,6 +183,7 @@ export class GlobalSearchScheduler {
   }
 
   private async runQueue(
+    queueName: string,
     tasks: GlobalSearchQueuedTask[],
     concurrency: number,
     signal: GlobalSearchCancelSignal
@@ -159,10 +193,35 @@ export class GlobalSearchScheduler {
     }
     const safeConcurrency: number = Math.max(1, concurrency);
     const executing: Promise<void>[] = [];
+    const startedAt: number = Date.now();
+    this.recordSchedulerEvent(
+      GlobalSearchFlowEventType.QUEUE_STARTED,
+      queueName,
+      tasks.length,
+      0,
+      `concurrency=${safeConcurrency}`,
+      true,
+      ''
+    );
 
     for (const task of tasks) {
       if (signal.isCancelled()) {
         logger.debug(TAG, `搜索队列已取消，跳过任务: ${task.taskName}`);
+        const skippedEvent: GlobalSearchFlowEvent = this.createSchedulerEvent(
+          GlobalSearchFlowEventType.QUEUE_TASK_SKIPPED,
+          queueName,
+          tasks.length,
+          0,
+          signal.getReason(),
+          true,
+          ''
+        );
+        skippedEvent.taskId = task.taskId;
+        skippedEvent.sourceName = task.taskName;
+        skippedEvent.taskKind = task.kind;
+        skippedEvent.cancelled = true;
+        skippedEvent.severity = GlobalSearchFlowSeverity.WARN;
+        this.flowMonitor.record(skippedEvent);
         break;
       }
 
@@ -184,11 +243,69 @@ export class GlobalSearchScheduler {
     }
 
     await Promise.all(executing);
+    const completedEvent: GlobalSearchFlowEvent = this.createSchedulerEvent(
+      GlobalSearchFlowEventType.QUEUE_COMPLETED,
+      queueName,
+      tasks.length,
+      tasks.length,
+      'queue_completed',
+      true,
+      ''
+    );
+    completedEvent.elapsedMs = Date.now() - startedAt;
+    completedEvent.metricName = 'global_search_queue_duration';
+    completedEvent.metricValue = completedEvent.elapsedMs;
+    completedEvent.metricUnit = 'ms';
+    this.flowMonitor.record(completedEvent);
   }
 
   private async sleep(durationMs: number): Promise<void> {
     return new Promise<void>((resolve) => {
       setTimeout(resolve, durationMs);
     });
+  }
+
+  private recordSchedulerEvent(
+    eventType: GlobalSearchFlowEventType,
+    queueName: string,
+    totalTasks: number,
+    completedTasks: number,
+    detail: string,
+    success: boolean,
+    errorMessage: string
+  ): void {
+    const event: GlobalSearchFlowEvent = this.createSchedulerEvent(
+      eventType,
+      queueName,
+      totalTasks,
+      completedTasks,
+      detail,
+      success,
+      errorMessage
+    );
+    this.flowMonitor.record(event);
+  }
+
+  private createSchedulerEvent(
+    eventType: GlobalSearchFlowEventType,
+    queueName: string,
+    totalTasks: number,
+    completedTasks: number,
+    detail: string,
+    success: boolean,
+    errorMessage: string
+  ): GlobalSearchFlowEvent {
+    const sessionId: string = this.config.flowSessionId && this.config.flowSessionId.length > 0 ? this.config.flowSessionId : 'scheduler_unbound';
+    const event: GlobalSearchFlowEvent = this.flowMonitor.createEvent(sessionId, eventType, queueName);
+    event.queueName = queueName;
+    event.totalGroups = totalTasks;
+    event.completedGroups = completedTasks;
+    event.detail = detail;
+    event.success = success;
+    event.errorMessage = errorMessage;
+    if (!success) {
+      event.severity = GlobalSearchFlowSeverity.WARN;
+    }
+    return event;
   }
 }

@@ -58,6 +58,7 @@ export class GlobalSearchMetrics {
   failedGroups: number = 0;
   resultCount: number = 0;
   uiPatchCount: number = 0;
+  firstResultEmitted: boolean = false;
 
   begin(sessionId: string, keyword: string, totalGroups: number): void {
     this.sessionId = sessionId;
@@ -71,6 +72,7 @@ export class GlobalSearchMetrics {
     this.failedGroups = 0;
     this.resultCount = 0;
     this.uiPatchCount = 0;
+    this.firstResultEmitted = false;
   }
 
   finish(resultCount: number): void {

@@ -15,6 +15,7 @@
  *
  * 通用路由:
  *   manxia://page/{pageName}                              页面跳转
+ *   manxia://page/{pageName}?action={action}              页面动作跳转
  *
  * {source} 支持: 图源名称、图源ID、图源pkg、别名（jm/pica/pixiv）
  */
@@ -43,6 +44,7 @@ interface DeepLinkQueryParams {
   tab: string;
   s: string;
   b: string;
+  action: string;
 }
 
 export interface DeepLinkSearchResult {
@@ -85,6 +87,7 @@ export interface DeepLinkNovelDetailResult {
 export interface DeepLinkPageResult {
   route: 'page';
   pageName: string;
+  action: string;
 }
 
 // ── 路由器 ──
@@ -161,7 +164,7 @@ export class DeepLinkRouter {
         return this.parseDetailRoute(pathSegments);
       }
       if (route === 'page') {
-        return this.parsePageRoute(pathSegments);
+        return this.parsePageRoute(pathSegments, queryParams);
       }
 
       logger.warn(TAG, `未知路由: route=${route}`);
@@ -403,6 +406,12 @@ export class DeepLinkRouter {
 
     if (result.route === 'page') {
       const r: DeepLinkPageResult = result as DeepLinkPageResult;
+      if (r.action.length > 0) {
+        this.storePageRouteForLater(r);
+        logger.info(TAG, `页面动作路由已存储: page=${r.pageName}, action=${r.action}`);
+        return true;
+      }
+
       const stack: NavPathStack | undefined = AppStorage.get<NavPathStack>('GlobalNavStack');
       if (stack) {
         stack.pushPathByName(r.pageName, undefined);
@@ -486,9 +495,8 @@ export class DeepLinkRouter {
 
     if (result.route === 'page') {
       const r: DeepLinkPageResult = result as DeepLinkPageResult;
-      AppStorage.setOrCreate('deepLinkPageName', r.pageName);
-      this.storeRouteMarker(r.route);
-      logger.info(TAG, `同步存储页面路由: page=${r.pageName}`);
+      this.storePageRouteForLater(r);
+      logger.info(TAG, `同步存储页面路由: page=${r.pageName}, action=${r.action}`);
       return true;
     }
 
@@ -499,6 +507,16 @@ export class DeepLinkRouter {
     AppStorage.setOrCreate('deepLinkRoute', route);
     AppStorage.setOrCreate('hasDeepLink', true);
     AppStorage.setOrCreate('deepLinkTrigger', Date.now());
+  }
+
+  private storePageRouteForLater(result: DeepLinkPageResult): void {
+    AppStorage.setOrCreate('deepLinkPageName', result.pageName);
+    if (result.action.length > 0) {
+      AppStorage.setOrCreate('deepLinkPageAction', result.action);
+    } else {
+      AppStorage.delete('deepLinkPageAction');
+    }
+    this.storeRouteMarker(result.route);
   }
 
   private clearStoredRoutePayload(): void {
@@ -515,6 +533,7 @@ export class DeepLinkRouter {
     AppStorage.delete('deepLinkContentId');
     AppStorage.delete('deepLinkNovelBookUrl');
     AppStorage.delete('deepLinkPageName');
+    AppStorage.delete('deepLinkPageAction');
   }
 
   // ── 格式化预览 ──
@@ -550,6 +569,9 @@ export class DeepLinkRouter {
     }
     if (result.route === 'page') {
       const r: DeepLinkPageResult = result as DeepLinkPageResult;
+      if (r.action.length > 0) {
+        return `跳转页面: ${r.pageName}\n动作: ${r.action}`;
+      }
       return `跳转页面: ${r.pageName}`;
     }
     return `路由: ${routeName}`;
@@ -689,13 +711,17 @@ export class DeepLinkRouter {
     return result;
   }
 
-  private parsePageRoute(pathSegments: string[]): DeepLinkPageResult | null {
+  private parsePageRoute(pathSegments: string[], queryParams: DeepLinkQueryParams): DeepLinkPageResult | null {
     if (pathSegments.length < 2) {
       logger.warn(TAG, '页面路由缺少 pageName');
       return null;
     }
-    const result: DeepLinkPageResult = { route: 'page', pageName: decodeURIComponent(pathSegments[1]) };
-    logger.info(TAG, `页面路由解析: page=${result.pageName}`);
+    const result: DeepLinkPageResult = {
+      route: 'page',
+      pageName: decodeURIComponent(pathSegments[1]),
+      action: queryParams.action
+    };
+    logger.info(TAG, `页面路由解析: page=${result.pageName}, action=${result.action}`);
     return result;
   }
 
@@ -706,7 +732,8 @@ export class DeepLinkRouter {
       q: '',
       tab: '',
       s: '',
-      b: ''
+      b: '',
+      action: ''
     };
     if (!queryPart) {
       return params;
@@ -736,6 +763,8 @@ export class DeepLinkRouter {
       params.s = value;
     } else if (key === 'b') {
       params.b = value;
+    } else if (key === 'action') {
+      params.action = value;
     }
   }
 

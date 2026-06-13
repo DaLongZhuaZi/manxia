@@ -13,6 +13,17 @@ import { BusinessError } from '@ohos.base';
 import { DataManager } from '../Data/DataManager';
 import { MangaPage } from '../../Models/MangaModels';
 import { DatabaseManager } from '../Database/DatabaseManager';
+import { DownloadCacheFlowMonitor, getDownloadCacheFlowMonitor } from '../Download/DownloadCacheFlowMonitor';
+import { eventBus, GameEvent, MangaCacheUpdatedPayload } from '../EventBus';
+import {
+  DownloadCacheContentType,
+  DownloadCacheEntrySource,
+  DownloadCacheFlowEvent,
+  DownloadCacheFlowEventType,
+  DownloadCacheFlowSessionInfo,
+  DownloadCacheFlowSeverity,
+  DownloadCacheFlowStage
+} from '../Download/DownloadCacheFlowTypes';
 
 const TAG = 'PermanentImageCacheManager';
 
@@ -47,15 +58,25 @@ interface FileInfo {
   size: number;
 }
 
+class PermanentMangaStatsCacheEntry {
+  public sourceId: number = 0;
+  public stats: MangaCacheStats[] = new Array<MangaCacheStats>();
+  public createdAt: number = 0;
+}
+
 export class PermanentImageCacheManager {
   private static instance: PermanentImageCacheManager;
   private dbManager: DatabaseManager;
   private permanentCachePath: string = '';
   private tempCachePath: string = '';
   private pendingContextLogged: boolean = false;
+  private statsCacheEntries: Map<number, PermanentMangaStatsCacheEntry> = new Map<number, PermanentMangaStatsCacheEntry>();
+  private readonly STATS_CACHE_TTL_MS: number = 5 * 1000;
+  private downloadCacheFlowMonitor: DownloadCacheFlowMonitor;
 
   private constructor() {
     this.dbManager = DatabaseManager.getInstance();
+    this.downloadCacheFlowMonitor = getDownloadCacheFlowMonitor();
     this.initCachePaths('constructor');
   }
 
@@ -253,6 +274,10 @@ export class PermanentImageCacheManager {
       await this.writeImageDataToFile(targetPath, imageData);
       
       logger.debug(TAG, `图片保存成功: ${targetPath}`);
+      if (config.downloadWhileReading) {
+        this.invalidateSourceStatsCache(sourceId, `save_image_to_cache:${mangaId}`);
+        this.publishMangaCacheUpdated(sourceId, mangaId, chapterId, 'save_image_to_cache');
+      }
       
       // 如果是临时缓存，检查是否超出限制
       if (!config.downloadWhileReading) {
@@ -273,7 +298,7 @@ export class PermanentImageCacheManager {
       file = await fs.open(targetPath, fs.OpenMode.CREATE | fs.OpenMode.WRITE_ONLY | fs.OpenMode.TRUNC);
       await fs.write(file.fd, imageData);
     } catch (error) {
-      operationError = error as Error;
+      operationError = error instanceof Error ? error : new Error(String(error));
       throw operationError;
     } finally {
       if (file !== null) {
@@ -282,7 +307,7 @@ export class PermanentImageCacheManager {
         } catch (closeError) {
           logger.warn(TAG, `关闭图片缓存文件句柄失败: ${targetPath}, ${String(closeError)}`);
           if (operationError === null) {
-            throw closeError as Error;
+            throw closeError instanceof Error ? closeError : new Error(String(closeError));
           }
         }
       }
@@ -448,6 +473,20 @@ export class PermanentImageCacheManager {
    * 获取图源的漫画缓存统计
    */
   async getSourceMangaCacheStats(sourceId: number): Promise<MangaCacheStats[]> {
+    const startedAt: number = Date.now();
+    const cachedStats: MangaCacheStats[] | null = this.getCachedSourceMangaStats(sourceId);
+    if (cachedStats !== null) {
+      this.recordPermanentStatsFlow(
+        sourceId,
+        DownloadCacheFlowEventType.PERMANENT_STATS_HIT,
+        'permanent_manga_stats_cache_hit',
+        true,
+        '',
+        Date.now() - startedAt,
+        cachedStats.length
+      );
+      return cachedStats;
+    }
     const stats: MangaCacheStats[] = [];
     
     try {
@@ -496,11 +535,134 @@ export class PermanentImageCacheManager {
           });
         }
       }
+      this.setCachedSourceMangaStats(sourceId, stats);
+      this.recordPermanentStatsFlow(
+        sourceId,
+        DownloadCacheFlowEventType.PERMANENT_STATS_MISS,
+        'permanent_manga_stats_cache_miss_computed',
+        true,
+        '',
+        Date.now() - startedAt,
+        stats.length
+      );
     } catch (error) {
       logger.error(TAG, `获取漫画缓存统计失败: ${error}`);
+      this.recordPermanentStatsFlow(
+        sourceId,
+        DownloadCacheFlowEventType.ERROR,
+        'permanent_manga_stats_failed',
+        false,
+        String(error),
+        Date.now() - startedAt,
+        0
+      );
     }
     
     return stats;
+  }
+
+  private getCachedSourceMangaStats(sourceId: number): MangaCacheStats[] | null {
+    const entry: PermanentMangaStatsCacheEntry | undefined = this.statsCacheEntries.get(sourceId);
+    if (!entry) {
+      return null;
+    }
+    if (Date.now() - entry.createdAt > this.STATS_CACHE_TTL_MS) {
+      this.statsCacheEntries.delete(sourceId);
+      return null;
+    }
+    return this.cloneMangaCacheStatsArray(entry.stats);
+  }
+
+  private setCachedSourceMangaStats(sourceId: number, stats: MangaCacheStats[]): void {
+    const entry: PermanentMangaStatsCacheEntry = new PermanentMangaStatsCacheEntry();
+    entry.sourceId = sourceId;
+    entry.stats = this.cloneMangaCacheStatsArray(stats);
+    entry.createdAt = Date.now();
+    this.statsCacheEntries.set(sourceId, entry);
+  }
+
+  private invalidateSourceStatsCache(sourceId: number, reason: string): void {
+    this.statsCacheEntries.delete(sourceId);
+    this.recordPermanentStatsFlow(
+      sourceId,
+      DownloadCacheFlowEventType.PERMANENT_STATS_INVALIDATED,
+      reason,
+      true,
+      '',
+      0,
+      0
+    );
+  }
+
+  private publishMangaCacheUpdated(sourceId: number, mangaId: string, chapterId: string, reason: string): void {
+    if (sourceId <= 0 || mangaId.length <= 0) {
+      return;
+    }
+    eventBus.publish(
+      GameEvent.MANGA_CACHE_UPDATED,
+      new MangaCacheUpdatedPayload(mangaId, chapterId, sourceId, '', reason)
+    );
+  }
+
+  private cloneMangaCacheStatsArray(stats: MangaCacheStats[]): MangaCacheStats[] {
+    const clonedStats: MangaCacheStats[] = new Array<MangaCacheStats>();
+    for (let i = 0; i < stats.length; i++) {
+      const source = stats[i];
+      const cloned: MangaCacheStats = {
+        sourceId: source.sourceId,
+        mangaId: source.mangaId,
+        mangaTitle: source.mangaTitle,
+        chapterCount: source.chapterCount,
+        imageCount: source.imageCount,
+        totalSize: source.totalSize,
+        path: source.path
+      };
+      clonedStats.push(cloned);
+    }
+    return clonedStats;
+  }
+
+  private recordPermanentStatsFlow(
+    sourceId: number,
+    eventType: DownloadCacheFlowEventType,
+    reason: string,
+    success: boolean,
+    errorMessage: string,
+    elapsedMs: number,
+    totalCount: number
+  ): void {
+    try {
+      const info: DownloadCacheFlowSessionInfo = new DownloadCacheFlowSessionInfo();
+      info.sessionId = this.downloadCacheFlowMonitor.createSessionId('permanent_stats');
+      info.entrySource = DownloadCacheEntrySource.PERMANENT_IMAGE_CACHE;
+      info.contentType = DownloadCacheContentType.CACHE_STATUS;
+      info.sourceId = sourceId;
+      info.sourceKey = sourceId > 0 ? `source_${sourceId}` : 'permanent_cache';
+      info.totalCount = totalCount;
+      info.pageName = 'PermanentImageCacheManager';
+      info.startedAt = Date.now();
+      const flowId: string = this.downloadCacheFlowMonitor.ensureSession(info);
+      const event: DownloadCacheFlowEvent = this.downloadCacheFlowMonitor.createEvent(
+        flowId,
+        eventType,
+        DownloadCacheFlowStage.CACHE_STATUS,
+        reason
+      );
+      event.entrySource = DownloadCacheEntrySource.PERMANENT_IMAGE_CACHE;
+      event.contentType = DownloadCacheContentType.CACHE_STATUS;
+      event.sourceId = sourceId;
+      event.sourceKey = info.sourceKey;
+      event.success = success;
+      event.severity = success ? DownloadCacheFlowSeverity.INFO : DownloadCacheFlowSeverity.ERROR;
+      event.errorMessage = errorMessage;
+      event.elapsedMs = elapsedMs;
+      event.totalCount = totalCount;
+      event.detail = `statsCacheSize=${this.statsCacheEntries.size}`;
+      this.downloadCacheFlowMonitor.record(event);
+      this.downloadCacheFlowMonitor.endSession(flowId, reason);
+    } catch (error) {
+      logger.warn(TAG, `记录永久缓存统计链路失败: ${String(error)}`);
+    }
   }
 
   /**
@@ -517,6 +679,7 @@ export class PermanentImageCacheManager {
       if (SafeFileUtils.accessSync(mangaPath)) {
         await this.deleteDirectory(mangaPath);
         logger.info(TAG, `删除漫画缓存成功: ${mangaPath}`);
+        this.invalidateSourceStatsCache(sourceId, `delete_manga_cache:${mangaId}`);
         return true;
       }
       
@@ -599,7 +762,8 @@ export class PermanentImageCacheManager {
       const mangaPath = `${this.permanentCachePath}/source_${sourceId}/manga_${safeMangaId}`;
       
       if (SafeFileUtils.accessSync(mangaPath)) {
-        this.deleteDirectory(mangaPath);
+        await this.deleteDirectory(mangaPath);
+        this.invalidateSourceStatsCache(sourceId, `clean_manga_cache:${mangaId}`);
         logger.info(TAG, `已删除漫画缓存: ${mangaPath}`);
       }
     } catch (error) {

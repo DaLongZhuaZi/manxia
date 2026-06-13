@@ -66,6 +66,17 @@ import {
 } from '../Framework/ExternalFile/ExternalFileTaskTypes';
 import { openExternalFileTaskInIsolatedAbility } from '../Framework/ExternalFile/ExternalFileTaskLauncher';
 import { MangaReadFlowImportReport, MangaReadFlowImportReporter } from '../Framework/Reader/MangaReadFlowImportReporter';
+import { ImportArchiveParseCache, getImportArchiveParseCache } from '../Framework/Import/ImportArchiveParseCache';
+import { ImportDuplicateDetectionCache, getImportDuplicateDetectionCache } from '../Framework/Import/ImportDuplicateDetectionCache';
+import { ImportFlowMonitor, getImportFlowMonitor } from '../Framework/Import/ImportFlowMonitor';
+import {
+  ImportFlowContentType,
+  ImportFlowEntrySource,
+  ImportFlowEvent,
+  ImportFlowEventType,
+  ImportFlowSessionInfo,
+  ImportFlowSeverity
+} from '../Framework/Import/ImportFlowTypes';
 
 const TAG = 'DataManagementPage';
 const APP_STORAGE_TRANSFER_RECORD_ID = 'pendingTransferRecordId';
@@ -750,6 +761,10 @@ struct DataManagementPage {
   @State private batchImportStrategy: 'ask' | 'merge_all' | 'create_all' = 'ask'; // 默认每次询问
   @State private showBatchStrategyDialog: boolean = false;
   private lastMangaImportReadFlowId: string = '';
+  private currentImportFlowId: string = '';
+  private readonly importFlowMonitor: ImportFlowMonitor = getImportFlowMonitor();
+  private readonly importArchiveParseCache: ImportArchiveParseCache = getImportArchiveParseCache();
+  private readonly importDuplicateDetectionCache: ImportDuplicateDetectionCache = getImportDuplicateDetectionCache();
   private fileImportEventSubscribed: boolean = false;
   private readonly fileImportRequestedListener = (payload: IEventPayload): void => {
     const filePayload = payload as FileImportRequestedPayload;
@@ -795,6 +810,151 @@ struct DataManagementPage {
     const sessionId: string = MangaReadFlowImportReporter.record(report);
     this.lastMangaImportReadFlowId = sessionId;
     return sessionId;
+  }
+
+  private startImportFlow(
+    entrySource: ImportFlowEntrySource,
+    contentType: ImportFlowContentType,
+    displayName: string,
+    fileCount: number,
+    batchMode: boolean,
+    sourceUri: string,
+    targetPath: string
+  ): string {
+    const info: ImportFlowSessionInfo = new ImportFlowSessionInfo();
+    info.sessionId = this.importFlowMonitor.createSessionId('import');
+    info.entrySource = entrySource;
+    info.contentType = contentType;
+    info.displayName = displayName;
+    info.fileCount = fileCount;
+    info.batchMode = batchMode;
+    info.sourceUri = sourceUri;
+    info.targetPath = targetPath;
+    info.pageName = 'DataManagementPage';
+    info.startedAt = Date.now();
+    this.currentImportFlowId = this.importFlowMonitor.ensureSession(info);
+    return this.currentImportFlowId;
+  }
+
+  private ensureImportFlow(
+    entrySource: ImportFlowEntrySource,
+    contentType: ImportFlowContentType,
+    displayName: string,
+    fileCount: number,
+    batchMode: boolean,
+    sourceUri: string,
+    targetPath: string
+  ): string {
+    const info: ImportFlowSessionInfo = new ImportFlowSessionInfo();
+    info.sessionId = this.currentImportFlowId;
+    info.entrySource = entrySource;
+    info.contentType = contentType;
+    info.displayName = displayName;
+    info.fileCount = fileCount;
+    info.batchMode = batchMode;
+    info.sourceUri = sourceUri;
+    info.targetPath = targetPath;
+    info.pageName = 'DataManagementPage';
+    info.startedAt = Date.now();
+    this.currentImportFlowId = this.importFlowMonitor.ensureSession(info);
+    return this.currentImportFlowId;
+  }
+
+  private recordImportFlowEvent(event: ImportFlowEvent): void {
+    if (!event.sessionId || event.sessionId.length <= 0) {
+      event.sessionId = this.ensureImportFlow(
+        event.entrySource,
+        event.contentType,
+        event.displayName,
+        event.fileCount,
+        event.batchMode,
+        event.sourceUri,
+        event.targetPath
+      );
+    }
+    this.importFlowMonitor.record(event);
+  }
+
+  private recordSimpleImportFlowEvent(
+    eventType: ImportFlowEventType,
+    reason: string,
+    contentType: ImportFlowContentType,
+    entrySource: ImportFlowEntrySource,
+    success: boolean,
+    detail: string,
+    elapsedMs: number
+  ): void {
+    const event: ImportFlowEvent = new ImportFlowEvent();
+    event.eventType = eventType;
+    event.reason = reason;
+    event.contentType = contentType;
+    event.entrySource = entrySource;
+    event.success = success;
+    event.severity = success ? ImportFlowSeverity.INFO : ImportFlowSeverity.ERROR;
+    event.elapsedMs = elapsedMs;
+    event.detail = detail;
+    this.recordImportFlowEvent(event);
+  }
+
+  private endCurrentImportFlow(reason: string): void {
+    if (this.currentImportFlowId.length <= 0) {
+      return;
+    }
+    const endedSessionId: string = this.currentImportFlowId;
+    this.importFlowMonitor.endSession(endedSessionId, reason);
+    this.importDuplicateDetectionCache.clearSession(endedSessionId);
+    this.importArchiveParseCache.clear();
+    this.currentImportFlowId = '';
+  }
+
+  private mapImportSource(source: string): ImportFlowEntrySource {
+    if (source === 'lan_transfer') {
+      return ImportFlowEntrySource.LAN_TRANSFER;
+    }
+    if (source === 'network_folder') {
+      return ImportFlowEntrySource.NETWORK_FOLDER;
+    }
+    if (source === 'external_file_task') {
+      return ImportFlowEntrySource.EXTERNAL_FILE_TASK;
+    }
+    if (source.length > 0) {
+      return ImportFlowEntrySource.MANUAL;
+    }
+    return ImportFlowEntrySource.UNKNOWN;
+  }
+
+  private mapImportContentType(category: string): ImportFlowContentType {
+    if (category === 'comic') {
+      return ImportFlowContentType.MANGA;
+    }
+    if (category === 'ebook') {
+      return ImportFlowContentType.EBOOK;
+    }
+    if (category === 'pdf') {
+      return ImportFlowContentType.PDF;
+    }
+    if (category === 'novel') {
+      return ImportFlowContentType.NOVEL;
+    }
+    if (category === 'backup') {
+      return ImportFlowContentType.BACKUP;
+    }
+    if (category === 'json') {
+      return ImportFlowContentType.JSON;
+    }
+    if (category === 'font') {
+      return ImportFlowContentType.FONT;
+    }
+    if (category === 'code') {
+      return ImportFlowContentType.CODE;
+    }
+    if (category === 'avif') {
+      return ImportFlowContentType.AVIF;
+    }
+    if (category === 'image') {
+      return ImportFlowContentType.IMAGE;
+    }
+    return ImportFlowContentType.UNKNOWN;
   }
   
   // 管理器实例
@@ -1093,6 +1253,25 @@ struct DataManagementPage {
       return;
     }
     
+    this.startImportFlow(
+      ImportFlowEntrySource.DOWNLOAD_DIR,
+      ImportFlowContentType.UNKNOWN,
+      'Download',
+      0,
+      true,
+      this.downloadDirPath,
+      this.downloadDirPath
+    );
+    const scanStartedAt: number = Date.now();
+    this.recordSimpleImportFlowEvent(
+      ImportFlowEventType.DOWNLOAD_SCAN_STARTED,
+      'download_scan_started',
+      ImportFlowContentType.UNKNOWN,
+      ImportFlowEntrySource.DOWNLOAD_DIR,
+      true,
+      this.downloadDirPath,
+      0
+    );
     this.isScanning = true;
     this.pendingMangaFiles = [];
     this.pendingEbookFiles = [];
@@ -1123,11 +1302,39 @@ struct DataManagementPage {
       
       const totalPending = this.pendingMangaFiles.length + this.pendingEbookFiles.length + 
                           this.pendingPdfFiles.length + this.pendingNovelFiles.length;
+      const classifiedEvent: ImportFlowEvent = new ImportFlowEvent();
+      classifiedEvent.eventType = ImportFlowEventType.FILE_CLASSIFIED;
+      classifiedEvent.reason = 'download_files_classified';
+      classifiedEvent.entrySource = ImportFlowEntrySource.DOWNLOAD_DIR;
+      classifiedEvent.contentType = ImportFlowContentType.UNKNOWN;
+      classifiedEvent.fileCount = totalPending;
+      classifiedEvent.totalCount = filenames.length;
+      classifiedEvent.detail = `manga=${this.pendingMangaFiles.length}, ebook=${this.pendingEbookFiles.length}, pdf=${this.pendingPdfFiles.length}, novel=${this.pendingNovelFiles.length}`;
+      this.recordImportFlowEvent(classifiedEvent);
+      const completedEvent: ImportFlowEvent = new ImportFlowEvent();
+      completedEvent.eventType = ImportFlowEventType.DOWNLOAD_SCAN_COMPLETED;
+      completedEvent.reason = 'download_scan_completed';
+      completedEvent.entrySource = ImportFlowEntrySource.DOWNLOAD_DIR;
+      completedEvent.contentType = ImportFlowContentType.UNKNOWN;
+      completedEvent.fileCount = totalPending;
+      completedEvent.totalCount = filenames.length;
+      completedEvent.elapsedMs = Date.now() - scanStartedAt;
+      completedEvent.detail = classifiedEvent.detail;
+      this.recordImportFlowEvent(completedEvent);
       
       logger.info(TAG, `扫描完成: 漫画=${this.pendingMangaFiles.length}, 电子书=${this.pendingEbookFiles.length}, PDF=${this.pendingPdfFiles.length}, 小说=${this.pendingNovelFiles.length}`);
       this.getUIContext().getPromptAction().showToast({ message: `扫描完成，发现 ${totalPending} 个可导入文件` });
     } catch (error) {
       logger.error(TAG, `扫描目录失败: ${String(error)}`);
+      const failedEvent: ImportFlowEvent = new ImportFlowEvent();
+      failedEvent.eventType = ImportFlowEventType.ERROR;
+      failedEvent.reason = 'download_scan_failed';
+      failedEvent.entrySource = ImportFlowEntrySource.DOWNLOAD_DIR;
+      failedEvent.success = false;
+      failedEvent.severity = ImportFlowSeverity.ERROR;
+      failedEvent.errorMessage = String(error);
+      failedEvent.elapsedMs = Date.now() - scanStartedAt;
+      this.recordImportFlowEvent(failedEvent);
       this.getUIContext().getPromptAction().showToast({ message: `扫描失败: ${String(error)}` });
     } finally {
       this.isScanning = false;
@@ -1160,6 +1367,15 @@ struct DataManagementPage {
    * 显示Download目录批量导入对话框
    */
   private async showDownloadBatchImportDialog(): Promise<void> {
+    this.ensureImportFlow(
+      ImportFlowEntrySource.DOWNLOAD_DIR,
+      ImportFlowContentType.MANGA,
+      'Download批量漫画导入',
+      this.pendingMangaFiles.length,
+      true,
+      this.downloadDirPath,
+      this.downloadDirPath
+    );
     // 构建文件URI列表
     const fileUris: string[] = [];
     for (let i = 0; i < this.pendingMangaFiles.length; i++) {
@@ -1183,12 +1399,16 @@ struct DataManagementPage {
         parseComicInfoXml: (xmlContent: string): PrefilledComicInfo | null => {
           return this.parseComicInfoXml(xmlContent);
         },
+        onFlowEvent: (event: ImportFlowEvent) => {
+          this.recordImportFlowEvent(event);
+        },
         onConfirm: (result: BatchMangaImportDialogResult) => {
           this.handleDownloadBatchImportResult(result);
         },
         onCancel: () => {
           this.updateProgress(ImportStatus.IDLE, '已取消批量导入', 0);
           this.pendingMangaFiles = [];
+          this.endCurrentImportFlow('download_batch_manga_cancelled');
         }
       }),
       autoCancel: false,
@@ -1196,6 +1416,15 @@ struct DataManagementPage {
     });
 
     this.batchMangaImportDialogController.open();
+    this.recordSimpleImportFlowEvent(
+      ImportFlowEventType.DIALOG_OPENED,
+      'download_batch_manga_dialog_opened',
+      ImportFlowContentType.MANGA,
+      ImportFlowEntrySource.DOWNLOAD_DIR,
+      true,
+      `files=${fileUris.length}`,
+      0
+    );
     this.updateProgress(ImportStatus.IDLE, '请配置批量导入选项', 10);
   }
   
@@ -1204,6 +1433,15 @@ struct DataManagementPage {
    */
   private async handleDownloadBatchImportResult(result: BatchMangaImportDialogResult): Promise<void> {
     this.updateProgress(ImportStatus.IMPORTING, `开始导入...`, 10);
+    const batchStartedAt: number = Date.now();
+    const confirmEvent: ImportFlowEvent = new ImportFlowEvent();
+    confirmEvent.eventType = ImportFlowEventType.DIALOG_CONFIRMED;
+    confirmEvent.reason = 'download_batch_manga_confirmed';
+    confirmEvent.contentType = ImportFlowContentType.MANGA;
+    confirmEvent.batchMode = true;
+    confirmEvent.fileCount = result.groups.length;
+    confirmEvent.totalCount = result.groups.length;
+    this.recordImportFlowEvent(confirmEvent);
     let successCount = 0;
     const total = result.groups.length;
     
@@ -1214,8 +1452,29 @@ struct DataManagementPage {
       try {
         await this.importDownloadMangaGroup(group);
         successCount++;
+        const progressEvent: ImportFlowEvent = new ImportFlowEvent();
+        progressEvent.eventType = ImportFlowEventType.COPY_PROGRESS;
+        progressEvent.reason = 'download_batch_group_imported';
+        progressEvent.contentType = ImportFlowContentType.MANGA;
+        progressEvent.batchMode = true;
+        progressEvent.displayName = group.title;
+        progressEvent.currentIndex = i + 1;
+        progressEvent.totalCount = total;
+        this.recordImportFlowEvent(progressEvent);
       } catch (error) {
         logger.error(TAG, `导入失败 ${group.title}: ${String(error)}`);
+        const failedEvent: ImportFlowEvent = new ImportFlowEvent();
+        failedEvent.eventType = ImportFlowEventType.ERROR;
+        failedEvent.reason = 'download_batch_group_failed';
+        failedEvent.contentType = ImportFlowContentType.MANGA;
+        failedEvent.batchMode = true;
+        failedEvent.displayName = group.title;
+        failedEvent.currentIndex = i + 1;
+        failedEvent.totalCount = total;
+        failedEvent.success = false;
+        failedEvent.severity = ImportFlowSeverity.ERROR;
+        failedEvent.errorMessage = String(error);
+        this.recordImportFlowEvent(failedEvent);
       }
     }
     
@@ -1225,13 +1484,31 @@ struct DataManagementPage {
     
     if (successCount > 0) {
       eventBus.publish(GameEvent.MANGA_IMPORT_COMPLETED, new MangaImportCompletedPayload(successCount, total));
+      const refreshEvent: ImportFlowEvent = new ImportFlowEvent();
+      refreshEvent.eventType = ImportFlowEventType.BOOKSHELF_REFRESH_PUBLISHED;
+      refreshEvent.reason = 'download_batch_bookshelf_refresh_published';
+      refreshEvent.contentType = ImportFlowContentType.MANGA;
+      refreshEvent.batchMode = true;
+      refreshEvent.currentIndex = successCount;
+      refreshEvent.totalCount = total;
+      refreshEvent.elapsedMs = Date.now() - batchStartedAt;
+      this.recordImportFlowEvent(refreshEvent);
     }
+    this.endCurrentImportFlow(successCount > 0 ? 'download_batch_manga_completed' : 'download_batch_manga_no_success');
   }
   
   /**
    * 导入Download目录的漫画组
    */
   private async importDownloadMangaGroup(group: MangaGroupResult): Promise<void> {
+    const dbStartedAt: number = Date.now();
+    const dbStartEvent: ImportFlowEvent = new ImportFlowEvent();
+    dbStartEvent.eventType = ImportFlowEventType.DB_WRITE_STARTED;
+    dbStartEvent.reason = 'download_group_manga_db_started';
+    dbStartEvent.contentType = ImportFlowContentType.MANGA;
+    dbStartEvent.displayName = group.title;
+    dbStartEvent.chapterCount = group.chapters.length;
+    this.recordImportFlowEvent(dbStartEvent);
     // 创建漫画记录
     const mangaId = await this.dataManager.addComicInfo({
       title: group.title,
@@ -1249,6 +1526,15 @@ struct DataManagementPage {
     
     // 添加收藏
     await DataService.getInstance().addToFavorites(mangaId, group.tags || []);
+    const dbCompletedEvent: ImportFlowEvent = new ImportFlowEvent();
+    dbCompletedEvent.eventType = ImportFlowEventType.DB_WRITE_COMPLETED;
+    dbCompletedEvent.reason = 'download_group_manga_record_created';
+    dbCompletedEvent.contentType = ImportFlowContentType.MANGA;
+    dbCompletedEvent.displayName = group.title;
+    dbCompletedEvent.elapsedMs = Date.now() - dbStartedAt;
+    dbCompletedEvent.chapterCount = group.chapters.length;
+    dbCompletedEvent.detail = `mangaId=${mangaId}`;
+    this.recordImportFlowEvent(dbCompletedEvent);
     
     // 在Download目录创建漫画文件夹
     const folderName = this.sanitizeFolderName(group.title);
@@ -1269,6 +1555,18 @@ struct DataManagementPage {
       // 解析并复制文件
       const parsed = await this.parseArchiveStructureWithPasswordRetry(chapter.fileUri);
       const imageFiles: string[] = [];
+      const copyStartedAt: number = Date.now();
+      const copyStartEvent: ImportFlowEvent = new ImportFlowEvent();
+      copyStartEvent.eventType = ImportFlowEventType.COPY_STARTED;
+      copyStartEvent.reason = 'download_group_chapter_copy_started';
+      copyStartEvent.contentType = ImportFlowContentType.MANGA;
+      copyStartEvent.displayName = group.title;
+      copyStartEvent.fileName = chapter.title;
+      copyStartEvent.sourceUri = chapter.fileUri;
+      copyStartEvent.targetPath = chapterPath;
+      copyStartEvent.currentIndex = i + 1;
+      copyStartEvent.totalCount = group.chapters.length;
+      this.recordImportFlowEvent(copyStartEvent);
       
       if (parsed.extractedPath) {
         const files = SafeFileUtils.listFileSync(parsed.extractedPath);
@@ -1285,6 +1583,19 @@ struct DataManagementPage {
           }
         }
       }
+      const copyCompletedEvent: ImportFlowEvent = new ImportFlowEvent();
+      copyCompletedEvent.eventType = ImportFlowEventType.COPY_COMPLETED;
+      copyCompletedEvent.reason = 'download_group_chapter_copy_completed';
+      copyCompletedEvent.contentType = ImportFlowContentType.MANGA;
+      copyCompletedEvent.displayName = group.title;
+      copyCompletedEvent.fileName = chapter.title;
+      copyCompletedEvent.sourceUri = chapter.fileUri;
+      copyCompletedEvent.targetPath = chapterPath;
+      copyCompletedEvent.currentIndex = i + 1;
+      copyCompletedEvent.totalCount = group.chapters.length;
+      copyCompletedEvent.pageCount = imageFiles.length;
+      copyCompletedEvent.elapsedMs = Date.now() - copyStartedAt;
+      this.recordImportFlowEvent(copyCompletedEvent);
       
       // 创建章节记录
       const chapterId = await this.dataManager.addChapterInfo({
@@ -1321,6 +1632,13 @@ struct DataManagementPage {
       try {
         SafeFileUtils.copyFileSync(firstCoverPath, coverPath);
         await this.dataManager.updateComicCoverUrl(mangaId, coverPath);
+        const coverEvent: ImportFlowEvent = new ImportFlowEvent();
+        coverEvent.eventType = ImportFlowEventType.COVER_HANDLED;
+        coverEvent.reason = 'download_group_cover_saved';
+        coverEvent.contentType = ImportFlowContentType.MANGA;
+        coverEvent.displayName = group.title;
+        coverEvent.targetPath = coverPath;
+        this.recordImportFlowEvent(coverEvent);
         logger.info(TAG, `封面已保存: ${coverPath}`);
       } catch (e) {
         logger.warn(TAG, `保存封面失败: ${String(e)}`);
@@ -1346,6 +1664,15 @@ struct DataManagementPage {
    */
   private async showDownloadSingleImportDialog(fileUri: string, filename: string): Promise<void> {
     try {
+      this.ensureImportFlow(
+        ImportFlowEntrySource.DOWNLOAD_DIR,
+        ImportFlowContentType.MANGA,
+        filename,
+        1,
+        false,
+        fileUri,
+        this.downloadDirPath
+      );
       this.updateProgress(ImportStatus.PARSING, `正在解析: ${filename}`, 10);
       
       // 解析压缩包结构
@@ -1371,12 +1698,16 @@ struct DataManagementPage {
           parsedStructure: dialogStructure,
           existingMangaCandidates: this.existingMangaCandidates,
           sourceFileUri: fileUri,
+          onFlowEvent: (event: ImportFlowEvent) => {
+            this.recordImportFlowEvent(event);
+          },
           onConfirm: (result: MangaImportDialogResult) => {
             this.handleDownloadSingleImportResult(result);
           },
           onCancel: () => {
             this.updateProgress(ImportStatus.IDLE, '已取消导入', 0);
             this.pendingMangaFiles = [];
+            this.endCurrentImportFlow('download_single_manga_cancelled');
           }
         }),
         autoCancel: false,
@@ -1385,11 +1716,31 @@ struct DataManagementPage {
       });
 
       this.mangaImportDialogController.open();
+      this.recordSimpleImportFlowEvent(
+        ImportFlowEventType.DIALOG_OPENED,
+        'download_single_manga_dialog_opened',
+        ImportFlowContentType.MANGA,
+        ImportFlowEntrySource.DOWNLOAD_DIR,
+        true,
+        filename,
+        0
+      );
       this.updateProgress(ImportStatus.IDLE, '请配置导入选项', 20);
     } catch (error) {
       logger.error(TAG, `解析失败: ${filename}`, String(error));
+      const failedEvent: ImportFlowEvent = new ImportFlowEvent();
+      failedEvent.eventType = ImportFlowEventType.ERROR;
+      failedEvent.reason = 'download_single_manga_prepare_failed';
+      failedEvent.contentType = ImportFlowContentType.MANGA;
+      failedEvent.sourceUri = fileUri;
+      failedEvent.fileName = filename;
+      failedEvent.success = false;
+      failedEvent.severity = ImportFlowSeverity.ERROR;
+      failedEvent.errorMessage = String(error);
+      this.recordImportFlowEvent(failedEvent);
       this.getUIContext().getPromptAction().showToast({ message: `解析失败: ${String(error)}` });
       this.pendingMangaFiles = [];
+      this.endCurrentImportFlow('download_single_manga_prepare_failed');
     }
   }
   
@@ -1397,6 +1748,7 @@ struct DataManagementPage {
    * 处理Download目录单文件导入结果
    */
   private async handleDownloadSingleImportResult(result: MangaImportDialogResult): Promise<void> {
+    const importStartedAt: number = Date.now();
     try {
       this.updateProgress(ImportStatus.IMPORTING, '正在导入漫画...', 30);
       
@@ -1424,6 +1776,15 @@ struct DataManagementPage {
       
       // 复制图片文件和ComicInfo.xml
       const imageFiles: string[] = [];
+      const copyStartedAt: number = Date.now();
+      const copyStartedEvent: ImportFlowEvent = new ImportFlowEvent();
+      copyStartedEvent.eventType = ImportFlowEventType.COPY_STARTED;
+      copyStartedEvent.reason = 'download_single_copy_started';
+      copyStartedEvent.contentType = ImportFlowContentType.MANGA;
+      copyStartedEvent.displayName = result.title;
+      copyStartedEvent.sourceUri = result.sourceFileUri || this.currentFileUri;
+      copyStartedEvent.targetPath = chapterPath;
+      this.recordImportFlowEvent(copyStartedEvent);
       if (parsed.extractedPath) {
         const files = SafeFileUtils.listFileSync(parsed.extractedPath);
         for (const file of files) {
@@ -1451,8 +1812,26 @@ struct DataManagementPage {
           }
         }
       }
-      
+      const copyCompletedEvent: ImportFlowEvent = new ImportFlowEvent();
+      copyCompletedEvent.eventType = ImportFlowEventType.COPY_COMPLETED;
+      copyCompletedEvent.reason = 'download_single_copy_completed';
+      copyCompletedEvent.contentType = ImportFlowContentType.MANGA;
+      copyCompletedEvent.displayName = result.title;
+      copyCompletedEvent.sourceUri = result.sourceFileUri || this.currentFileUri;
+      copyCompletedEvent.targetPath = chapterPath;
+      copyCompletedEvent.pageCount = imageFiles.length;
+      copyCompletedEvent.elapsedMs = Date.now() - copyStartedAt;
+      this.recordImportFlowEvent(copyCompletedEvent);
+       
       // 创建漫画记录
+      const dbStartedAt: number = Date.now();
+      const dbStartedEvent: ImportFlowEvent = new ImportFlowEvent();
+      dbStartedEvent.eventType = ImportFlowEventType.DB_WRITE_STARTED;
+      dbStartedEvent.reason = 'download_single_db_started';
+      dbStartedEvent.contentType = ImportFlowContentType.MANGA;
+      dbStartedEvent.displayName = result.title;
+      dbStartedEvent.pageCount = imageFiles.length;
+      this.recordImportFlowEvent(dbStartedEvent);
       const mangaId = await this.dataManager.addComicInfo({
         title: result.title,
         author: result.author,
@@ -1474,10 +1853,19 @@ struct DataManagementPage {
       chapterInput.comicId = mangaId;
       chapterInput.pageCount = imageFiles.length;
       const chapterId = await this.dataManager.addChapterInfo(chapterInput);
-      
+       
       // 添加页面信息
       await this.addPageInfoToDatabaseFromPath(chapterId, chapterPath);
-      
+      const dbCompletedEvent: ImportFlowEvent = new ImportFlowEvent();
+      dbCompletedEvent.eventType = ImportFlowEventType.DB_WRITE_COMPLETED;
+      dbCompletedEvent.reason = 'download_single_db_completed';
+      dbCompletedEvent.contentType = ImportFlowContentType.MANGA;
+      dbCompletedEvent.displayName = result.title;
+      dbCompletedEvent.pageCount = imageFiles.length;
+      dbCompletedEvent.elapsedMs = Date.now() - dbStartedAt;
+      dbCompletedEvent.detail = `mangaId=${mangaId}, chapterId=${chapterId}`;
+      this.recordImportFlowEvent(dbCompletedEvent);
+       
       // 处理封面 - 复制第一张图片到漫画目录作为封面
       if (imageFiles.length > 0) {
         imageFiles.sort();
@@ -1489,6 +1877,13 @@ struct DataManagementPage {
           SafeFileUtils.copyFileSync(firstImagePath, coverPath);
           // 更新数据库中的封面路径
           await this.dataManager.updateComicCoverUrl(mangaId, coverPath);
+          const coverEvent: ImportFlowEvent = new ImportFlowEvent();
+          coverEvent.eventType = ImportFlowEventType.COVER_HANDLED;
+          coverEvent.reason = 'download_single_cover_saved';
+          coverEvent.contentType = ImportFlowContentType.MANGA;
+          coverEvent.displayName = result.title;
+          coverEvent.targetPath = coverPath;
+          this.recordImportFlowEvent(coverEvent);
           logger.info(TAG, `封面已保存: ${coverPath}`);
         } catch (e) {
           logger.warn(TAG, `保存封面失败: ${String(e)}`);
@@ -1509,17 +1904,36 @@ struct DataManagementPage {
         chapterPath,
         'download_single_import_completed'
       );
-      
+       
       eventBus.publish(GameEvent.MANGA_IMPORT_COMPLETED, new MangaImportCompletedPayload(1, 1));
-      
+      const refreshEvent: ImportFlowEvent = new ImportFlowEvent();
+      refreshEvent.eventType = ImportFlowEventType.BOOKSHELF_REFRESH_PUBLISHED;
+      refreshEvent.reason = 'download_single_bookshelf_refresh_published';
+      refreshEvent.contentType = ImportFlowContentType.MANGA;
+      refreshEvent.displayName = result.title;
+      refreshEvent.elapsedMs = Date.now() - importStartedAt;
+      this.recordImportFlowEvent(refreshEvent);
+      this.endCurrentImportFlow('download_single_manga_completed');
+       
       // 询问是否删除原文件
       if (result.sourceFileUri) {
         this.askDeleteSourceFile(result.sourceFileUri, result.title);
       }
     } catch (error) {
       logger.error(TAG, `导入失败: ${String(error)}`);
+      const failedEvent: ImportFlowEvent = new ImportFlowEvent();
+      failedEvent.eventType = ImportFlowEventType.ERROR;
+      failedEvent.reason = 'download_single_import_failed';
+      failedEvent.contentType = ImportFlowContentType.MANGA;
+      failedEvent.displayName = result.title;
+      failedEvent.success = false;
+      failedEvent.severity = ImportFlowSeverity.ERROR;
+      failedEvent.elapsedMs = Date.now() - importStartedAt;
+      failedEvent.errorMessage = String(error);
+      this.recordImportFlowEvent(failedEvent);
       this.updateProgress(ImportStatus.ERROR, `导入失败: ${String(error)}`, 0);
       this.getUIContext().getPromptAction().showToast({ message: `导入失败: ${String(error)}` });
+      this.endCurrentImportFlow('download_single_manga_failed');
     }
   }
   
@@ -1743,6 +2157,15 @@ struct DataManagementPage {
       this.getUIContext().getPromptAction().showToast({ message: '没有待导入的电子书文件' });
       return;
     }
+    this.ensureImportFlow(
+      ImportFlowEntrySource.DOWNLOAD_DIR,
+      ImportFlowContentType.EBOOK,
+      'Download电子书导入',
+      this.pendingEbookFiles.length,
+      this.pendingEbookFiles.length > 1,
+      this.downloadDirPath,
+      `${this.downloadDirPath}/ebooks`
+    );
     
     // 创建电子书专属文件夹
     const ebooksPath = `${this.downloadDirPath}/ebooks`;
@@ -1772,7 +2195,31 @@ struct DataManagementPage {
         const safeFilename = filename.replace(/[<>:"/\\|?*]/g, '_');
         const targetPath = `${ebooksPath}/${timestamp}_${safeFilename}`;
         
+        const copyStartedAt: number = Date.now();
+        const copyStartedEvent: ImportFlowEvent = new ImportFlowEvent();
+        copyStartedEvent.eventType = ImportFlowEventType.COPY_STARTED;
+        copyStartedEvent.reason = 'download_ebook_copy_started';
+        copyStartedEvent.entrySource = ImportFlowEntrySource.DOWNLOAD_DIR;
+        copyStartedEvent.contentType = ImportFlowContentType.EBOOK;
+        copyStartedEvent.fileName = filename;
+        copyStartedEvent.sourceUri = sourcePath;
+        copyStartedEvent.targetPath = targetPath;
+        copyStartedEvent.currentIndex = i + 1;
+        copyStartedEvent.totalCount = totalFiles;
+        this.recordImportFlowEvent(copyStartedEvent);
         SafeFileUtils.copyFileSync(sourcePath, targetPath);
+        const copyCompletedEvent: ImportFlowEvent = new ImportFlowEvent();
+        copyCompletedEvent.eventType = ImportFlowEventType.COPY_COMPLETED;
+        copyCompletedEvent.reason = 'download_ebook_copy_completed';
+        copyCompletedEvent.entrySource = ImportFlowEntrySource.DOWNLOAD_DIR;
+        copyCompletedEvent.contentType = ImportFlowContentType.EBOOK;
+        copyCompletedEvent.fileName = filename;
+        copyCompletedEvent.sourceUri = sourcePath;
+        copyCompletedEvent.targetPath = targetPath;
+        copyCompletedEvent.currentIndex = i + 1;
+        copyCompletedEvent.totalCount = totalFiles;
+        copyCompletedEvent.elapsedMs = Date.now() - copyStartedAt;
+        this.recordImportFlowEvent(copyCompletedEvent);
         logger.info(TAG, `电子书复制成功: ${targetPath}`);
         
         // 继续导入流程
@@ -1784,6 +2231,18 @@ struct DataManagementPage {
         }
       } catch (error) {
         logger.error(TAG, `导入电子书失败 ${filename}: ${String(error)}`);
+        const failedEvent: ImportFlowEvent = new ImportFlowEvent();
+        failedEvent.eventType = ImportFlowEventType.ERROR;
+        failedEvent.reason = 'download_ebook_import_failed';
+        failedEvent.entrySource = ImportFlowEntrySource.DOWNLOAD_DIR;
+        failedEvent.contentType = ImportFlowContentType.EBOOK;
+        failedEvent.fileName = filename;
+        failedEvent.currentIndex = i + 1;
+        failedEvent.totalCount = totalFiles;
+        failedEvent.success = false;
+        failedEvent.severity = ImportFlowSeverity.ERROR;
+        failedEvent.errorMessage = String(error);
+        this.recordImportFlowEvent(failedEvent);
       }
     }
     
@@ -2437,9 +2896,46 @@ struct DataManagementPage {
         const pendingFileSource = AppStorage.get<string>('pendingFileSource');
         const pendingFileTarget = AppStorage.get<string>('pendingFileTarget');
         const pendingFileDisplayName = AppStorage.get<string>('pendingFileDisplayName');
+        const pendingImportFlowId = AppStorage.get<string>('pendingImportFlowId');
         
         if (pendingFileUri) {
           logger.info(TAG, `准备处理文件: ${pendingFileUri}, 分类: ${pendingFileCategory}`);
+          const entrySource = this.mapImportSource(pendingFileSource || '');
+          const contentType = this.mapImportContentType(pendingFileCategory || '');
+          if (pendingImportFlowId && pendingImportFlowId.length > 0) {
+            this.currentImportFlowId = pendingImportFlowId;
+            this.ensureImportFlow(
+              entrySource,
+              contentType,
+              pendingFileDisplayName || pendingFileType || '',
+              1,
+              false,
+              pendingFileUri,
+              pendingFileTarget || ''
+            );
+          } else {
+            this.startImportFlow(
+              entrySource,
+              contentType,
+              pendingFileDisplayName || pendingFileType || '',
+              1,
+              false,
+              pendingFileUri,
+              pendingFileTarget || ''
+            );
+          }
+          const consumedEvent: ImportFlowEvent = new ImportFlowEvent();
+          consumedEvent.eventType = ImportFlowEventType.PENDING_MARKERS_CONSUMED;
+          consumedEvent.reason = 'pending_file_consumed';
+          consumedEvent.entrySource = entrySource;
+          consumedEvent.contentType = contentType;
+          consumedEvent.sourceUri = pendingFileUri;
+          consumedEvent.targetPath = pendingFileTarget || '';
+          consumedEvent.displayName = pendingFileDisplayName || pendingFileType || '';
+          consumedEvent.fileCount = 1;
+          consumedEvent.transferRecordId = AppStorage.get<string>(APP_STORAGE_TRANSFER_RECORD_ID) || '';
+          consumedEvent.detail = `category=${pendingFileCategory || ''}, source=${pendingFileSource || ''}, target=${pendingFileTarget || ''}`;
+          this.recordImportFlowEvent(consumedEvent);
           
           // 清除文件信息
           AppStorage.delete('pendingFileUri');
@@ -2448,6 +2944,7 @@ struct DataManagementPage {
           AppStorage.delete('pendingFileSource');
           AppStorage.delete('pendingFileTarget');
           AppStorage.delete('pendingFileDisplayName');
+          AppStorage.delete('pendingImportFlowId');
           
           // 延迟处理，确保UI完全渲染
           setTimeout(() => {
@@ -2479,6 +2976,15 @@ struct DataManagementPage {
 
       AppStorage.setOrCreate(APP_STORAGE_TRANSFER_RESULT, status);
       AppStorage.setOrCreate(APP_STORAGE_TRANSFER_TRACKING_ACTIVE, false);
+      const event: ImportFlowEvent = new ImportFlowEvent();
+      event.eventType = ImportFlowEventType.TRANSFER_RESULT_WRITTEN;
+      event.reason = status;
+      event.entrySource = ImportFlowEntrySource.LAN_TRANSFER;
+      event.transferRecordId = recordId;
+      event.success = status !== 'import_failed';
+      event.severity = status === 'import_failed' ? ImportFlowSeverity.ERROR : ImportFlowSeverity.INFO;
+      event.detail = `status=${status}`;
+      this.recordImportFlowEvent(event);
       logger.info(TAG, `已回写局域网传书导入结果: recordId=${recordId}, status=${status}`);
     } catch (error) {
       logger.warn(TAG, `回写局域网传书导入结果失败: ${String(error)}`);
@@ -2496,8 +3002,30 @@ struct DataManagementPage {
     target: string = '',
     displayName: string = ''
   ): Promise<void> {
+    const entrySource = this.mapImportSource(source);
+    const contentType = this.mapImportContentType(category);
     try {
       logger.info(TAG, `根据分类处理文件: ${fileUri}, 分类: ${category}, 来源: ${source}, 目标: ${target}`);
+      this.ensureImportFlow(
+        entrySource,
+        contentType,
+        displayName || fileType,
+        1,
+        false,
+        fileUri,
+        target
+      );
+      const entryEvent: ImportFlowEvent = new ImportFlowEvent();
+      entryEvent.eventType = ImportFlowEventType.ENTRY_RECEIVED;
+      entryEvent.reason = 'pending_category_dispatch';
+      entryEvent.entrySource = entrySource;
+      entryEvent.contentType = contentType;
+      entryEvent.sourceUri = fileUri;
+      entryEvent.targetPath = target;
+      entryEvent.displayName = displayName || fileType;
+      entryEvent.fileCount = 1;
+      entryEvent.detail = `category=${category}, source=${source}, target=${target}`;
+      this.recordImportFlowEvent(entryEvent);
 
       if (source === 'network_folder' && target === 'download_dir') {
         await this.handleNetworkFolderPendingImport(fileUri, fileType, category, displayName);
@@ -2527,6 +3055,17 @@ struct DataManagementPage {
       }
     } catch (error) {
       logger.error(TAG, '根据分类处理文件失败', String(error));
+      const failedEvent: ImportFlowEvent = new ImportFlowEvent();
+      failedEvent.eventType = ImportFlowEventType.ERROR;
+      failedEvent.reason = 'pending_category_dispatch_failed';
+      failedEvent.entrySource = entrySource;
+      failedEvent.contentType = contentType;
+      failedEvent.sourceUri = fileUri;
+      failedEvent.displayName = displayName || fileType;
+      failedEvent.success = false;
+      failedEvent.severity = ImportFlowSeverity.ERROR;
+      failedEvent.errorMessage = String(error);
+      this.recordImportFlowEvent(failedEvent);
       this.finalizeTrackedTransferImport('import_failed');
     }
   }
@@ -2891,6 +3430,15 @@ struct DataManagementPage {
   private async handleExternalComicImport(fileUri: string): Promise<void> {
     try {
       logger.info(TAG, `处理外部漫画文件导入: ${fileUri}`);
+      this.ensureImportFlow(
+        this.currentImportFlowId.length > 0 ? ImportFlowEntrySource.UNKNOWN : ImportFlowEntrySource.EXTERNAL_FILE_TASK,
+        ImportFlowContentType.MANGA,
+        this.getFileNameFromUri(fileUri),
+        1,
+        false,
+        fileUri,
+        ''
+      );
       
       // 将文件URI添加到选中文件列表
       this.selectedFiles = [fileUri];
@@ -2913,6 +3461,15 @@ struct DataManagementPage {
   private async handleExternalEBookImport(fileUri: string): Promise<void> {
     try {
       logger.info(TAG, `处理外部电子书文件导入: ${fileUri}`);
+      this.ensureImportFlow(
+        this.currentImportFlowId.length > 0 ? ImportFlowEntrySource.UNKNOWN : ImportFlowEntrySource.EXTERNAL_FILE_TASK,
+        ImportFlowContentType.EBOOK,
+        this.getFileNameFromUri(fileUri),
+        1,
+        false,
+        fileUri,
+        ''
+      );
       
       // 直接调用导入电子书方法
       await this.importEBook(fileUri);
@@ -2932,6 +3489,15 @@ struct DataManagementPage {
   ): Promise<void> {
     try {
       logger.info(TAG, `处理PDF文件导入，显示设置对话框: ${fileUri}`);
+      this.ensureImportFlow(
+        this.currentImportFlowId.length > 0 ? ImportFlowEntrySource.UNKNOWN : ImportFlowEntrySource.FILE_PICKER,
+        ImportFlowContentType.PDF,
+        this.pdfImportService.getDefaultTitle(fileUri),
+        1,
+        false,
+        fileUri,
+        preferredOutputDir
+      );
       
       const defaultTitle = this.pdfImportService.getDefaultTitle(fileUri);
       
@@ -2943,6 +3509,7 @@ struct DataManagementPage {
         // [修复] 清除进度提示信息
         this.updateProgress(ImportStatus.IDLE, '', 0);
         this.finalizeTrackedTransferImport('import_cancelled');
+        this.endCurrentImportFlow('pdf_dialog_cancelled');
         return;
       }
       
@@ -2953,8 +3520,18 @@ struct DataManagementPage {
       
     } catch (error) {
       logger.error(TAG, '处理PDF文件导入失败', String(error instanceof Error ? error.message : error));
+      const failedEvent: ImportFlowEvent = new ImportFlowEvent();
+      failedEvent.eventType = ImportFlowEventType.ERROR;
+      failedEvent.reason = 'pdf_import_prepare_failed';
+      failedEvent.contentType = ImportFlowContentType.PDF;
+      failedEvent.sourceUri = fileUri;
+      failedEvent.success = false;
+      failedEvent.severity = ImportFlowSeverity.ERROR;
+      failedEvent.errorMessage = String(error instanceof Error ? error.message : error);
+      this.recordImportFlowEvent(failedEvent);
       this.showToast('PDF导入失败: ' + String(error instanceof Error ? error.message : error));
       this.finalizeTrackedTransferImport('import_failed');
+      this.endCurrentImportFlow('pdf_import_prepare_failed');
     }
   }
 
@@ -2971,10 +3548,24 @@ struct DataManagementPage {
           sourceFileName: sourceFileName,
           onConfirm: (result: PdfImportDialogResult) => {
             logger.info(TAG, `PDF导入对话框确认: ${result.title}`);
+            const event: ImportFlowEvent = new ImportFlowEvent();
+            event.eventType = ImportFlowEventType.DIALOG_CONFIRMED;
+            event.reason = 'pdf_dialog_confirmed';
+            event.contentType = ImportFlowContentType.PDF;
+            event.displayName = result.title;
+            event.sourceUri = sourceFileName;
+            event.detail = `contentType=${result.contentType}, mode=${result.importMode}`;
+            this.recordImportFlowEvent(event);
             resolve(result);
           },
           onCancel: () => {
             logger.info(TAG, 'PDF导入对话框取消');
+            const event: ImportFlowEvent = new ImportFlowEvent();
+            event.eventType = ImportFlowEventType.DIALOG_CANCELLED;
+            event.reason = 'pdf_dialog_cancelled';
+            event.contentType = ImportFlowContentType.PDF;
+            event.sourceUri = sourceFileName;
+            this.recordImportFlowEvent(event);
             resolve(null);
           }
         }),
@@ -2985,6 +3576,13 @@ struct DataManagementPage {
       
       this.pdfImportDialogController.open();
       logger.info(TAG, 'PDF导入设置对话框已显示');
+      const event: ImportFlowEvent = new ImportFlowEvent();
+      event.eventType = ImportFlowEventType.DIALOG_OPENED;
+      event.reason = 'pdf_dialog_opened';
+      event.contentType = ImportFlowContentType.PDF;
+      event.displayName = defaultTitle;
+      event.sourceUri = sourceFileName;
+      this.recordImportFlowEvent(event);
     });
   }
 
@@ -3005,6 +3603,7 @@ struct DataManagementPage {
     const filesDir = context.filesDir;
     
     // 创建后台任务
+    const activeImportFlowId: string = this.currentImportFlowId;
     const taskId = taskManager.createTask(
       TaskType.PDF_IMPORT,
       `导入: ${dialogResult.title}`,
@@ -3016,7 +3615,8 @@ struct DataManagementPage {
           onProgress,
           cancelSignal,
           preferredOutputDir,
-          sourceId
+          sourceId,
+          activeImportFlowId
         );
       },
       {
@@ -3028,19 +3628,60 @@ struct DataManagementPage {
         }
       }
     );
+    const createdEvent: ImportFlowEvent = new ImportFlowEvent();
+    createdEvent.eventType = ImportFlowEventType.PDF_TASK_CREATED;
+    createdEvent.reason = 'pdf_task_created';
+    createdEvent.contentType = ImportFlowContentType.PDF;
+    createdEvent.sourceUri = fileUri;
+    createdEvent.targetPath = preferredOutputDir;
+    createdEvent.displayName = dialogResult.title;
+    createdEvent.taskId = taskId;
+    this.recordImportFlowEvent(createdEvent);
     
     // 启动任务（后台执行）
     taskManager.startTask(taskId).then(() => {
       logger.info(TAG, `PDF导入任务完成: ${taskId}`);
+      const event: ImportFlowEvent = new ImportFlowEvent();
+      event.eventType = ImportFlowEventType.PDF_TASK_COMPLETED;
+      event.reason = 'pdf_task_completed';
+      event.sessionId = activeImportFlowId;
+      event.contentType = ImportFlowContentType.PDF;
+      event.sourceUri = fileUri;
+      event.displayName = dialogResult.title;
+      event.taskId = taskId;
+      this.recordImportFlowEvent(event);
       this.showToast(`导入成功: ${dialogResult.title}`);
       this.finalizeTrackedTransferImport('imported');
       // 发送导入完成事件
       const payload = new MangaImportCompletedPayload(1, 1);
       eventBus.publish(GameEvent.MANGA_IMPORT_COMPLETED, payload);
+      this.recordSimpleImportFlowEvent(
+        ImportFlowEventType.BOOKSHELF_REFRESH_PUBLISHED,
+        'pdf_bookshelf_refresh_published',
+        ImportFlowContentType.PDF,
+        ImportFlowEntrySource.UNKNOWN,
+        true,
+        dialogResult.title,
+        0
+      );
+      this.endCurrentImportFlow('pdf_import_completed');
     }).catch((error: Error) => {
       logger.error(TAG, `PDF导入任务失败: ${taskId}`, error.message);
+      const event: ImportFlowEvent = new ImportFlowEvent();
+      event.eventType = ImportFlowEventType.PDF_TASK_FAILED;
+      event.reason = 'pdf_task_failed';
+      event.sessionId = activeImportFlowId;
+      event.contentType = ImportFlowContentType.PDF;
+      event.sourceUri = fileUri;
+      event.displayName = dialogResult.title;
+      event.taskId = taskId;
+      event.success = false;
+      event.severity = ImportFlowSeverity.ERROR;
+      event.errorMessage = error.message;
+      this.recordImportFlowEvent(event);
       this.showToast(`导入失败: ${error.message}`);
       this.finalizeTrackedTransferImport('import_failed');
+      this.endCurrentImportFlow('pdf_import_failed');
     });
     
     // 显示提示，任务已在后台运行
@@ -3057,7 +3698,8 @@ struct DataManagementPage {
     onProgress: (current: number, total: number, message: string) => void,
     cancelSignal: TaskCancelSignal,
     preferredOutputDir: string = '',
-    sourceId: string = 'local_pdf'
+    sourceId: string = 'local_pdf',
+    importFlowId: string = ''
   ): Promise<PdfImportResult> {
     try {
       const result = await this.pdfImportService.executeImport({
@@ -3067,6 +3709,7 @@ struct DataManagementPage {
         outputDir: preferredOutputDir,
         cancelSignal: cancelSignal,
         sourceId: sourceId,
+        importFlowId: importFlowId,
         onProgress: (current: number, total: number, message: string) => {
           onProgress(current, total, message);
           this.updateProgress(ImportStatus.PROCESSING, message, total > 0 ? Math.floor((current / total) * 100) : 0);
@@ -3706,8 +4349,18 @@ struct DataManagementPage {
    * @returns true 表示导入成功，false 表示用户取消或失败
    */
   private async continueImportEBook(sandboxPath: string): Promise<boolean> {
+    const importStartedAt: number = Date.now();
     try {
       logger.info(TAG, `继续导入电子书: ${sandboxPath}`);
+      this.ensureImportFlow(
+        this.currentImportFlowId.length > 0 ? ImportFlowEntrySource.UNKNOWN : ImportFlowEntrySource.DOWNLOAD_DIR,
+        ImportFlowContentType.EBOOK,
+        this.getFileNameFromUri(sandboxPath),
+        1,
+        false,
+        sandboxPath,
+        sandboxPath
+      );
       
       // 显示进度
       this.updateProgress(ImportStatus.PARSING, '正在解析电子书...', 20);
@@ -3720,7 +4373,17 @@ struct DataManagementPage {
       }
 
       // 解析电子书
+      const parseStartedAt: number = Date.now();
       const ebook = await parser.parse();
+      const metadataEvent: ImportFlowEvent = new ImportFlowEvent();
+      metadataEvent.eventType = ImportFlowEventType.METADATA_DETECTED;
+      metadataEvent.reason = 'ebook_metadata_detected';
+      metadataEvent.contentType = ImportFlowContentType.EBOOK;
+      metadataEvent.sourceUri = sandboxPath;
+      metadataEvent.displayName = ebook.metadata.title;
+      metadataEvent.chapterCount = ebook.chapters.length;
+      metadataEvent.elapsedMs = Date.now() - parseStartedAt;
+      this.recordImportFlowEvent(metadataEvent);
       logger.info(TAG, `电子书解析完成: ${ebook.metadata.title}`);
       
       this.updateProgress(ImportStatus.PROCESSING, `正在处理: ${ebook.metadata.title}`, 50);
@@ -3743,6 +4406,14 @@ struct DataManagementPage {
       // 尝试提取封面图片
       this.updateProgress(ImportStatus.PROCESSING, '正在提取封面...', 60);
       await this.tryExtractEBookCover(ebook, sandboxPath);
+      const coverEvent: ImportFlowEvent = new ImportFlowEvent();
+      coverEvent.eventType = ImportFlowEventType.COVER_HANDLED;
+      coverEvent.reason = 'ebook_cover_handled';
+      coverEvent.contentType = ImportFlowContentType.EBOOK;
+      coverEvent.sourceUri = sandboxPath;
+      coverEvent.targetPath = ebook.metadata.coverImagePath || '';
+      coverEvent.displayName = ebook.metadata.title;
+      this.recordImportFlowEvent(coverEvent);
       logger.info(TAG, `[封面诊断] 提取封面后 coverImagePath='${ebook.metadata.coverImagePath}'`);
 
       // 显示确认对话框，让用户查看和编辑解析到的信息
@@ -3756,6 +4427,17 @@ struct DataManagementPage {
       this.updateProgress(ImportStatus.ERROR, `导入失败: ${errorMsg}`, 0);
       this.showToast('导入失败: ' + errorMsg);
       this.finalizeTrackedTransferImport('import_failed');
+      const failedEvent: ImportFlowEvent = new ImportFlowEvent();
+      failedEvent.eventType = ImportFlowEventType.ERROR;
+      failedEvent.reason = 'ebook_continue_import_failed';
+      failedEvent.contentType = ImportFlowContentType.EBOOK;
+      failedEvent.sourceUri = sandboxPath;
+      failedEvent.success = false;
+      failedEvent.severity = ImportFlowSeverity.ERROR;
+      failedEvent.elapsedMs = Date.now() - importStartedAt;
+      failedEvent.errorMessage = errorMsg;
+      this.recordImportFlowEvent(failedEvent);
+      this.endCurrentImportFlow('ebook_import_failed');
       return false;
     }
   }
@@ -4026,6 +4708,7 @@ struct DataManagementPage {
    * 导入电子书
    */
   private async importEBook(fileUri: string): Promise<void> {
+    const importStartedAt: number = Date.now();
     try {
       logger.info(TAG, `开始导入电子书: ${fileUri}`);
       
@@ -4034,7 +4717,22 @@ struct DataManagementPage {
       
       // 0. 复制文件到沙箱
       // 这步非常重要，解决了权限持久化和路径读取问题
+      const copyStartedAt: number = Date.now();
+      const copyStartedEvent: ImportFlowEvent = new ImportFlowEvent();
+      copyStartedEvent.eventType = ImportFlowEventType.COPY_STARTED;
+      copyStartedEvent.reason = 'ebook_copy_started';
+      copyStartedEvent.contentType = ImportFlowContentType.EBOOK;
+      copyStartedEvent.sourceUri = fileUri;
+      this.recordImportFlowEvent(copyStartedEvent);
       const sandboxPath = await this.copyFileToSandbox(fileUri);
+      const copyCompletedEvent: ImportFlowEvent = new ImportFlowEvent();
+      copyCompletedEvent.eventType = ImportFlowEventType.COPY_COMPLETED;
+      copyCompletedEvent.reason = 'ebook_copy_completed';
+      copyCompletedEvent.contentType = ImportFlowContentType.EBOOK;
+      copyCompletedEvent.sourceUri = fileUri;
+      copyCompletedEvent.targetPath = sandboxPath;
+      copyCompletedEvent.elapsedMs = Date.now() - copyStartedAt;
+      this.recordImportFlowEvent(copyCompletedEvent);
       logger.info(TAG, `文件已复制到沙箱: ${sandboxPath}`);
       
       this.updateProgress(ImportStatus.PARSING, '正在解析电子书...', 30);
@@ -4047,7 +4745,18 @@ struct DataManagementPage {
       }
 
       // 2. 解析电子书
+      const parseStartedAt: number = Date.now();
       const ebook = await parser.parse();
+      const metadataEvent: ImportFlowEvent = new ImportFlowEvent();
+      metadataEvent.eventType = ImportFlowEventType.METADATA_DETECTED;
+      metadataEvent.reason = 'ebook_metadata_detected';
+      metadataEvent.contentType = ImportFlowContentType.EBOOK;
+      metadataEvent.sourceUri = fileUri;
+      metadataEvent.targetPath = sandboxPath;
+      metadataEvent.displayName = ebook.metadata.title;
+      metadataEvent.chapterCount = ebook.chapters.length;
+      metadataEvent.elapsedMs = Date.now() - parseStartedAt;
+      this.recordImportFlowEvent(metadataEvent);
       logger.info(TAG, `电子书解析完成: ${ebook.metadata.title}`);
       
       // 设置默认收藏状态为 true（导入即收藏）
@@ -4056,6 +4765,14 @@ struct DataManagementPage {
       // 尝试提取封面图片
       this.updateProgress(ImportStatus.PROCESSING, '正在提取封面...', 50);
       await this.tryExtractEBookCover(ebook, sandboxPath);
+      const coverEvent: ImportFlowEvent = new ImportFlowEvent();
+      coverEvent.eventType = ImportFlowEventType.COVER_HANDLED;
+      coverEvent.reason = 'ebook_cover_handled';
+      coverEvent.contentType = ImportFlowContentType.EBOOK;
+      coverEvent.sourceUri = fileUri;
+      coverEvent.targetPath = ebook.metadata.coverImagePath || '';
+      coverEvent.displayName = ebook.metadata.title;
+      this.recordImportFlowEvent(coverEvent);
       
       this.updateProgress(ImportStatus.PROCESSING, '准备确认信息...', 70);
 
@@ -4067,9 +4784,20 @@ struct DataManagementPage {
     } catch (error) {
       const errorMsg = error instanceof Error ? error.message : String(error);
       logger.error(TAG, '导入电子书失败', errorMsg);
+      const failedEvent: ImportFlowEvent = new ImportFlowEvent();
+      failedEvent.eventType = ImportFlowEventType.ERROR;
+      failedEvent.reason = 'ebook_import_failed';
+      failedEvent.contentType = ImportFlowContentType.EBOOK;
+      failedEvent.sourceUri = fileUri;
+      failedEvent.success = false;
+      failedEvent.severity = ImportFlowSeverity.ERROR;
+      failedEvent.elapsedMs = Date.now() - importStartedAt;
+      failedEvent.errorMessage = errorMsg;
+      this.recordImportFlowEvent(failedEvent);
       this.updateProgress(ImportStatus.ERROR, `导入失败: ${errorMsg}`, 0);
       this.showToast(`电子书导入失败: ${errorMsg}`);
       this.finalizeTrackedTransferImport('import_failed');
+      this.endCurrentImportFlow('ebook_import_failed');
     }
   }
 
@@ -4227,6 +4955,15 @@ struct DataManagementPage {
           chapters: ebook.chapters,  // 传递章节信息
           onConfirm: async (result: EBookMetadataDialogResult) => {
             logger.info(TAG, '用户确认导入电子书');
+            const dbStartedAt: number = Date.now();
+            const confirmEvent: ImportFlowEvent = new ImportFlowEvent();
+            confirmEvent.eventType = ImportFlowEventType.DIALOG_CONFIRMED;
+            confirmEvent.reason = 'ebook_metadata_dialog_confirmed';
+            confirmEvent.contentType = ImportFlowContentType.EBOOK;
+            confirmEvent.displayName = result.metadata.title;
+            confirmEvent.sourceUri = sourceFileName;
+            confirmEvent.chapterCount = ebook.chapters.length;
+            this.recordImportFlowEvent(confirmEvent);
             // [修复] 保存原始封面路径，防止 @Prop 深拷贝丢失嵌套属性
             const originalCoverPath = ebook.metadata.coverImagePath || '';
             logger.info(TAG, `[封面诊断] 对话框确认前: originalCoverPath='${originalCoverPath}', result.coverImagePath='${result.metadata.coverImagePath}'`);
@@ -4253,17 +4990,47 @@ struct DataManagementPage {
             
             logger.info(TAG, `[封面诊断] 保存前最终 coverImagePath='${ebook.metadata.coverImagePath}'`);
             // 保存到数据库
+            const dbStartedEvent: ImportFlowEvent = new ImportFlowEvent();
+            dbStartedEvent.eventType = ImportFlowEventType.DB_WRITE_STARTED;
+            dbStartedEvent.reason = 'ebook_db_write_started';
+            dbStartedEvent.contentType = ImportFlowContentType.EBOOK;
+            dbStartedEvent.displayName = ebook.metadata.title;
+            dbStartedEvent.chapterCount = ebook.chapters.length;
+            this.recordImportFlowEvent(dbStartedEvent);
             await this.ebookDataManager.saveEBook(ebook);
+            const dbCompletedEvent: ImportFlowEvent = new ImportFlowEvent();
+            dbCompletedEvent.eventType = ImportFlowEventType.DB_WRITE_COMPLETED;
+            dbCompletedEvent.reason = 'ebook_db_write_completed';
+            dbCompletedEvent.contentType = ImportFlowContentType.EBOOK;
+            dbCompletedEvent.displayName = ebook.metadata.title;
+            dbCompletedEvent.chapterCount = ebook.chapters.length;
+            dbCompletedEvent.elapsedMs = Date.now() - dbStartedAt;
+            dbCompletedEvent.detail = `ebookId=${ebook.id}`;
+            this.recordImportFlowEvent(dbCompletedEvent);
             logger.info(TAG, `电子书导入成功: ${ebook.metadata.title}`);
             
             // 显示成功提示
             this.updateProgress(ImportStatus.COMPLETED, `导入成功: ${ebook.metadata.title}`, 100);
             this.showToast(`导入成功: ${ebook.metadata.title}`);
             this.finalizeTrackedTransferImport('imported');
+            const refreshEvent: ImportFlowEvent = new ImportFlowEvent();
+            refreshEvent.eventType = ImportFlowEventType.BOOKSHELF_REFRESH_PUBLISHED;
+            refreshEvent.reason = 'ebook_bookshelf_refresh_published';
+            refreshEvent.contentType = ImportFlowContentType.EBOOK;
+            refreshEvent.displayName = ebook.metadata.title;
+            this.recordImportFlowEvent(refreshEvent);
+            this.endCurrentImportFlow('ebook_import_completed');
             resolve(true);
           },
           onCancel: async () => {
             logger.info(TAG, '用户取消导入电子书');
+            const cancelEvent: ImportFlowEvent = new ImportFlowEvent();
+            cancelEvent.eventType = ImportFlowEventType.DIALOG_CANCELLED;
+            cancelEvent.reason = 'ebook_metadata_dialog_cancelled';
+            cancelEvent.contentType = ImportFlowContentType.EBOOK;
+            cancelEvent.displayName = ebook.metadata.title;
+            cancelEvent.sourceUri = sourceFileName;
+            this.recordImportFlowEvent(cancelEvent);
             
             // 删除已生成的封面图片（如果有）
             if (ebook.metadata.coverImagePath && ebook.metadata.coverImagePath.length > 0) {
@@ -4277,6 +5044,7 @@ struct DataManagementPage {
 
             this.updateProgress(ImportStatus.IDLE, '已取消导入', 0);
             this.finalizeTrackedTransferImport('import_cancelled');
+            this.endCurrentImportFlow('ebook_import_cancelled');
             resolve(false);
           },
           onRegenerateCover: async (title: string, oldCoverPath: string): Promise<string> => {
@@ -4317,6 +5085,14 @@ struct DataManagementPage {
       });
 
       this.ebookMetadataDialogController.open();
+      const event: ImportFlowEvent = new ImportFlowEvent();
+      event.eventType = ImportFlowEventType.DIALOG_OPENED;
+      event.reason = 'ebook_metadata_dialog_opened';
+      event.contentType = ImportFlowContentType.EBOOK;
+      event.displayName = ebook.metadata.title;
+      event.sourceUri = sourceFileName;
+      event.chapterCount = ebook.chapters.length;
+      this.recordImportFlowEvent(event);
     });
   }
   
@@ -4455,6 +5231,24 @@ struct DataManagementPage {
       this.updateProgress(ImportStatus.ERROR, '请先选择要导入的文件', 0);
       return;
     }
+    this.ensureImportFlow(
+      this.currentImportFlowId.length > 0 ? ImportFlowEntrySource.UNKNOWN : ImportFlowEntrySource.FILE_PICKER,
+      ImportFlowContentType.MANGA,
+      this.selectedFiles.length === 1 ? this.getFileNameFromUri(this.selectedFiles[0]) : '批量漫画导入',
+      this.selectedFiles.length,
+      this.selectedFiles.length >= 2,
+      this.selectedFiles[0],
+      ''
+    );
+    const entryEvent: ImportFlowEvent = new ImportFlowEvent();
+    entryEvent.eventType = ImportFlowEventType.ENTRY_RECEIVED;
+    entryEvent.reason = 'manga_start_import';
+    entryEvent.contentType = ImportFlowContentType.MANGA;
+    entryEvent.fileCount = this.selectedFiles.length;
+    entryEvent.batchMode = this.selectedFiles.length >= 2;
+    entryEvent.sourceUri = this.selectedFiles[0];
+    entryEvent.displayName = this.selectedFiles.length === 1 ? this.getFileNameFromUri(this.selectedFiles[0]) : '批量漫画导入';
+    this.recordImportFlowEvent(entryEvent);
 
     // 如果选择了多个文件（2个或以上），显示批量导入配置对话框
     if (this.selectedFiles.length >= 2) {
@@ -4484,11 +5278,15 @@ struct DataManagementPage {
         parseComicInfoXml: (xmlContent: string): PrefilledComicInfo | null => {
           return this.parseComicInfoXml(xmlContent);
         },
+        onFlowEvent: (event: ImportFlowEvent) => {
+          this.recordImportFlowEvent(event);
+        },
         onConfirm: (result: BatchMangaImportDialogResult) => {
           this.handleBatchMangaImportDialogResult(result);
         },
         onCancel: () => {
           this.updateProgress(ImportStatus.IDLE, '已取消批量导入', 0);
+          this.endCurrentImportFlow('batch_manga_cancelled');
         }
       }),
       autoCancel: false,
@@ -4497,6 +5295,15 @@ struct DataManagementPage {
     });
 
     this.batchMangaImportDialogController.open();
+    this.recordSimpleImportFlowEvent(
+      ImportFlowEventType.DIALOG_OPENED,
+      'batch_manga_dialog_opened',
+      ImportFlowContentType.MANGA,
+      ImportFlowEntrySource.UNKNOWN,
+      true,
+      `files=${this.selectedFiles.length}`,
+      0
+    );
     this.updateProgress(ImportStatus.IDLE, '请配置批量导入选项', 10);
   }
   
@@ -4504,12 +5311,38 @@ struct DataManagementPage {
    * 为批量导入查找可能的重复漫画
    */
   private async parseArchiveStructureWithPasswordRetry(fileUri: string): Promise<CompressionParsedStructure> {
+    const cachedParsed = this.importArchiveParseCache.get(fileUri);
+    if (cachedParsed !== null) {
+      const cacheEvent: ImportFlowEvent = new ImportFlowEvent();
+      cacheEvent.eventType = ImportFlowEventType.ARCHIVE_PARSE_CACHE_HIT;
+      cacheEvent.reason = 'archive_parse_cache_hit';
+      cacheEvent.contentType = ImportFlowContentType.MANGA;
+      cacheEvent.sourceUri = fileUri;
+      cacheEvent.fileName = this.getFileNameFromUri(fileUri);
+      cacheEvent.cacheHit = true;
+      cacheEvent.cacheKey = this.importArchiveParseCache.buildKey(fileUri);
+      cacheEvent.detail = `chapters=${cachedParsed.detectedChapters.length}, pages=${cachedParsed.totalImageCount}`;
+      this.recordImportFlowEvent(cacheEvent);
+      return cachedParsed;
+    }
+
+    const startedAt: number = Date.now();
+    const startedEvent: ImportFlowEvent = new ImportFlowEvent();
+    startedEvent.eventType = ImportFlowEventType.ARCHIVE_PARSE_STARTED;
+    startedEvent.reason = 'archive_parse_started';
+    startedEvent.contentType = ImportFlowContentType.MANGA;
+    startedEvent.sourceUri = fileUri;
+    startedEvent.fileName = this.getFileNameFromUri(fileUri);
+    this.recordImportFlowEvent(startedEvent);
+
     const cachedPassword = this.archivePasswordCache.get(fileUri);
     if (cachedPassword) {
       try {
-        return await this.compressionUtils.parseArchiveStructure(fileUri, { password: cachedPassword });
+        const parsed = await this.compressionUtils.parseArchiveStructure(fileUri, { password: cachedPassword });
+        return this.completeArchiveStructureParse(fileUri, parsed, startedAt, 'cached_password');
       } catch (error) {
         if (!this.compressionUtils.isPasswordRequiredError(error)) {
+          this.recordArchiveStructureParseFailure(fileUri, startedAt, String(error), 'cached_password_failed');
           throw error as Error;
         }
         this.archivePasswordCache.delete(fileUri);
@@ -4520,24 +5353,44 @@ struct DataManagementPage {
       try {
         const parsed = await this.compressionUtils.parseArchiveStructure(fileUri, { password: this.lastArchivePassword });
         this.archivePasswordCache.set(fileUri, this.lastArchivePassword);
-        return parsed;
+        return this.completeArchiveStructureParse(fileUri, parsed, startedAt, 'last_password');
       } catch (error) {
         if (!this.compressionUtils.isPasswordRequiredError(error)) {
+          this.recordArchiveStructureParseFailure(fileUri, startedAt, String(error), 'last_password_failed');
           throw error as Error;
         }
       }
     }
 
     try {
-      return await this.compressionUtils.parseArchiveStructure(fileUri);
+      const parsed = await this.compressionUtils.parseArchiveStructure(fileUri);
+      return this.completeArchiveStructureParse(fileUri, parsed, startedAt, 'no_password');
     } catch (error) {
       if (!this.compressionUtils.isPasswordRequiredError(error)) {
+        this.recordArchiveStructureParseFailure(fileUri, startedAt, String(error), 'no_password_failed');
         throw error as Error;
       }
     }
 
+    const passwordRequiredEvent: ImportFlowEvent = new ImportFlowEvent();
+    passwordRequiredEvent.eventType = ImportFlowEventType.PASSWORD_REQUIRED;
+    passwordRequiredEvent.reason = 'archive_password_required';
+    passwordRequiredEvent.contentType = ImportFlowContentType.MANGA;
+    passwordRequiredEvent.sourceUri = fileUri;
+    passwordRequiredEvent.fileName = this.getFileNameFromUri(fileUri);
+    this.recordImportFlowEvent(passwordRequiredEvent);
+
     let errorMessage = '该压缩包需要密码才能继续导入';
     for (let attempt = 0; attempt < 3; attempt++) {
+      const retryEvent: ImportFlowEvent = new ImportFlowEvent();
+      retryEvent.eventType = ImportFlowEventType.PASSWORD_RETRY;
+      retryEvent.reason = 'archive_password_retry';
+      retryEvent.contentType = ImportFlowContentType.MANGA;
+      retryEvent.sourceUri = fileUri;
+      retryEvent.fileName = this.getFileNameFromUri(fileUri);
+      retryEvent.currentIndex = attempt + 1;
+      retryEvent.totalCount = 3;
+      this.recordImportFlowEvent(retryEvent);
       const password = await showArchivePasswordDialog(
         this.themeState,
         this.getFileNameFromUri(fileUri),
@@ -4545,6 +5398,7 @@ struct DataManagementPage {
         errorMessage
       );
       if (!password) {
+        this.recordArchiveStructureParseFailure(fileUri, startedAt, '用户取消输入压缩包密码', 'password_cancelled');
         throw new UserSkipError('用户取消输入压缩包密码');
       }
 
@@ -4552,16 +5406,54 @@ struct DataManagementPage {
         const parsed = await this.compressionUtils.parseArchiveStructure(fileUri, { password: password });
         this.lastArchivePassword = password;
         this.archivePasswordCache.set(fileUri, password);
-        return parsed;
+        return this.completeArchiveStructureParse(fileUri, parsed, startedAt, 'password_retry_success');
       } catch (error) {
         if (!this.compressionUtils.isPasswordRequiredError(error)) {
+          this.recordArchiveStructureParseFailure(fileUri, startedAt, String(error), 'password_retry_failed');
           throw error as Error;
         }
         errorMessage = '密码不正确，请重试';
       }
     }
 
+    this.recordArchiveStructureParseFailure(fileUri, startedAt, '压缩包密码错误', 'password_retry_exhausted');
     throw new Error('压缩包密码错误');
+  }
+
+  private completeArchiveStructureParse(
+    fileUri: string,
+    parsed: CompressionParsedStructure,
+    startedAt: number,
+    reason: string
+  ): CompressionParsedStructure {
+    this.importArchiveParseCache.set(fileUri, parsed);
+    const event: ImportFlowEvent = new ImportFlowEvent();
+    event.eventType = ImportFlowEventType.ARCHIVE_PARSE_COMPLETED;
+    event.reason = reason;
+    event.contentType = ImportFlowContentType.MANGA;
+    event.sourceUri = fileUri;
+    event.fileName = this.getFileNameFromUri(fileUri);
+    event.chapterCount = parsed.detectedChapters.length;
+    event.pageCount = parsed.totalImageCount;
+    event.elapsedMs = Date.now() - startedAt;
+    event.cacheKey = this.importArchiveParseCache.buildKey(fileUri);
+    event.detail = `chapters=${parsed.detectedChapters.length}, pages=${parsed.totalImageCount}, rootImages=${parsed.rootImageCount}`;
+    this.recordImportFlowEvent(event);
+    return parsed;
+  }
+
+  private recordArchiveStructureParseFailure(fileUri: string, startedAt: number, errorMessage: string, reason: string): void {
+    const event: ImportFlowEvent = new ImportFlowEvent();
+    event.eventType = ImportFlowEventType.ARCHIVE_PARSE_FAILED;
+    event.reason = reason;
+    event.contentType = ImportFlowContentType.MANGA;
+    event.sourceUri = fileUri;
+    event.fileName = this.getFileNameFromUri(fileUri);
+    event.success = false;
+    event.severity = ImportFlowSeverity.ERROR;
+    event.elapsedMs = Date.now() - startedAt;
+    event.errorMessage = errorMessage;
+    this.recordImportFlowEvent(event);
   }
 
   private async extractRecursivelyAndFindComicInfoWithPasswordRetry(
@@ -4696,6 +5588,27 @@ struct DataManagementPage {
   }
 
   private async findExistingMangaCandidatesForBatch(): Promise<void> {
+    const cacheTitle: string = 'batch';
+    const cachedCandidates = this.importDuplicateDetectionCache.get(this.currentImportFlowId, cacheTitle, 'manga', 'batch');
+    if (cachedCandidates !== null) {
+      this.existingMangaCandidates = cachedCandidates;
+      const cacheEvent: ImportFlowEvent = new ImportFlowEvent();
+      cacheEvent.eventType = ImportFlowEventType.DUPLICATE_CACHE_HIT;
+      cacheEvent.reason = 'batch_duplicate_cache_hit';
+      cacheEvent.contentType = ImportFlowContentType.MANGA;
+      cacheEvent.cacheHit = true;
+      cacheEvent.cacheKey = this.importDuplicateDetectionCache.buildKey(this.currentImportFlowId, cacheTitle, 'manga', 'batch');
+      cacheEvent.detail = `candidates=${cachedCandidates.length}`;
+      this.recordImportFlowEvent(cacheEvent);
+      return;
+    }
+    const startedAt: number = Date.now();
+    const startedEvent: ImportFlowEvent = new ImportFlowEvent();
+    startedEvent.eventType = ImportFlowEventType.DUPLICATE_DETECT_STARTED;
+    startedEvent.reason = 'batch_duplicate_detect_started';
+    startedEvent.contentType = ImportFlowContentType.MANGA;
+    startedEvent.detail = `selected=${this.selectedFiles.length}, pending=${this.pendingMangaFiles.length}`;
+    this.recordImportFlowEvent(startedEvent);
     try {
       // 获取所有漫画记录
       const allComics: ComicRecord[] = await this.dataManager.getAllComics();
@@ -4714,11 +5627,30 @@ struct DataManagementPage {
         candidates.push(candidate);
       }
       this.existingMangaCandidates = candidates;
+      this.importDuplicateDetectionCache.set(this.currentImportFlowId, cacheTitle, 'manga', 'batch', candidates);
+      const completedEvent: ImportFlowEvent = new ImportFlowEvent();
+      completedEvent.eventType = ImportFlowEventType.DUPLICATE_DETECT_COMPLETED;
+      completedEvent.reason = 'batch_duplicate_detect_completed';
+      completedEvent.contentType = ImportFlowContentType.MANGA;
+      completedEvent.elapsedMs = Date.now() - startedAt;
+      completedEvent.totalCount = allComics.length;
+      completedEvent.currentIndex = candidates.length;
+      completedEvent.detail = `candidates=${candidates.length}`;
+      this.recordImportFlowEvent(completedEvent);
       
       logger.info(TAG, `批量导入找到 ${this.existingMangaCandidates.length} 个已有漫画候选`);
     } catch (error) {
       logger.error(TAG, `查找已有漫画失败: ${error}`);
       this.existingMangaCandidates = [];
+      const failedEvent: ImportFlowEvent = new ImportFlowEvent();
+      failedEvent.eventType = ImportFlowEventType.ERROR;
+      failedEvent.reason = 'batch_duplicate_detect_failed';
+      failedEvent.contentType = ImportFlowContentType.MANGA;
+      failedEvent.success = false;
+      failedEvent.severity = ImportFlowSeverity.ERROR;
+      failedEvent.elapsedMs = Date.now() - startedAt;
+      failedEvent.errorMessage = String(error);
+      this.recordImportFlowEvent(failedEvent);
     }
   }
   
@@ -4799,6 +5731,7 @@ struct DataManagementPage {
    * 处理批量漫画导入对话框结果
    */
   private async handleBatchMangaImportDialogResult(result: BatchMangaImportDialogResult): Promise<void> {
+    const batchStartedAt: number = Date.now();
     try {
       this.importResults = [];
       this.importResultDetails = [];
@@ -4809,6 +5742,14 @@ struct DataManagementPage {
       let successfulImports = 0;
       
       logger.info(TAG, `开始批量导入，共 ${totalGroups} 部漫画`);
+      const confirmEvent: ImportFlowEvent = new ImportFlowEvent();
+      confirmEvent.eventType = ImportFlowEventType.DIALOG_CONFIRMED;
+      confirmEvent.reason = 'batch_manga_confirmed';
+      confirmEvent.contentType = ImportFlowContentType.MANGA;
+      confirmEvent.batchMode = true;
+      confirmEvent.fileCount = totalGroups;
+      confirmEvent.totalCount = totalGroups;
+      this.recordImportFlowEvent(confirmEvent);
       
       for (const group of result.groups) {
         processedGroups++;
@@ -4822,9 +5763,30 @@ struct DataManagementPage {
           await this.importMangaGroup(group);
           successfulImports++;
           this.importResults.push(`✅ ${group.title}: 导入成功 (${group.chapters.length} 章节)`);
+          const progressEvent: ImportFlowEvent = new ImportFlowEvent();
+          progressEvent.eventType = ImportFlowEventType.COPY_PROGRESS;
+          progressEvent.reason = 'batch_manga_group_imported';
+          progressEvent.contentType = ImportFlowContentType.MANGA;
+          progressEvent.batchMode = true;
+          progressEvent.displayName = group.title;
+          progressEvent.currentIndex = processedGroups;
+          progressEvent.totalCount = totalGroups;
+          this.recordImportFlowEvent(progressEvent);
         } catch (error) {
           this.importResults.push(`❌ ${group.title}: 导入失败 - ${error}`);
           logger.error(TAG, `导入漫画分组失败: ${group.title}`, String(error));
+          const failedEvent: ImportFlowEvent = new ImportFlowEvent();
+          failedEvent.eventType = ImportFlowEventType.ERROR;
+          failedEvent.reason = 'batch_manga_group_failed';
+          failedEvent.contentType = ImportFlowContentType.MANGA;
+          failedEvent.batchMode = true;
+          failedEvent.displayName = group.title;
+          failedEvent.currentIndex = processedGroups;
+          failedEvent.totalCount = totalGroups;
+          failedEvent.success = false;
+          failedEvent.severity = ImportFlowSeverity.ERROR;
+          failedEvent.errorMessage = String(error);
+          this.recordImportFlowEvent(failedEvent);
         }
       }
       
@@ -4844,12 +5806,33 @@ struct DataManagementPage {
       // 发布导入完成事件
       if (successfulImports > 0) {
         eventBus.publish(GameEvent.MANGA_IMPORT_COMPLETED, new MangaImportCompletedPayload(successfulImports, totalGroups));
+        const refreshEvent: ImportFlowEvent = new ImportFlowEvent();
+        refreshEvent.eventType = ImportFlowEventType.BOOKSHELF_REFRESH_PUBLISHED;
+        refreshEvent.reason = 'batch_manga_bookshelf_refresh_published';
+        refreshEvent.contentType = ImportFlowContentType.MANGA;
+        refreshEvent.batchMode = true;
+        refreshEvent.currentIndex = successfulImports;
+        refreshEvent.totalCount = totalGroups;
+        refreshEvent.elapsedMs = Date.now() - batchStartedAt;
+        this.recordImportFlowEvent(refreshEvent);
       }
+      this.endCurrentImportFlow(successfulImports > 0 ? 'batch_manga_completed' : 'batch_manga_no_success');
       
     } catch (error) {
       logger.error(TAG, '批量导入失败', String(error));
+      const failedEvent: ImportFlowEvent = new ImportFlowEvent();
+      failedEvent.eventType = ImportFlowEventType.ERROR;
+      failedEvent.reason = 'batch_manga_failed';
+      failedEvent.contentType = ImportFlowContentType.MANGA;
+      failedEvent.batchMode = true;
+      failedEvent.success = false;
+      failedEvent.severity = ImportFlowSeverity.ERROR;
+      failedEvent.elapsedMs = Date.now() - batchStartedAt;
+      failedEvent.errorMessage = String(error);
+      this.recordImportFlowEvent(failedEvent);
       this.updateProgress(ImportStatus.ERROR, `批量导入失败: ${error}`, 0);
       this.showToast(`批量导入失败: ${error instanceof Error ? error.message : String(error)}`);
+      this.endCurrentImportFlow('batch_manga_failed');
     }
   }
   
@@ -4858,6 +5841,7 @@ struct DataManagementPage {
    */
   private async importMangaGroup(group: MangaGroupResult): Promise<void> {
     let mangaId: string;
+    const dbStartedAt: number = Date.now();
     
     if (group.mergeToExisting && group.targetMangaId) {
       // 合并到已有漫画
@@ -4879,6 +5863,13 @@ struct DataManagementPage {
         lastUpdateTime: Date.now()
       };
       
+      const dbStartedEvent: ImportFlowEvent = new ImportFlowEvent();
+      dbStartedEvent.eventType = ImportFlowEventType.DB_WRITE_STARTED;
+      dbStartedEvent.reason = 'batch_manga_record_create_started';
+      dbStartedEvent.contentType = ImportFlowContentType.MANGA;
+      dbStartedEvent.displayName = group.title;
+      dbStartedEvent.chapterCount = group.chapters.length;
+      this.recordImportFlowEvent(dbStartedEvent);
       mangaId = await this.dataManager.addComicInfo(comicInfoInput);
       logger.info(TAG, `创建新漫画: ${mangaId}, 标题: ${group.title}`);
       
@@ -4889,8 +5880,24 @@ struct DataManagementPage {
       // 处理封面
       if (group.selectedCoverPath) {
         await this.processCoverImage(mangaId, group.selectedCoverPath, group.title);
+        const coverEvent: ImportFlowEvent = new ImportFlowEvent();
+        coverEvent.eventType = ImportFlowEventType.COVER_HANDLED;
+        coverEvent.reason = 'batch_manga_cover_handled';
+        coverEvent.contentType = ImportFlowContentType.MANGA;
+        coverEvent.displayName = group.title;
+        coverEvent.targetPath = group.selectedCoverPath;
+        this.recordImportFlowEvent(coverEvent);
       }
     }
+    const dbCompletedEvent: ImportFlowEvent = new ImportFlowEvent();
+    dbCompletedEvent.eventType = ImportFlowEventType.DB_WRITE_COMPLETED;
+    dbCompletedEvent.reason = 'batch_manga_record_ready';
+    dbCompletedEvent.contentType = ImportFlowContentType.MANGA;
+    dbCompletedEvent.displayName = group.title;
+    dbCompletedEvent.chapterCount = group.chapters.length;
+    dbCompletedEvent.elapsedMs = Date.now() - dbStartedAt;
+    dbCompletedEvent.detail = `mangaId=${mangaId}`;
+    this.recordImportFlowEvent(dbCompletedEvent);
     
     // 导入所有章节
     for (const chapter of group.chapters) {
@@ -4924,6 +5931,7 @@ struct DataManagementPage {
       externalId: `local_chapter_${generateUUID()}`
     };
     
+    const dbStartedAt: number = Date.now();
     const chapterId = await this.dataManager.addChapterInfo(chapterInfoInput);
     logger.info(TAG, `创建章节: ${chapterId}, 标题: ${chapter.title}`);
     
@@ -4942,7 +5950,28 @@ struct DataManagementPage {
       lastUpdateTime: Date.now()
     };
     
+    const copyStartedAt: number = Date.now();
     await this.organizeAndAddPages(comicInfoInput, chapterInfoInput, parsedStructure.extractedPath, chapterId);
+    const copyEvent: ImportFlowEvent = new ImportFlowEvent();
+    copyEvent.eventType = ImportFlowEventType.COPY_COMPLETED;
+    copyEvent.reason = 'batch_chapter_organized';
+    copyEvent.contentType = ImportFlowContentType.MANGA;
+    copyEvent.displayName = comicTitle;
+    copyEvent.fileName = chapter.title;
+    copyEvent.targetPath = parsedStructure.extractedPath;
+    copyEvent.pageCount = parsedStructure.totalImageCount;
+    copyEvent.elapsedMs = Date.now() - copyStartedAt;
+    this.recordImportFlowEvent(copyEvent);
+    const dbEvent: ImportFlowEvent = new ImportFlowEvent();
+    dbEvent.eventType = ImportFlowEventType.DB_WRITE_COMPLETED;
+    dbEvent.reason = 'batch_chapter_db_completed';
+    dbEvent.contentType = ImportFlowContentType.MANGA;
+    dbEvent.displayName = comicTitle;
+    dbEvent.fileName = chapter.title;
+    dbEvent.pageCount = parsedStructure.totalImageCount;
+    dbEvent.elapsedMs = Date.now() - dbStartedAt;
+    dbEvent.detail = `chapterId=${chapterId}`;
+    this.recordImportFlowEvent(dbEvent);
   }
 
   /**
@@ -5048,9 +6077,29 @@ struct DataManagementPage {
    * 查找可能的重复漫画
    */
   private async findExistingMangaCandidates(fileName: string): Promise<void> {
+    const possibleTitle = removeFileExtension(fileName);
+    const cachedCandidates = this.importDuplicateDetectionCache.get(this.currentImportFlowId, possibleTitle, 'manga', 'single');
+    if (cachedCandidates !== null) {
+      this.existingMangaCandidates = cachedCandidates;
+      const cacheEvent: ImportFlowEvent = new ImportFlowEvent();
+      cacheEvent.eventType = ImportFlowEventType.DUPLICATE_CACHE_HIT;
+      cacheEvent.reason = 'single_duplicate_cache_hit';
+      cacheEvent.contentType = ImportFlowContentType.MANGA;
+      cacheEvent.cacheHit = true;
+      cacheEvent.cacheKey = this.importDuplicateDetectionCache.buildKey(this.currentImportFlowId, possibleTitle, 'manga', 'single');
+      cacheEvent.detail = `title=${possibleTitle}, candidates=${cachedCandidates.length}`;
+      this.recordImportFlowEvent(cacheEvent);
+      return;
+    }
+    const startedAt: number = Date.now();
+    const startedEvent: ImportFlowEvent = new ImportFlowEvent();
+    startedEvent.eventType = ImportFlowEventType.DUPLICATE_DETECT_STARTED;
+    startedEvent.reason = 'single_duplicate_detect_started';
+    startedEvent.contentType = ImportFlowContentType.MANGA;
+    startedEvent.displayName = possibleTitle;
+    this.recordImportFlowEvent(startedEvent);
     try {
       // 从文件名提取可能的漫画名称
-      const possibleTitle = removeFileExtension(fileName);
       
       // 查询数据库中的本地漫画
       const allManga: ComicRecord[] = await this.dataManager.getAllComics();
@@ -5084,11 +6133,32 @@ struct DataManagementPage {
       }
       
       this.existingMangaCandidates = candidates;
+      this.importDuplicateDetectionCache.set(this.currentImportFlowId, possibleTitle, 'manga', 'single', candidates);
+      const completedEvent: ImportFlowEvent = new ImportFlowEvent();
+      completedEvent.eventType = ImportFlowEventType.DUPLICATE_DETECT_COMPLETED;
+      completedEvent.reason = 'single_duplicate_detect_completed';
+      completedEvent.contentType = ImportFlowContentType.MANGA;
+      completedEvent.displayName = possibleTitle;
+      completedEvent.elapsedMs = Date.now() - startedAt;
+      completedEvent.totalCount = localManga.length;
+      completedEvent.currentIndex = candidates.length;
+      completedEvent.detail = `title=${possibleTitle}, candidates=${candidates.length}`;
+      this.recordImportFlowEvent(completedEvent);
       logger.info(TAG, `找到 ${candidates.length} 个可能的重复漫画`);
       
     } catch (error) {
       logger.error(TAG, '查找重复漫画失败', String(error));
       this.existingMangaCandidates = [];
+      const failedEvent: ImportFlowEvent = new ImportFlowEvent();
+      failedEvent.eventType = ImportFlowEventType.ERROR;
+      failedEvent.reason = 'single_duplicate_detect_failed';
+      failedEvent.contentType = ImportFlowContentType.MANGA;
+      failedEvent.displayName = possibleTitle;
+      failedEvent.success = false;
+      failedEvent.severity = ImportFlowSeverity.ERROR;
+      failedEvent.elapsedMs = Date.now() - startedAt;
+      failedEvent.errorMessage = String(error);
+      this.recordImportFlowEvent(failedEvent);
     }
   }
 
@@ -5123,6 +6193,10 @@ struct DataManagementPage {
         fileName: fileName,
         parsedStructure: parsedStructure,
         existingMangaCandidates: this.existingMangaCandidates,
+        sourceFileUri: this.currentFileUri,
+        onFlowEvent: (event: ImportFlowEvent) => {
+          this.recordImportFlowEvent(event);
+        },
         onConfirm: (result: MangaImportDialogResult) => {
           this.handleMangaImportDialogResult(result);
         },
@@ -5135,6 +6209,7 @@ struct DataManagementPage {
           this.currentFileUri = '';
           this.updateProgress(ImportStatus.IDLE, '已取消导入', 0);
           this.finalizeTrackedTransferImport('import_cancelled');
+          this.endCurrentImportFlow('manga_dialog_cancelled');
         }
       }),
       autoCancel: false,
@@ -5143,6 +6218,15 @@ struct DataManagementPage {
     });
 
     this.mangaImportDialogController.open();
+    this.recordSimpleImportFlowEvent(
+      ImportFlowEventType.DIALOG_OPENED,
+      'manga_dialog_opened',
+      ImportFlowContentType.MANGA,
+      ImportFlowEntrySource.UNKNOWN,
+      true,
+      fileName,
+      0
+    );
     this.updateProgress(ImportStatus.IDLE, '请配置导入选项', 20);
   }
 
@@ -5150,8 +6234,17 @@ struct DataManagementPage {
    * 处理漫画导入对话框结果
    */
   private async handleMangaImportDialogResult(result: MangaImportDialogResult): Promise<void> {
+    const importStartedAt: number = Date.now();
     try {
       this.updateProgress(ImportStatus.IMPORTING, '正在导入漫画...', 30);
+      const confirmEvent: ImportFlowEvent = new ImportFlowEvent();
+      confirmEvent.eventType = ImportFlowEventType.DIALOG_CONFIRMED;
+      confirmEvent.reason = 'manga_dialog_result_confirmed';
+      confirmEvent.contentType = ImportFlowContentType.MANGA;
+      confirmEvent.displayName = result.title;
+      confirmEvent.sourceUri = result.sourceFileUri || this.currentFileUri;
+      confirmEvent.detail = `mode=${result.importMode}`;
+      this.recordImportFlowEvent(confirmEvent);
       
       const parsedStructure = result.parsedStructure;
       
@@ -5178,12 +6271,32 @@ struct DataManagementPage {
       
       // 发布导入完成事件
       eventBus.publish(GameEvent.MANGA_IMPORT_COMPLETED, new MangaImportCompletedPayload(1, 1));
+      const refreshEvent: ImportFlowEvent = new ImportFlowEvent();
+      refreshEvent.eventType = ImportFlowEventType.BOOKSHELF_REFRESH_PUBLISHED;
+      refreshEvent.reason = 'manga_bookshelf_refresh_published';
+      refreshEvent.contentType = ImportFlowContentType.MANGA;
+      refreshEvent.displayName = result.title;
+      refreshEvent.elapsedMs = Date.now() - importStartedAt;
+      this.recordImportFlowEvent(refreshEvent);
+      this.endCurrentImportFlow('manga_import_completed');
       
     } catch (error) {
       logger.error(TAG, '导入漫画失败', String(error));
+      const failedEvent: ImportFlowEvent = new ImportFlowEvent();
+      failedEvent.eventType = ImportFlowEventType.ERROR;
+      failedEvent.reason = 'manga_import_failed';
+      failedEvent.contentType = ImportFlowContentType.MANGA;
+      failedEvent.displayName = result.title;
+      failedEvent.sourceUri = result.sourceFileUri || this.currentFileUri;
+      failedEvent.success = false;
+      failedEvent.severity = ImportFlowSeverity.ERROR;
+      failedEvent.elapsedMs = Date.now() - importStartedAt;
+      failedEvent.errorMessage = String(error);
+      this.recordImportFlowEvent(failedEvent);
       this.updateProgress(ImportStatus.ERROR, `导入失败: ${error}`, 0);
       this.showToast(`漫画导入失败: ${error instanceof Error ? error.message : String(error)}`);
       this.finalizeTrackedTransferImport('import_failed');
+      this.endCurrentImportFlow('manga_import_failed');
     } finally {
       // 清理临时文件
       if (this.currentParsedStructure) {

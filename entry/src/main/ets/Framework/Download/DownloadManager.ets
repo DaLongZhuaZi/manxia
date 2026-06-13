@@ -21,6 +21,16 @@ import { OnlineArchiveCreateResult, OnlineArchiveMetadata, OnlineArchivePageFile
 import { eventBus, GameEvent, MangaCacheUpdatedPayload } from '../EventBus';
 import { CookieManager } from '../Managers/CookieManager';
 import util from '@ohos.util';
+import { DownloadCacheFlowMonitor, getDownloadCacheFlowMonitor } from './DownloadCacheFlowMonitor';
+import {
+  DownloadCacheContentType,
+  DownloadCacheEntrySource,
+  DownloadCacheFlowEvent,
+  DownloadCacheFlowEventType,
+  DownloadCacheFlowSessionInfo,
+  DownloadCacheFlowSeverity,
+  DownloadCacheFlowStage
+} from './DownloadCacheFlowTypes';
 
 const TAG = 'DownloadManager';
 const DOWNLOAD_BACKGROUND_TASK_OWNER = 'download_manager_queue';
@@ -102,6 +112,7 @@ export interface DownloadTaskInfo {
   defaultRequestHeaders?: Record<string, string>; // 默认请求头
   pageRequestHeaders?: (Record<string, string> | undefined)[]; // 页面级请求头
   failedPageIndexes?: number[];  // 所有重试后仍失败的页码索引
+  downloadCacheFlowId?: string;
 }
 
 /**
@@ -135,6 +146,7 @@ export class MangaDownloadManager {
   private databaseManager: DatabaseManager;
   private downloadDirManager: DownloadDirManager;
   private onlineArchiveService: OnlineMangaArchiveService;
+  private downloadCacheFlowMonitor: DownloadCacheFlowMonitor;
   private usePublicDownloadDir: boolean = true;  // 是否使用公共Download目录
   private progressCallbacks: Map<string, DownloadProgressCallback> = new Map();  // 进度回调
   
@@ -150,6 +162,7 @@ export class MangaDownloadManager {
     this.databaseManager = DatabaseManager.getInstance();
     this.downloadDirManager = DownloadDirManager.getInstance();
     this.onlineArchiveService = OnlineMangaArchiveService.getInstance();
+    this.downloadCacheFlowMonitor = getDownloadCacheFlowMonitor();
     logger.info(TAG, '下载管理器初始化');
   }
 
@@ -254,6 +267,74 @@ export class MangaDownloadManager {
     });
   }
 
+  private ensureTaskFlow(
+    requestedFlowId: string,
+    mangaId: string,
+    mangaTitle: string,
+    chapterId: string,
+    chapterTitle: string,
+    taskId: string,
+    sourceId: number,
+    totalCount: number
+  ): string {
+    const flowId: string = requestedFlowId.length > 0
+      ? requestedFlowId
+      : this.downloadCacheFlowMonitor.createSessionId('download_cache_task');
+    const info: DownloadCacheFlowSessionInfo = new DownloadCacheFlowSessionInfo();
+    info.sessionId = flowId;
+    info.entrySource = DownloadCacheEntrySource.MANGA_DOWNLOAD_MANAGER;
+    info.contentType = DownloadCacheContentType.MANGA;
+    info.contentId = mangaId;
+    info.contentTitle = mangaTitle;
+    info.chapterId = chapterId;
+    info.chapterTitle = chapterTitle;
+    info.taskId = taskId;
+    info.sourceId = sourceId;
+    info.totalCount = totalCount;
+    info.pageName = 'MangaDownloadManager';
+    return this.downloadCacheFlowMonitor.ensureSession(info);
+  }
+
+  private recordTaskFlowEvent(
+    task: DownloadTaskInfo,
+    eventType: DownloadCacheFlowEventType,
+    stage: DownloadCacheFlowStage,
+    reason: string,
+    success: boolean,
+    errorMessage: string,
+    elapsedMs: number,
+    downloadedCount: number,
+    totalCount: number
+  ): void {
+    if (!task.downloadCacheFlowId || task.downloadCacheFlowId.length <= 0) {
+      return;
+    }
+    try {
+      const event: DownloadCacheFlowEvent = this.downloadCacheFlowMonitor.createEvent(task.downloadCacheFlowId, eventType, stage, reason);
+      event.entrySource = DownloadCacheEntrySource.MANGA_DOWNLOAD_MANAGER;
+      event.contentType = DownloadCacheContentType.MANGA;
+      event.contentId = task.mangaId;
+      event.contentTitle = task.mangaTitle;
+      event.chapterId = task.chapterId;
+      event.chapterTitle = task.chapterTitle;
+      event.taskId = task.id;
+      event.sourceId = task.sourceId || 0;
+      event.success = success;
+      event.severity = success ? DownloadCacheFlowSeverity.INFO : DownloadCacheFlowSeverity.ERROR;
+      event.errorMessage = errorMessage;
+      event.elapsedMs = elapsedMs;
+      event.downloadedCount = downloadedCount;
+      event.totalCount = totalCount;
+      event.failedCount = task.failedPageIndexes ? task.failedPageIndexes.length : 0;
+      event.filePath = task.savePath;
+      event.archivePath = task.archivePath || '';
+      event.detail = `status=${task.status}, progress=${task.progress}`;
+      this.downloadCacheFlowMonitor.record(event);
+    } catch (error) {
+      logger.warn(TAG, `下载缓存链路记录失败: ${String(error)}`);
+    }
+  }
+
   /**
    * 注册下载进度回调
    * @param listenerId 监听器ID（用于取消注册）
@@ -293,8 +374,10 @@ export class MangaDownloadManager {
     mangaTitle: string,
     chapterId: string,
     chapterTitle: string,
-    imageUrls: string[]
+    imageUrls: string[],
+    downloadCacheFlowId: string = ''
   ): Promise<string> {
+    const startedAt: number = Date.now();
     try {
       if (!this.context) {
         throw new Error('应用上下文未设置');
@@ -302,6 +385,7 @@ export class MangaDownloadManager {
 
       // 生成任务ID
       const taskId = `${mangaId}_${chapterId}_${Date.now()}`;
+      const flowId: string = this.ensureTaskFlow(downloadCacheFlowId, mangaId, mangaTitle, chapterId, chapterTitle, taskId, 0, imageUrls.length);
       
       // 创建保存目录
       const savePath = `${this.context.filesDir}/downloads/${mangaId}/${chapterId}`;
@@ -320,7 +404,8 @@ export class MangaDownloadManager {
         progress: 0,
         downloadedCount: 0,
         totalCount: imageUrls.length,
-        createdTime: Date.now()
+        createdTime: Date.now(),
+        downloadCacheFlowId: flowId
       };
 
       // 保存到内存
@@ -328,9 +413,11 @@ export class MangaDownloadManager {
       
       // 保存到数据库
       await this.saveTaskToDatabase(taskInfo);
+      this.recordTaskFlowEvent(taskInfo, DownloadCacheFlowEventType.TASK_DB_UPDATE_COMPLETED, DownloadCacheFlowStage.DATABASE, 'download_task_saved_to_db', true, '', Date.now() - startedAt, 0, imageUrls.length);
 
       // 添加到下载队列
       this.enqueueTask(taskId);
+      this.recordTaskFlowEvent(taskInfo, DownloadCacheFlowEventType.QUEUE_ENQUEUED, DownloadCacheFlowStage.QUEUE, 'local_manga_task_enqueued', true, '', 0, 0, imageUrls.length);
       
       logger.info(TAG, `下载任务已创建: ${taskId}, 章节: ${chapterTitle}, 图片数: ${imageUrls.length}`);
       
@@ -362,8 +449,10 @@ export class MangaDownloadManager {
     chapterTitle: string,
     imageUrls: string[],
     sourceId: number,
-    headers?: Record<string, string>
+    headers?: Record<string, string>,
+    downloadCacheFlowId: string = ''
   ): Promise<string> {
+    const startedAt: number = Date.now();
     try {
       if (!this.context) {
         throw new Error('应用上下文未设置');
@@ -371,6 +460,7 @@ export class MangaDownloadManager {
 
       const existingTask = this.findExistingOnlineTask(sourceId, mangaId, chapterId);
       if (existingTask) {
+        this.recordTaskFlowEvent(existingTask.task, DownloadCacheFlowEventType.TASK_DEDUP_HIT, DownloadCacheFlowStage.TASK, 'manga_download_manager_dedup_hit', true, '', Date.now() - startedAt, existingTask.task.downloadedCount, existingTask.task.totalCount);
         return existingTask.taskId;
       }
 
@@ -385,6 +475,7 @@ export class MangaDownloadManager {
 
       // 生成任务ID
       const taskId = `online_${mangaId}_${chapterId}_${Date.now()}`;
+      const flowId: string = this.ensureTaskFlow(downloadCacheFlowId, mangaId, mangaTitle, chapterId, chapterTitle, taskId, sourceId, imageUrls.length);
 
       const sourceIdentity = await this.resolveOnlineSourceIdentity(sourceId);
       const savePath = `${this.context.cacheDir}/online_download_work/${taskId}`;
@@ -408,7 +499,8 @@ export class MangaDownloadManager {
         isOnlineManga: true,
         sourceId: sourceId,
         sourceName: sourceIdentity.sourceName,
-        sourcePkg: sourceIdentity.sourcePkg
+        sourcePkg: sourceIdentity.sourcePkg,
+        downloadCacheFlowId: flowId
       };
       taskInfo.defaultRequestHeaders = this.cloneHeaderRecord(headers);
 
@@ -417,10 +509,12 @@ export class MangaDownloadManager {
       
       // 保存到数据库
       await this.saveTaskToDatabase(taskInfo);
+      this.recordTaskFlowEvent(taskInfo, DownloadCacheFlowEventType.TASK_DB_UPDATE_COMPLETED, DownloadCacheFlowStage.DATABASE, 'online_manga_task_saved_to_db', true, '', Date.now() - startedAt, 0, imageUrls.length);
       this.registerOnlineTaskIndex(taskInfo);
 
       // 添加到下载队列
       this.enqueueTask(taskId);
+      this.recordTaskFlowEvent(taskInfo, DownloadCacheFlowEventType.QUEUE_ENQUEUED, DownloadCacheFlowStage.QUEUE, 'online_manga_task_enqueued', true, '', 0, 0, imageUrls.length);
       
       logger.info(TAG, `在线漫画下载任务已创建: ${taskId}, 漫画: ${mangaTitle}, 章节: ${chapterTitle}, 图片数: ${imageUrls.length}`);
       
@@ -445,8 +539,10 @@ export class MangaDownloadManager {
     chapterId: string,
     chapterTitle: string,
     sourceId: number,
-    pageListFetcher: PageListFetcher
+    pageListFetcher: PageListFetcher,
+    downloadCacheFlowId: string = ''
   ): Promise<string> {
+    const startedAt: number = Date.now();
     try {
       if (!this.context) {
         throw new Error('应用上下文未设置');
@@ -454,6 +550,7 @@ export class MangaDownloadManager {
 
       const existingTask = this.findExistingOnlineTask(sourceId, mangaId, chapterId);
       if (existingTask) {
+        this.recordTaskFlowEvent(existingTask.task, DownloadCacheFlowEventType.TASK_DEDUP_HIT, DownloadCacheFlowStage.TASK, 'manga_download_manager_fetcher_dedup_hit', true, '', Date.now() - startedAt, existingTask.task.downloadedCount, existingTask.task.totalCount);
         return existingTask.taskId;
       }
 
@@ -467,6 +564,7 @@ export class MangaDownloadManager {
 
       // 生成任务ID
       const taskId = `online_${mangaId}_${chapterId}_${Date.now()}`;
+      const flowId: string = this.ensureTaskFlow(downloadCacheFlowId, mangaId, mangaTitle, chapterId, chapterTitle, taskId, sourceId, 0);
 
       const sourceIdentity = await this.resolveOnlineSourceIdentity(sourceId);
       const savePath = `${this.context.cacheDir}/online_download_work/${taskId}`;
@@ -492,7 +590,8 @@ export class MangaDownloadManager {
         sourceName: sourceIdentity.sourceName,
         sourcePkg: sourceIdentity.sourcePkg,
         needFetchPages: true,
-        pageListFetcher: pageListFetcher
+        pageListFetcher: pageListFetcher,
+        downloadCacheFlowId: flowId
       };
 
       // 保存到内存
@@ -500,10 +599,12 @@ export class MangaDownloadManager {
       
       // 保存到数据库
       await this.saveTaskToDatabase(taskInfo);
+      this.recordTaskFlowEvent(taskInfo, DownloadCacheFlowEventType.TASK_DB_UPDATE_COMPLETED, DownloadCacheFlowStage.DATABASE, 'online_manga_fetcher_task_saved_to_db', true, '', Date.now() - startedAt, 0, 0);
       this.registerOnlineTaskIndex(taskInfo);
 
       // 添加到下载队列
       this.enqueueTask(taskId);
+      this.recordTaskFlowEvent(taskInfo, DownloadCacheFlowEventType.QUEUE_ENQUEUED, DownloadCacheFlowStage.QUEUE, 'online_manga_fetcher_task_enqueued', true, '', 0, 0, 0);
       
       logger.info(TAG, `在线漫画下载任务已创建(延迟获取): ${taskId}, 漫画: ${mangaTitle}, 章节: ${chapterTitle}`);
       
@@ -561,6 +662,17 @@ export class MangaDownloadManager {
         }
         if (task.status === TaskStatus.PENDING) {
           this.activeDownloads.add(taskId);
+          this.recordTaskFlowEvent(
+            task,
+            DownloadCacheFlowEventType.QUEUE_DISPATCHED,
+            DownloadCacheFlowStage.QUEUE,
+            'download_queue_dispatched',
+            true,
+            '',
+            0,
+            task.downloadedCount,
+            task.totalCount
+          );
           // 根据任务类型分发到不同的下载方法
           if (task.taskType === DownloadTaskType.EBOOK) {
             this.downloadEBookTask(taskId).catch((error: Error) => {
@@ -605,6 +717,17 @@ export class MangaDownloadManager {
       logger.warn(TAG, `下载任务失败状态落库失败: ${taskId}, ${String(dbError)}`);
     }
     this.notifyProgressCallbacks(task);
+    this.recordTaskFlowEvent(
+      task,
+      DownloadCacheFlowEventType.ERROR,
+      DownloadCacheFlowStage.QUEUE,
+      'task_dispatch_failed',
+      false,
+      task.error || '',
+      0,
+      task.downloadedCount,
+      task.totalCount
+    );
     if (task.isOnlineManga) {
       this.publishMangaCacheUpdated(task, '', 'task_dispatch_failed');
     }
@@ -621,14 +744,38 @@ export class MangaDownloadManager {
       return;
     }
 
+    const taskStartedAt: number = Date.now();
     try {
       logger.info(TAG, `开始下载任务: ${taskId}`);
       task.status = TaskStatus.DOWNLOADING;
       await this.updateTaskInDatabase(task);
+      this.recordTaskFlowEvent(
+        task,
+        DownloadCacheFlowEventType.TASK_DB_UPDATE_COMPLETED,
+        DownloadCacheFlowStage.DATABASE,
+        'task_marked_downloading',
+        true,
+        '',
+        0,
+        task.downloadedCount,
+        task.totalCount
+      );
 
       // 如果需要先获取图片列表
       if (task.needFetchPages && task.pageListFetcher && task.urls.length === 0) {
         logger.info(TAG, `获取章节图片列表: ${task.chapterTitle}`);
+        const pageListStartedAt: number = Date.now();
+        this.recordTaskFlowEvent(
+          task,
+          DownloadCacheFlowEventType.PAGE_LIST_FETCH_STARTED,
+          DownloadCacheFlowStage.PAGE_LIST,
+          'page_list_fetch_started',
+          true,
+          '',
+          0,
+          0,
+          0
+        );
         try {
           const pageListResult = await task.pageListFetcher(task.chapterId, task.mangaId);
           const normalizedPages = this.normalizePageListResult(pageListResult);
@@ -642,7 +789,29 @@ export class MangaDownloadManager {
           
           // 更新数据库中的任务信息
           await this.updateTaskInDatabase(task);
+          this.recordTaskFlowEvent(
+            task,
+            DownloadCacheFlowEventType.PAGE_LIST_FETCH_COMPLETED,
+            DownloadCacheFlowStage.PAGE_LIST,
+            'page_list_fetch_completed',
+            true,
+            '',
+            Date.now() - pageListStartedAt,
+            0,
+            task.totalCount
+          );
         } catch (fetchError) {
+          this.recordTaskFlowEvent(
+            task,
+            DownloadCacheFlowEventType.PAGE_LIST_FETCH_FAILED,
+            DownloadCacheFlowStage.PAGE_LIST,
+            'page_list_fetch_failed',
+            false,
+            String(fetchError),
+            Date.now() - pageListStartedAt,
+            0,
+            0
+          );
           logger.error(TAG, `获取图片列表失败: ${String(fetchError)}`);
           throw new Error(`获取图片列表失败: ${String(fetchError)}`);
         }
@@ -686,9 +855,32 @@ export class MangaDownloadManager {
         const filePath = `${task.savePath}/${fileName}`;
 
         try {
-          await this.downloadImageWithRetry(url, filePath, !!task.isOnlineManga, this.resolveRequestHeadersForPage(task, i));
+          const imageStartedAt: number = Date.now();
+          this.recordTaskFlowEvent(
+            task,
+            DownloadCacheFlowEventType.IMAGE_DOWNLOAD_STARTED,
+            DownloadCacheFlowStage.NETWORK,
+            'image_download_started',
+            true,
+            '',
+            0,
+            task.downloadedCount,
+            task.totalCount
+          );
+          await this.downloadImageWithRetry(task, url, filePath, !!task.isOnlineManga, this.resolveRequestHeadersForPage(task, i));
           task.downloadedCount++;
           task.progress = Math.floor((task.downloadedCount / task.totalCount) * 100);
+          this.recordTaskFlowEvent(
+            task,
+            DownloadCacheFlowEventType.IMAGE_DOWNLOAD_COMPLETED,
+            DownloadCacheFlowStage.NETWORK,
+            'image_download_completed',
+            true,
+            '',
+            Date.now() - imageStartedAt,
+            task.downloadedCount,
+            task.totalCount
+          );
 
           try {
             if (task.isOnlineManga) {
@@ -706,6 +898,17 @@ export class MangaDownloadManager {
               };
               downloadedPageFiles.push(pageFile);
               logger.debug(TAG, `✅ 在线页面已下载: ${fileName}`);
+              this.recordTaskFlowEvent(
+                task,
+                DownloadCacheFlowEventType.PAGE_DB_UPDATE_COMPLETED,
+                DownloadCacheFlowStage.DATABASE,
+                'online_page_db_update_completed',
+                true,
+                '',
+                0,
+                task.downloadedCount,
+                task.totalCount
+              );
             } else {
               const updateData: UpdateRecordData = {
                 id: '',
@@ -718,8 +921,30 @@ export class MangaDownloadManager {
                 [task.chapterId, String(i)]
               );
               logger.debug(TAG, `✅ 更新page本地路径: ${fileName} -> ${filePath}`);
+              this.recordTaskFlowEvent(
+                task,
+                DownloadCacheFlowEventType.PAGE_DB_UPDATE_COMPLETED,
+                DownloadCacheFlowStage.DATABASE,
+                'local_page_db_update_completed',
+                true,
+                '',
+                0,
+                task.downloadedCount,
+                task.totalCount
+              );
             }
           } catch (dbErr) {
+            this.recordTaskFlowEvent(
+              task,
+              DownloadCacheFlowEventType.PAGE_DB_UPDATE_FAILED,
+              DownloadCacheFlowStage.DATABASE,
+              'page_db_update_failed',
+              false,
+              String(dbErr),
+              0,
+              task.downloadedCount,
+              task.totalCount
+            );
             logger.warn(TAG, `更新页面本地路径失败: ${String(dbErr)}`);
           }
 
@@ -738,6 +963,17 @@ export class MangaDownloadManager {
         } catch (error) {
           logger.error(TAG, `图片下载失败(已重试): ${fileName}, ${error}`);
           newFailedIndexes.push(i);
+          this.recordTaskFlowEvent(
+            task,
+            DownloadCacheFlowEventType.IMAGE_DOWNLOAD_FAILED,
+            DownloadCacheFlowStage.NETWORK,
+            'image_download_failed_after_retry',
+            false,
+            String(error),
+            0,
+            task.downloadedCount,
+            task.totalCount
+          );
           // 继续下载下一页，不中断整个任务
         }
       }
@@ -748,8 +984,11 @@ export class MangaDownloadManager {
         task.failedPageIndexes = undefined;
 
         if (task.isOnlineManga) {
+          const archiveStartedAt: number = Date.now();
+          this.recordTaskFlowEvent(task, DownloadCacheFlowEventType.ARCHIVE_STARTED, DownloadCacheFlowStage.ARCHIVE, 'full_archive_started', true, '', 0, task.downloadedCount, task.totalCount);
           const archiveResult = await this.createOnlineMangaArchive(task, downloadedPageFiles);
           task.archivePath = archiveResult.archivePath;
+          this.recordTaskFlowEvent(task, DownloadCacheFlowEventType.ARCHIVE_COMPLETED, DownloadCacheFlowStage.ARCHIVE, 'full_archive_completed', true, '', Date.now() - archiveStartedAt, task.downloadedCount, task.totalCount);
           await this.cleanupOnlineDownloadWorkDir(task.savePath);
         }
 
@@ -757,6 +996,7 @@ export class MangaDownloadManager {
         task.progress = 100;
         task.completedTime = Date.now();
         await this.updateTaskInDatabase(task);
+        this.recordTaskFlowEvent(task, DownloadCacheFlowEventType.TASK_DB_UPDATE_COMPLETED, DownloadCacheFlowStage.DATABASE, 'task_completed_saved_to_db', true, '', 0, task.downloadedCount, task.totalCount);
 
         const chapterStatusUpdated = await this.updateChapterDownloadStatus(
           task.chapterId,
@@ -765,9 +1005,12 @@ export class MangaDownloadManager {
           task.archivePath
         );
         if (!chapterStatusUpdated) {
+          this.recordTaskFlowEvent(task, DownloadCacheFlowEventType.CHAPTER_STATUS_UPDATE_FAILED, DownloadCacheFlowStage.DATABASE, 'chapter_status_update_failed', false, '章节下载状态更新失败', 0, task.downloadedCount, task.totalCount);
           throw new Error('章节下载状态更新失败');
         }
+        this.recordTaskFlowEvent(task, DownloadCacheFlowEventType.CHAPTER_STATUS_UPDATE_COMPLETED, DownloadCacheFlowStage.DATABASE, 'chapter_status_update_completed', true, '', 0, task.downloadedCount, task.totalCount);
         if (task.isOnlineManga) {
+          await this.syncOnlineArchiveStatusAfterDownload(task, 'download_complete_archive_sync');
           this.publishMangaCacheUpdated(task, task.archivePath || '', 'download_complete');
         }
         this.notifyProgressCallbacks(task);
@@ -789,8 +1032,11 @@ export class MangaDownloadManager {
           // 达到80%阈值：创建部分归档（含占位图）
           logger.info(TAG, `下载完成度 ${task.downloadedCount}/${task.totalCount} >= ${PARTIAL_ARCHIVE_THRESHOLD * 100}%，创建部分归档`);
           try {
+            const partialArchiveStartedAt: number = Date.now();
+            this.recordTaskFlowEvent(task, DownloadCacheFlowEventType.ARCHIVE_STARTED, DownloadCacheFlowStage.ARCHIVE, 'partial_archive_started', true, '', 0, task.downloadedCount, task.totalCount);
             const archiveResult = await this.createPartialOnlineMangaArchive(task, downloadedPageFiles, newFailedIndexes);
             task.archivePath = archiveResult.archivePath;
+            this.recordTaskFlowEvent(task, DownloadCacheFlowEventType.ARCHIVE_COMPLETED, DownloadCacheFlowStage.ARCHIVE, 'partial_archive_completed', true, '', Date.now() - partialArchiveStartedAt, task.downloadedCount, task.totalCount);
             await this.cleanupOnlineDownloadWorkDir(task.savePath);
 
             // 标记为已完成（部分归档）
@@ -799,16 +1045,21 @@ export class MangaDownloadManager {
             task.completedTime = Date.now();
             task.error = `部分归档: ${task.downloadedCount}/${task.totalCount}页已下载, ${newFailedIndexes.length}页待补充`;
             await this.updateTaskInDatabase(task);
+            this.recordTaskFlowEvent(task, DownloadCacheFlowEventType.TASK_DB_UPDATE_COMPLETED, DownloadCacheFlowStage.DATABASE, 'partial_archive_task_saved_to_db', true, '', 0, task.downloadedCount, task.totalCount);
 
             const chapterStatusUpdated = await this.updateChapterDownloadStatus(
               task.chapterId,
-              true,
+              false,
               true,
               task.archivePath
             );
             if (!chapterStatusUpdated) {
               logger.warn(TAG, `部分归档章节状态更新失败: ${task.chapterId}`);
+              this.recordTaskFlowEvent(task, DownloadCacheFlowEventType.CHAPTER_STATUS_UPDATE_FAILED, DownloadCacheFlowStage.DATABASE, 'partial_archive_chapter_status_update_failed', false, '章节状态回读校验失败', 0, task.downloadedCount, task.totalCount);
+            } else {
+              this.recordTaskFlowEvent(task, DownloadCacheFlowEventType.CHAPTER_STATUS_UPDATE_COMPLETED, DownloadCacheFlowStage.DATABASE, 'partial_archive_chapter_status_update_completed', true, '', 0, task.downloadedCount, task.totalCount);
             }
+            await this.syncOnlineArchiveStatusAfterDownload(task, 'partial_archive_sync');
             this.publishMangaCacheUpdated(task, task.archivePath || '', 'partial_archive_complete');
             this.notifyProgressCallbacks(task);
 
@@ -819,11 +1070,13 @@ export class MangaDownloadManager {
 
             logger.info(TAG, `任务部分归档完成: ${taskId}, ${task.downloadedCount}/${task.totalCount}页`);
           } catch (archiveError) {
+            this.recordTaskFlowEvent(task, DownloadCacheFlowEventType.ARCHIVE_FAILED, DownloadCacheFlowStage.ARCHIVE, 'partial_archive_failed', false, String(archiveError), 0, task.downloadedCount, task.totalCount);
             logger.error(TAG, `部分归档创建失败: ${String(archiveError)}`);
             // 归档失败，回退到普通部分失败逻辑
             task.status = TaskStatus.FAILED;
             task.error = `${newFailedIndexes.length}页下载失败 (${task.downloadedCount}/${task.totalCount}页已下载)`;
             await this.updateTaskInDatabase(task);
+            this.recordTaskFlowEvent(task, DownloadCacheFlowEventType.TASK_DB_UPDATE_COMPLETED, DownloadCacheFlowStage.DATABASE, 'partial_failure_task_saved_to_db', false, task.error, 0, task.downloadedCount, task.totalCount);
             this.notifyProgressCallbacks(task);
             this.publishMangaCacheUpdated(task, '', 'partial_download');
             await this.notificationManager.sendDownloadFailedNotification(
@@ -837,6 +1090,7 @@ export class MangaDownloadManager {
           task.status = TaskStatus.FAILED;
           task.error = `${newFailedIndexes.length}页下载失败 (${task.downloadedCount}/${task.totalCount}页已下载)`;
           await this.updateTaskInDatabase(task);
+          this.recordTaskFlowEvent(task, DownloadCacheFlowEventType.TASK_DB_UPDATE_COMPLETED, DownloadCacheFlowStage.DATABASE, 'download_failed_task_saved_to_db', false, task.error, 0, task.downloadedCount, task.totalCount);
           this.notifyProgressCallbacks(task);
 
           if (task.isOnlineManga) {
@@ -857,6 +1111,7 @@ export class MangaDownloadManager {
       task.status = TaskStatus.FAILED;
       task.error = err.message;
       await this.updateTaskInDatabase(task);
+      this.recordTaskFlowEvent(task, DownloadCacheFlowEventType.ERROR, DownloadCacheFlowStage.TASK, 'download_task_failed', false, err.message, Date.now() - taskStartedAt, task.downloadedCount, task.totalCount);
       this.notifyProgressCallbacks(task);
 
       await this.notificationManager.sendDownloadFailedNotification(
@@ -869,6 +1124,10 @@ export class MangaDownloadManager {
     } finally {
       // 从活动下载中移除
       this.activeDownloads.delete(taskId);
+      this.recordTaskFlowEvent(task, DownloadCacheFlowEventType.SESSION_END, DownloadCacheFlowStage.SESSION, `download_task_finished_${task.status}`, task.status !== TaskStatus.FAILED, task.error || '', Date.now() - taskStartedAt, task.downloadedCount, task.totalCount);
+      if (task.downloadCacheFlowId && task.downloadCacheFlowId.length > 0) {
+        this.downloadCacheFlowMonitor.endSession(task.downloadCacheFlowId, `download_task_finished_${task.status}`);
+      }
       if (task.status === TaskStatus.COMPLETED || task.status === TaskStatus.FAILED) {
         this.clearOnlineTaskIndexForTask(task);
       }
@@ -1051,6 +1310,7 @@ export class MangaDownloadManager {
    * 带重试的图片下载（指数退避）
    */
   private async downloadImageWithRetry(
+    task: DownloadTaskInfo,
     url: string,
     filePath: string,
     isOnlineManga: boolean,
@@ -1072,6 +1332,17 @@ export class MangaDownloadManager {
         if (attempt < maxRetries) {
           const delayMs = Math.min(1000 * Math.pow(2, attempt), 8000);
           logger.warn(TAG, `图片下载失败，${delayMs}ms 后重试 (${attempt + 1}/${maxRetries}): ${url}`);
+          this.recordTaskFlowEvent(
+            task,
+            DownloadCacheFlowEventType.IMAGE_DOWNLOAD_RETRY,
+            DownloadCacheFlowStage.NETWORK,
+            'image_download_retry',
+            false,
+            String(error),
+            0,
+            task.downloadedCount,
+            task.totalCount
+          );
           await this.sleep(delayMs);
         }
       }
@@ -1097,6 +1368,7 @@ export class MangaDownloadManager {
 
     task.status = TaskStatus.PAUSED;
     await this.updateTaskInDatabase(task);
+    this.recordTaskFlowEvent(task, DownloadCacheFlowEventType.STATUS_CHANGED, DownloadCacheFlowStage.TASK, 'pause_task', true, '', 0, task.downloadedCount, task.totalCount);
     logger.info(TAG, `任务已暂停: ${taskId}`);
     return true;
   }
@@ -1122,6 +1394,7 @@ export class MangaDownloadManager {
     }
     this.enqueueTask(taskId);
     await this.updateTaskInDatabase(task);
+    this.recordTaskFlowEvent(task, DownloadCacheFlowEventType.QUEUE_ENQUEUED, DownloadCacheFlowStage.QUEUE, 'resume_task_enqueued', true, '', 0, task.downloadedCount, task.totalCount);
     this.scheduleProcessQueue('resume_task');
     logger.info(TAG, `任务已恢复: ${taskId}`);
     return true;
@@ -1154,6 +1427,7 @@ export class MangaDownloadManager {
     }
     this.enqueueTask(taskId);
     await this.updateTaskInDatabase(task);
+    this.recordTaskFlowEvent(task, DownloadCacheFlowEventType.QUEUE_ENQUEUED, DownloadCacheFlowStage.QUEUE, 'retry_failed_pages_enqueued', true, '', 0, task.downloadedCount, task.totalCount);
     this.scheduleProcessQueue('retry_failed_pages');
     logger.info(TAG, `任务已加入重试队列: ${taskId}, 待重试 ${task.failedPageIndexes.length} 页`);
     return true;
@@ -1223,8 +1497,11 @@ export class MangaDownloadManager {
       }
 
       // 创建部分归档
+      const archiveStartedAt: number = Date.now();
+      this.recordTaskFlowEvent(task, DownloadCacheFlowEventType.ARCHIVE_STARTED, DownloadCacheFlowStage.ARCHIVE, 'manual_partial_archive_started', true, '', 0, task.downloadedCount, task.totalCount);
       const archiveResult = await this.createPartialOnlineMangaArchive(task, downloadedPageFiles, task.failedPageIndexes);
       task.archivePath = archiveResult.archivePath;
+      this.recordTaskFlowEvent(task, DownloadCacheFlowEventType.ARCHIVE_COMPLETED, DownloadCacheFlowStage.ARCHIVE, 'manual_partial_archive_completed', true, '', Date.now() - archiveStartedAt, task.downloadedCount, task.totalCount);
       await this.cleanupOnlineDownloadWorkDir(task.savePath);
 
       // 更新任务状态
@@ -1234,10 +1511,13 @@ export class MangaDownloadManager {
       task.error = `手动保存: ${task.downloadedCount}/${task.totalCount}页已下载, ${task.failedPageIndexes.length}页待补充`;
       task.failedPageIndexes = undefined;
       await this.updateTaskInDatabase(task);
+      this.recordTaskFlowEvent(task, DownloadCacheFlowEventType.TASK_DB_UPDATE_COMPLETED, DownloadCacheFlowStage.DATABASE, 'manual_partial_task_saved_to_db', true, '', 0, task.downloadedCount, task.totalCount);
       this.clearOnlineTaskIndexForTask(task);
 
       // 更新章节下载状态
-      await this.updateChapterDownloadStatus(task.chapterId, true, true, task.archivePath);
+      await this.updateChapterDownloadStatus(task.chapterId, false, true, task.archivePath);
+      this.recordTaskFlowEvent(task, DownloadCacheFlowEventType.CHAPTER_STATUS_UPDATE_COMPLETED, DownloadCacheFlowStage.DATABASE, 'manual_partial_chapter_status_update_completed', true, '', 0, task.downloadedCount, task.totalCount);
+      await this.syncOnlineArchiveStatusAfterDownload(task, 'manual_partial_archive_sync');
 
       this.publishMangaCacheUpdated(task, task.archivePath || '', 'manual_save_partial');
       this.notifyProgressCallbacks(task);
@@ -1245,6 +1525,7 @@ export class MangaDownloadManager {
       logger.info(TAG, `手动保存部分归档完成: ${taskId}, path=${task.archivePath}`);
       return true;
     } catch (error) {
+      this.recordTaskFlowEvent(task, DownloadCacheFlowEventType.ARCHIVE_FAILED, DownloadCacheFlowStage.ARCHIVE, 'manual_partial_archive_failed', false, String(error), 0, task.downloadedCount, task.totalCount);
       logger.error(TAG, `手动保存部分归档失败: ${taskId}, ${String(error)}`);
       return false;
     }
@@ -1323,6 +1604,10 @@ export class MangaDownloadManager {
     });
 
     // 标记已下载的页面
+    await this.databaseManager.executeSql(
+      'UPDATE online_page SET isDownloaded = 0 WHERE chapterId = ?',
+      [task.chapterId]
+    );
     for (const pageFile of pageFiles) {
       try {
         const baseUrl = this.extractBaseImageUrl(pageFile.imageUrl);
@@ -1472,6 +1757,17 @@ export class MangaDownloadManager {
     }
   }
 
+  private async syncOnlineArchiveStatusAfterDownload(task: DownloadTaskInfo, reason: string): Promise<void> {
+    if (!task.isOnlineManga) {
+      return;
+    }
+    try {
+      await this.onlineArchiveService.syncOnlineChapterArchiveStatus(task.chapterId, reason);
+    } catch (error) {
+      logger.warn(TAG, `下载归档状态同步失败: chapter=${task.chapterId}, reason=${reason}, ${String(error)}`);
+    }
+  }
+
   /**
    * 更新章节下载状态
    * 在线漫画更新online_chapter表，本地漫画更新chapter_info表
@@ -1549,6 +1845,17 @@ export class MangaDownloadManager {
         archivePath,
         reason
       )
+    );
+    this.recordTaskFlowEvent(
+      task,
+      DownloadCacheFlowEventType.MANGA_CACHE_EVENT_PUBLISHED,
+      DownloadCacheFlowStage.VISIBILITY,
+      reason,
+      true,
+      '',
+      0,
+      task.downloadedCount,
+      task.totalCount
     );
     logger.info(TAG, `已发布漫画缓存更新事件: mangaId=${task.mangaId}, chapterId=${task.chapterId}, reason=${reason}`);
   }

@@ -45,6 +45,14 @@ import {
   ExternalFileTaskParams,
   ExternalFileTaskSource
 } from '../Framework/ExternalFile/ExternalFileTaskTypes';
+import { ImportFlowMonitor, getImportFlowMonitor } from '../Framework/Import/ImportFlowMonitor';
+import {
+  ImportFlowContentType,
+  ImportFlowEntrySource,
+  ImportFlowEvent,
+  ImportFlowEventType,
+  ImportFlowSessionInfo
+} from '../Framework/Import/ImportFlowTypes';
 
 const TAG = 'NetworkFolderPage';
 const TITLE_BAR_HEIGHT_MINI: number = 56;
@@ -57,6 +65,7 @@ const ACTION_STYLE_INFO: number = 2;
 const ACTION_STYLE_DANGER: number = 3;
 const ENTRY_NAME_MARQUEE_INTERVAL_MS: number = 260;
 const ENTRY_NAME_MARQUEE_GAP: string = '   ';
+const APP_STORAGE_PENDING_IMPORT_FLOW_ID: string = 'pendingImportFlowId';
 
 interface NavDestinationContext {
   pathStack: NavPathStack;
@@ -78,6 +87,7 @@ export struct NetworkFolderPage {
   private browserScroller: Scroller = new Scroller();
   private dialogScroller: Scroller = new Scroller();
   private manager: NetworkFolderManager = getNetworkFolderManager();
+  private importFlowMonitor: ImportFlowMonitor = getImportFlowMonitor();
   private componentId: string = TAG;
   private pathStack: NavPathStack = new NavPathStack();
   private protocolOptions: NetworkFolderProtocol[] = ['webdav', 'ftp', 'ftps', 'sftp', 'smb'];
@@ -1082,6 +1092,7 @@ export struct NetworkFolderPage {
     AppStorage.delete('pendingFileSource');
     AppStorage.delete('pendingFileTarget');
     AppStorage.delete('pendingFileDisplayName');
+    AppStorage.delete(APP_STORAGE_PENDING_IMPORT_FLOW_ID);
     AppStorage.delete('fileImportPending');
 
     AppStorage.delete('pendingBackupUri');
@@ -1099,6 +1110,8 @@ export struct NetworkFolderPage {
     importCategory: NetworkFolderImportCategory
   ): void {
     this.clearPendingImportMarkers();
+    const importFlowId: string = this.createPendingImportFlow(fileUri, fileName, importCategory, 'download_dir');
+    AppStorage.setOrCreate(APP_STORAGE_PENDING_IMPORT_FLOW_ID, importFlowId);
     AppStorage.setOrCreate('pendingFileUri', fileUri);
     AppStorage.setOrCreate('pendingFileType', fileName);
     AppStorage.setOrCreate('pendingFileCategory', importCategory);
@@ -1108,12 +1121,73 @@ export struct NetworkFolderPage {
     AppStorage.setOrCreate('fileImportPending', true);
   }
 
+  private createPendingImportFlow(
+    fileUri: string,
+    fileName: string,
+    importCategory: NetworkFolderImportCategory,
+    target: string
+  ): string {
+    const info: ImportFlowSessionInfo = new ImportFlowSessionInfo();
+    info.sessionId = this.importFlowMonitor.createSessionId('import');
+    info.entrySource = ImportFlowEntrySource.NETWORK_FOLDER;
+    info.contentType = this.mapNetworkCategoryToImportFlowContentType(importCategory);
+    info.sourceUri = fileUri;
+    info.targetPath = target;
+    info.displayName = fileName;
+    info.fileCount = 1;
+    info.batchMode = false;
+    info.pageName = 'NetworkFolderPage';
+    info.startedAt = Date.now();
+    const sessionId: string = this.importFlowMonitor.ensureSession(info);
+
+    const event: ImportFlowEvent = new ImportFlowEvent();
+    event.sessionId = sessionId;
+    event.eventType = ImportFlowEventType.PENDING_MARKERS_WRITTEN;
+    event.reason = 'network_folder_pending_markers_written';
+    event.entrySource = ImportFlowEntrySource.NETWORK_FOLDER;
+    event.contentType = info.contentType;
+    event.sourceUri = fileUri;
+    event.targetPath = target;
+    event.displayName = fileName;
+    event.fileCount = 1;
+    event.detail = `category=${importCategory}, target=${target}`;
+    this.importFlowMonitor.record(event);
+    return sessionId;
+  }
+
+  private mapNetworkCategoryToImportFlowContentType(category: NetworkFolderImportCategory): ImportFlowContentType {
+    switch (category) {
+      case 'comic':
+        return ImportFlowContentType.MANGA;
+      case 'ebook':
+        return ImportFlowContentType.EBOOK;
+      case 'pdf':
+        return ImportFlowContentType.PDF;
+      case 'backup':
+        return ImportFlowContentType.BACKUP;
+      case 'json':
+        return ImportFlowContentType.JSON;
+      case 'font':
+        return ImportFlowContentType.FONT;
+      case 'code':
+        return ImportFlowContentType.CODE;
+      case 'avif':
+        return ImportFlowContentType.AVIF;
+      case 'image':
+        return ImportFlowContentType.IMAGE;
+      default:
+        return ImportFlowContentType.UNKNOWN;
+    }
+  }
+
   private preparePendingImportForMainMenu(
     fileUri: string,
     fileName: string,
     importCategory: NetworkFolderImportCategory
   ): void {
     this.clearPendingImportMarkers();
+    const importFlowId: string = this.createPendingImportFlow(fileUri, fileName, importCategory, 'main_menu');
+    AppStorage.setOrCreate(APP_STORAGE_PENDING_IMPORT_FLOW_ID, importFlowId);
 
     if (importCategory === 'backup') {
       AppStorage.setOrCreate('pendingBackupUri', fileUri);

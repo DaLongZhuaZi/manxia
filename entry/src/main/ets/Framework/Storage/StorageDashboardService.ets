@@ -1209,6 +1209,10 @@ export class StorageDashboardService {
         'UPDATE online_chapter SET isDownloaded = 0, downloadPath = NULL WHERE isDownloaded = 1 OR downloadPath IS NOT NULL',
         []
       );
+      await this.databaseManager.executeSql(
+        'DELETE FROM online_chapter_cache_state',
+        []
+      );
     } catch (error) {
       logger.warn(TAG, `同步清理在线图片缓存记录失败: ${String(error)}`);
     }

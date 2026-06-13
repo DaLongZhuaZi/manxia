@@ -30,6 +30,14 @@ import {
   ExternalFileTaskParams,
   ExternalFileTaskSource
 } from '../ExternalFile/ExternalFileTaskTypes';
+import { ImportFlowMonitor, getImportFlowMonitor } from '../Import/ImportFlowMonitor';
+import {
+  ImportFlowContentType,
+  ImportFlowEntrySource,
+  ImportFlowEvent,
+  ImportFlowEventType,
+  ImportFlowSessionInfo
+} from '../Import/ImportFlowTypes';
 
 const TAG = 'TransferUploadStore';
 const INDEX_VERSION = 1;
@@ -40,6 +48,7 @@ const UPLOAD_FREE_SPACE_RESERVE_BYTES = 512 * 1024 * 1024;
 const APP_STORAGE_TRANSFER_RECORD_ID = 'pendingTransferRecordId';
 const APP_STORAGE_TRANSFER_RESULT = 'pendingTransferImportResult';
 const APP_STORAGE_TRANSFER_TRACKING_ACTIVE = 'pendingTransferTrackingActive';
+const APP_STORAGE_PENDING_IMPORT_FLOW_ID = 'pendingImportFlowId';
 
 interface TransferUploadIndexData {
   version: number;
@@ -87,6 +96,7 @@ export class TransferUploadStoreService {
   private records: TransferUploadRecord[] = [];
   private reservedUploadBytes: number = 0;
   private storageBudgetLock: Promise<void> = Promise.resolve<void>(undefined);
+  private readonly importFlowMonitor: ImportFlowMonitor = getImportFlowMonitor();
   private readonly encoder: util.TextEncoder = new util.TextEncoder();
   private readonly decoder: util.TextDecoder = new util.TextDecoder('utf-8');
 
@@ -838,6 +848,7 @@ export class TransferUploadStoreService {
     AppStorage.delete('pendingFileSource');
     AppStorage.delete('pendingFileTarget');
     AppStorage.delete('pendingFileDisplayName');
+    AppStorage.delete(APP_STORAGE_PENDING_IMPORT_FLOW_ID);
     AppStorage.delete('fileImportPending');
 
     AppStorage.delete('pendingBackupUri');
@@ -851,6 +862,8 @@ export class TransferUploadStoreService {
 
   private preparePendingImportMarkers(record: TransferUploadRecord): void {
     if (this.shouldRouteToDataManagementImport(record.importCategory)) {
+      const importFlowId: string = this.createPendingImportFlow(record, 'data_management');
+      AppStorage.setOrCreate(APP_STORAGE_PENDING_IMPORT_FLOW_ID, importFlowId);
       AppStorage.setOrCreate('pendingFileUri', record.localUri);
       AppStorage.setOrCreate('pendingFileType', record.fileName);
       AppStorage.setOrCreate('pendingFileCategory', record.importCategory);
@@ -876,6 +889,63 @@ export class TransferUploadStoreService {
       category === 'code' ||
       category === 'avif' ||
       category === 'image';
+  }
+
+  private createPendingImportFlow(record: TransferUploadRecord, target: string): string {
+    const info: ImportFlowSessionInfo = new ImportFlowSessionInfo();
+    info.sessionId = this.importFlowMonitor.createSessionId('import');
+    info.entrySource = ImportFlowEntrySource.LAN_TRANSFER;
+    info.contentType = this.mapTransferCategoryToImportFlowContentType(record.importCategory);
+    info.sourceUri = record.localUri;
+    info.targetPath = target;
+    info.displayName = record.fileName;
+    info.fileCount = 1;
+    info.batchMode = false;
+    info.transferRecordId = record.id;
+    info.pageName = 'TransferUploadStoreService';
+    info.startedAt = Date.now();
+    const sessionId: string = this.importFlowMonitor.ensureSession(info);
+
+    const event: ImportFlowEvent = new ImportFlowEvent();
+    event.sessionId = sessionId;
+    event.eventType = ImportFlowEventType.PENDING_MARKERS_WRITTEN;
+    event.reason = 'lan_transfer_pending_markers_written';
+    event.entrySource = ImportFlowEntrySource.LAN_TRANSFER;
+    event.contentType = info.contentType;
+    event.sourceUri = record.localUri;
+    event.targetPath = target;
+    event.displayName = record.fileName;
+    event.fileCount = 1;
+    event.transferRecordId = record.id;
+    event.byteCount = record.fileSizeBytes;
+    event.detail = `category=${record.importCategory}, target=${target}`;
+    this.importFlowMonitor.record(event);
+    return sessionId;
+  }
+
+  private mapTransferCategoryToImportFlowContentType(category: NetworkFolderImportCategory): ImportFlowContentType {
+    switch (category) {
+      case 'comic':
+        return ImportFlowContentType.MANGA;
+      case 'ebook':
+        return ImportFlowContentType.EBOOK;
+      case 'pdf':
+        return ImportFlowContentType.PDF;
+      case 'backup':
+        return ImportFlowContentType.BACKUP;
+      case 'json':
+        return ImportFlowContentType.JSON;
+      case 'font':
+        return ImportFlowContentType.FONT;
+      case 'code':
+        return ImportFlowContentType.CODE;
+      case 'avif':
+        return ImportFlowContentType.AVIF;
+      case 'image':
+        return ImportFlowContentType.IMAGE;
+      default:
+        return ImportFlowContentType.UNKNOWN;
+    }
   }
 
   private createExternalFileTaskParams(record: TransferUploadRecord): ExternalFileTaskParams {
@@ -918,6 +988,8 @@ export class TransferUploadStoreService {
   }
 
   private prepareMainMenuImportMarkers(record: TransferUploadRecord): void {
+    const importFlowId: string = this.createPendingImportFlow(record, 'main_menu');
+    AppStorage.setOrCreate(APP_STORAGE_PENDING_IMPORT_FLOW_ID, importFlowId);
     AppStorage.setOrCreate('pendingFileSource', 'lan_transfer');
     AppStorage.setOrCreate('pendingFileTarget', 'inbox');
     AppStorage.setOrCreate('pendingFileDisplayName', record.fileName);

@@ -16,13 +16,29 @@ import { webview } from '@kit.ArkWeb';
 import CookieManager from '../Managers/CookieManager';
 import { cryptoFramework } from '@kit.CryptoArchitectureKit';
 import { DiskCacheManager } from './DiskCacheManager';
-import { DataManager } from '../Data/DataManager';
+import { DataManager, PageCacheUpdate } from '../Data/DataManager';
 import { JinmantiantangDescrambler, JinmantiantangParameters } from '../ImageProcessing/JinmantiantangDescrambler';
 import { UserAgentManager } from '../Managers/UserAgentManager';
 import { AvifDecoder, isAvifFormat } from '../Image/AvifDecoder';
 import { GlobalWebViewContainer, WebViewEventCallbacks } from '../WebView/WebViewContainerPage';
 import { WebViewSourceConfig } from '../WebView/WebViewImageLoader';
 import { OnlineMangaArchiveService } from '../Download/OnlineMangaArchiveService';
+import { DownloadCacheFlowMonitor, getDownloadCacheFlowMonitor } from '../Download/DownloadCacheFlowMonitor';
+import { DownloadCacheFailureTtlCache, getDownloadCacheFailureTtlCache } from '../Download/DownloadCacheFailureTtlCache';
+import {
+  DownloadCacheLimiterPermit,
+  DownloadCacheSourceLimiter,
+  getDownloadCacheSourceLimiter
+} from '../Download/DownloadCacheSourceLimiter';
+import {
+  DownloadCacheContentType,
+  DownloadCacheEntrySource,
+  DownloadCacheFlowEvent,
+  DownloadCacheFlowEventType,
+  DownloadCacheFlowSessionInfo,
+  DownloadCacheFlowSeverity,
+  DownloadCacheFlowStage
+} from '../Download/DownloadCacheFlowTypes';
 
 
 const TAG = 'OnlineImageLoader';
@@ -44,6 +60,10 @@ export interface OnlineLoadOptions {
   sourceId?: number;
   priority?: number;  // 优先级：10=当前页，5=下一页，3=下下页，1=其他
   partitionKey?: string;
+  downloadCacheFlowId?: string;
+  visibleLoad?: boolean;
+  prefetch?: boolean;
+  skipFailureTtl?: boolean;
 }
 
 
@@ -89,6 +109,10 @@ interface HttpHeadersObject {
 interface QueuedRequest {
   url: string;
   options: OnlineLoadOptions;
+  cacheKey: string;
+  flowId: string;
+  sourceKey: string;
+  visibleLoad: boolean;
   priority: number;
   resolve: (value: image.PixelMap | null) => void;
   reject: (reason: Error) => void;
@@ -109,12 +133,20 @@ interface CookieCacheEntry {
 interface CacheStatusUpdateValue {
   localPath: string;
   fileSize: number;
+  flowId: string;
+  sourceId: number;
+  sourceKey: string;
+  cacheKey: string;
 }
 
 interface CacheStatusUpdatePayload {
   imageUrl: string;
   localPath: string;
   fileSize: number;
+  flowId: string;
+  sourceId: number;
+  sourceKey: string;
+  cacheKey: string;
 }
 
 interface WebViewLoadWaiter {
@@ -141,7 +173,10 @@ export class OnlineImageLoader {
   private readonly MAX_CONCURRENT = 2;  // 保守并发，避免漫画站/CDN图片请求被限流或误判
   
   // [修复] 正在加载的URL集合，用于去重
-  private loadingUrls = new Set<string>();
+  private loadingKeys = new Set<string>();
+  private downloadCacheFlowMonitor: DownloadCacheFlowMonitor = getDownloadCacheFlowMonitor();
+  private failureTtlCache: DownloadCacheFailureTtlCache = getDownloadCacheFailureTtlCache();
+  private sourceLimiter: DownloadCacheSourceLimiter = getDownloadCacheSourceLimiter();
 
   // 缓存状态写库队列（按URL去重，批量异步落库）
   private pendingCacheStatusUpdates = new Map<string, CacheStatusUpdateValue>();
@@ -189,14 +224,31 @@ export class OnlineImageLoader {
    * 加载在线图片（三级缓存：内存->磁盘->网络）
    */
   public async load(url: string, options?: OnlineLoadOptions): Promise<image.PixelMap | null> {
-    const cacheKey = this.generateCacheKey(url, options);
-    const priority = options?.priority || 1;
+    const effectiveOptions: OnlineLoadOptions = this.cloneLoadOptions(options);
+    const cacheKey = this.generateCacheKey(url, effectiveOptions);
+    const sourceKey = this.resolveSourceKey(url, effectiveOptions);
+    const flowId = this.ensureImageFlow(url, cacheKey, effectiveOptions);
+    effectiveOptions.downloadCacheFlowId = flowId;
+    const priority = effectiveOptions.priority || 1;
     
     // 1. 检查内存缓存
 
     const cached = this.getFromCache(cacheKey);
     if (cached) {
       logger.info(TAG, `✅ 内存缓存命中: ${url.substring(0, 80)}`);
+      this.recordImageFlowEvent(
+        flowId,
+        DownloadCacheFlowEventType.CACHE_MEMORY_HIT,
+        DownloadCacheFlowStage.DISK_CACHE,
+        'online_image_memory_cache_hit',
+        url,
+        cacheKey,
+        effectiveOptions,
+        true,
+        '',
+        0,
+        0
+      );
       return cached;
     }
     
@@ -205,37 +257,87 @@ export class OnlineImageLoader {
       const diskCache = DiskCacheManager.getInstance();
       // 检查是否已初始化，避免警告日志泛滥
       if (diskCache.isInitialized()) {
-        const diskCacheUrl = this.buildDiskCacheUrl(url, options);
+        const diskCacheUrl = this.buildDiskCacheUrl(url, effectiveOptions);
         const diskCached = await diskCache.get(diskCacheUrl);
 
         if (diskCached) {
           logger.info(TAG, `✅ 磁盘缓存命中: ${url.substring(0, 80)}`);
           // 存入内存缓存
           await this.putToCache(cacheKey, diskCached);
-          this.syncCacheStatusToDatabaseAsync(url, diskCacheUrl, diskCache);
+          this.recordImageFlowEvent(
+            flowId,
+            DownloadCacheFlowEventType.CACHE_DISK_HIT,
+            DownloadCacheFlowStage.DISK_CACHE,
+            'online_image_disk_cache_hit',
+            url,
+            cacheKey,
+            effectiveOptions,
+            true,
+            '',
+            0,
+            0
+          );
+          this.syncCacheStatusToDatabaseAsync(url, diskCacheUrl, diskCache, flowId, effectiveOptions.sourceId || 0, sourceKey, cacheKey);
           return diskCached;
         }
       }
     } catch (error) {
       logger.debug(TAG, `磁盘缓存读取失败: ${String(error)}`);
     }
+
+    const allowFailureSkip = this.shouldAllowFailureTtlSkip(effectiveOptions);
+    if (this.failureTtlCache.shouldSkip(effectiveOptions.sourceId || 0, sourceKey, cacheKey, 'network', allowFailureSkip)) {
+      const message = this.failureTtlCache.getErrorMessage(effectiveOptions.sourceId || 0, sourceKey, cacheKey, 'network');
+      logger.debug(TAG, `预取命中失败TTL，跳过后台请求: ${url.substring(0, 80)}, error=${message}`);
+      this.recordImageFlowEvent(
+        flowId,
+        DownloadCacheFlowEventType.FAILURE_TTL_HIT,
+        DownloadCacheFlowStage.NETWORK,
+        'background_prefetch_failure_ttl_hit',
+        url,
+        cacheKey,
+        effectiveOptions,
+        true,
+        message,
+        0,
+        0
+      );
+      return null;
+    }
     
     // 3. [修复] 检查是否已在加载中
-    if (this.loadingUrls.has(url)) {
-      logger.debug(TAG, `URL已在加载队列中，等待现有加载完成: ${url.substring(0, 80)}`);
+    if (this.loadingKeys.has(cacheKey)) {
+      logger.debug(TAG, `缓存Key已在加载队列中，等待现有加载完成: ${url.substring(0, 80)}, key=${cacheKey}`);
+      this.recordImageFlowEvent(
+        flowId,
+        DownloadCacheFlowEventType.CACHE_DEDUP_WAIT,
+        DownloadCacheFlowStage.QUEUE,
+        'online_image_cache_key_dedup_wait',
+        url,
+        cacheKey,
+        effectiveOptions,
+        true,
+        '',
+        0,
+        0
+      );
       // 等待现有加载完成，然后从缓存返回
-      return this.waitForLoading(url, options);
+      return this.waitForLoading(url, cacheKey, effectiveOptions, flowId);
 
     }
     
     // 4. 标记为正在加载
-    this.loadingUrls.add(url);
+    this.loadingKeys.add(cacheKey);
     
     // 4. 加入请求队列
     return new Promise<image.PixelMap | null>((resolve, reject) => {
       const request: QueuedRequest = {
         url: url,
-        options: options || {} as OnlineLoadOptions,
+        options: effectiveOptions,
+        cacheKey: cacheKey,
+        flowId: flowId,
+        sourceKey: sourceKey,
+        visibleLoad: this.isVisibleLoad(effectiveOptions),
         priority: priority,
         resolve: resolve,
         reject: reject,
@@ -246,6 +348,19 @@ export class OnlineImageLoader {
       this.sortQueue();
       
       logger.debug(TAG, `加入队列: url=${url.substring(0, 80)}, priority=${priority}, queueSize=${this.requestQueue.length}`);
+      this.recordImageFlowEvent(
+        flowId,
+        DownloadCacheFlowEventType.CACHE_QUEUE_ENQUEUED,
+        DownloadCacheFlowStage.QUEUE,
+        'online_image_request_enqueued',
+        url,
+        cacheKey,
+        effectiveOptions,
+        true,
+        '',
+        0,
+        0
+      );
       
       // 触发队列处理
       this.processQueue();
@@ -255,15 +370,32 @@ export class OnlineImageLoader {
   /**
    * [新增] 等待URL加载完成
    */
-  private async waitForLoading(url: string, options?: OnlineLoadOptions): Promise<image.PixelMap | null> {
+  private async waitForLoading(
+    url: string,
+    cacheKey: string,
+    options: OnlineLoadOptions,
+    flowId: string
+  ): Promise<image.PixelMap | null> {
     const maxWaitTime = 30000; // 最多等待30秒
     const checkInterval = 100; // 每100ms检查一次
     const startTime = Date.now();
-    const cacheKey = this.generateCacheKey(url, options);
     
-    while (this.loadingUrls.has(url)) {
+    while (this.loadingKeys.has(cacheKey)) {
       if (Date.now() - startTime > maxWaitTime) {
         logger.warn(TAG, `等待URL加载超时: ${url.substring(0, 80)}`);
+        this.recordImageFlowEvent(
+          flowId,
+          DownloadCacheFlowEventType.IMAGE_DOWNLOAD_FAILED,
+          DownloadCacheFlowStage.QUEUE,
+          'online_image_dedup_wait_timeout',
+          url,
+          cacheKey,
+          options,
+          false,
+          'wait_for_loading_timeout',
+          Date.now() - startTime,
+          0
+        );
         return null;
       }
       
@@ -273,6 +405,19 @@ export class OnlineImageLoader {
       // 检查缓存是否已更新
       const cached = this.getFromCache(cacheKey);
       if (cached) {
+        this.recordImageFlowEvent(
+          flowId,
+          DownloadCacheFlowEventType.CACHE_MEMORY_HIT,
+          DownloadCacheFlowStage.DISK_CACHE,
+          'online_image_dedup_wait_cache_hit',
+          url,
+          cacheKey,
+          options,
+          true,
+          '',
+          Date.now() - startTime,
+          0
+        );
         return cached;
       }
     }
@@ -298,49 +443,175 @@ export class OnlineImageLoader {
     }
     
     this.activeRequests++;
+    let permit: DownloadCacheLimiterPermit | null = null;
     
     try {
       await this.waitForInterval();
+
+      const limiterActiveBefore = this.sourceLimiter.getActiveCount(request.sourceKey);
+      if (limiterActiveBefore >= 1) {
+        this.recordImageFlowEvent(
+          request.flowId,
+          DownloadCacheFlowEventType.SOURCE_LIMIT_WAIT_STARTED,
+          DownloadCacheFlowStage.QUEUE,
+          'online_image_source_limit_wait_started',
+          request.url,
+          request.cacheKey,
+          request.options,
+          true,
+          '',
+          0,
+          0
+        );
+      }
+      permit = await this.sourceLimiter.acquire(request.sourceKey);
+      if (permit.waitedMs > 0) {
+        this.recordImageFlowEvent(
+          request.flowId,
+          DownloadCacheFlowEventType.SOURCE_LIMIT_WAIT_COMPLETED,
+          DownloadCacheFlowStage.QUEUE,
+          'online_image_source_limit_wait_completed',
+          request.url,
+          request.cacheKey,
+          request.options,
+          true,
+          '',
+          permit.waitedMs,
+          0
+        );
+      }
 
       // 执行HTTP请求
       const pixelMap = await this.httpRequest(request.url, request.options);
       
       if (pixelMap) {
         // 存入内存缓存
-        await this.putToCache(this.generateCacheKey(request.url, request.options), pixelMap);
+        await this.putToCache(request.cacheKey, pixelMap);
         
         // [新增] 存入磁盘缓存（仅在已初始化时）
         try {
           const diskCache = await this.getDiskCacheForRequest(request.options);
           if (diskCache && diskCache.isInitialized()) {
             const diskCacheUrl = this.buildDiskCacheUrl(request.url, request.options);
+            const diskWriteStart = Date.now();
+            this.recordImageFlowEvent(
+              request.flowId,
+              DownloadCacheFlowEventType.DISK_WRITE_STARTED,
+              DownloadCacheFlowStage.DISK_CACHE,
+              'online_image_disk_write_started',
+              request.url,
+              request.cacheKey,
+              request.options,
+              true,
+              '',
+              0,
+              0
+            );
             await diskCache.put(diskCacheUrl, pixelMap);
             logger.debug(TAG, `已保存到磁盘缓存: ${request.url.substring(0, 80)}`);
+            this.recordImageFlowEvent(
+              request.flowId,
+              DownloadCacheFlowEventType.DISK_WRITE_COMPLETED,
+              DownloadCacheFlowStage.DISK_CACHE,
+              'online_image_disk_write_completed',
+              request.url,
+              request.cacheKey,
+              request.options,
+              true,
+              '',
+              Date.now() - diskWriteStart,
+              0
+            );
 
             // [P1] 缓存状态写库异步批量化，避免阻塞主加载链路
-            this.syncCacheStatusToDatabaseAsync(request.url, diskCacheUrl, diskCache);
+            this.syncCacheStatusToDatabaseAsync(
+              request.url,
+              diskCacheUrl,
+              diskCache,
+              request.flowId,
+              request.options.sourceId || 0,
+              request.sourceKey,
+              request.cacheKey
+            );
           }
         } catch (error) {
           logger.warn(TAG, `保存到磁盘缓存失败: ${String(error)}`);
+          this.recordImageFlowEvent(
+            request.flowId,
+            DownloadCacheFlowEventType.DISK_WRITE_FAILED,
+            DownloadCacheFlowStage.DISK_CACHE,
+            'online_image_disk_write_failed',
+            request.url,
+            request.cacheKey,
+            request.options,
+            false,
+            String(error),
+            0,
+            0
+          );
         }
 
         
         request.resolve(pixelMap);
         
-        // [修复] 加载成功，从loadingUrls中移除
-        this.loadingUrls.delete(request.url);
+        // [修复] 加载成功，从loadingKeys中移除
+        this.loadingKeys.delete(request.cacheKey);
       } else {
+        const emptyMessage = 'online_image_empty_pixel_map';
+        this.recordImageFlowEvent(
+          request.flowId,
+          DownloadCacheFlowEventType.IMAGE_DOWNLOAD_FAILED,
+          DownloadCacheFlowStage.NETWORK,
+          emptyMessage,
+          request.url,
+          request.cacheKey,
+          request.options,
+          false,
+          emptyMessage,
+          0,
+          0
+        );
+        if (this.shouldAllowFailureTtlSkip(request.options)) {
+          this.failureTtlCache.recordFailure(request.options.sourceId || 0, request.sourceKey, request.cacheKey, 'network', emptyMessage);
+          this.recordImageFlowEvent(
+            request.flowId,
+            DownloadCacheFlowEventType.FAILURE_TTL_RECORDED,
+            DownloadCacheFlowStage.NETWORK,
+            'background_prefetch_failure_ttl_recorded',
+            request.url,
+            request.cacheKey,
+            request.options,
+            true,
+            emptyMessage,
+            0,
+            0
+          );
+        }
         request.resolve(null);
         
-        // [修复] 加载失败，从loadingUrls中移除
-        this.loadingUrls.delete(request.url);
+        // [修复] 加载失败，从loadingKeys中移除
+        this.loadingKeys.delete(request.cacheKey);
       }
       
     } catch (error) {
+      const errorObj: Error = error instanceof Error ? error : new Error(String(error));
       // 重试逻辑
       if (request.retryCount < this.MAX_RETRIES) {
         request.retryCount++;
         logger.warn(TAG, `请求失败，准备重试 (${request.retryCount}/${this.MAX_RETRIES}): ${request.url.substring(0, 80)}`);
+        this.recordImageFlowEvent(
+          request.flowId,
+          DownloadCacheFlowEventType.IMAGE_DOWNLOAD_RETRY,
+          DownloadCacheFlowStage.NETWORK,
+          'online_image_download_retry',
+          request.url,
+          request.cacheKey,
+          request.options,
+          false,
+          errorObj.message,
+          0,
+          0
+        );
         
         // 重新加入队列（降低优先级）
         request.priority = Math.max(1, request.priority - 1);
@@ -350,13 +621,45 @@ export class OnlineImageLoader {
         // 延迟后重试
         setTimeout(() => this.processQueue(), this.RETRY_DELAY);
       } else {
-        logger.error(TAG, `请求最终失败: ${request.url.substring(0, 80)}, error=${String(error)}`);
-        request.reject(error as Error);
+        logger.error(TAG, `请求最终失败: ${request.url.substring(0, 80)}, error=${String(errorObj)}`);
+        this.recordImageFlowEvent(
+          request.flowId,
+          DownloadCacheFlowEventType.IMAGE_DOWNLOAD_FAILED,
+          DownloadCacheFlowStage.NETWORK,
+          'online_image_download_final_failed',
+          request.url,
+          request.cacheKey,
+          request.options,
+          false,
+          errorObj.message,
+          0,
+          0
+        );
+        if (this.shouldAllowFailureTtlSkip(request.options)) {
+          this.failureTtlCache.recordFailure(request.options.sourceId || 0, request.sourceKey, request.cacheKey, 'network', errorObj.message);
+          this.recordImageFlowEvent(
+            request.flowId,
+            DownloadCacheFlowEventType.FAILURE_TTL_RECORDED,
+            DownloadCacheFlowStage.NETWORK,
+            'background_prefetch_failure_ttl_recorded',
+            request.url,
+            request.cacheKey,
+            request.options,
+            true,
+            errorObj.message,
+            0,
+            0
+          );
+        }
+        request.reject(errorObj);
         
-        // [修复] 最终失败，从loadingUrls中移除
-        this.loadingUrls.delete(request.url);
+        // [修复] 最终失败，从loadingKeys中移除
+        this.loadingKeys.delete(request.cacheKey);
       }
     } finally {
+      if (permit !== null) {
+        this.sourceLimiter.release(permit);
+      }
       this.activeRequests--;
       
       // 继续处理队列
@@ -392,25 +695,29 @@ export class OnlineImageLoader {
    */
   public async getCachedPixelMap(url: string, options?: OnlineLoadOptions): Promise<image.PixelMap | null> {
     try {
-      const cacheKey = this.generateCacheKey(url, options);
+      const effectiveOptions: OnlineLoadOptions = this.cloneLoadOptions(options);
+      const cacheKey = this.generateCacheKey(url, effectiveOptions);
       const memoryCached = this.getFromCache(cacheKey);
       if (memoryCached) {
         return memoryCached;
       }
 
-      const diskCache = await this.getDiskCacheForRequest(options);
+      const diskCache = await this.getDiskCacheForRequest(effectiveOptions);
       if (!diskCache || !diskCache.isInitialized()) {
         return null;
       }
 
-      const diskCacheUrl = this.buildDiskCacheUrl(url, options);
+      const diskCacheUrl = this.buildDiskCacheUrl(url, effectiveOptions);
       const diskCached = await diskCache.get(diskCacheUrl);
       if (!diskCached) {
         return null;
       }
 
       await this.putToCache(cacheKey, diskCached);
-      this.syncCacheStatusToDatabaseAsync(url, diskCacheUrl, diskCache);
+      const sourceKey = this.resolveSourceKey(url, effectiveOptions);
+      const flowId = this.ensureImageFlow(url, cacheKey, effectiveOptions);
+      effectiveOptions.downloadCacheFlowId = flowId;
+      this.syncCacheStatusToDatabaseAsync(url, diskCacheUrl, diskCache, flowId, effectiveOptions.sourceId || 0, sourceKey, cacheKey);
       return diskCached;
     } catch (error) {
       logger.warn(TAG, `获取在线图片缓存PixelMap失败: ${String(error)}`);
@@ -441,7 +748,15 @@ export class OnlineImageLoader {
     return 'default';
   }
 
-  private syncCacheStatusToDatabaseAsync(imageUrl: string, cacheUrl: string, diskCache: DiskCacheManager): void {
+  private syncCacheStatusToDatabaseAsync(
+    imageUrl: string,
+    cacheUrl: string,
+    diskCache: DiskCacheManager,
+    flowId: string,
+    sourceId: number,
+    sourceKey: string,
+    cacheKey: string
+  ): void {
 
     (async () => {
       try {
@@ -449,18 +764,48 @@ export class OnlineImageLoader {
         const fileSize = await diskCache.getCacheFileSize(cacheUrl);
 
         if (filePath && fileSize > 0) {
-          this.enqueueCacheStatusUpdate(imageUrl, filePath, fileSize);
+          this.enqueueCacheStatusUpdate(imageUrl, filePath, fileSize, flowId, sourceId, sourceKey, cacheKey);
         }
       } catch (error) {
         logger.warn(TAG, `准备缓存状态同步失败: ${String(error)}`);
+        const optionsForEvent: OnlineLoadOptions = this.createFlowOptions(sourceId, flowId);
+        this.recordImageFlowEvent(
+          flowId,
+          DownloadCacheFlowEventType.DB_FLUSH_FAILED,
+          DownloadCacheFlowStage.DATABASE,
+          'online_image_cache_status_prepare_failed',
+          imageUrl,
+          cacheKey,
+          optionsForEvent,
+          false,
+          String(error),
+          0,
+          0
+        );
       }
     })().catch((error: Error) => {
       logger.warn(TAG, `异步缓存状态同步失败: ${String(error)}`);
     });
   }
 
-  private enqueueCacheStatusUpdate(imageUrl: string, localPath: string, fileSize: number): void {
-    this.pendingCacheStatusUpdates.set(imageUrl, { localPath, fileSize });
+  private enqueueCacheStatusUpdate(
+    imageUrl: string,
+    localPath: string,
+    fileSize: number,
+    flowId: string,
+    sourceId: number,
+    sourceKey: string,
+    cacheKey: string
+  ): void {
+    const updateValue: CacheStatusUpdateValue = {
+      localPath: localPath,
+      fileSize: fileSize,
+      flowId: flowId,
+      sourceId: sourceId,
+      sourceKey: sourceKey,
+      cacheKey: cacheKey
+    };
+    this.pendingCacheStatusUpdates.set(imageUrl, updateValue);
     this.scheduleCacheStatusFlush();
   }
 
@@ -484,23 +829,58 @@ export class OnlineImageLoader {
 
     this.isFlushingCacheStatusUpdates = true;
     const updates: Array<CacheStatusUpdatePayload> = [];
+    const pageCacheUpdates: Array<PageCacheUpdate> = [];
     this.pendingCacheStatusUpdates.forEach((value, imageUrl) => {
       updates.push({
-        imageUrl,
+        imageUrl: imageUrl,
+        localPath: value.localPath,
+        fileSize: value.fileSize,
+        flowId: value.flowId,
+        sourceId: value.sourceId,
+        sourceKey: value.sourceKey,
+        cacheKey: value.cacheKey
+      });
+      pageCacheUpdates.push({
+        imageUrl: imageUrl,
         localPath: value.localPath,
         fileSize: value.fileSize
-      });
+      } as PageCacheUpdate);
     });
     this.pendingCacheStatusUpdates.clear();
 
     try {
+      const flushStartedAt = Date.now();
+      this.recordCacheStatusFlushEvent(
+        updates,
+        DownloadCacheFlowEventType.DB_FLUSH_STARTED,
+        'online_image_cache_status_flush_started',
+        true,
+        '',
+        0
+      );
       const dataManager = DataManager.getInstance();
-      const chapterIds = await dataManager.batchUpdateOnlinePageCacheStatus(updates);
+      const chapterIds = await dataManager.batchUpdateOnlinePageCacheStatus(pageCacheUpdates);
       logger.debug(TAG, `Flushed cache status updates: count=${updates.length}`);
       logger.debug(TAG, `已批量同步缓存状态到数据库: ${updates.length}条`);
-      await this.archiveCompletedOnlineChapterCaches(chapterIds);
+      this.recordCacheStatusFlushEvent(
+        updates,
+        DownloadCacheFlowEventType.DB_FLUSH_COMPLETED,
+        'online_image_cache_status_flush_completed',
+        true,
+        '',
+        Date.now() - flushStartedAt
+      );
+      await this.archiveCompletedOnlineChapterCaches(chapterIds, updates);
     } catch (error) {
       logger.warn(TAG, `批量同步缓存状态到数据库失败: ${String(error)}`);
+      this.recordCacheStatusFlushEvent(
+        updates,
+        DownloadCacheFlowEventType.DB_FLUSH_FAILED,
+        'online_image_cache_status_flush_failed',
+        false,
+        String(error),
+        0
+      );
     } finally {
       this.isFlushingCacheStatusUpdates = false;
       if (this.pendingCacheStatusUpdates.size > 0) {
@@ -509,7 +889,10 @@ export class OnlineImageLoader {
     }
   }
 
-  private async archiveCompletedOnlineChapterCaches(chapterIds: string[]): Promise<void> {
+  private async archiveCompletedOnlineChapterCaches(
+    chapterIds: string[],
+    updates: Array<CacheStatusUpdatePayload>
+  ): Promise<void> {
     if (chapterIds.length === 0) {
       return;
     }
@@ -521,6 +904,180 @@ export class OnlineImageLoader {
       queuedCount++;
     }
     logger.debug(TAG, `阅读缓存归档任务已投递: count=${queuedCount}`);
+    this.recordCacheStatusFlushEvent(
+      updates,
+      DownloadCacheFlowEventType.ARCHIVE_STARTED,
+      'online_image_reader_cache_archive_enqueued',
+      true,
+      '',
+      0
+    );
+  }
+
+  private cloneLoadOptions(options?: OnlineLoadOptions): OnlineLoadOptions {
+    const cloned: OnlineLoadOptions = {} as OnlineLoadOptions;
+    if (!options) {
+      return cloned;
+    }
+    cloned.width = options.width;
+    cloned.height = options.height;
+    cloned.headers = options.headers;
+    cloned.sourceId = options.sourceId;
+    cloned.priority = options.priority;
+    cloned.partitionKey = options.partitionKey;
+    cloned.downloadCacheFlowId = options.downloadCacheFlowId;
+    cloned.visibleLoad = options.visibleLoad;
+    cloned.prefetch = options.prefetch;
+    cloned.skipFailureTtl = options.skipFailureTtl;
+    return cloned;
+  }
+
+  private createFlowOptions(sourceId: number, flowId: string): OnlineLoadOptions {
+    const options: OnlineLoadOptions = {} as OnlineLoadOptions;
+    options.sourceId = sourceId;
+    options.downloadCacheFlowId = flowId;
+    return options;
+  }
+
+  private ensureImageFlow(url: string, cacheKey: string, options: OnlineLoadOptions): string {
+    try {
+      const providedFlowId = options.downloadCacheFlowId ? options.downloadCacheFlowId : '';
+      const flowId = providedFlowId.length > 0 ? providedFlowId : this.downloadCacheFlowMonitor.createSessionId('online_image');
+      const info: DownloadCacheFlowSessionInfo = new DownloadCacheFlowSessionInfo();
+      info.sessionId = flowId;
+      info.entrySource = DownloadCacheEntrySource.ONLINE_IMAGE_LOADER;
+      info.contentType = DownloadCacheContentType.IMAGE;
+      info.sourceId = options.sourceId || 0;
+      info.sourceKey = this.resolveSourceKey(url, options);
+      info.url = url;
+      info.cacheKey = cacheKey;
+      info.totalCount = 1;
+      info.pageName = 'OnlineImageLoader';
+      info.startedAt = Date.now();
+      return this.downloadCacheFlowMonitor.ensureSession(info);
+    } catch (error) {
+      logger.warn(TAG, `创建在线图片下载缓存链路失败: ${String(error)}`);
+      return options.downloadCacheFlowId ? options.downloadCacheFlowId : '';
+    }
+  }
+
+  private recordImageFlowEvent(
+    flowId: string,
+    eventType: DownloadCacheFlowEventType,
+    stage: DownloadCacheFlowStage,
+    reason: string,
+    url: string,
+    cacheKey: string,
+    options: OnlineLoadOptions,
+    success: boolean,
+    errorMessage: string,
+    elapsedMs: number,
+    byteCount: number
+  ): void {
+    try {
+      const event: DownloadCacheFlowEvent = this.downloadCacheFlowMonitor.createEvent(flowId, eventType, stage, reason);
+      event.entrySource = DownloadCacheEntrySource.ONLINE_IMAGE_LOADER;
+      event.contentType = DownloadCacheContentType.IMAGE;
+      event.sourceId = options.sourceId || 0;
+      event.sourceKey = this.resolveSourceKey(url, options);
+      event.url = url;
+      event.cacheKey = cacheKey;
+      event.success = success;
+      event.severity = this.resolveEventSeverity(eventType, success);
+      event.errorMessage = errorMessage;
+      event.elapsedMs = elapsedMs;
+      event.byteCount = byteCount;
+      event.queueSize = this.requestQueue.length;
+      event.activeCount = this.activeRequests;
+      event.cacheHit = eventType === DownloadCacheFlowEventType.CACHE_MEMORY_HIT ||
+        eventType === DownloadCacheFlowEventType.CACHE_DISK_HIT;
+      event.visibleLoad = this.isVisibleLoad(options);
+      event.detail = `priority=${options.priority || 0}, source=${event.sourceKey}`;
+      this.safeRecordDownloadCacheFlowEvent(event);
+    } catch (error) {
+      logger.warn(TAG, `记录在线图片下载缓存链路失败: ${String(error)}`);
+    }
+  }
+
+  private recordCacheStatusFlushEvent(
+    updates: Array<CacheStatusUpdatePayload>,
+    eventType: DownloadCacheFlowEventType,
+    reason: string,
+    success: boolean,
+    errorMessage: string,
+    elapsedMs: number
+  ): void {
+    for (let i = 0; i < updates.length; i++) {
+      const update = updates[i];
+      const options: OnlineLoadOptions = this.createFlowOptions(update.sourceId, update.flowId);
+      this.recordImageFlowEvent(
+        update.flowId,
+        eventType,
+        eventType === DownloadCacheFlowEventType.ARCHIVE_STARTED ? DownloadCacheFlowStage.ARCHIVE : DownloadCacheFlowStage.DATABASE,
+        reason,
+        update.imageUrl,
+        update.cacheKey,
+        options,
+        success,
+        errorMessage,
+        elapsedMs,
+        update.fileSize
+      );
+    }
+  }
+
+  private safeRecordDownloadCacheFlowEvent(event: DownloadCacheFlowEvent): void {
+    try {
+      this.downloadCacheFlowMonitor.record(event);
+    } catch (error) {
+      logger.warn(TAG, `在线图片链路事件写入失败: ${String(error)}`);
+    }
+  }
+
+  private resolveEventSeverity(eventType: DownloadCacheFlowEventType, success: boolean): DownloadCacheFlowSeverity {
+    if (!success) {
+      return DownloadCacheFlowSeverity.ERROR;
+    }
+    if (eventType === DownloadCacheFlowEventType.CACHE_MEMORY_HIT ||
+      eventType === DownloadCacheFlowEventType.CACHE_DISK_HIT ||
+      eventType === DownloadCacheFlowEventType.CACHE_DEDUP_WAIT ||
+      eventType === DownloadCacheFlowEventType.CACHE_QUEUE_ENQUEUED ||
+      eventType === DownloadCacheFlowEventType.SOURCE_LIMIT_WAIT_STARTED ||
+      eventType === DownloadCacheFlowEventType.SOURCE_LIMIT_WAIT_COMPLETED) {
+      return DownloadCacheFlowSeverity.DEBUG;
+    }
+    return DownloadCacheFlowSeverity.INFO;
+  }
+
+  private resolveSourceKey(url: string, options?: OnlineLoadOptions): string {
+    const sourceId = options?.sourceId || 0;
+    if (sourceId > 0) {
+      return `source_${sourceId}`;
+    }
+    const host = this.extractHost(url);
+    return host.length > 0 ? host : 'unknown_source';
+  }
+
+  private isVisibleLoad(options?: OnlineLoadOptions): boolean {
+    if (options?.visibleLoad === true) {
+      return true;
+    }
+    const priority = options?.priority || 0;
+    return priority >= 10;
+  }
+
+  private shouldAllowFailureTtlSkip(options?: OnlineLoadOptions): boolean {
+    if (options?.skipFailureTtl === true) {
+      return false;
+    }
+    if (this.isVisibleLoad(options)) {
+      return false;
+    }
+    if (options?.prefetch === true) {
+      return true;
+    }
+    const priority = options?.priority || 0;
+    return priority <= 0;
   }
 
   /**
@@ -555,18 +1112,26 @@ export class OnlineImageLoader {
       // 如果是SSL错误(2300060)且URL是HTTPS，尝试降级为HTTP
       if (this.isRmcdnRequest(url) && this.isHttp403Error(errMsg)) {
         logger.warn(TAG, `rmcdn鍥剧墖HTTP 403锛屽皾璇昗ebView鍏滃簳鍔犺浇: ${url.substring(0, 80)}`);
+        const fallbackStart = Date.now();
+        this.recordWebViewFallbackEvent(url, options, true, 'rmcdn_webview_fallback_started', '', 0);
         const recovered = await this.retryRmcdnWithWebView(url, options);
         if (recovered) {
+          this.recordWebViewFallbackEvent(url, options, true, 'rmcdn_webview_fallback_completed', '', Date.now() - fallbackStart);
           return recovered;
         }
+        this.recordWebViewFallbackEvent(url, options, false, 'rmcdn_webview_fallback_failed', errMsg, Date.now() - fallbackStart);
       }
 
       if (this.isPhotos18Request(options, url) && this.isHttp403Error(errMsg)) {
         logger.warn(TAG, `Photos18 HTTP 403锛屽皾璇曚娇鐢║ebView鍏滃簳鍔犺浇: ${url.substring(0, 80)}`);
+        const fallbackStart = Date.now();
+        this.recordWebViewFallbackEvent(url, options, true, 'photos18_webview_fallback_started', '', 0);
         const recovered = await this.retryPhotos18WithWebView(url, options);
         if (recovered) {
+          this.recordWebViewFallbackEvent(url, options, true, 'photos18_webview_fallback_completed', '', Date.now() - fallbackStart);
           return recovered;
         }
+        this.recordWebViewFallbackEvent(url, options, false, 'photos18_webview_fallback_failed', errMsg, Date.now() - fallbackStart);
       }
 
       if (errCode === 2300060 && url.startsWith('https://')) {
@@ -578,21 +1143,58 @@ export class OnlineImageLoader {
         } catch (retryError) {
           // HTTP降级也失败，抛出原始错误
           logger.warn(TAG, `HTTP降级也失败: ${httpUrl.substring(0, 80)}`);
-          throw error as Error;
+          throw error instanceof Error ? error : new Error(String(error));
         }
       }
 
       // Pixiv CDN HTTP模块无法连接，使用WebView降级加载
       if (this.isPixivCdnUrl(url)) {
         logger.warn(TAG, `Pixiv CDN HTTP加载失败(code=${errCode})，尝试WebView降级: ${url.substring(0, 80)}`);
+        const fallbackStart = Date.now();
+        this.recordWebViewFallbackEvent(url, options, true, 'pixiv_webview_fallback_started', '', 0);
         const recovered = await this.retryPixivWithWebView(url, options);
         if (recovered) {
+          this.recordWebViewFallbackEvent(url, options, true, 'pixiv_webview_fallback_completed', '', Date.now() - fallbackStart);
           return recovered;
         }
+        this.recordWebViewFallbackEvent(url, options, false, 'pixiv_webview_fallback_failed', errMsg, Date.now() - fallbackStart);
       }
 
-      throw error as Error;
+      throw error instanceof Error ? error : new Error(String(error));
     }
+  }
+
+  private recordWebViewFallbackEvent(
+    url: string,
+    options: OnlineLoadOptions,
+    success: boolean,
+    reason: string,
+    errorMessage: string,
+    elapsedMs: number
+  ): void {
+    const cacheKey = this.generateCacheKey(url, options);
+    const flowId = options.downloadCacheFlowId && options.downloadCacheFlowId.length > 0
+      ? options.downloadCacheFlowId
+      : this.ensureImageFlow(url, cacheKey, options);
+    let eventType = DownloadCacheFlowEventType.WEBVIEW_FALLBACK_COMPLETED;
+    if (reason.includes('started')) {
+      eventType = DownloadCacheFlowEventType.WEBVIEW_FALLBACK_STARTED;
+    } else if (!success) {
+      eventType = DownloadCacheFlowEventType.WEBVIEW_FALLBACK_FAILED;
+    }
+    this.recordImageFlowEvent(
+      flowId,
+      eventType,
+      DownloadCacheFlowStage.NETWORK,
+      reason,
+      url,
+      cacheKey,
+      options,
+      success,
+      errorMessage,
+      elapsedMs,
+      0
+    );
   }
 
   private isPhotos18Request(options: OnlineLoadOptions, url: string): boolean {
@@ -764,7 +1366,11 @@ export class OnlineImageLoader {
         headers: retriedHeaders,
         sourceId: options.sourceId,
         priority: options.priority,
-        partitionKey: options.partitionKey
+        partitionKey: options.partitionKey,
+        downloadCacheFlowId: options.downloadCacheFlowId,
+        visibleLoad: options.visibleLoad,
+        prefetch: options.prefetch,
+        skipFailureTtl: options.skipFailureTtl
       };
 
       return await this.doHttpRequest(url, retriedOptions);
@@ -873,7 +1479,11 @@ export class OnlineImageLoader {
       height: options.height,
       sourceId: options.sourceId,
       priority: options.priority,
-      partitionKey: options.partitionKey
+      partitionKey: options.partitionKey,
+      downloadCacheFlowId: options.downloadCacheFlowId,
+      visibleLoad: options.visibleLoad,
+      prefetch: options.prefetch,
+      skipFailureTtl: options.skipFailureTtl
     };
     const headers = options.headers;
     if (headers) {
@@ -1138,9 +1748,27 @@ export class OnlineImageLoader {
   }
 
   private async doHttpRequest(url: string, options: OnlineLoadOptions): Promise<image.PixelMap | null> {
+    const cacheKey = this.generateCacheKey(url, options);
+    const flowId = options.downloadCacheFlowId && options.downloadCacheFlowId.length > 0
+      ? options.downloadCacheFlowId
+      : this.ensureImageFlow(url, cacheKey, options);
+    options.downloadCacheFlowId = flowId;
+    const startTs = Date.now();
+    this.recordImageFlowEvent(
+      flowId,
+      DownloadCacheFlowEventType.HTTP_STARTED,
+      DownloadCacheFlowStage.NETWORK,
+      'online_image_http_started',
+      url,
+      cacheKey,
+      options,
+      true,
+      '',
+      0,
+      0
+    );
     try {
       const httpRequest = http.createHttp();
-      const startTs = Date.now();
       
       // 构建请求头
       const headers = await this.buildHeaders(url, options);
@@ -1164,68 +1792,109 @@ export class OnlineImageLoader {
         const bytesLen = imageBuffer.byteLength;
         
         logger.info(TAG, `HTTP响应成功: code=200, bytes=${bytesLen}, duration=${duration}ms`);
+        this.recordImageFlowEvent(
+          flowId,
+          DownloadCacheFlowEventType.HTTP_COMPLETED,
+          DownloadCacheFlowStage.NETWORK,
+          'online_image_http_completed',
+          url,
+          cacheKey,
+          options,
+          true,
+          '',
+          duration,
+          bytesLen
+        );
         
         // 检查是否需要解扰/解密
         let finalBuffer = imageBuffer;
+        const processStart = Date.now();
+        this.recordImageFlowEvent(
+          flowId,
+          DownloadCacheFlowEventType.IMAGE_PROCESS_STARTED,
+          DownloadCacheFlowStage.IMAGE_PROCESS,
+          'online_image_process_started',
+          url,
+          cacheKey,
+          options,
+          true,
+          '',
+          0,
+          bytesLen
+        );
+        try {
         
-        // 禁漫天堂图片解扰（检查URL是否包含media/photos）
-        if (url.includes('media/photos')) {
-          const imageInfo = JinmantiantangDescrambler.extractImageInfo(url);
-          if (imageInfo !== null) {
-            const descrambler = getJinmantiantangDescrambler();
-            const params: JinmantiantangParameters = {
-              aid: imageInfo.aid,
-              imgIndex: imageInfo.imgIndex
-            };
-            
-            // 检查是否需要解扰（aid >= 220980）
-            if (descrambler.shouldDescramble(url, params)) {
-              logger.info(TAG, `检测到禁漫天堂加扰图片，开始解扰: aid=${imageInfo.aid}, imgIndex=${imageInfo.imgIndex}`);
-              try {
-                finalBuffer = await descrambler.descramble(imageBuffer, params);
-                logger.info(TAG, `禁漫天堂图片解扰完成，原始大小: ${imageBuffer.byteLength}, 解扰后: ${finalBuffer.byteLength}`);
-              } catch (descrambleError) {
-                const errMsg = descrambleError instanceof Error ? descrambleError.message : String(descrambleError);
-                logger.error(TAG, `禁漫天堂图片解扰失败: ${errMsg}`);
-                // 解扰失败时使用原始图片
-                finalBuffer = imageBuffer;
+          // 禁漫天堂图片解扰（检查URL是否包含media/photos）
+          if (url.includes('media/photos')) {
+            const imageInfo = JinmantiantangDescrambler.extractImageInfo(url);
+            if (imageInfo !== null) {
+              const descrambler = getJinmantiantangDescrambler();
+              const params: JinmantiantangParameters = {
+                aid: imageInfo.aid,
+                imgIndex: imageInfo.imgIndex
+              };
+              
+              // 检查是否需要解扰（aid >= 220980）
+              if (descrambler.shouldDescramble(url, params)) {
+                logger.info(TAG, `检测到禁漫天堂加扰图片，开始解扰: aid=${imageInfo.aid}, imgIndex=${imageInfo.imgIndex}`);
+                try {
+                  finalBuffer = await descrambler.descramble(imageBuffer, params);
+                  logger.info(TAG, `禁漫天堂图片解扰完成，原始大小: ${imageBuffer.byteLength}, 解扰后: ${finalBuffer.byteLength}`);
+                } catch (descrambleError) {
+                  const errMsg = descrambleError instanceof Error ? descrambleError.message : String(descrambleError);
+                  logger.error(TAG, `禁漫天堂图片解扰失败: ${errMsg}`);
+                  // 解扰失败时使用原始图片
+                  finalBuffer = imageBuffer;
+                }
               }
             }
           }
-        }
-        
-        // Manwa图片AES解密
-        if (url.endsWith('?v=20220724')) {
-          logger.debug(TAG, `检测到加密图片，开始AES解密: ${url.substring(0, 80)}`);
-          try {
-            // 记录原始数据的前16字节（加密头）
-            const encryptedView = new Uint8Array(imageBuffer);
-            const encHeader = Array.from(encryptedView.slice(0, 16)).map(b => b.toString(16).padStart(2, '0')).join(' ');
-            logger.debug(TAG, `加密数据头(hex): ${encHeader}`);
-            
-            finalBuffer = await this.decryptManwaImage(imageBuffer);
-            
-            // 记录解密后的前16字节（应该是WEBP文件头: RIFF....WEBP）
-            const decryptedView = new Uint8Array(finalBuffer);
-            const decHeader = Array.from(decryptedView.slice(0, 16)).map(b => b.toString(16).padStart(2, '0')).join(' ');
-            logger.debug(TAG, `解密数据头(hex): ${decHeader}`);
-            
-            // 检查是否是有效的WEBP文件（RIFF开头）
-            const isValidWebP = decryptedView[0] === 0x52 && decryptedView[1] === 0x49 && 
-                               decryptedView[2] === 0x46 && decryptedView[3] === 0x46;
-            logger.debug(TAG, `AES解密完成，解密后大小: ${finalBuffer.byteLength}, 是否有效WEBP: ${isValidWebP}`);
-            
-            if (!isValidWebP) {
-              logger.warn(TAG, `解密后的数据不是有效的WEBP格式！前4字节: ${decHeader.substring(0, 11)}`);
+          
+          // Manwa图片AES解密
+          if (url.endsWith('?v=20220724')) {
+            logger.debug(TAG, `检测到加密图片，开始AES解密: ${url.substring(0, 80)}`);
+            try {
+              // 记录原始数据的前16字节（加密头）
+              const encryptedView = new Uint8Array(imageBuffer);
+              const encHeader = Array.from(encryptedView.slice(0, 16)).map(b => b.toString(16).padStart(2, '0')).join(' ');
+              logger.debug(TAG, `加密数据头(hex): ${encHeader}`);
+              
+              finalBuffer = await this.decryptManwaImage(imageBuffer);
+              
+              // 记录解密后的前16字节（应该是WEBP文件头: RIFF....WEBP）
+              const decryptedView = new Uint8Array(finalBuffer);
+              const decHeader = Array.from(decryptedView.slice(0, 16)).map(b => b.toString(16).padStart(2, '0')).join(' ');
+              logger.debug(TAG, `解密数据头(hex): ${decHeader}`);
+              
+              // 检查是否是有效的WEBP文件（RIFF开头）
+              const isValidWebP = decryptedView[0] === 0x52 && decryptedView[1] === 0x49 && 
+                                 decryptedView[2] === 0x46 && decryptedView[3] === 0x46;
+              logger.debug(TAG, `AES解密完成，解密后大小: ${finalBuffer.byteLength}, 是否有效WEBP: ${isValidWebP}`);
+              
+              if (!isValidWebP) {
+                logger.warn(TAG, `解密后的数据不是有效的WEBP格式！前4字节: ${decHeader.substring(0, 11)}`);
+              }
+            } catch (decryptError) {
+              logger.error(TAG, `AES解密失败: ${decryptError}`);
+              throw new Error(`图片解密失败: ${decryptError}`);
             }
-          } catch (decryptError) {
-            logger.error(TAG, `AES解密失败: ${decryptError}`);
-            throw new Error(`图片解密失败: ${decryptError}`);
           }
-        }
-        
-        // 创建PixelMap
-        const pixelMap = await this.createPixelMapFromBuffer(finalBuffer, options);
+          
+          // 创建PixelMap
+          const pixelMap = await this.createPixelMapFromBuffer(finalBuffer, options);
+          this.recordImageFlowEvent(
+            flowId,
+            DownloadCacheFlowEventType.IMAGE_PROCESS_COMPLETED,
+            DownloadCacheFlowStage.IMAGE_PROCESS,
+            'online_image_process_completed',
+            url,
+            cacheKey,
+            options,
+            pixelMap !== null,
+            pixelMap === null ? 'pixel_map_empty' : '',
+            Date.now() - processStart,
+            finalBuffer.byteLength
+          );
         /*
         let pixelMap: image.PixelMap | null = null;
         
@@ -1258,8 +1927,25 @@ export class OnlineImageLoader {
         }
         
         */
-        httpRequest.destroy();
-        return pixelMap;
+          httpRequest.destroy();
+          return pixelMap;
+        } catch (processError) {
+          const processMessage = processError instanceof Error ? processError.message : String(processError);
+          this.recordImageFlowEvent(
+            flowId,
+            DownloadCacheFlowEventType.IMAGE_PROCESS_FAILED,
+            DownloadCacheFlowStage.IMAGE_PROCESS,
+            'online_image_process_failed',
+            url,
+            cacheKey,
+            options,
+            false,
+            processMessage,
+            Date.now() - processStart,
+            finalBuffer.byteLength
+          );
+          throw processError instanceof Error ? processError : new Error(String(processError));
+        }
         
       } else {
         const duration = Date.now() - startTs;
@@ -1294,6 +1980,19 @@ export class OnlineImageLoader {
       
       // 输出完整错误信息
       logger.error(TAG, `HTTP请求异常: message=${errMsg}, code=${errCode}, data=${errData}, url=${url}`);
+      this.recordImageFlowEvent(
+        flowId,
+        DownloadCacheFlowEventType.HTTP_FAILED,
+        DownloadCacheFlowStage.NETWORK,
+        'online_image_http_failed',
+        url,
+        cacheKey,
+        options,
+        false,
+        errMsg,
+        Date.now() - startTs,
+        0
+      );
       
       // 重新抛出错误
       throw new Error(`${errMsg} (code=${errCode})`);

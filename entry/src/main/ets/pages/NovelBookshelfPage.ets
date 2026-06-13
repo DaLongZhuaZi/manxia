@@ -95,6 +95,7 @@ export interface NovelReaderPageParams {
   readerHostMode?: string;
   readerInstanceId?: string;
   readerTitle?: string;
+  readerOpenFlowId?: string;
 }
 
 /**

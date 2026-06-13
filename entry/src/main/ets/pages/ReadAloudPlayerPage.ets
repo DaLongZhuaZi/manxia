@@ -630,7 +630,8 @@ export struct ReadAloudPlayerPage {
       tocUrl: param.tocUrl || param.bookUrl,
       author: param.author || '',
       coverUrl: param.coverUrl || '',
-      autoStartReadAloud: param.autoStartReadAloud === true
+      autoStartReadAloud: param.autoStartReadAloud === true,
+      readerOpenFlowId: param.readerOpenFlowId
     };
   }
 
@@ -655,7 +656,8 @@ export struct ReadAloudPlayerPage {
       tocUrl: launchParams.tocUrl,
       author: launchParams.author,
       coverUrl: launchParams.coverUrl,
-      autoStartReadAloud: shouldAutoStart
+      autoStartReadAloud: shouldAutoStart,
+      readerOpenFlowId: launchParams.readerOpenFlowId
     };
 
     logger.info(

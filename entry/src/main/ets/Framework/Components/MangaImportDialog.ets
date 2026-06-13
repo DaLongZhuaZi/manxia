@@ -17,6 +17,7 @@ import { AppColors } from '../Theme/AppColors';
 import { ScraperDialog, ScraperDialogConfig, ScraperDialogResult } from './ScraperDialog';
 import { ScraperContentType } from '../Scraper/ScraperTypes';
 import { fileIo } from '@kit.CoreFileKit';
+import { ImportFlowContentType, ImportFlowEvent, ImportFlowEventType } from '../Import/ImportFlowTypes';
 
 const TAG = 'MangaImportDialog';
 
@@ -148,6 +149,7 @@ export struct MangaImportDialog {
   // 回调函数
   onConfirm: (result: MangaImportDialogResult) => void = () => {};
   onCancel: () => void = () => {};
+  onFlowEvent: (event: ImportFlowEvent) => void = () => {};
 
   // 表单状态
   @State importMode: MangaImportMode = MangaImportMode.TANKOUBON;
@@ -194,6 +196,21 @@ export struct MangaImportDialog {
     
     // 从文件名推测章节编号
     this.guessChapterNumberFromTitle();
+    this.emitFlowEvent(ImportFlowEventType.METADATA_DETECTED, 'manga_dialog_ready', true, `chapters=${this.chapters.length}, candidates=${this.existingMangaCandidates.length}`);
+  }
+
+  private emitFlowEvent(eventType: ImportFlowEventType, reason: string, success: boolean, detail: string): void {
+    const event: ImportFlowEvent = new ImportFlowEvent();
+    event.eventType = eventType;
+    event.reason = reason;
+    event.success = success;
+    event.contentType = ImportFlowContentType.MANGA;
+    event.fileName = this.fileName;
+    event.sourceUri = this.sourceFileUri;
+    event.displayName = this.title;
+    event.chapterCount = this.chapters.length;
+    event.detail = detail;
+    this.onFlowEvent(event);
   }
   
   /**
@@ -618,6 +635,7 @@ export struct MangaImportDialog {
           .layoutWeight(1)
           .fontFamily(this.appFontFamily)
           .onClick(() => {
+            this.emitFlowEvent(ImportFlowEventType.DIALOG_CANCELLED, 'manga_dialog_cancelled', true, '');
             this.onCancel();
             this.controller.close();
           })
@@ -652,6 +670,7 @@ export struct MangaImportDialog {
                 selectedCoverPath: selectedCoverPath,
                 sourceFileUri: this.sourceFileUri || undefined
               };
+              this.emitFlowEvent(ImportFlowEventType.DIALOG_CONFIRMED, 'manga_dialog_confirmed', true, `mode=${this.importMode}, merge=${this.mergeToExisting}`);
               this.onConfirm(result);
               this.controller.close();
             }

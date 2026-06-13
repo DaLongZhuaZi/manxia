@@ -37,11 +37,19 @@ import {
   ExternalImportNavigationSource,
   ExternalImportNavigationTarget
 } from '../Framework/ExternalFile/ExternalImportNavigationCoordinator';
+import { ImportFlowMonitor, getImportFlowMonitor } from '../Framework/Import/ImportFlowMonitor';
+import {
+  ImportFlowEntrySource,
+  ImportFlowEvent,
+  ImportFlowEventType,
+  ImportFlowSeverity
+} from '../Framework/Import/ImportFlowTypes';
 
 const TAG: string = 'ExternalFileTaskAbilityPage';
 const APP_STORAGE_TRANSFER_RECORD_ID: string = 'pendingTransferRecordId';
 const APP_STORAGE_TRANSFER_RESULT: string = 'pendingTransferImportResult';
 const APP_STORAGE_TRANSFER_TRACKING_ACTIVE: string = 'pendingTransferTrackingActive';
+const APP_STORAGE_PENDING_IMPORT_FLOW_ID: string = 'pendingImportFlowId';
 
 @Entry
 @Component
@@ -53,6 +61,7 @@ struct ExternalFileTaskAbilityPage {
   @State private errorText: string = '';
   @StorageLink('source_features_enabled') private sourceFeaturesEnabled: boolean = false;
   private hasDispatchedTask: boolean = false;
+  private importFlowMonitor: ImportFlowMonitor = getImportFlowMonitor();
 
   aboutToAppear(): void {
     this.resolveTaskLaunchPayload('appear');
@@ -331,6 +340,21 @@ struct ExternalFileTaskAbilityPage {
 
       AppStorage.setOrCreate(APP_STORAGE_TRANSFER_RESULT, status);
       AppStorage.setOrCreate(APP_STORAGE_TRANSFER_TRACKING_ACTIVE, false);
+      const importFlowId: string = AppStorage.get<string>(APP_STORAGE_PENDING_IMPORT_FLOW_ID) || '';
+      if (importFlowId.length > 0) {
+        const event: ImportFlowEvent = new ImportFlowEvent();
+        event.sessionId = importFlowId;
+        event.eventType = ImportFlowEventType.TRANSFER_RESULT_WRITTEN;
+        event.reason = status;
+        event.entrySource = ImportFlowEntrySource.LAN_TRANSFER;
+        event.transferRecordId = recordId;
+        event.success = status !== 'import_failed';
+        event.severity = status === 'import_failed' ? ImportFlowSeverity.ERROR : ImportFlowSeverity.INFO;
+        event.detail = `external_task_status=${status}`;
+        this.importFlowMonitor.record(event);
+        this.importFlowMonitor.endSession(importFlowId, status);
+        AppStorage.delete(APP_STORAGE_PENDING_IMPORT_FLOW_ID);
+      }
       logger.info(TAG, `已回写局域网传书独立任务结果: recordId=${recordId}, status=${status}`);
     } catch (error) {
       logger.warn(TAG, `回写局域网传书独立任务结果失败: ${String(error)}`);

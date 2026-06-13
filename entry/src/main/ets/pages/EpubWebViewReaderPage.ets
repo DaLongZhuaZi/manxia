@@ -46,7 +46,9 @@ import {
   EpubWebHighlightRange,
   EpubWebSelectionSnapshot,
   EpubWebTextSnapshot,
-  EpubWebPurifyRulePayload
+  EpubWebPurifyRulePayload,
+  EpubWebComponentFlowEvent,
+  EpubWebComponentFlowEventName
 } from '../Framework/Components/EpubWebViewReaderComponent';
 import { UnifiedContentType } from '../Models/UnifiedContentModels';
 import {
@@ -91,6 +93,17 @@ import { openEBookReaderRouterPage } from '../Framework/Adapters/EBookReaderRout
 import { READER_ABILITY_HOST_MULTITON } from '../Framework/Reader/MangaReaderAbilityConstants';
 import { openReadAloudPlayerInIsolatedAbility } from '../Framework/ReadAloud/ReadAloudPlayerAbilityLauncher';
 import type { KeyEvent as InputKeyEvent } from '@kit.InputKit';
+import { DetailOpenFlowMonitor } from '../Framework/Reader/DetailOpenFlowMonitor';
+import {
+  DetailOpenFlowEventType,
+  DetailOpenFlowTargetKind
+} from '../Framework/Reader/DetailOpenFlowTypes';
+import { EpubReadFlowMonitor } from '../Framework/Reader/EpubReadFlowMonitor';
+import {
+  EpubReadFlowEventType,
+  EpubReadFlowSessionInfo,
+  EpubReadFlowSeverity
+} from '../Framework/Reader/EpubReadFlowTypes';
 
 const TAG = 'EpubWebViewReaderPage';
 const IMAGE_RESOURCE_PATH_PATTERN: RegExp = /\.(apng|avif|bmp|gif|heic|heif|jpe?g|png|svg|webp)$/i;
@@ -140,6 +153,9 @@ export struct EpubWebViewReaderPage {
   private routerBackOnClose: boolean = false;
   private readerHostMode: string = '';
   private readerInstanceId: string = '';
+  private readerOpenFlowId: string = '';
+  private epubReadFlowId: string = '';
+  private routeReaderTitle: string = '';
 
   // ──── 安全区 ────
   @StorageProp('statusBarHeight') statusBarHeight: number = 0;
@@ -313,6 +329,10 @@ export struct EpubWebViewReaderPage {
     void this.persistTextReadingSettings('about_to_disappear');
     void this.persistPageReadingSettings('about_to_disappear');
     void this.saveReadingProgress('about_to_disappear');
+    if (this.epubReadFlowId.length > 0) {
+      EpubReadFlowMonitor.getInstance().endSession(this.epubReadFlowId, 'about_to_disappear');
+      this.epubReadFlowId = '';
+    }
   }
 
   onPageShow(): void {
@@ -355,14 +375,18 @@ export struct EpubWebViewReaderPage {
     this.routerBackOnClose = params.routerBackOnClose === true;
     this.readerHostMode = params.readerHostMode || '';
     this.readerInstanceId = params.readerInstanceId || '';
+    this.readerOpenFlowId = params.readerOpenFlowId || '';
+    this.routeReaderTitle = params.readerTitle || '';
     this.shouldAutoStartReadAloudFromRoute = params.autoStartReadAloud === true;
     this.shouldAutoOpenReadAloudPlayerFromRoute = params.autoOpenReadAloudPlayer === true;
     this.routeReadAloudAutoStartAttempts = 0;
+    this.startEpubReadFlowSession(params.bookId, this.routeReaderTitle, '', 'initialize_params');
     await this.loadEBook(params.bookId);
     this.sessionStartTimestamp = Date.now();
   }
 
   private async loadEBook(bookId: string): Promise<void> {
+    const loadStartedAt = Date.now();
     this.isLoading = true;
     this.errorMessage = '';
     this.hasNotifiedTransitionReaderReady = false;
@@ -544,13 +568,28 @@ export struct EpubWebViewReaderPage {
       this.syncAutoPageTurnState();
       void this.updateEpubReadAloudContextByPosition();
       this.scheduleRouteReadAloudAutoStart('ebook_loaded', 360);
+      this.recordEpubReadFlowEvent(
+        EpubReadFlowEventType.BOOK_LOADED,
+        'ebook_loaded',
+        Math.max(0, Date.now() - loadStartedAt),
+        true,
+        `format=${ebook.format}, spineItems=${spineItems.length}`
+      );
       logger.info(TAG, `EPUB 加载完成: bookId=${bookId}, spineItems=${spineItems.length}, spineIndex=${this.currentSpineIndex}`);
     } catch (error) {
-      const msg = error instanceof Error ? error.message : String(error);
+      const msg = String(error);
       logger.error(TAG, `EPUB 加载失败: ${msg}`);
       this.errorMessage = msg;
       this.isLoading = false;
       this.updateVolumeKeyListener();
+      this.recordEpubReadFlowEvent(
+        EpubReadFlowEventType.ERROR,
+        'ebook_load_failed',
+        Math.max(0, Date.now() - loadStartedAt),
+        false,
+        msg
+      );
+      this.markDetailOpenReaderReady('ebook_load_failed', false, msg);
       cancelTransition();
     }
   }
@@ -563,6 +602,140 @@ export struct EpubWebViewReaderPage {
     this.hasNotifiedTransitionReaderReady = true;
     setReaderReady();
     logger.info(TAG, `📖 已通知过渡动画阅读器就绪: ${reason}`);
+    this.recordEpubReadFlowEvent(EpubReadFlowEventType.READER_READY, reason, 0, true, '');
+    this.markDetailOpenReaderReady(reason, true, '');
+  }
+
+  private startEpubReadFlowSession(bookId: string, bookTitle: string, format: string, reason: string): void {
+    if (this.epubReadFlowId.length > 0) {
+      return;
+    }
+    const info = new EpubReadFlowSessionInfo();
+    info.readerOpenFlowId = this.readerOpenFlowId;
+    info.bookId = bookId;
+    info.bookTitle = bookTitle;
+    info.format = format;
+    info.spineIndex = this.currentSpineIndex;
+    info.spinePath = this.resolveSpinePath(this.currentSpineIndex);
+    info.readerHostMode = this.readerHostMode;
+    info.readerInstanceId = this.readerInstanceId;
+    this.epubReadFlowId = EpubReadFlowMonitor.getInstance().startSession(info);
+    this.recordEpubReadFlowEvent(EpubReadFlowEventType.PARAM_BOUND, reason, 0, true, `host=${this.readerHostMode}, instance=${this.readerInstanceId}`);
+  }
+
+  private recordEpubReadFlowEvent(
+    eventType: EpubReadFlowEventType,
+    reason: string,
+    elapsedMs: number,
+    success: boolean,
+    detail: string
+  ): void {
+    const bookId = this.ebook ? this.ebook.id : '';
+    if (this.epubReadFlowId.length <= 0) {
+      this.startEpubReadFlowSession(bookId, this.getBookTitle(), this.ebook ? String(this.ebook.format) : '', 'auto_start_for_event');
+    }
+    if (this.epubReadFlowId.length <= 0) {
+      return;
+    }
+    const event = EpubReadFlowMonitor.getInstance().createEvent(
+      this.epubReadFlowId,
+      eventType,
+      bookId,
+      this.currentSpineIndex,
+      reason
+    );
+    event.readerOpenFlowId = this.readerOpenFlowId;
+    event.spinePath = this.resolveSpinePath(this.currentSpineIndex);
+    event.pageIndex = this.currentPageWithinSpine;
+    event.pageCount = this.totalPagesInSpine;
+    event.elapsedMs = Math.max(0, elapsedMs);
+    event.success = success;
+    event.detail = detail;
+    if (!success) {
+      event.severity = EpubReadFlowSeverity.ERROR;
+      event.errorMessage = detail;
+    }
+    if (event.elapsedMs > 0) {
+      event.metricName = `epub_read.${eventType}`;
+      event.metricValue = event.elapsedMs;
+      event.metricUnit = 'ms';
+    }
+    EpubReadFlowMonitor.getInstance().record(event);
+  }
+
+  private handleEpubComponentFlowEvent(event: EpubWebComponentFlowEvent): void {
+    if (this.epubReadFlowId.length <= 0) {
+      this.startEpubReadFlowSession(
+        this.ebook ? this.ebook.id : '',
+        this.getBookTitle(),
+        this.ebook ? String(this.ebook.format) : '',
+        'component_flow_event'
+      );
+    }
+    if (this.epubReadFlowId.length <= 0) {
+      return;
+    }
+    let eventType = EpubReadFlowEventType.WEBVIEW_LOAD_START;
+    if (event.eventName === EpubWebComponentFlowEventName.WEBVIEW_LOAD_END) {
+      eventType = EpubReadFlowEventType.WEBVIEW_LOAD_END;
+    } else if (event.eventName === EpubWebComponentFlowEventName.WEBVIEW_ERROR) {
+      eventType = EpubReadFlowEventType.WEBVIEW_ERROR;
+    } else if (event.eventName === EpubWebComponentFlowEventName.JS_EXECUTED) {
+      eventType = EpubReadFlowEventType.JS_EXECUTED;
+    } else if (event.eventName === EpubWebComponentFlowEventName.JS_FAILED) {
+      eventType = EpubReadFlowEventType.JS_FAILED;
+    } else if (event.eventName === EpubWebComponentFlowEventName.PAGINATION_CHANGED) {
+      eventType = EpubReadFlowEventType.PAGINATION_CHANGED;
+    }
+    const flowEvent = EpubReadFlowMonitor.getInstance().createEvent(
+      this.epubReadFlowId,
+      eventType,
+      this.ebook ? this.ebook.id : '',
+      this.currentSpineIndex,
+      event.reason
+    );
+    flowEvent.readerOpenFlowId = this.readerOpenFlowId;
+    flowEvent.spinePath = event.url.length > 0 ? event.url : this.resolveSpinePath(this.currentSpineIndex);
+    flowEvent.pageIndex = event.pageIndex;
+    flowEvent.pageCount = event.pageCount;
+    flowEvent.elapsedMs = event.elapsedMs;
+    flowEvent.success = event.success;
+    flowEvent.errorMessage = event.errorMessage;
+    flowEvent.detail = event.detail;
+    if (!event.success) {
+      flowEvent.severity = EpubReadFlowSeverity.ERROR;
+    }
+    if (event.elapsedMs > 0) {
+      flowEvent.metricName = `epub_read.${eventType}`;
+      flowEvent.metricValue = event.elapsedMs;
+      flowEvent.metricUnit = 'ms';
+    }
+    EpubReadFlowMonitor.getInstance().record(flowEvent);
+  }
+
+  private markDetailOpenReaderReady(reason: string, success: boolean, detail: string): void {
+    if (this.readerOpenFlowId.length <= 0) {
+      return;
+    }
+    const event = DetailOpenFlowMonitor.getInstance().createEvent(
+      this.readerOpenFlowId,
+      success ? DetailOpenFlowEventType.READER_READY : DetailOpenFlowEventType.READER_FAILED,
+      this.ebook ? this.ebook.id : '',
+      this.spineItems.length > this.currentSpineIndex ? this.spineItems[this.currentSpineIndex].id : '',
+      this.currentSpineIndex,
+      reason
+    );
+    event.targetKind = DetailOpenFlowTargetKind.EPUB_WEBVIEW;
+    event.routeName = 'EpubWebViewReaderPage';
+    event.chapterTitle = this.getCurrentChapterTitle();
+    event.elapsedMs = DetailOpenFlowMonitor.getInstance().getSessionElapsedMs(this.readerOpenFlowId);
+    event.success = success;
+    event.detail = detail;
+    if (!success) {
+      event.errorMessage = detail;
+    }
+    DetailOpenFlowMonitor.getInstance().record(event);
+    DetailOpenFlowMonitor.getInstance().endSession(this.readerOpenFlowId, reason);
   }
 
   private refreshAppFontFamilyForDialog(source: string): void {
@@ -2198,7 +2371,10 @@ export struct EpubWebViewReaderPage {
       coverUrl: readAloudCoverUrl,
       content: snapshot.text,
       pageIndex: this.currentPageWithinSpine,
-      resumeCharIndex: safeResumeCharIndex
+      resumeCharIndex: safeResumeCharIndex,
+      readerOpenFlowId: this.readerOpenFlowId,
+      sourceId: 'ebook',
+      totalChapters: this.spineItems.length
     });
     return true;
   }
@@ -3435,13 +3611,28 @@ export struct EpubWebViewReaderPage {
     anchorFragment: string = '',
     source: string = 'manual'
   ): void {
+    const requestStartedAt = Date.now();
     const resolvedSpineIndex = this.resolveReadableSpineIndex(spineIndex, transitionDirection);
     if (resolvedSpineIndex < 0) {
       logger.warn(TAG, `请求切换 spine 失败: 未找到可读 spine, requested=${spineIndex}, direction=${transitionDirection}`);
+      this.recordEpubReadFlowEvent(
+        EpubReadFlowEventType.SPINE_REQUESTED,
+        'spine_request_no_readable_target',
+        Math.max(0, Date.now() - requestStartedAt),
+        false,
+        `requested=${spineIndex}, direction=${transitionDirection}`
+      );
       return;
     }
     const path = this.resolveSpinePath(resolvedSpineIndex);
     if (path.length === 0) {
+      this.recordEpubReadFlowEvent(
+        EpubReadFlowEventType.SPINE_REQUESTED,
+        'spine_request_empty_path',
+        Math.max(0, Date.now() - requestStartedAt),
+        false,
+        `requested=${spineIndex}, resolved=${resolvedSpineIndex}`
+      );
       return;
     }
     if (source === 'manual') {
@@ -3466,6 +3657,13 @@ export struct EpubWebViewReaderPage {
       this.currentPageWithinSpine = 0;
       this.totalPagesInSpine = 0;
       void this.refreshCurrentSpineHighlightRanges('spine_change_without_controller');
+      this.recordEpubReadFlowEvent(
+        EpubReadFlowEventType.SPINE_REQUESTED,
+        'spine_change_without_controller',
+        Math.max(0, Date.now() - requestStartedAt),
+        true,
+        `resolved=${resolvedSpineIndex}, path=${path}`
+      );
       return;
     }
     this.pendingSpineIndex = resolvedSpineIndex;
@@ -3480,6 +3678,13 @@ export struct EpubWebViewReaderPage {
     logger.info(
       TAG,
       `请求切换 spine: requested=${spineIndex}, resolved=${resolvedSpineIndex}, pageOffset=${normalizedPageOffset}, direction=${transitionDirection}, anchor=${normalizedAnchor || 'none'}, path=${path}`
+    );
+    this.recordEpubReadFlowEvent(
+      EpubReadFlowEventType.SPINE_REQUESTED,
+      source,
+      Math.max(0, Date.now() - requestStartedAt),
+      true,
+      `requested=${spineIndex}, resolved=${resolvedSpineIndex}, pageOffset=${normalizedPageOffset}, direction=${transitionDirection}`
     );
   }
 
@@ -3819,6 +4024,7 @@ export struct EpubWebViewReaderPage {
   // ──── 进度保存 ────
 
   private async saveReadingProgress(trigger: string): Promise<void> {
+    const saveStartedAt = Date.now();
     const ebook = this.ebook;
     if (!ebook) {
       return;
@@ -3857,8 +4063,22 @@ export struct EpubWebViewReaderPage {
         TAG,
         `[${trigger}] 进度已保存: spine=${this.currentSpineIndex}, page=${this.currentPageWithinSpine}/${this.totalPagesInSpine}, progress=${progressPercent.toFixed(2)}%, totalReadingTime=${progress.totalReadingTime.toFixed(2)}min`
       );
+      this.recordEpubReadFlowEvent(
+        EpubReadFlowEventType.PROGRESS_SAVED,
+        trigger,
+        Math.max(0, Date.now() - saveStartedAt),
+        true,
+        `spine=${this.currentSpineIndex}, page=${this.currentPageWithinSpine}/${this.totalPagesInSpine}`
+      );
     } catch (e) {
       logger.warn(TAG, `保存进度失败: ${String(e)}`);
+      this.recordEpubReadFlowEvent(
+        EpubReadFlowEventType.PROGRESS_SAVED,
+        `${trigger}_failed`,
+        Math.max(0, Date.now() - saveStartedAt),
+        false,
+        String(e)
+      );
     }
   }
 
@@ -5098,6 +5318,13 @@ export struct EpubWebViewReaderPage {
                     if (this.currentAnchorFragment.length > 0) {
                       this.currentAnchorFragment = '';
                     }
+                    this.recordEpubReadFlowEvent(
+                      EpubReadFlowEventType.PAGINATION_CHANGED,
+                      isReadAloudFollow ? 'read_aloud_follow' : 'page_change',
+                      0,
+                      true,
+                      `page=${page + 1}/${totalPages}, spineChanged=${spineChanged === true}`
+                    );
                     this.syncAutoPageTurnState();
                     if (!isReadAloudFollow) {
                       this.readAloudController.updatePageIndex(page);
@@ -5133,8 +5360,16 @@ export struct EpubWebViewReaderPage {
                   onError: (msg: string) => {
                     this.pendingSpineIndex = -1;
                     logger.warn(TAG, `WebView 错误: ${msg}`);
+                    this.recordEpubReadFlowEvent(
+                      EpubReadFlowEventType.WEBVIEW_ERROR,
+                      'component_error',
+                      0,
+                      false,
+                      msg
+                    );
                     if (!this.hasNotifiedTransitionReaderReady) {
                       logger.warn(TAG, 'WebView 初始加载失败，取消翻开过渡遮罩');
+                      this.markDetailOpenReaderReady('component_error_before_ready', false, msg);
                       cancelTransition();
                     }
                   },
@@ -5164,6 +5399,9 @@ export struct EpubWebViewReaderPage {
                   },
                   onUpdateHighlightThought: (highlightId: string, thoughtText: string) => {
                     this.onUpdateEpubHighlightThought(highlightId, thoughtText);
+                  },
+                  onFlowEvent: (event: EpubWebComponentFlowEvent) => {
+                    this.handleEpubComponentFlowEvent(event);
                   }
                 }
               } as EpubWebViewReaderParams,
