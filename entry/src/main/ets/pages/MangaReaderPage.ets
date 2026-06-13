@@ -79,7 +79,13 @@ import { PageInfo as SourcePageInfo, PageRequestHeader as SourcePageRequestHeade
 import { getLegadoMangaSourceBridge, LegadoMangaPageResult } from '../Framework/Novel/LegadoMangaSourceBridge';
 import { MangaSourceAPIEngine } from '../Framework/WebView/MangaSourceAPIEngine';
 import { ChapterPreloadManager } from '../Framework/Preload/ChapterPreloadManager';
-import { OnlineArchiveExtractedPage, OnlineArchiveExtractResult, OnlineMangaArchiveService } from '../Framework/Download/OnlineMangaArchiveService';
+import {
+  OnlineArchiveCacheState,
+  OnlineArchiveExtractedPage,
+  OnlineArchiveExtractResult,
+  OnlineChapterArchiveCacheStatus,
+  OnlineMangaArchiveService
+} from '../Framework/Download/OnlineMangaArchiveService';
 import { webview } from '@kit.ArkWeb';
 import { photoAccessHelper } from '@kit.MediaLibraryKit';
 import { fileUri } from '@kit.CoreFileKit';
@@ -140,6 +146,7 @@ import { distributedReadingService } from '../Framework/Distributed/DistributedR
 import { distributedDataSyncManager, SyncReadingState } from '../Framework/Distributed/DistributedDataSyncManager';
 
 const TAG = 'MangaReaderPage';
+const AUTO_WEBTOON_ASPECT_RATIO_THRESHOLD: number = 2.8;
 
 /**
 * 漫画阅读器页面参数接口
@@ -534,6 +541,7 @@ export struct MangaReaderPage {
   @State showQuickSettings: boolean = false;
   @State showMoreMenu: boolean = false;
   @State showChapterList: boolean = false;
+  @State chapterListPageCountSignal: number = 0;
   // 自动翻页控制
   @State showAutoPageTurnSettings: boolean = false;
   @State autoPageTurnEnabled: boolean = false;
@@ -626,6 +634,8 @@ export struct MangaReaderPage {
   private webtoonOnlineAdjacentLoadingChapterIds: Set<string> = new Set();
   private lastWebtoonSwitchChapterId: string = '';
   private lastWebtoonSwitchAt: number = 0;
+  private chapterPageCountRefreshInProgress: boolean = false;
+  private hasAutoWebtoonModeDetectionRun: boolean = false;
   private readonly WEBTOON_SWITCH_DEBOUNCE_LOCAL_MS: number = 120;
   private readonly WEBTOON_SWITCH_DEBOUNCE_ONLINE_MS: number = 280;
   
@@ -2099,6 +2109,30 @@ private onlineDownloadedLocalFastPathActive: boolean = false;
     return imageUrl.trim().length > 0 && !this.isUnresolvedLegadoImageRuleUrl(imageUrl);
   }
 
+  private async buildCachedOnlineMangaPages(chapterId: string, cachedPages: OnlinePageInfo[]): Promise<MangaPage[]> {
+    const mangaPages: MangaPage[] = [];
+    for (let index: number = 0; index < cachedPages.length; index++) {
+      const pageInfo: OnlinePageInfo = cachedPages[index];
+      const localPath: string = await this.resolveExistingLocalImagePath(pageInfo.localPath);
+      const useLocalPath: boolean = localPath.length > 0;
+      const page: MangaPage = {
+        id: pageInfo.id || `${chapterId}_page_${pageInfo.pageNumber}`,
+        index: index,
+        sourceType: useLocalPath ? ImageSourceType.LOCAL : ImageSourceType.NETWORK,
+        imagePath: useLocalPath ? localPath : pageInfo.imageUrl,
+        imageUrl: pageInfo.imageUrl,
+        localPath: useLocalPath ? localPath : '',
+        width: pageInfo.width,
+        height: pageInfo.height,
+        fileSize: pageInfo.fileSize,
+        requestHeaders: this.parseOnlinePageRequestHeaders(pageInfo),
+        isLoaded: false
+      };
+      mangaPages.push(page);
+    }
+    return mangaPages;
+  }
+
   private isUnresolvedLegadoImageRuleUrl(imageUrl: string): boolean {
     if (!imageUrl || imageUrl.trim().length <= 0) {
       return false;
@@ -2964,6 +2998,55 @@ private onlineDownloadedLocalFastPathActive: boolean = false;
     logger.info(TAG, `在线已下载漫画完整预热上下文已准备: warmupMode=deferred_after_first_display, baseUrl=${context.requestBaseUrl}, isPhotos18=${context.isPhotos18}`);
   }
 
+  private tryActivateOnlineDownloadedLocalPathFastPath(
+    chapter: MangaChapter,
+    pageIndex: number,
+    pages: MangaPage[],
+    localCount: number,
+    networkCount: number,
+    reason: string
+  ): boolean {
+    if (this.pageParams?.contentType !== MangaReaderContentType.OnlineDownloaded) {
+      return false;
+    }
+    if (this.isOnlineDownloadedFullFlowReady()) {
+      return false;
+    }
+    if (pages.length <= 0) {
+      return false;
+    }
+
+    const safePageIndex: number = Math.max(0, Math.min(pageIndex, pages.length - 1));
+    const visiblePage: MangaPage = pages[safePageIndex];
+    if (visiblePage.sourceType !== ImageSourceType.LOCAL) {
+      logger.info(TAG, `在线已下载散图快速通道未启用: reason=${reason}, page=${safePageIndex + 1}, sourceType=${visiblePage.sourceType}, local=${localCount}, network=${networkCount}`);
+      return false;
+    }
+
+    const visibleLocalPath: string = visiblePage.localPath && visiblePage.localPath.length > 0
+      ? visiblePage.localPath
+      : visiblePage.imagePath;
+    if (!visibleLocalPath || visibleLocalPath.trim().length <= 0) {
+      logger.info(TAG, `在线已下载散图快速通道未启用: reason=${reason}, page=${safePageIndex + 1}, localPath=empty`);
+      return false;
+    }
+
+    const fastPathInfo: OnlineDownloadedArchiveFastPathInfo = new OnlineDownloadedArchiveFastPathInfo();
+    fastPathInfo.pageCount = pages.length;
+    fastPathInfo.networkPageCount = networkCount;
+    this.onlineDownloadedArchiveFastPathInfo = fastPathInfo;
+    this.onlineDownloadedLocalFastPathActive = true;
+    this.onlineDownloadedWarmupState = OnlineDownloadedWarmupState.LOCAL_FIRST_PAGE_READY;
+
+    const detail: string = this.buildOnlineDownloadedWarmupDetail(
+      `chapter=${chapter.title}, chapterId=${chapter.id}, selectedPage=${safePageIndex + 1}, local=${localCount}, network=${networkCount}, reason=${reason}`
+    );
+    this.recordMangaReadFlowRecovered('online_downloaded_local_path_fast_path_selected', detail);
+    this.recordOnlineDownloadedCacheSnapshot('online_downloaded_local_path_fast_path_selected');
+    logger.info(TAG, `在线已下载散图本地快速通道启用: chapter=${chapter.title}, page=${safePageIndex + 1}, local=${localCount}, network=${networkCount}, reason=${reason}`);
+    return true;
+  }
+
   private shouldThrottleOnlineDownloadedPreload(): boolean {
     return this.pageParams?.contentType === MangaReaderContentType.OnlineDownloaded &&
       this.onlineDownloadedLocalFastPathActive &&
@@ -3690,6 +3773,7 @@ private onlineDownloadedLocalFastPathActive: boolean = false;
   ): Promise<boolean> {
     try {
       let archivePath = chapter.localPath || '';
+      let archiveState: OnlineArchiveCacheState | null = null;
       if (!this.isCbzArchivePath(archivePath)) {
         const dbChapter = await DataManager.getInstance().getOnlineChapterById(chapter.id);
         if (dbChapter && dbChapter.downloadPath && this.isCbzArchivePath(dbChapter.downloadPath)) {
@@ -3699,6 +3783,32 @@ private onlineDownloadedLocalFastPathActive: boolean = false;
       }
 
       if (!archivePath || !this.isCbzArchivePath(archivePath)) {
+        archiveState = await this.onlineArchiveService.syncOnlineChapterArchiveStatus(
+          chapter.id,
+          'reader_archive_lookup'
+        );
+        if (archiveState !== null) {
+          archivePath = archiveState.archivePath;
+          chapter.localPath = archivePath;
+        }
+      }
+
+      if (!archivePath || !this.isCbzArchivePath(archivePath)) {
+        return false;
+      }
+
+      if (archiveState === null) {
+        archiveState = await this.onlineArchiveService.syncOnlineChapterArchiveStatus(
+          chapter.id,
+          'reader_archive_verify'
+        );
+      }
+      if (
+        archiveState === null ||
+          (archiveState.cacheStatus !== OnlineChapterArchiveCacheStatus.COMPLETE &&
+            archiveState.cacheStatus !== OnlineChapterArchiveCacheStatus.PARTIAL)
+      ) {
+        logger.info(TAG, `在线章节CBZ状态不可用，回退在线链路: chapter=${chapter.title}, status=${archiveState ? archiveState.cacheStatus : 'none'}, archive=${archivePath}`);
         return false;
       }
       const archiveInfo: OnlineDownloadedArchiveFastPathInfo = new OnlineDownloadedArchiveFastPathInfo();
@@ -3749,26 +3859,22 @@ private onlineDownloadedLocalFastPathActive: boolean = false;
       }
 
       if (networkPages > 0) {
-        logger.info(TAG, `在线已下载章节CBZ为部分归档，回退旧链路: ${chapter.title}, pages=${mangaPages.length}, network=${networkPages}, archive=${archivePath}`);
-        this.recordMangaReadFlowDegraded(
-          'online_archive_partial_network_pages',
+        logger.info(TAG, `在线章节CBZ为部分归档，使用本地+在线混合加载: ${chapter.title}, pages=${mangaPages.length}, network=${networkPages}, archive=${archivePath}`);
+        this.recordMangaReadFlowRecovered(
+          'online_archive_partial_mixed_pages_selected',
           archiveDetail
         );
-        this.recordMangaReadFlowPagesResolved('online_archive_partial_network_pages', extractElapsedMs, archiveDetail);
-        if (this.pageParams?.contentType === MangaReaderContentType.OnlineDownloaded) {
-          this.onlineDownloadedLocalFastPathActive = false;
-          this.recordOnlineDownloadedCacheSnapshot('online_downloaded_archive_partial', 'blocking_before_first_display');
-        }
-        return false;
       }
 
       chapter.pages = mangaPages;
       chapter.totalPages = chapter.pages.length;
-      chapter.isDownloaded = true;
-      chapter.downloadStatus = DownloadStatus.COMPLETED;
-      chapter.downloadProgress = 100;
+      chapter.isDownloaded = networkPages <= 0;
+      chapter.downloadStatus = networkPages <= 0 ? DownloadStatus.COMPLETED : DownloadStatus.DOWNLOADING;
+      chapter.downloadProgress = mangaPages.length > 0
+        ? Math.floor(((mangaPages.length - networkPages) / mangaPages.length) * 100)
+        : 0;
 
-      logger.info(TAG, `在线已下载章节已从CBZ解压加载: ${chapter.title}, pages=${chapter.pages.length}, archive=${archivePath}, reusedExtract=${extractResult.reusedExtract}`);
+      logger.info(TAG, `在线章节已从CBZ解压加载: ${chapter.title}, pages=${chapter.pages.length}, local=${chapter.pages.length - networkPages}, network=${networkPages}, partial=${archiveState ? archiveState.isPartialArchive : false}, archive=${archivePath}, reusedExtract=${extractResult.reusedExtract}`);
       if (this.pageParams?.contentType === MangaReaderContentType.OnlineDownloaded &&
         !this.isOnlineDownloadedFullFlowReady()) {
         this.onlineDownloadedLocalFastPathActive = true;
@@ -3797,6 +3903,81 @@ private onlineDownloadedLocalFastPathActive: boolean = false;
       this.recordMangaReadFlowDegraded(
         'online_archive_extract_failed_fallback',
         `chapter=${chapter.title}, error=${String(error)}`
+      );
+      return false;
+    }
+  }
+
+  private async tryLoadOnlinePageRecordsForChapter(
+    chapter: MangaChapter,
+    kickstartViewer: boolean,
+    reason: string
+  ): Promise<boolean> {
+    try {
+      const pageInfos: OnlinePageInfo[] = await DataManager.getInstance().getOnlineChapterPages(chapter.id);
+      const usablePages: OnlinePageInfo[] = [];
+      const skipNetworkCachedPages: boolean = this.shouldRefreshVolatileSourcePages();
+      for (let i = 0; i < pageInfos.length; i++) {
+        const pageInfo = pageInfos[i];
+        const localPath = pageInfo.localPath || '';
+        const imageUrl = pageInfo.imageUrl || '';
+        if (localPath.length > 0 || (!skipNetworkCachedPages && this.isUsableCachedOnlineImageUrl(imageUrl))) {
+          usablePages.push(pageInfo);
+        }
+      }
+
+      if (usablePages.length <= 0) {
+        logger.info(TAG, `在线章节页表兜底未命中: chapter=${chapter.title}, chapterId=${chapter.id}, reason=${reason}`);
+        return false;
+      }
+
+      const mangaPages: MangaPage[] = await this.buildCachedOnlineMangaPages(chapter.id, usablePages);
+      if (mangaPages.length <= 0) {
+        logger.info(TAG, `在线章节页表兜底转换为空: chapter=${chapter.title}, chapterId=${chapter.id}, reason=${reason}`);
+        return false;
+      }
+
+      chapter.pages = mangaPages;
+      chapter.totalPages = Math.max(chapter.totalPages || 0, mangaPages.length);
+      if (this.readerState.currentChapter && this.readerState.currentChapter.id === chapter.id) {
+        this.readerState.currentChapter.pages = mangaPages;
+        this.readerState.currentChapter.totalPages = chapter.totalPages;
+      }
+
+      const localCount: number = mangaPages.filter((page: MangaPage): boolean => {
+        return page.sourceType === ImageSourceType.LOCAL;
+      }).length;
+      const networkCount: number = mangaPages.length - localCount;
+      logger.info(
+        TAG,
+        `在线章节页表兜底命中: chapter=${chapter.title}, pages=${mangaPages.length}, local=${localCount}, network=${networkCount}, reason=${reason}`
+      );
+      this.recordMangaReadFlowRecovered(
+        'online_page_records_fallback_hit',
+        `chapter=${chapter.title}, chapterId=${chapter.id}, pages=${mangaPages.length}, local=${localCount}, network=${networkCount}, reason=${reason}`
+      );
+      this.recordMangaReadFlowPagesResolved(
+        'online_page_records_fallback_hit',
+        0,
+        `chapter=${chapter.title}, chapterId=${chapter.id}, pages=${mangaPages.length}, local=${localCount}, network=${networkCount}`
+      );
+      this.tryActivateOnlineDownloadedLocalPathFastPath(
+        chapter,
+        this.pageParams?.pageIndex !== undefined ? this.pageParams.pageIndex : 0,
+        mangaPages,
+        localCount,
+        networkCount,
+        reason
+      );
+      if (kickstartViewer && this.mangaViewerComponent) {
+        this.mangaViewerComponent.kickstartLoading();
+      }
+      return true;
+    } catch (error) {
+      logger.warn(TAG, `在线章节页表兜底加载失败: chapter=${chapter.title}, ${String(error)}`);
+      this.recordMangaReadFlowDegraded(
+        'online_page_records_fallback_failed',
+        `chapter=${chapter.title}, chapterId=${chapter.id}, error=${String(error)}, reason=${reason}`
       );
       return false;
     }
@@ -4202,6 +4383,7 @@ private onlineDownloadedLocalFastPathActive: boolean = false;
       const isLegadoBridgeSource: boolean = params.sourceId !== undefined && params.sourceId > 0
         ? await getLegadoMangaSourceBridge().isLegadoMangaSourceId(params.sourceId)
         : false;
+      let webViewSourceInitializationError: Error | null = null;
 
 
       if (params.manga) {
@@ -4224,7 +4406,7 @@ private onlineDownloadedLocalFastPathActive: boolean = false;
               if (shouldQueryPageCounts) {
                 const counts = await DataManager.getInstance().getOnlineChapterPageCounts(manga.id);
                 counts.forEach((count: number, chapterId: string) => pageCountMap.set(chapterId, count));
-                logger.info(TAG, `⚡ [懒加载] 章节数=${chapters.length}，跳过online_page页数聚合查询，使用chapter.pageCount加速首屏`);
+                logger.info(TAG, `⚡ [懒加载] 章节数=${chapters.length}，已聚合online_page页数用于目录显示`);
               } else {
                 logger.info(TAG, `[source-loader] skip online_page count query, chapterCount=${chapters.length}, use chapter.pageCount`);
               }
@@ -4246,6 +4428,12 @@ private onlineDownloadedLocalFastPathActive: boolean = false;
                   localPath: chapterInfo.downloadPath,
                   externalId: chapterInfo.externalId
                 };
+                const resolvedPageCount: number = chapterInfo.pageCount && chapterInfo.pageCount > 0
+                  ? chapterInfo.pageCount
+                  : (pageCountMap.get(chapterInfo.id) || 0);
+                if (resolvedPageCount > 0) {
+                  chapter.totalPages = resolvedPageCount;
+                }
                 mangaChapters.push(chapter);
               }
               
@@ -4479,7 +4667,11 @@ private onlineDownloadedLocalFastPathActive: boolean = false;
             if (errorStack) {
               logger.error(TAG, `错误堆栈: ${errorStack}`);
             }
-            throw new Error(`WebView 图源引擎初始化失败: ${errorMsg}`);
+            webViewSourceInitializationError = new Error(`WebView 图源引擎初始化失败: ${errorMsg}`);
+            logger.warn(
+              TAG,
+              `WebView 图源引擎初始化失败，将先继续尝试本地CBZ归档: ${errorMsg}`
+            );
           }
         logger.info(TAG, `✅ WebView图源分支执行完成，准备进入章节设置阶段`);
         }
@@ -4612,6 +4804,7 @@ private onlineDownloadedLocalFastPathActive: boolean = false;
               title: chapterInfo.title,
               chapterNumber: chapterNumber,
               pages: pages,// 使用加载的页面信息
+              totalPages: chapterTotalPages,
               publishDate: chapterInfo.publishTime || Date.now(),
               isRead: false,
               readProgress: 0,
@@ -4796,9 +4989,20 @@ private onlineDownloadedLocalFastPathActive: boolean = false;
       const shouldTryOnlineArchivePages =
         params.contentType === MangaReaderContentType.OnlineDownloaded ||
         params.contentType === MangaReaderContentType.OnlineUndownloaded;
-      const didLoadOnlineArchivePages = shouldTryOnlineArchivePages
+      let didLoadOnlineArchivePages = shouldTryOnlineArchivePages
         ? await this.tryLoadOnlineDownloadedArchivePagesForChapter(this.readerState.currentChapter, true)
         : false;
+      if (!didLoadOnlineArchivePages && shouldTryOnlineArchivePages) {
+        didLoadOnlineArchivePages = await this.tryLoadOnlinePageRecordsForChapter(
+          this.readerState.currentChapter,
+          true,
+          'initial_archive_miss_online_page_fallback'
+        );
+      }
+      if (didLoadOnlineArchivePages && !this.isNetworkConfigReady) {
+        this.isNetworkConfigReady = true;
+        logger.info(TAG, '✅ 在线章节已命中本地缓存或页表，允许阅读器先使用已有页面渲染');
+      }
 
       // [修复] 扩展条件：当页面为空，或页面存在但第一页的sourceType仍为NETWORK时，重新加载
       const needsLocalPathReload = !didLoadOnlineArchivePages && params.contentType === MangaReaderContentType.OnlineDownloaded && (
@@ -4811,50 +5015,40 @@ private onlineDownloadedLocalFastPathActive: boolean = false;
         
         // [修复] 使用getOnlineChapterPages查询online_page表
         const pageInfos = await DataManager.getInstance().getOnlineChapterPages(this.readerState.currentChapter.id);
-        // [修复] 使用数组索引而不是pageNumber，确保index是0-indexed
-        const mangaPages: MangaPage[] = pageInfos.map((pageInfo: OnlinePageInfo, arrayIndex: number) => {
-          // 在线已下载的页面应该有localPath
-          let sourceType: ImageSourceType;
-          let imagePath: string;
-          
-          // 优先使用localPath（如果已下载）
-          if (pageInfo.localPath && pageInfo.localPath.length > 0) {
-            sourceType = ImageSourceType.LOCAL;
-            imagePath = pageInfo.localPath;
-            logger.debug(TAG, `  - 页面 ${pageInfo.pageNumber}: 使用本地路径 ${imagePath}`);
-          } else {
-            // 如果没有localPath，使用imageUrl（可能是网络URL）
-            if (pageInfo.imageUrl.startsWith('http://') || pageInfo.imageUrl.startsWith('https://')) {
-              sourceType = ImageSourceType.NETWORK;
-            } else {
-              sourceType = ImageSourceType.RAWFILE;
-            }
-            imagePath = pageInfo.imageUrl;
-            logger.warn(TAG, `  - 页面 ${pageInfo.pageNumber}: 未找到本地路径，使用 ${sourceType}`);
-          }
-          
-          const page: MangaPage = {
-            id: pageInfo.id,
-            index: arrayIndex,// [修复] 使用0-indexed数组索引
-            sourceType: sourceType,
-            imagePath: imagePath,
-            imageUrl: pageInfo.imageUrl,
-            localPath: pageInfo.localPath,// [新增] 保留本地路径
-            width: pageInfo.width,
-            height: pageInfo.height,
-            fileSize: pageInfo.fileSize,
-            isLoaded: false
-          };
-          return page;
-        });
+        const mangaPages: MangaPage[] = await this.buildCachedOnlineMangaPages(this.readerState.currentChapter.id, pageInfos);
         this.readerState.currentChapter.pages = mangaPages;
-        // [新增] 输出加载统计
-        const localCount = mangaPages.filter(p => p.sourceType === ImageSourceType.LOCAL).length;
-        const networkCount = mangaPages.filter(p => p.sourceType === ImageSourceType.NETWORK).length;
+        this.readerState.currentChapter.totalPages = mangaPages.length;
+        const localCount: number = mangaPages.filter((page: MangaPage): boolean => page.sourceType === ImageSourceType.LOCAL).length;
+        const networkCount: number = mangaPages.filter((page: MangaPage): boolean => page.sourceType === ImageSourceType.NETWORK).length;
         logger.info(TAG, `✅ 从online_page表加载 ${mangaPages.length} 张页面 (本地: ${localCount}, 网络: ${networkCount})`);
+        this.tryActivateOnlineDownloadedLocalPathFastPath(
+          this.readerState.currentChapter,
+          params.pageIndex !== undefined ? params.pageIndex : 0,
+          mangaPages,
+          localCount,
+          networkCount,
+          'online_page_local_path_reload'
+        );
         if (this.mangaViewerComponent) {
           this.mangaViewerComponent.kickstartLoading();
         }
+      }
+
+      if (params.contentType === MangaReaderContentType.OnlineDownloaded &&
+        !this.onlineDownloadedLocalFastPathActive &&
+        this.readerState.currentChapter.pages &&
+        this.readerState.currentChapter.pages.length > 0) {
+        const existingPages: MangaPage[] = this.readerState.currentChapter.pages;
+        const localCount: number = existingPages.filter((page: MangaPage): boolean => page.sourceType === ImageSourceType.LOCAL).length;
+        const networkCount: number = existingPages.filter((page: MangaPage): boolean => page.sourceType === ImageSourceType.NETWORK).length;
+        this.tryActivateOnlineDownloadedLocalPathFastPath(
+          this.readerState.currentChapter,
+          params.pageIndex !== undefined ? params.pageIndex : 0,
+          existingPages,
+          localCount,
+          networkCount,
+          'existing_online_downloaded_pages'
+        );
       }
 
       if (params.contentType === MangaReaderContentType.OnlineDownloaded && !this.onlineDownloadedLocalFastPathActive) {
@@ -4869,6 +5063,12 @@ private onlineDownloadedLocalFastPathActive: boolean = false;
       const hasValidPages = !shouldRefreshVolatilePages &&
         this.readerState.currentChapter.pages.length > 0 &&
         (!!this.readerState.currentChapter.pages[0].imageUrl || !!this.readerState.currentChapter.pages[0].imagePath);
+
+      if (webViewSourceInitializationError !== null &&
+        !didLoadOnlineArchivePages &&
+        this.readerState.currentChapter.pages.length <= 0) {
+        throw webViewSourceInitializationError;
+      }
 
       // 调试日志：输出页面数据状态
       logger.debug(TAG, `📊 页面数据检查: 页数=${this.readerState.currentChapter.pages.length}, hasValidPages=${hasValidPages}`);
@@ -4939,7 +5139,6 @@ private onlineDownloadedLocalFastPathActive: boolean = false;
         logger.info(TAG, 'WebView chapter has no valid local pages, fallback to source getPageList');
 
         // [P0] Cache-first: already cached online pages should bypass network page-list flow.
-        // [P0] Cache-first: already cached online pages should bypass network page-list flow.
         let validCachedDbPages: OnlinePageInfo[] = [];
         if (shouldRefreshVolatilePages) {
           logger.info(TAG, '[缓存优先] 易失票据图源跳过 online_page 缓存，刷新页面票据');
@@ -4965,31 +5164,15 @@ private onlineDownloadedLocalFastPathActive: boolean = false;
         }
         if (validCachedDbPages.length > 0) {
           const currentChapterId = this.readerState.currentChapter.id;
-          const shouldForceNetworkSource = params.contentType === MangaReaderContentType.OnlineUndownloaded;
-          const cachedMangaPages: MangaPage[] = validCachedDbPages.map((pageInfo: OnlinePageInfo, index: number) => {
-            const hasLocalPath = !!pageInfo.localPath && pageInfo.localPath.trim().length > 0;
-            const useLocalPath = !shouldForceNetworkSource && hasLocalPath;
-            const sourceType: ImageSourceType = useLocalPath ? ImageSourceType.LOCAL : ImageSourceType.NETWORK;
-            const imagePath = useLocalPath ? pageInfo.localPath : pageInfo.imageUrl;
-            return {
-              id: pageInfo.id || `${currentChapterId}_page_${pageInfo.pageNumber}`,
-              index: index,
-              sourceType: sourceType,
-              imagePath: imagePath,
-              imageUrl: pageInfo.imageUrl,
-              localPath: pageInfo.localPath,
-              width: pageInfo.width,
-              height: pageInfo.height,
-              fileSize: pageInfo.fileSize,
-              requestHeaders: this.parseOnlinePageRequestHeaders(pageInfo),
-              isLoaded: false
-            } as MangaPage;
-          });
+          const cachedMangaPages: MangaPage[] = await this.buildCachedOnlineMangaPages(currentChapterId, validCachedDbPages);
+          const localCount: number = cachedMangaPages.filter((page: MangaPage): boolean => page.sourceType === ImageSourceType.LOCAL).length;
+          const networkCount: number = cachedMangaPages.length - localCount;
           this.readerState.currentChapter.pages = cachedMangaPages;
-          logger.info(TAG, `[P0] Cache-first hit online_page: count=${cachedMangaPages.length}`);
+          this.readerState.currentChapter.totalPages = cachedMangaPages.length;
+          logger.info(TAG, `[P0] Cache-first hit online_page: count=${cachedMangaPages.length}, local=${localCount}, network=${networkCount}, contentType=${params.contentType}`);
           this.recordMangaReadFlowRecovered(
             'online_page_cache_first_hit',
-            `chapterId=${currentChapterId}, pages=${cachedMangaPages.length}`
+            `chapterId=${currentChapterId}, pages=${cachedMangaPages.length}, local=${localCount}, network=${networkCount}`
           );
           if (this.mangaViewerComponent) {
             this.mangaViewerComponent.kickstartLoading();
@@ -5192,6 +5375,7 @@ private onlineDownloadedLocalFastPathActive: boolean = false;
           
           // 更新章节的页面列表
           this.readerState.currentChapter.pages = mangaPages;
+          this.readerState.currentChapter.totalPages = validPages.length;
           
           logger.info(TAG, `📊 [MangaReaderPage] 转换后的MangaPage详情:`);
           mangaPages.forEach((page: MangaPage, idx: number) => {
@@ -6315,9 +6499,139 @@ private onlineDownloadedLocalFastPathActive: boolean = false;
     return 0;
   }
 
+  private findChapterById(chapters: MangaChapter[], chapterId: string): MangaChapter | null {
+    if (chapterId.length <= 0) {
+      return null;
+    }
+    for (let i = 0; i < chapters.length; i++) {
+      const chapter = chapters[i];
+      if (chapter.id === chapterId || (chapter.externalId !== undefined && chapter.externalId === chapterId)) {
+        return chapter;
+      }
+    }
+    return null;
+  }
+
+  private findChapterByOnlineRecord(chapters: MangaChapter[], onlineChapter: OnlineChapterInfo): MangaChapter | null {
+    const byId = this.findChapterById(chapters, onlineChapter.id);
+    if (byId) {
+      return byId;
+    }
+    if (onlineChapter.externalId && onlineChapter.externalId.length > 0) {
+      return this.findChapterById(chapters, onlineChapter.externalId);
+    }
+    return null;
+  }
+
+  private updateKnownChapterPageCount(chapter: MangaChapter, pageCount: number, reason: string): boolean {
+    if (pageCount <= 0) {
+      return false;
+    }
+    const currentKnownCount = chapter.totalPages && chapter.totalPages > 0
+      ? chapter.totalPages
+      : (chapter.pages && chapter.pages.length > 0 ? chapter.pages.length : 0);
+    if (currentKnownCount === pageCount && chapter.totalPages === pageCount) {
+      return false;
+    }
+    chapter.totalPages = pageCount;
+    logger.debug(TAG, `章节页数已更新: chapter=${chapter.title}, count=${pageCount}, reason=${reason}`);
+    return true;
+  }
+
+  private notifyChapterListPageCountChanged(reason: string): void {
+    this.chapterListPageCountSignal = this.chapterListPageCountSignal + 1;
+    logger.debug(TAG, `章节目录页数刷新信号: signal=${this.chapterListPageCountSignal}, reason=${reason}`);
+  }
+
+  private isUsableNumber(value: number): boolean {
+    return value === value && value !== Infinity && value !== -Infinity;
+  }
+
+  private async refreshChapterPageCountsForList(trigger: string): Promise<void> {
+    const manga = this.readerState.currentManga;
+    if (!manga || !manga.chapters || manga.chapters.length <= 0) {
+      logger.debug(TAG, `章节目录页数刷新跳过: manga/chapter未就绪, trigger=${trigger}`);
+      return;
+    }
+    if (this.chapterPageCountRefreshInProgress) {
+      logger.debug(TAG, `章节目录页数刷新已在进行中，跳过重复触发: trigger=${trigger}`);
+      return;
+    }
+
+    this.chapterPageCountRefreshInProgress = true;
+    let updatedCount = 0;
+    try {
+      for (let i = 0; i < manga.chapters.length; i++) {
+        const chapter = manga.chapters[i];
+        if (chapter.pages && chapter.pages.length > 0) {
+          if (this.updateKnownChapterPageCount(chapter, chapter.pages.length, `${trigger}_loaded_pages`)) {
+            updatedCount++;
+          }
+        }
+      }
+
+      const dataManager = DataManager.getInstance();
+      const isOnlineContent = this.pageParams?.contentType === MangaReaderContentType.OnlineUndownloaded ||
+        this.pageParams?.contentType === MangaReaderContentType.OnlineDownloaded ||
+        this.currentSourceId > 0;
+
+      if (manga.id && manga.id.length > 0) {
+        if (isOnlineContent) {
+          try {
+            const onlineChapters = await dataManager.getOnlineComicChapters(manga.id);
+            for (let i = 0; i < onlineChapters.length; i++) {
+              const onlineChapter = onlineChapters[i];
+              const chapter = this.findChapterByOnlineRecord(manga.chapters, onlineChapter);
+              if (chapter && onlineChapter.pageCount && onlineChapter.pageCount > 0) {
+                if (this.updateKnownChapterPageCount(chapter, onlineChapter.pageCount, `${trigger}_online_chapter`)) {
+                  updatedCount++;
+                }
+              }
+            }
+          } catch (chapterError) {
+            logger.warn(TAG, `章节目录页数刷新: online_chapter查询失败: ${String(chapterError)}`);
+          }
+
+          if (!this.shouldRefreshVolatileSourcePages()) {
+            try {
+              const pageCounts = await dataManager.getOnlineChapterPageCounts(manga.id);
+              pageCounts.forEach((pageCount: number, chapterId: string) => {
+                const chapter = this.findChapterById(manga.chapters, chapterId);
+                if (chapter && this.updateKnownChapterPageCount(chapter, pageCount, `${trigger}_online_page`)) {
+                  updatedCount++;
+                }
+              });
+            } catch (countError) {
+              logger.warn(TAG, `章节目录页数刷新: online_page聚合失败: ${String(countError)}`);
+            }
+          }
+        } else {
+          try {
+            const pageCounts = await dataManager.getLocalChapterPageCounts(manga.id);
+            pageCounts.forEach((pageCount: number, chapterId: string) => {
+              const chapter = this.findChapterById(manga.chapters, chapterId);
+              if (chapter && this.updateKnownChapterPageCount(chapter, pageCount, `${trigger}_local_page`)) {
+                updatedCount++;
+              }
+            });
+          } catch (countError) {
+            logger.warn(TAG, `章节目录页数刷新: 本地page聚合失败: ${String(countError)}`);
+          }
+        }
+      }
+
+      if (updatedCount > 0) {
+        this.notifyChapterListPageCountChanged(trigger);
+      }
+      logger.info(TAG, `章节目录页数刷新完成: trigger=${trigger}, updated=${updatedCount}, chapters=${manga.chapters.length}`);
+    } finally {
+      this.chapterPageCountRefreshInProgress = false;
+    }
+  }
+
   private clampPageIndexForChapter(chapter: MangaChapter, pageIndex: number): number {
     const pageCount: number = this.getChapterPageCount(chapter);
-    const safeInteger: number = Number.isFinite(pageIndex) ? Math.max(0, Math.floor(pageIndex)) : 0;
+    const safeInteger: number = this.isUsableNumber(pageIndex) ? Math.max(0, Math.floor(pageIndex)) : 0;
     if (pageCount <= 0) {
       return safeInteger;
     }
@@ -7347,7 +7661,9 @@ private onlineDownloadedLocalFastPathActive: boolean = false;
       headers: this.buildOnlineRequestHeaders(headers),
       sourceId: this.getCurrentReaderSourceId(),
       priority: 10,
-      partitionKey: headers.cachePartition
+      partitionKey: headers.cachePartition,
+      visibleLoad: true,
+      prefetch: false
     } as OnlineLoadOptions;
   }
 
@@ -7733,6 +8049,10 @@ private onlineDownloadedLocalFastPathActive: boolean = false;
 
     try {
       const dataManager = DataManager.getInstance();
+      const chapterUpdates: Partial<ChapterInfo> = {
+        pageCount: pages.length
+      };
+      await dataManager.updateChapterInfo(chapterId, chapterUpdates);
       
       // 检查是否已经保存过页面信息
       const existingPages = await dataManager.getPageInfoList(chapterId);
@@ -8310,6 +8630,10 @@ private onlineDownloadedLocalFastPathActive: boolean = false;
 
     try {
       const dataManager = DataManager.getInstance();
+      const chapterUpdates: Partial<ChapterInfo> = {
+        pageCount: pages.length
+      };
+      await dataManager.updateChapterInfo(chapterId, chapterUpdates);
       
       // [修复] 先删除该章节的旧页面数据，避免重复插入
       logger.debug(TAG, `🗑️ 删除章节 ${chapterId} 的旧页面数据`);
@@ -8375,6 +8699,14 @@ private onlineDownloadedLocalFastPathActive: boolean = false;
     if (shouldTryOnlineArchive) {
       const archiveLoaded = await this.tryLoadOnlineDownloadedArchivePagesForChapter(chapter, false);
       if (archiveLoaded) {
+        return;
+      }
+      const pageRecordLoaded = await this.tryLoadOnlinePageRecordsForChapter(
+        chapter,
+        false,
+        'preload_archive_miss_online_page_fallback'
+      );
+      if (pageRecordLoaded) {
         return;
       }
       if (this.pageParams?.contentType === MangaReaderContentType.OnlineDownloaded) {
@@ -8500,6 +8832,7 @@ private onlineDownloadedLocalFastPathActive: boolean = false;
               isLoaded: false
             };
           });
+          chapter.totalPages = localPages.length;
           
           return;
         }
@@ -8543,6 +8876,7 @@ private onlineDownloadedLocalFastPathActive: boolean = false;
               isLoaded: false
             };
           });
+          chapter.totalPages = usableDbPages.length;
           
           return;
         }
@@ -8574,24 +8908,11 @@ private onlineDownloadedLocalFastPathActive: boolean = false;
           return this.isUsableCachedOnlineImageUrl(imageUrl);
         });
         if (validCachedOnlinePages.length > 0) {
-          chapter.pages = validCachedOnlinePages.map((p: OnlinePageInfo, index: number): MangaPage => {
-            // OnlineUndownloaded 场景统一按网络源处理，避免缓存记录中的失效 localPath 导致章节切换加载异常
-            const sourceType: ImageSourceType = ImageSourceType.NETWORK;
-            const imagePath = p.imageUrl;
-            return {
-              id: p.id || `${chapter.id}_page_${p.pageNumber}`,
-              index: index,
-              sourceType: sourceType,
-              imagePath: imagePath,
-              imageUrl: p.imageUrl,
-              width: p.width,
-              height: p.height,
-              fileSize: p.fileSize,
-              requestHeaders: this.parseOnlinePageRequestHeaders(p),
-              isLoaded: false
-            } as MangaPage;
-          });
-          logger.info(TAG, `[缓存优先] 命中 online_page: 章节=${chapter.title}, 页数=${chapter.pages.length}`);
+          chapter.pages = await this.buildCachedOnlineMangaPages(chapter.id, validCachedOnlinePages);
+          chapter.totalPages = validCachedOnlinePages.length;
+          const localCount: number = chapter.pages.filter((page: MangaPage): boolean => page.sourceType === ImageSourceType.LOCAL).length;
+          const networkCount: number = chapter.pages.length - localCount;
+          logger.info(TAG, `[缓存优先] 命中 online_page: 章节=${chapter.title}, 页数=${chapter.pages.length}, 本地=${localCount}, 网络=${networkCount}`);
           return;
         }
       } catch (cacheError) {
@@ -8679,6 +9000,7 @@ private onlineDownloadedLocalFastPathActive: boolean = false;
       
       // 更新章节的页面列表（内存中）
       chapter.pages = mangaPages;
+      chapter.totalPages = pageListResult.data.length;
       
       // [P0] Non-blocking save: avoid blocking chapter switch on per-page DB writes.
       this.savePageInfoToDatabase(chapter.id, pageListResult.data).catch((err: Error) => {
@@ -8910,6 +9232,9 @@ private onlineDownloadedLocalFastPathActive: boolean = false;
 
       // 显示章节列表面板
       this.showChapterList = true;
+      void this.refreshChapterPageCountsForList('open_table_of_contents').catch((error: Error) => {
+        logger.warn(TAG, `打开目录时刷新章节页数失败: ${error.message}`);
+      });
       this.handleMenusVisibilityChange();
       logger.info(TAG, '打开章节列表面板');
     } catch (error) {
@@ -9427,6 +9752,103 @@ private onlineDownloadedLocalFastPathActive: boolean = false;
 
   private isScrollableReaderMode(): boolean {
     return this.isWebtoonMode() || this.isContinuousScrollMode();
+  }
+
+  private findCurrentChapterPage(pageIndex: number, pageId: string): MangaPage | null {
+    const chapter = this.readerState.currentChapter;
+    if (!chapter || !chapter.pages || chapter.pages.length <= 0) {
+      return null;
+    }
+    if (pageIndex >= 0 && pageIndex < chapter.pages.length) {
+      const indexedPage = chapter.pages[pageIndex];
+      if (!pageId || indexedPage.id === pageId) {
+        return indexedPage;
+      }
+    }
+    if (pageId.length > 0) {
+      for (let i = 0; i < chapter.pages.length; i++) {
+        if (chapter.pages[i].id === pageId) {
+          return chapter.pages[i];
+        }
+      }
+    }
+    return null;
+  }
+
+  private handleFirstVisibleMangaImageCommitted(pageIndex: number, pageId: string, sourceType: ImageSourceType): void {
+    void this.refreshChapterPageCountsForList(`first_visible_${pageIndex + 1}`).catch((error: Error) => {
+      logger.warn(TAG, `首图显示后刷新章节目录页数失败: ${error.message}`);
+    });
+    this.tryAutoSwitchToWebtoonForLongImage(pageIndex, pageId, sourceType);
+  }
+
+  private tryAutoSwitchToWebtoonForLongImage(pageIndex: number, pageId: string, sourceType: ImageSourceType): void {
+    if (this.hasAutoWebtoonModeDetectionRun) {
+      return;
+    }
+    this.hasAutoWebtoonModeDetectionRun = true;
+
+    if (this.isWebtoonMode()) {
+      logger.debug(TAG, '自动条漫检测跳过: 当前已是条漫模式');
+      return;
+    }
+    if (this.isModeLocked()) {
+      logger.info(TAG, '自动条漫检测跳过: 阅读模式已锁定');
+      return;
+    }
+
+    const page = this.findCurrentChapterPage(pageIndex, pageId);
+    if (!page) {
+      logger.warn(TAG, `自动条漫检测跳过: 未找到首图页面, pageIndex=${pageIndex}, pageId=${pageId}`);
+      return;
+    }
+
+    const width: number = page.width && page.width > 0 ? page.width : 0;
+    const height: number = page.height && page.height > 0 ? page.height : 0;
+    if (width <= 0 || height <= 0) {
+      logger.info(TAG, `自动条漫检测跳过: 首图尺寸未知, pageId=${pageId}, sourceType=${String(sourceType)}`);
+      return;
+    }
+
+    const aspectRatio: number = height / width;
+    if (aspectRatio < AUTO_WEBTOON_ASPECT_RATIO_THRESHOLD) {
+      logger.debug(TAG, `自动条漫检测未命中: ratio=${aspectRatio.toFixed(2)}, threshold=${AUTO_WEBTOON_ASPECT_RATIO_THRESHOLD}`);
+      return;
+    }
+
+    const nextSettings: ReadingSettings = this.cloneReadingSettings(this.readingSettings);
+    nextSettings.readingMode = ReadingMode.WEBTOON;
+    nextSettings.readingDirection = ReadingDirection.TOP_TO_BOTTOM;
+    nextSettings.pageTurnAnimation = this.normalizePageTurnAnimationForSettings(nextSettings);
+    const snapshot: ReadingSettings = this.cloneReadingSettings(nextSettings);
+    if (this.readerState.currentManga) {
+      const mangaId = this.readerState.currentManga.id;
+      AppStorage.setOrCreate(`manga_settings_${mangaId}`, JSON.stringify(snapshot));
+      this.readerState.currentManga.readingSettings = snapshot;
+    }
+    this.readingSettings = snapshot;
+    this.syncDeviceOrientationLock('auto_webtoon_long_image');
+    this.queueReadingSettingsSave('auto_webtoon_long_image');
+    this.updateAdjacentChaptersForWebtoon();
+    this.syncAutoPageTurnStateFromSettings(true);
+
+    logger.info(TAG, `自动切换条漫模式: page=${pageIndex + 1}, size=${width}x${height}, ratio=${aspectRatio.toFixed(2)}, sourceType=${String(sourceType)}`);
+    this.getUIContext().getPromptAction().showToast({ message: '检测到长条图片，已自动切换为条漫模式' });
+
+    const targetIndex: number = this.readerState.currentPageIndex;
+    setTimeout(() => {
+      if (!this.isWebtoonMode()) {
+        return;
+      }
+      if (this.mangaViewerComponent && this.mangaViewerComponent.jumpToPageImmediate) {
+        const jumped = this.mangaViewerComponent.jumpToPageImmediate(targetIndex);
+        if (!jumped) {
+          this.scrollToWebtoonPage(targetIndex);
+        }
+      } else {
+        this.scrollToWebtoonPage(targetIndex);
+      }
+    }, 120);
   }
 
   private isReaderProgressRtl(): boolean {
@@ -10691,6 +11113,7 @@ private onlineDownloadedLocalFastPathActive: boolean = false;
               this.handleWebtoonChapterSwitch(chapterId, chapterTitle, pageIndex);
             },
             onFirstVisibleDisplayCommitted: (pageIndex: number, pageId: string, sourceType: ImageSourceType) => {
+              this.handleFirstVisibleMangaImageCommitted(pageIndex, pageId, sourceType);
               this.handleOnlineDownloadedFirstVisibleDisplayCommitted(
                 pageIndex,
                 pageId,
@@ -11143,6 +11566,7 @@ private onlineDownloadedLocalFastPathActive: boolean = false;
             chapters: this.readerState.currentManga.chapters,
             currentChapterId: this.readerState.currentChapter?.id || '',
             isVisible: this.showChapterList,
+            pageCountSignal: this.chapterListPageCountSignal,
             callbacks: {
               onChapterSelect: (chapterId: string) => {
                 this.switchToChapter(chapterId);

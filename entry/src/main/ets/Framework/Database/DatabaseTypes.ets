@@ -914,6 +914,8 @@ export type AggregationQueryResult =
 export interface GenericQueryRecord {
   // 通用字段
   id?: DatabaseValue;
+  mangaId?: DatabaseValue;
+  mangaTitle?: DatabaseValue;
   // read_history 表字段
   comicId?: DatabaseValue;
   chapterId?: DatabaseValue;
@@ -940,9 +942,19 @@ export interface GenericQueryRecord {
   // chapter 表字段
   chapterIndex?: DatabaseValue;
   pageCount?: DatabaseValue;
+  chapterPageCount?: DatabaseValue;
   isDownloaded?: DatabaseValue;
   downloadPath?: DatabaseValue;
   publishTime?: DatabaseValue;
+  archivePath?: DatabaseValue;
+  storageType?: DatabaseValue;
+  cachedPageCount?: DatabaseValue;
+  totalPageCount?: DatabaseValue;
+  archiveSize?: DatabaseValue;
+  imageEntryCount?: DatabaseValue;
+  hasComicInfo?: DatabaseValue;
+  failedPageIndexes?: DatabaseValue;
+  lastScanTime?: DatabaseValue;
   // page 表字段
   index?: DatabaseValue;
   imageUrl?: DatabaseValue;
@@ -973,6 +985,7 @@ export interface GenericQueryRecord {
   iconPath?: DatabaseValue;    // 图源图标路径
   type?: DatabaseValue;        // 图源类型 (manga/ebook/novel)
   requireProxy?: DatabaseValue; // 是否需要代理
+  sourceName?: DatabaseValue;  // 在线漫画关联的图源名称
   sourcePkg?: DatabaseValue;   // 在线漫画关联的图源包名
   // favorite 表字段
   favoriteType?: DatabaseValue;

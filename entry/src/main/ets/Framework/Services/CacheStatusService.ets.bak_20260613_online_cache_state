@@ -1,0 +1,1250 @@
+﻿import { SafeFileUtils } from '../../Utils/SafeFileUtils';
+/**
+ * 缓存状态服务
+ * 提供统一接口查询漫画/小说的缓存状态
+ * 整合 PermanentImageCacheManager 和 NovelChapterCacheManager 的数据
+ * 
+ * 文件路径: entry/src/main/ets/Framework/Services/CacheStatusService.ets
+ */
+
+import { logger } from '../../Utils/Logger';
+import { common } from '@kit.AbilityKit';
+import fs from '@ohos.file.fs';
+import { PermanentImageCacheManager } from '../Cache/PermanentImageCacheManager';
+import { getNovelChapterCacheManager, NovelChapterCacheManager } from '../Novel/NovelChapterCacheManager';
+import { DataManager, OnlineChapterInfo, OnlinePageInfo } from '../Data/DataManager';
+import { DatabaseManager } from '../Database/DatabaseManager';
+import { DatabaseValue, GenericQueryRecord } from '../Database/DatabaseTypes';
+import { eventBus, GameEvent, IEventPayload, MangaCacheUpdatedPayload } from '../EventBus';
+import { OnlineArchiveCacheState, OnlineMangaArchiveService } from '../Download/OnlineMangaArchiveService';
+import {
+  CacheStatusIncrementalChapter,
+  CacheStatusIncrementalStats,
+  CacheStatusIncrementalStore,
+  getCacheStatusIncrementalStore
+} from './CacheStatusIncrementalStore';
+import { DownloadCacheFlowMonitor, getDownloadCacheFlowMonitor } from '../Download/DownloadCacheFlowMonitor';
+import {
+  DownloadCacheContentType,
+  DownloadCacheEntrySource,
+  DownloadCacheFlowEvent,
+  DownloadCacheFlowEventType,
+  DownloadCacheFlowSessionInfo,
+  DownloadCacheFlowSeverity,
+  DownloadCacheFlowStage
+} from '../Download/DownloadCacheFlowTypes';
+
+const TAG = 'CacheStatusService';
+const SUPPORTED_MANGA_CACHE_IMAGE_EXTENSIONS: string[] = ['jpg', 'jpeg', 'png', 'webp', 'gif', 'bmp', 'avif'];
+
+/**
+ * 内容类型枚举
+ */
+export enum CacheContentType {
+  MANGA = 'manga',
+  NOVEL = 'novel'
+}
+
+/**
+ * 章节缓存状态
+ */
+export interface ChapterCacheStatus {
+  chapterId: string;
+  chapterTitle: string;
+  chapterIndex: number;
+  isCached: boolean;
+  isPartiallyCached?: boolean;  // 0 < cachedPageCount < totalPageCount
+  cachedPageCount: number;
+  totalPageCount: number;
+  cacheSize: number;  // 字节
+  cachePath?: string;
+}
+
+/**
+ * 内容缓存统计信息
+ */
+export interface ContentCacheStats {
+  contentId: string;
+  contentType: CacheContentType;
+  title: string;
+  sourceId: number;
+  
+  // 缓存统计
+  cachedChapterCount: number;
+  totalChapterCount: number;
+  cachedPageCount: number;  // 仅漫画有效
+  totalPageCount: number;   // 仅漫画有效
+  cacheSize: number;        // 总缓存大小（字节）
+  
+  // 下载状态
+  downloadWhileReadingEnabled: boolean;
+  
+  // 章节详情
+  chapterStats: ChapterCacheStatus[];
+  
+  // 时间信息
+  lastCacheTime: number;
+}
+
+interface MangaChapterPageStats {
+  chapterId: string;
+  totalPages: number;
+  downloadedPages: number;
+  downloadedSize: number;
+}
+
+interface MangaChapterCachedFileStats {
+  cachedPages: number;
+  cacheSize: number;
+  cachePath: string;
+}
+
+interface MangaChapterPageStatsResult {
+  statsMap: Map<string, MangaChapterPageStats>;
+  isReliable: boolean;
+}
+
+/**
+ * 缓存状态服务类
+ */
+export class CacheStatusService {
+  private static instance: CacheStatusService | null = null;
+  private permanentCacheManager: PermanentImageCacheManager;
+  private novelCacheManager: NovelChapterCacheManager;
+  private dataManager: DataManager;
+  private databaseManager: DatabaseManager;
+  private onlineArchiveService: OnlineMangaArchiveService;
+  private cacheStatusStore: CacheStatusIncrementalStore;
+  private downloadCacheFlowMonitor: DownloadCacheFlowMonitor;
+  private mangaCacheUpdatedCallback: (payload: IEventPayload) => void = (_payload: IEventPayload): void => {};
+  
+  private constructor() {
+    this.permanentCacheManager = PermanentImageCacheManager.getInstance();
+    this.novelCacheManager = getNovelChapterCacheManager();
+    this.dataManager = DataManager.getInstance();
+    this.databaseManager = DatabaseManager.getInstance();
+    this.onlineArchiveService = OnlineMangaArchiveService.getInstance();
+    this.cacheStatusStore = getCacheStatusIncrementalStore();
+    this.downloadCacheFlowMonitor = getDownloadCacheFlowMonitor();
+    this.mangaCacheUpdatedCallback = (payload: IEventPayload): void => {
+      this.handleMangaCacheUpdated(payload);
+    };
+    eventBus.subscribe(GameEvent.MANGA_CACHE_UPDATED, this.mangaCacheUpdatedCallback);
+  }
+  
+  public static getInstance(): CacheStatusService {
+    if (!CacheStatusService.instance) {
+      CacheStatusService.instance = new CacheStatusService();
+    }
+    return CacheStatusService.instance;
+  }
+
+  public setContext(context: common.UIAbilityContext): void {
+    this.onlineArchiveService.setContext(context);
+  }
+  
+  /**
+   * 获取漫画缓存状态
+   * @param sourceId 图源ID
+   * @param mangaId 漫画ID
+   * @param mangaTitle 漫画标题（可选）
+   */
+  async getMangaCacheStatus(
+    sourceId: number,
+    mangaId: string,
+    mangaTitle?: string
+  ): Promise<ContentCacheStats> {
+    const startedAt: number = Date.now();
+    const flowId: string = this.ensureCacheStatusFlow(CacheContentType.MANGA, sourceId, mangaId, mangaTitle || '');
+    try {
+      logger.info(TAG, `获取漫画缓存状态: sourceId=${sourceId}, mangaId=${mangaId}, title=${mangaTitle}`);
+      const cachedStats: CacheStatusIncrementalStats | null = this.cacheStatusStore.get(CacheContentType.MANGA, sourceId, mangaId);
+      const shouldUseIncrementalCache: boolean = sourceId <= 0;
+      if (cachedStats !== null && shouldUseIncrementalCache) {
+        const cachedResult: ContentCacheStats = this.fromIncrementalStats(cachedStats);
+        this.recordCacheStatusFlow(
+          flowId,
+          DownloadCacheFlowEventType.CACHE_STATUS_HIT,
+          CacheContentType.MANGA,
+          sourceId,
+          mangaId,
+          mangaTitle || cachedResult.title,
+          true,
+          '',
+          Date.now() - startedAt,
+          cachedResult.chapterStats.length
+        );
+        this.downloadCacheFlowMonitor.endSession(flowId, 'cache_status_hit');
+        return cachedResult;
+      }
+      this.recordCacheStatusFlow(
+        flowId,
+        DownloadCacheFlowEventType.CACHE_STATUS_MISS,
+        CacheContentType.MANGA,
+        sourceId,
+        mangaId,
+        mangaTitle || '',
+        true,
+        '',
+        Date.now() - startedAt,
+        0
+      );
+      
+      // 获取边看边下载设置
+      const config = await this.permanentCacheManager.getSourceCacheConfig(sourceId);
+      const downloadWhileReadingEnabled = config.downloadWhileReading;
+      
+      // 获取漫画的缓存统计
+      const mangaCacheStats = await this.permanentCacheManager.getSourceMangaCacheStats(sourceId);
+      const mangaStats = mangaCacheStats.find(s => s.mangaId === mangaId);
+      
+      // 从数据库获取章节信息（使用已有的 getOnlineComicChapters 方法）
+      const chapters = await this.dataManager.getOnlineComicChapters(mangaId);
+      const totalChapterCount = chapters.length;
+      const pageStatsResult = await this.getMangaChapterPageStats(mangaId);
+      const pageStatsByChapterId = pageStatsResult.statsMap;
+      
+      logger.info(TAG, `漫画 [${mangaTitle}] 章节数: ${totalChapterCount}`);
+      
+      // 统计每个章节的缓存状态
+      const chapterStats: ChapterCacheStatus[] = [];
+      let cachedChapterCount = 0;
+      let cachedPageCount = 0;
+      let totalPageCount = 0;
+      let totalCacheSize = mangaStats?.totalSize || 0;
+      
+      for (const chapter of chapters) {
+        const chapterStatus: ChapterCacheStatus = await this.resolveOnlineChapterCacheStatus(
+          sourceId,
+          mangaId,
+          chapter,
+          pageStatsByChapterId.get(chapter.id),
+          pageStatsResult.isReliable
+        );
+        totalPageCount += chapterStatus.totalPageCount;
+        cachedPageCount += chapterStatus.cachedPageCount;
+        if (chapterStatus.isCached) {
+          cachedChapterCount++;
+        }
+        chapterStats.push(chapterStatus);
+      }
+      
+      const calculatedCacheSize = chapterStats.reduce((sum, ch) => sum + ch.cacheSize, 0);
+      if (calculatedCacheSize > 0) {
+        totalCacheSize = calculatedCacheSize;
+      }
+      
+      const result: ContentCacheStats = {
+        contentId: mangaId,
+        contentType: CacheContentType.MANGA,
+        title: mangaTitle || mangaStats?.mangaTitle || mangaId,
+        sourceId: sourceId,
+        cachedChapterCount: cachedChapterCount,
+        totalChapterCount: totalChapterCount,
+        cachedPageCount: cachedPageCount,
+        totalPageCount: totalPageCount,
+        cacheSize: totalCacheSize,
+        downloadWhileReadingEnabled: downloadWhileReadingEnabled,
+        chapterStats: chapterStats,
+        lastCacheTime: Date.now()
+      };
+      
+      logger.info(TAG, `漫画缓存状态: cached=${cachedChapterCount}/${totalChapterCount}章, pages=${cachedPageCount}/${totalPageCount}, size=${this.formatSize(totalCacheSize)}`);
+      this.cacheStatusStore.set(CacheContentType.MANGA, sourceId, mangaId, this.toIncrementalStats(result));
+      this.recordCacheStatusFlow(
+        flowId,
+        DownloadCacheFlowEventType.CACHE_STATUS_COMPLETED,
+        CacheContentType.MANGA,
+        sourceId,
+        mangaId,
+        result.title,
+        true,
+        '',
+        Date.now() - startedAt,
+        chapterStats.length
+      );
+      this.downloadCacheFlowMonitor.endSession(flowId, 'cache_status_completed');
+      
+      return result;
+    } catch (error) {
+      logger.error(TAG, `获取漫画缓存状态失败: ${String(error)}`);
+      this.recordCacheStatusFlow(
+        flowId,
+        DownloadCacheFlowEventType.CACHE_STATUS_FAILED,
+        CacheContentType.MANGA,
+        sourceId,
+        mangaId,
+        mangaTitle || '',
+        false,
+        String(error),
+        Date.now() - startedAt,
+        0
+      );
+      this.downloadCacheFlowMonitor.endSession(flowId, 'cache_status_failed');
+      return this.createEmptyStats(mangaId, CacheContentType.MANGA, sourceId, mangaTitle);
+    }
+  }
+
+  private async resolveOnlineChapterCacheStatus(
+    sourceId: number,
+    mangaId: string,
+    chapter: OnlineChapterInfo,
+    pageStats: MangaChapterPageStats | undefined,
+    isPageStatsReliable: boolean
+  ): Promise<ChapterCacheStatus> {
+    let pages: OnlinePageInfo[] = [];
+    let chapterTotalPages = Math.max(pageStats ? pageStats.totalPages : 0, chapter.pageCount || 0);
+    if (!pageStats && !isPageStatsReliable) {
+      // 只有批量聚合失败时才逐章回退扫描，避免对没有页表的章节反复空查询。
+      pages = await this.dataManager.getOnlineChapterPages(chapter.id);
+      chapterTotalPages = Math.max(pages.length, chapter.pageCount || 0);
+    }
+
+    let chapterCachedPages = 0;
+    let chapterCacheSize = 0;
+    let chapterCachePath = '';
+
+    const rawDownloadPath: string = chapter.downloadPath || '';
+    let archiveState: OnlineArchiveCacheState | null = null;
+    try {
+      archiveState = await this.onlineArchiveService.syncOnlineChapterArchiveStatus(
+        chapter.id,
+        'cache_status'
+      );
+    } catch (error) {
+      logger.warn(TAG, `同步在线章节归档状态失败，降级旧缓存扫描: chapter=${chapter.id}, ${String(error)}`);
+    }
+    const resolvedArchivePath: string = archiveState
+      ? archiveState.archivePath
+      : this.resolveReadableArchivePath(rawDownloadPath);
+    const hasArchive: boolean = resolvedArchivePath.length > 0;
+    if (archiveState !== null) {
+      chapterTotalPages = Math.max(chapterTotalPages, archiveState.totalPageCount);
+      if (chapterTotalPages <= 0 && archiveState.downloadedPageCount > 0) {
+        chapterTotalPages = archiveState.downloadedPageCount;
+      }
+      chapterCachedPages = archiveState.isPartialArchive
+        ? archiveState.downloadedPageCount
+        : (chapterTotalPages > 0 ? chapterTotalPages : archiveState.downloadedPageCount);
+      chapterCacheSize = archiveState.archiveSize;
+      chapterCachePath = archiveState.archivePath;
+    } else if (hasArchive) {
+      const downloadedPageCount: number = pageStats ? pageStats.downloadedPages : 0;
+      chapterCachedPages = downloadedPageCount > 0 ? downloadedPageCount : chapterTotalPages;
+      chapterCacheSize = pageStats && pageStats.downloadedSize > 0 ? pageStats.downloadedSize : this.getFileSize(resolvedArchivePath);
+      chapterCachePath = resolvedArchivePath;
+    } else {
+      const downloadPathDirectoryStats: MangaChapterCachedFileStats = this.getDownloadPathDirectoryCachedFileStats(rawDownloadPath, chapterTotalPages);
+      if (downloadPathDirectoryStats.cachedPages > 0) {
+        chapterCachedPages = downloadPathDirectoryStats.cachedPages;
+        chapterCacheSize = downloadPathDirectoryStats.cacheSize;
+        chapterCachePath = downloadPathDirectoryStats.cachePath;
+        if (chapterTotalPages <= 0) {
+          chapterTotalPages = downloadPathDirectoryStats.cachedPages;
+        }
+      }
+
+      if (chapterTotalPages <= 0 || chapterCachedPages < chapterTotalPages) {
+        if (pages.length <= 0 && chapterTotalPages > 0) {
+          pages = await this.dataManager.getOnlineChapterPages(chapter.id);
+          chapterTotalPages = Math.max(chapterTotalPages, pages.length);
+        }
+        const cachedFileStats: MangaChapterCachedFileStats = await this.getChapterCachedFileStats(sourceId, mangaId, chapter.id, pages);
+        if (
+          cachedFileStats.cachedPages > chapterCachedPages ||
+          (cachedFileStats.cachedPages === chapterCachedPages && cachedFileStats.cacheSize > chapterCacheSize)
+        ) {
+          chapterCachedPages = cachedFileStats.cachedPages;
+          chapterCacheSize = cachedFileStats.cacheSize;
+          chapterCachePath = cachedFileStats.cachePath;
+        }
+      }
+
+      if (pageStats && pageStats.downloadedPages > chapterCachedPages) {
+        logger.warn(
+          TAG,
+          `在线章节下载标记与实际缓存不一致: chapter=${chapter.id}, marked=${pageStats.downloadedPages}, files=${chapterCachedPages}, total=${chapterTotalPages}`
+        );
+      }
+    }
+
+    if (!hasArchive && pages.length <= 0 && chapterCachedPages <= 0 && pageStats && pageStats.downloadedPages > 0) {
+      logger.warn(
+        TAG,
+        `在线章节存在下载标记但页表不可用于文件校验: chapter=${chapter.id}, marked=${pageStats.downloadedPages}, total=${chapterTotalPages}`
+      );
+    }
+
+    if (!hasArchive && pages.length > 0 && chapterTotalPages <= 0) {
+      chapterTotalPages = pages.length;
+    }
+
+    const isChapterCached = archiveState !== null
+      ? (!archiveState.isPartialArchive && (chapterTotalPages <= 0 || chapterCachedPages >= chapterTotalPages))
+      : (hasArchive && chapterTotalPages <= 0
+        ? true
+        : chapterTotalPages > 0 && chapterCachedPages >= chapterTotalPages);
+    const isPartiallyCached = !isChapterCached && chapterCachedPages > 0 && chapterTotalPages > 0;
+
+    const result: ChapterCacheStatus = {
+      chapterId: chapter.id,
+      chapterTitle: chapter.title || `第${chapter.index + 1}话`,
+      chapterIndex: chapter.index,
+      isCached: isChapterCached,
+      isPartiallyCached: isPartiallyCached,
+      cachedPageCount: chapterCachedPages,
+      totalPageCount: chapterTotalPages,
+      cacheSize: chapterCacheSize
+    };
+    if (chapterCachePath.length > 0) {
+      result.cachePath = chapterCachePath;
+    }
+    return result;
+  }
+
+  private async getChapterCachedFileStats(
+    sourceId: number,
+    mangaId: string,
+    chapterId: string,
+    pages: OnlinePageInfo[]
+  ): Promise<MangaChapterCachedFileStats> {
+    const result: MangaChapterCachedFileStats = {
+      cachedPages: 0,
+      cacheSize: 0,
+      cachePath: ''
+    };
+    for (const page of pages) {
+      const cachedPath = await this.resolveCachedOnlinePagePath(sourceId, mangaId, chapterId, page);
+      if (cachedPath.length <= 0) {
+        continue;
+      }
+      result.cachedPages++;
+      result.cacheSize += page.fileSize || this.getFileSize(cachedPath);
+      if (result.cachePath.length <= 0) {
+        result.cachePath = cachedPath;
+      }
+    }
+    return result;
+  }
+
+  private async getMangaChapterPageStats(mangaId: string): Promise<MangaChapterPageStatsResult> {
+    const statsMap: Map<string, MangaChapterPageStats> = new Map<string, MangaChapterPageStats>();
+    try {
+      const rows = await this.databaseManager.querySql(
+        'SELECT op.chapterId AS chapterId, COUNT(*) AS pageCount, ' +
+          'SUM(CASE WHEN op.isDownloaded = 1 THEN 1 ELSE 0 END) AS isDownloaded, ' +
+          'SUM(CASE WHEN op.isDownloaded = 1 THEN COALESCE(op.fileSize, 0) ELSE 0 END) AS fileSize ' +
+          'FROM online_page op INNER JOIN online_chapter oc ON op.chapterId = oc.id ' +
+          'WHERE oc.comicId = ? GROUP BY op.chapterId',
+        [mangaId]
+      );
+
+      for (let i = 0; i < rows.length; i++) {
+        const row = rows[i] as GenericQueryRecord;
+        const chapterId = this.databaseValueToString(row.chapterId);
+        if (chapterId.length === 0) {
+          continue;
+        }
+        const stats: MangaChapterPageStats = {
+          chapterId: chapterId,
+          totalPages: this.databaseValueToNumber(row.pageCount),
+          downloadedPages: this.databaseValueToNumber(row.isDownloaded),
+          downloadedSize: this.databaseValueToNumber(row.fileSize)
+        };
+        statsMap.set(chapterId, stats);
+      }
+      logger.debug(TAG, `漫画缓存页统计批量查询完成: mangaId=${mangaId}, chapters=${statsMap.size}`);
+    } catch (error) {
+      logger.warn(TAG, `漫画缓存页统计批量查询失败，将回退旧扫描: mangaId=${mangaId}, ${String(error)}`);
+      const failedResult: MangaChapterPageStatsResult = {
+        statsMap: statsMap,
+        isReliable: false
+      };
+      return failedResult;
+    }
+    const result: MangaChapterPageStatsResult = {
+      statsMap: statsMap,
+      isReliable: true
+    };
+    return result;
+  }
+
+  private databaseValueToString(value: DatabaseValue | undefined): string {
+    if (typeof value === 'string') {
+      return value;
+    }
+    if (typeof value === 'number') {
+      return `${value}`;
+    }
+    return '';
+  }
+
+  private databaseValueToNumber(value: DatabaseValue | undefined): number {
+    if (typeof value === 'number') {
+      return value;
+    }
+    if (typeof value === 'string') {
+      const parsed = Number(value);
+      return Number.isFinite(parsed) ? parsed : 0;
+    }
+    return 0;
+  }
+
+  private fileExists(path: string): boolean {
+    try {
+      return SafeFileUtils.accessSync(path);
+    } catch (_error) {
+      return false;
+    }
+  }
+
+  private getFileSize(path: string): number {
+    try {
+      const stat = SafeFileUtils.statSync(path);
+      return stat.size;
+    } catch (_error) {
+      return 0;
+    }
+  }
+
+  private getDownloadPathDirectoryCachedFileStats(
+    downloadPath: string,
+    totalPages: number
+  ): MangaChapterCachedFileStats {
+    const result: MangaChapterCachedFileStats = {
+      cachedPages: 0,
+      cacheSize: 0,
+      cachePath: ''
+    };
+    const normalizedPath: string = this.normalizeFileSystemPath(downloadPath);
+    if (normalizedPath.length <= 0 || normalizedPath.toLowerCase().endsWith('.cbz') || !this.fileExists(normalizedPath)) {
+      return result;
+    }
+
+    try {
+      const stat: fs.Stat = SafeFileUtils.statSync(normalizedPath);
+      if (!stat.isDirectory()) {
+        return result;
+      }
+      const imageFiles: string[] = this.scanImageFilesRecursive(normalizedPath);
+      const countedPages: number = totalPages > 0 ? Math.min(imageFiles.length, totalPages) : imageFiles.length;
+      if (countedPages <= 0) {
+        return result;
+      }
+      result.cachedPages = countedPages;
+      result.cachePath = normalizedPath;
+      for (let i = 0; i < countedPages; i++) {
+        result.cacheSize += this.getFileSize(imageFiles[i]);
+      }
+      return result;
+    } catch (error) {
+      logger.warn(TAG, `扫描旧章节散图缓存失败: ${normalizedPath}, ${String(error)}`);
+      return result;
+    }
+  }
+
+  private scanImageFilesRecursive(directoryPath: string): string[] {
+    const imageFiles: string[] = [];
+    const entries: string[] = SafeFileUtils.listFileSync(directoryPath);
+    for (let i = 0; i < entries.length; i++) {
+      const childPath: string = `${directoryPath}/${entries[i]}`;
+      const stat: fs.Stat = SafeFileUtils.statSync(childPath);
+      if (stat.isDirectory()) {
+        const childImageFiles: string[] = this.scanImageFilesRecursive(childPath);
+        for (let j = 0; j < childImageFiles.length; j++) {
+          imageFiles.push(childImageFiles[j]);
+        }
+      } else if (this.isSupportedMangaCacheImageFile(childPath)) {
+        imageFiles.push(childPath);
+      }
+    }
+    imageFiles.sort((left: string, right: string): number => {
+      return left.localeCompare(right);
+    });
+    return imageFiles;
+  }
+
+  private isSupportedMangaCacheImageFile(filePath: string): boolean {
+    const normalizedPath: string = filePath.trim().toLowerCase();
+    const dotIndex: number = normalizedPath.lastIndexOf('.');
+    if (dotIndex < 0 || dotIndex >= normalizedPath.length - 1) {
+      return false;
+    }
+    const extension: string = normalizedPath.substring(dotIndex + 1);
+    return SUPPORTED_MANGA_CACHE_IMAGE_EXTENSIONS.includes(extension);
+  }
+
+  private resolveReadableArchivePath(archivePath: string): string {
+    const normalizedArchivePath = this.normalizeFileSystemPath(archivePath);
+    if (normalizedArchivePath.length === 0 || !normalizedArchivePath.toLowerCase().endsWith('.cbz')) {
+      return '';
+    }
+    if (this.fileExists(normalizedArchivePath)) {
+      return normalizedArchivePath;
+    }
+    return this.recoverTemporaryArchiveFile(normalizedArchivePath);
+  }
+
+  private recoverTemporaryArchiveFile(archivePath: string): string {
+    const tempPaths = this.buildArchiveTempPathCandidates(archivePath);
+    for (let i = 0; i < tempPaths.length; i++) {
+      const tempPath = tempPaths[i];
+      if (!this.fileExists(tempPath)) {
+        continue;
+      }
+
+      try {
+        this.deleteFileIfExists(archivePath);
+        SafeFileUtils.renameSync(tempPath, archivePath);
+        this.deleteArchiveTempFiles(archivePath);
+        logger.info(TAG, `已恢复未完成CBZ缓存: ${tempPath} -> ${archivePath}`);
+        return archivePath;
+      } catch (error) {
+        logger.warn(TAG, `恢复未完成CBZ缓存失败: ${tempPath}, ${String(error)}`);
+      }
+    }
+    return '';
+  }
+
+  private deleteFileIfExists(path: string): void {
+    try {
+      if (this.fileExists(path)) {
+        SafeFileUtils.unlinkSync(path);
+      }
+    } catch (error) {
+      logger.warn(TAG, `删除缓存文件失败: ${path}, ${String(error)}`);
+    }
+  }
+
+  private deleteArchiveTempFiles(archivePath: string): void {
+    const tempPaths = this.buildArchiveTempPathCandidates(archivePath);
+    for (let i = 0; i < tempPaths.length; i++) {
+      this.deleteFileIfExists(tempPaths[i]);
+    }
+  }
+
+  private buildArchiveTempPathCandidates(archivePath: string): string[] {
+    const legacyTempArchivePath = `${archivePath}.tmp`;
+    const zipTempArchivePath = `${archivePath}.tmp.zip`;
+    const paths: string[] = [];
+    paths.push(zipTempArchivePath);
+    paths.push(`${zipTempArchivePath}.zip`);
+    paths.push(legacyTempArchivePath);
+    paths.push(`${legacyTempArchivePath}.zip`);
+    return this.deduplicatePaths(paths);
+  }
+
+  private deduplicatePaths(paths: string[]): string[] {
+    const result: string[] = [];
+    for (let i = 0; i < paths.length; i++) {
+      const currentPath = paths[i];
+      let exists = false;
+      for (let j = 0; j < result.length; j++) {
+        if (result[j] === currentPath) {
+          exists = true;
+          break;
+        }
+      }
+      if (!exists) {
+        result.push(currentPath);
+      }
+    }
+    return result;
+  }
+
+  private async resolveCachedOnlinePagePath(
+    sourceId: number,
+    mangaId: string,
+    chapterId: string,
+    page: OnlinePageInfo
+  ): Promise<string> {
+    const localPath = this.normalizeFileSystemPath(page.localPath || '');
+    if (localPath.length > 0 && this.fileExists(localPath)) {
+      return localPath;
+    }
+
+    const fallbackPath = await this.permanentCacheManager.getCachedImagePath(
+      sourceId,
+      mangaId,
+      chapterId,
+      page.pageNumber,
+      page.imageUrl
+    );
+    if (fallbackPath && fallbackPath.length > 0 && this.fileExists(fallbackPath)) {
+      return fallbackPath;
+    }
+    return '';
+  }
+
+  private normalizeFileSystemPath(path: string): string {
+    const trimmed = path.trim();
+    if (trimmed.length === 0) {
+      return '';
+    }
+    if (trimmed.startsWith('file://')) {
+      return trimmed.substring(7);
+    }
+    if (trimmed.startsWith('/')) {
+      return trimmed;
+    }
+    if (trimmed.startsWith('storage/') || trimmed.startsWith('data/')) {
+      return `/${trimmed}`;
+    }
+    return trimmed;
+  }
+
+  private decodeLegacyBookUrlFromCompositeId(bookId: string): string {
+    const separatorIndex = bookId.indexOf('_');
+    if (separatorIndex <= 0 || separatorIndex >= bookId.length - 1) {
+      return '';
+    }
+    const encodedBookUrl = bookId.substring(separatorIndex + 1).trim();
+    if (encodedBookUrl.length <= 0) {
+      return '';
+    }
+    let decodedBookUrl = '';
+    try {
+      decodedBookUrl = decodeURIComponent(encodedBookUrl);
+    } catch (_error) {
+      return '';
+    }
+    const normalized = decodedBookUrl.trim();
+    if (
+      normalized.length <= 0 ||
+      normalized === bookId ||
+      (!normalized.startsWith('http://') && !normalized.startsWith('https://') && !normalized.startsWith('file://'))
+    ) {
+      return '';
+    }
+    return normalized;
+  }
+
+  private mergeNovelCacheKind(
+    first: 'text' | 'audio' | 'mixed' | undefined,
+    second: 'text' | 'audio' | 'mixed' | undefined
+  ): 'text' | 'audio' | 'mixed' | undefined {
+    if (first === 'mixed' || second === 'mixed') {
+      return 'mixed';
+    }
+    if (!first) {
+      return second;
+    }
+    if (!second) {
+      return first;
+    }
+    if (first === second) {
+      return first;
+    }
+    return 'mixed';
+  }
+  
+  /**
+   * 获取小说缓存状态
+   * @param bookId 小说ID
+   * @param bookTitle 小说标题（可选）
+   * @param totalChapters 总章节数（可选）
+   */
+  async getNovelCacheStatus(
+    bookId: string,
+    bookTitle?: string,
+    totalChapters?: number
+  ): Promise<ContentCacheStats> {
+    const startedAt: number = Date.now();
+    const flowId: string = this.ensureCacheStatusFlow(CacheContentType.NOVEL, 0, bookId, bookTitle || '');
+    try {
+      logger.info(TAG, `获取小说缓存状态: bookId=${bookId}`);
+      const cachedStats: CacheStatusIncrementalStats | null = this.cacheStatusStore.get(CacheContentType.NOVEL, 0, bookId);
+      const requestedTotalChapters: number = totalChapters || 0;
+      if (cachedStats !== null && (requestedTotalChapters <= 0 || cachedStats.totalChapterCount >= requestedTotalChapters)) {
+        const cachedResult: ContentCacheStats = this.fromIncrementalStats(cachedStats);
+        this.recordCacheStatusFlow(
+          flowId,
+          DownloadCacheFlowEventType.CACHE_STATUS_HIT,
+          CacheContentType.NOVEL,
+          0,
+          bookId,
+          bookTitle || cachedResult.title,
+          true,
+          '',
+          Date.now() - startedAt,
+          cachedResult.chapterStats.length
+        );
+        this.downloadCacheFlowMonitor.endSession(flowId, 'cache_status_hit');
+        return cachedResult;
+      }
+      this.recordCacheStatusFlow(
+        flowId,
+        DownloadCacheFlowEventType.CACHE_STATUS_MISS,
+        CacheContentType.NOVEL,
+        0,
+        bookId,
+        bookTitle || '',
+        true,
+        '',
+        Date.now() - startedAt,
+        0
+      );
+      
+      // 获取主key（组合bookId）缓存信息
+      const primaryCacheInfo = await this.novelCacheManager.getBookCacheInfo(bookId);
+      
+      // 获取已缓存的章节索引
+      const primaryCachedIndexes = await this.novelCacheManager.getCachedChapterIndexes(
+        bookId,
+        totalChapters || primaryCacheInfo.totalChapterCount || 0
+      );
+      const mergedCachedIndexes = new Set<number>();
+      primaryCachedIndexes.forEach((index: number) => mergedCachedIndexes.add(index));
+
+      let mergedCacheSize = primaryCacheInfo.cacheSize;
+      let mergedLastCacheTime = primaryCacheInfo.lastCacheTime;
+      let mergedCacheKind: 'text' | 'audio' | 'mixed' | undefined = primaryCacheInfo.cacheKind;
+
+      const legacyBookUrl = this.decodeLegacyBookUrlFromCompositeId(bookId);
+      if (legacyBookUrl.length > 0 && legacyBookUrl !== bookId) {
+        logger.debug(TAG, `小说缓存状态启用旧bookUrl兼容: composite=${bookId}, legacy=${legacyBookUrl}`);
+        const legacyCacheInfo = await this.novelCacheManager.getBookCacheInfo(legacyBookUrl);
+        const legacyCachedIndexes = await this.novelCacheManager.getCachedChapterIndexes(
+          legacyBookUrl,
+          totalChapters || legacyCacheInfo.totalChapterCount || 0
+        );
+        legacyCachedIndexes.forEach((index: number) => mergedCachedIndexes.add(index));
+        mergedCacheSize += legacyCacheInfo.cacheSize;
+        mergedLastCacheTime = Math.max(mergedLastCacheTime, legacyCacheInfo.lastCacheTime);
+        mergedCacheKind = this.mergeNovelCacheKind(mergedCacheKind, legacyCacheInfo.cacheKind);
+      }
+
+      const cachedChapterCount = Math.max(primaryCacheInfo.cachedChapterCount, mergedCachedIndexes.size);
+
+      // 构建章节状态列表
+      const chapterStats: ChapterCacheStatus[] = [];
+      const totalChapterCount = totalChapters || primaryCacheInfo.totalChapterCount || cachedChapterCount;
+      
+      for (let i = 0; i < totalChapterCount; i++) {
+        const isCached = mergedCachedIndexes.has(i);
+        chapterStats.push({
+          chapterId: `${bookId}_chapter_${i}`,
+          chapterTitle: `第${i + 1}章`,
+          chapterIndex: i,
+          isCached: isCached,
+          cachedPageCount: isCached ? 1 : 0,
+          totalPageCount: 1,
+          cacheSize: 0  // 小说章节大小需要单独计算
+        });
+      }
+      
+      const result: ContentCacheStats = {
+        contentId: bookId,
+        contentType: CacheContentType.NOVEL,
+        title: bookTitle || bookId,
+        sourceId: 0,  // 小说可能没有sourceId
+        cachedChapterCount: cachedChapterCount,
+        totalChapterCount: totalChapterCount,
+        cachedPageCount: cachedChapterCount,  // 小说用章节数代替
+        totalPageCount: totalChapterCount,
+        cacheSize: mergedCacheSize,
+        downloadWhileReadingEnabled: true,  // 小说默认开启
+        chapterStats: chapterStats,
+        lastCacheTime: mergedLastCacheTime
+      };
+      
+      logger.info(
+        TAG,
+        `小说缓存状态: cached=${cachedChapterCount}/${totalChapterCount}章, size=${this.formatSize(mergedCacheSize)}, kind=${mergedCacheKind || 'none'}`
+      );
+      this.cacheStatusStore.set(CacheContentType.NOVEL, 0, bookId, this.toIncrementalStats(result));
+      this.recordCacheStatusFlow(
+        flowId,
+        DownloadCacheFlowEventType.CACHE_STATUS_COMPLETED,
+        CacheContentType.NOVEL,
+        0,
+        bookId,
+        result.title,
+        true,
+        '',
+        Date.now() - startedAt,
+        chapterStats.length
+      );
+      this.downloadCacheFlowMonitor.endSession(flowId, 'cache_status_completed');
+      
+      return result;
+    } catch (error) {
+      logger.error(TAG, `获取小说缓存状态失败: ${String(error)}`);
+      this.recordCacheStatusFlow(
+        flowId,
+        DownloadCacheFlowEventType.CACHE_STATUS_FAILED,
+        CacheContentType.NOVEL,
+        0,
+        bookId,
+        bookTitle || '',
+        false,
+        String(error),
+        Date.now() - startedAt,
+        0
+      );
+      this.downloadCacheFlowMonitor.endSession(flowId, 'cache_status_failed');
+      return this.createEmptyStats(bookId, CacheContentType.NOVEL, 0, bookTitle);
+    }
+  }
+  
+  /**
+   * 根据内容类型获取缓存状态
+   */
+  async getCacheStatus(
+    contentType: CacheContentType,
+    contentId: string,
+    sourceId: number,
+    title?: string,
+    totalChapters?: number
+  ): Promise<ContentCacheStats> {
+    if (contentType === CacheContentType.MANGA) {
+      return this.getMangaCacheStatus(sourceId, contentId, title);
+    } else {
+      return this.getNovelCacheStatus(contentId, title, totalChapters);
+    }
+  }
+  
+  /**
+   * 检查边看边下载是否开启
+   */
+  async isDownloadWhileReadingEnabled(sourceId: number): Promise<boolean> {
+    try {
+      const config = await this.permanentCacheManager.getSourceCacheConfig(sourceId);
+      return config.downloadWhileReading;
+    } catch (error) {
+      logger.error(TAG, `检查边看边下载设置失败: ${String(error)}`);
+      return true;  // 默认开启
+    }
+  }
+  
+  /**
+   * 获取所有已缓存的漫画列表
+   * [改进] 直接从数据库查询有缓存页面的漫画，而不是依赖文件系统扫描
+   * 这样可以获取正确的漫画标题和完整的缓存信息
+   */
+  async getAllCachedMangas(sourceId: number): Promise<ContentCacheStats[]> {
+    try {
+      // 使用DataManager的新方法获取已缓存的漫画列表
+      const cachedMangas = await this.dataManager.getCachedMangasBySource(sourceId);
+      const results: ContentCacheStats[] = [];
+      
+      for (const manga of cachedMangas) {
+        if (manga.mangaId) {
+          const cacheStatus = await this.getMangaCacheStatus(
+            sourceId,
+            manga.mangaId,
+            manga.mangaTitle
+          );
+          
+          // 只添加有实际缓存的漫画
+          if (cacheStatus.cachedPageCount > 0) {
+            results.push(cacheStatus);
+          }
+        }
+      }
+      
+      logger.info(TAG, `获取已缓存漫画列表: sourceId=${sourceId}, 找到 ${results.length} 部漫画`);
+      return results;
+    } catch (error) {
+      logger.error(TAG, `获取已缓存漫画列表失败: ${String(error)}`);
+      return [];
+    }
+  }
+  
+  /**
+   * 清理指定内容的缓存
+   * [改进] 同时清理文件系统和数据库中的缓存记录
+   */
+  async clearContentCache(
+    contentType: CacheContentType,
+    contentId: string,
+    sourceId?: number
+  ): Promise<boolean> {
+    try {
+      if (contentType === CacheContentType.MANGA && sourceId !== undefined) {
+        this.invalidateCacheStatus(CacheContentType.MANGA, sourceId, contentId, 'clear_manga_cache_started');
+        // 1. 删除文件系统中的缓存文件
+        await this.permanentCacheManager.deleteMangaCache(sourceId, contentId);
+        await this.clearMangaArchiveFiles(contentId);
+        
+        // 2. 清理数据库中的localPath字段
+        await this.dataManager.clearMangaCacheRecords(contentId);
+        eventBus.publish(
+          GameEvent.MANGA_CACHE_UPDATED,
+          new MangaCacheUpdatedPayload(contentId, '', sourceId, '', 'clear_cache')
+        );
+        
+        logger.info(TAG, `清理漫画缓存成功: ${contentId}`);
+      } else if (contentType === CacheContentType.NOVEL) {
+        this.invalidateCacheStatus(CacheContentType.NOVEL, 0, contentId, 'clear_novel_cache_started');
+        await this.novelCacheManager.clearBookCache(contentId);
+        const legacyBookUrl = this.decodeLegacyBookUrlFromCompositeId(contentId);
+        if (legacyBookUrl.length > 0 && legacyBookUrl !== contentId) {
+          await this.novelCacheManager.clearBookCache(legacyBookUrl);
+          this.invalidateCacheStatus(CacheContentType.NOVEL, 0, legacyBookUrl, 'clear_legacy_novel_cache_started');
+          logger.info(TAG, `已同步清理小说旧版bookUrl缓存: ${legacyBookUrl}`);
+        }
+        logger.info(TAG, `清理小说缓存成功: ${contentId}`);
+      }
+      return true;
+    } catch (error) {
+      logger.error(TAG, `清理缓存失败: ${String(error)}`);
+      return false;
+    }
+  }
+
+  private async clearMangaArchiveFiles(mangaId: string): Promise<void> {
+    const chapters = await this.dataManager.getOnlineComicChapters(mangaId);
+    for (let i = 0; i < chapters.length; i++) {
+      const archivePath = this.normalizeFileSystemPath(chapters[i].downloadPath || '');
+      if (archivePath.toLowerCase().endsWith('.cbz')) {
+        this.deleteFileIfExists(archivePath);
+        this.deleteArchiveTempFiles(archivePath);
+        logger.info(TAG, `已清理漫画CBZ缓存文件族: ${archivePath}`);
+      }
+    }
+    await this.databaseManager.executeSql(
+      'UPDATE online_chapter SET isDownloaded = 0, downloadPath = NULL WHERE comicId = ?',
+      [mangaId]
+    );
+  }
+
+  private handleMangaCacheUpdated(payload: IEventPayload): void {
+    if (!(payload instanceof MangaCacheUpdatedPayload)) {
+      return;
+    }
+    const mangaId: string = payload.mangaId || '';
+    const sourceId: number = payload.sourceId || 0;
+    if (mangaId.length > 0) {
+      this.invalidateCacheStatus(CacheContentType.MANGA, sourceId, mangaId, payload.reason || 'manga_cache_updated');
+      return;
+    }
+    if (sourceId > 0) {
+      this.cacheStatusStore.invalidateSource(CacheContentType.MANGA, sourceId);
+      this.recordCacheStatusInvalidated(CacheContentType.MANGA, sourceId, '', payload.reason || 'manga_cache_updated_source');
+    }
+  }
+
+  private invalidateCacheStatus(contentType: CacheContentType, sourceId: number, contentId: string, reason: string): void {
+    this.cacheStatusStore.invalidate(contentType, sourceId, contentId);
+    this.recordCacheStatusInvalidated(contentType, sourceId, contentId, reason);
+  }
+
+  private toIncrementalStats(stats: ContentCacheStats): CacheStatusIncrementalStats {
+    const converted: CacheStatusIncrementalStats = new CacheStatusIncrementalStats();
+    converted.contentId = stats.contentId;
+    converted.contentType = stats.contentType;
+    converted.title = stats.title;
+    converted.sourceId = stats.sourceId;
+    converted.cachedChapterCount = stats.cachedChapterCount;
+    converted.totalChapterCount = stats.totalChapterCount;
+    converted.cachedPageCount = stats.cachedPageCount;
+    converted.totalPageCount = stats.totalPageCount;
+    converted.cacheSize = stats.cacheSize;
+    converted.downloadWhileReadingEnabled = stats.downloadWhileReadingEnabled;
+    converted.lastCacheTime = stats.lastCacheTime;
+    const chapters: CacheStatusIncrementalChapter[] = new Array<CacheStatusIncrementalChapter>();
+    for (let i = 0; i < stats.chapterStats.length; i++) {
+      const source = stats.chapterStats[i];
+      const chapter: CacheStatusIncrementalChapter = new CacheStatusIncrementalChapter();
+      chapter.chapterId = source.chapterId;
+      chapter.chapterTitle = source.chapterTitle;
+      chapter.chapterIndex = source.chapterIndex;
+      chapter.isCached = source.isCached;
+      chapter.isPartiallyCached = source.isPartiallyCached === true;
+      chapter.cachedPageCount = source.cachedPageCount;
+      chapter.totalPageCount = source.totalPageCount;
+      chapter.cacheSize = source.cacheSize;
+      chapter.cachePath = source.cachePath || '';
+      chapters.push(chapter);
+    }
+    converted.chapterStats = chapters;
+    return converted;
+  }
+
+  private fromIncrementalStats(stats: CacheStatusIncrementalStats): ContentCacheStats {
+    const chapters: ChapterCacheStatus[] = new Array<ChapterCacheStatus>();
+    for (let i = 0; i < stats.chapterStats.length; i++) {
+      const source = stats.chapterStats[i];
+      const chapter: ChapterCacheStatus = {
+        chapterId: source.chapterId,
+        chapterTitle: source.chapterTitle,
+        chapterIndex: source.chapterIndex,
+        isCached: source.isCached,
+        isPartiallyCached: source.isPartiallyCached,
+        cachedPageCount: source.cachedPageCount,
+        totalPageCount: source.totalPageCount,
+        cacheSize: source.cacheSize,
+        cachePath: source.cachePath.length > 0 ? source.cachePath : undefined
+      };
+      chapters.push(chapter);
+    }
+    const result: ContentCacheStats = {
+      contentId: stats.contentId,
+      contentType: stats.contentType === CacheContentType.NOVEL ? CacheContentType.NOVEL : CacheContentType.MANGA,
+      title: stats.title,
+      sourceId: stats.sourceId,
+      cachedChapterCount: stats.cachedChapterCount,
+      totalChapterCount: stats.totalChapterCount,
+      cachedPageCount: stats.cachedPageCount,
+      totalPageCount: stats.totalPageCount,
+      cacheSize: stats.cacheSize,
+      downloadWhileReadingEnabled: stats.downloadWhileReadingEnabled,
+      chapterStats: chapters,
+      lastCacheTime: stats.lastCacheTime
+    };
+    return result;
+  }
+
+  private ensureCacheStatusFlow(
+    contentType: CacheContentType,
+    sourceId: number,
+    contentId: string,
+    title: string
+  ): string {
+    try {
+      const info: DownloadCacheFlowSessionInfo = new DownloadCacheFlowSessionInfo();
+      info.sessionId = this.downloadCacheFlowMonitor.createSessionId('cache_status');
+      info.entrySource = DownloadCacheEntrySource.CACHE_STATUS_SERVICE;
+      info.contentType = this.mapCacheContentTypeToFlowContentType(contentType);
+      info.contentId = contentId;
+      info.contentTitle = title;
+      info.sourceId = sourceId;
+      info.sourceKey = sourceId > 0 ? `source_${sourceId}` : 'cache_status';
+      info.pageName = 'CacheStatusService';
+      info.startedAt = Date.now();
+      return this.downloadCacheFlowMonitor.ensureSession(info);
+    } catch (error) {
+      logger.warn(TAG, `创建缓存状态链路失败: ${String(error)}`);
+      return '';
+    }
+  }
+
+  private recordCacheStatusFlow(
+    flowId: string,
+    eventType: DownloadCacheFlowEventType,
+    contentType: CacheContentType,
+    sourceId: number,
+    contentId: string,
+    title: string,
+    success: boolean,
+    errorMessage: string,
+    elapsedMs: number,
+    totalCount: number
+  ): void {
+    try {
+      const event: DownloadCacheFlowEvent = this.downloadCacheFlowMonitor.createEvent(
+        flowId,
+        eventType,
+        DownloadCacheFlowStage.CACHE_STATUS,
+        `${eventType}`
+      );
+      event.entrySource = DownloadCacheEntrySource.CACHE_STATUS_SERVICE;
+      event.contentType = this.mapCacheContentTypeToFlowContentType(contentType);
+      event.contentId = contentId;
+      event.contentTitle = title;
+      event.sourceId = sourceId;
+      event.sourceKey = sourceId > 0 ? `source_${sourceId}` : 'cache_status';
+      event.success = success;
+      event.severity = success ? DownloadCacheFlowSeverity.INFO : DownloadCacheFlowSeverity.ERROR;
+      event.errorMessage = errorMessage;
+      event.elapsedMs = elapsedMs;
+      event.totalCount = totalCount;
+      event.detail = `cacheStatusStoreSize=${this.cacheStatusStore.size()}`;
+      this.downloadCacheFlowMonitor.record(event);
+    } catch (error) {
+      logger.warn(TAG, `记录缓存状态链路失败: ${String(error)}`);
+    }
+  }
+
+  private recordCacheStatusInvalidated(
+    contentType: CacheContentType,
+    sourceId: number,
+    contentId: string,
+    reason: string
+  ): void {
+    const flowId: string = this.ensureCacheStatusFlow(contentType, sourceId, contentId, '');
+    this.recordCacheStatusFlow(
+      flowId,
+      DownloadCacheFlowEventType.CACHE_STATUS_INVALIDATED,
+      contentType,
+      sourceId,
+      contentId,
+      '',
+      true,
+      '',
+      0,
+      0
+    );
+    this.downloadCacheFlowMonitor.endSession(flowId, reason);
+  }
+
+  private mapCacheContentTypeToFlowContentType(contentType: CacheContentType): DownloadCacheContentType {
+    if (contentType === CacheContentType.MANGA) {
+      return DownloadCacheContentType.MANGA;
+    }
+    if (contentType === CacheContentType.NOVEL) {
+      return DownloadCacheContentType.NOVEL;
+    }
+    return DownloadCacheContentType.CACHE_STATUS;
+  }
+
+  /**
+   * 创建空的统计信息
+   */
+  private createEmptyStats(
+    contentId: string,
+    contentType: CacheContentType,
+    sourceId: number,
+    title?: string
+  ): ContentCacheStats {
+    return {
+      contentId: contentId,
+      contentType: contentType,
+      title: title || contentId,
+      sourceId: sourceId,
+      cachedChapterCount: 0,
+      totalChapterCount: 0,
+      cachedPageCount: 0,
+      totalPageCount: 0,
+      cacheSize: 0,
+      downloadWhileReadingEnabled: true,
+      chapterStats: [],
+      lastCacheTime: 0
+    };
+  }
+  
+  /**
+   * 格式化文件大小
+   */
+  formatSize(bytes: number): string {
+    if (bytes === 0) return '0 B';
+    const units = ['B', 'KB', 'MB', 'GB'];
+    const k = 1024;
+    const i = Math.floor(Math.log(bytes) / Math.log(k));
+    return (bytes / Math.pow(k, i)).toFixed(2) + ' ' + units[i];
+  }
+  
+  /**
+   * 计算缓存进度百分比
+   */
+  calculateProgress(stats: ContentCacheStats): number {
+    if (stats.contentType === CacheContentType.MANGA) {
+      if (stats.totalPageCount > 0) {
+        return Math.round((stats.cachedPageCount / stats.totalPageCount) * 100);
+      }
+      if (stats.totalChapterCount === 0) return 0;
+      return Math.round((stats.cachedChapterCount / stats.totalChapterCount) * 100);
+    } else {
+      if (stats.totalChapterCount === 0) return 0;
+      return Math.round((stats.cachedChapterCount / stats.totalChapterCount) * 100);
+    }
+  }
+}
+
+/**
+ * 获取缓存状态服务实例
+ */
+export function getCacheStatusService(): CacheStatusService {
+  return CacheStatusService.getInstance();
+}

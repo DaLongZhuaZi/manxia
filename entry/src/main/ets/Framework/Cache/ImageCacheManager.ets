@@ -457,13 +457,16 @@ export class ImageCacheManager {
   }
 
   private buildOnlineLoadOptions(options?: LoadOptions): OnlineLoadOptions {
+    const priority: number = options?.priority || 1;
     return {
       width: options?.width,
       height: options?.height,
       headers: this.buildOnlineHeaders(options?.headers),
       sourceId: options?.sourceId,
-      priority: options?.priority || 1,
-      partitionKey: options?.partitionKey
+      priority: priority,
+      partitionKey: options?.partitionKey,
+      visibleLoad: priority >= 10,
+      prefetch: priority <= 0
     } as OnlineLoadOptions;
   }
 
@@ -1725,7 +1728,9 @@ export class ImageCacheManager {
          headers: onlineHeaders,
          sourceId: options?.sourceId,
          priority: 0,  // 低优先级，不影响正常加载
-         partitionKey: options?.partitionKey
+         partitionKey: options?.partitionKey,
+         visibleLoad: false,
+         prefetch: true
        };
 
       

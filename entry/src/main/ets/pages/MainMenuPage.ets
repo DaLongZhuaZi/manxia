@@ -13,7 +13,7 @@ import fs from '@ohos.file.fs';
 import { picker, fileUri as coreFileUri } from '@kit.CoreFileKit';
 import { hdsEffect } from '@kit.UIDesignKit';
 import { InteractionManager, VibrationScene } from '../Framework/Managers/InteractionManager';
-import { BasicDataSource } from '../Utils/BasicDataSource';
+import { BasicDataSource, BasicDataSourceStableUpdateResult } from '../Utils/BasicDataSource';
 import { MultiSelectState } from '../Utils/MultiSelectState';
 import { SwipeGestureState } from '../Utils/SwipeGestureState';
 import { ContextMenuState } from '../Utils/ContextMenuState';
@@ -198,6 +198,17 @@ import { CoverCacheManager } from '../Framework/Cache/CoverCacheManager';
 import { LibraryCoverManager, LibraryCoverType } from '../Framework/Storage/LibraryCoverManager';
 import { AvifImage } from '../components/AvifImage';
 import { RemoteControlPage } from './RemoteControlPage';
+import { getHomeLoadFlowMonitor, HomeLoadFlowMonitor } from '../Framework/Home/HomeLoadFlowMonitor';
+import {
+  HomeLoadFlowEntryReason,
+  HomeLoadFlowEvent,
+  HomeLoadFlowEventType,
+  HomeLoadFlowPrimaryTab,
+  HomeLoadFlowSessionInfo,
+  HomeLoadFlowSeverity,
+  HomeLoadFlowStage
+} from '../Framework/Home/HomeLoadFlowTypes';
+import { getHomeCoverFailureTtlCache, HomeCoverFailureTtlCache } from '../Framework/Home/HomeCoverFailureTtlCache';
 
 // 测试页面导入已移除
 // import { ReaderKitTestPage } from './ReaderKitTestPage';
@@ -220,7 +231,7 @@ import { SourceRepositoryManager, SavedRepository, SourceRepositoryEntry, SyncRe
 
 // 导入数据管理器
 import { DataManager, ComicInfo, ReadHistory, ChapterInfo, DeleteComicsResult,
-  OnlineComicInfo } from '../Framework/Data/DataManager';
+  OnlineComicInfo, OnlineChapterInfo, OnlinePageInfo } from '../Framework/Data/DataManager';
 import { ComicSourceDatabaseRecord } from '../Framework/Database/DatabaseTypes';
 import { DatabaseManager } from '../Framework/Database/DatabaseManager';
 
@@ -971,6 +982,19 @@ struct MainMenuPage {
   @State private suwayomiTabRefreshSignal: number = 0;
   @State private komgaTabRefreshSignal: number = 0;
   private startupDeferredTasksScheduled: boolean = false;
+  private startupSourceTasksScheduled: boolean = false;
+  private startupSourceTasksCompleted: boolean = false;
+  private startupMangaLoadedInCriticalPath: boolean = false;
+  private startupEBookLoadedInCriticalPath: boolean = false;
+  private startupNovelLoadedInCriticalPath: boolean = false;
+  private startupDiscoverPrepared: boolean = false;
+  private homeLoadFlowMonitor: HomeLoadFlowMonitor = getHomeLoadFlowMonitor();
+  private homeCoverFailureTtlCache: HomeCoverFailureTtlCache = getHomeCoverFailureTtlCache();
+  private homeLoadFlowId: string = '';
+  private homeLoadStartedAt: number = 0;
+  private homeLoadEntryReason: HomeLoadFlowEntryReason = HomeLoadFlowEntryReason.NORMAL;
+  private homeLoadPrimaryTab: HomeLoadFlowPrimaryTab = HomeLoadFlowPrimaryTab.LIBRARY;
+  private homeFirstScreenReadyRecorded: boolean = false;
 
   // Tab内容缓存管理器
   private tabContentCacheManager: TabContentCacheManager = TabContentCacheManager.getInstance();
@@ -1570,6 +1594,342 @@ struct MainMenuPage {
     return true;
   }
 
+  private resolveHomeWidgetTarget(): string {
+    const targetPage: string = AppStorage.get<string>('widgetTargetPage') || '';
+    return targetPage.trim();
+  }
+
+  private resolveHomeLoadEntryReason(): HomeLoadFlowEntryReason {
+    const widgetTarget: string = this.resolveHomeWidgetTarget();
+    const hasDeepLink: boolean = AppStorage.get<boolean>('hasDeepLink') || false;
+    if (this.fromGuide) {
+      return HomeLoadFlowEntryReason.GUIDE;
+    }
+    if (hasDeepLink) {
+      return HomeLoadFlowEntryReason.DEEP_LINK;
+    }
+    if (widgetTarget.length > 0 || this.startupRoutePending) {
+      return HomeLoadFlowEntryReason.WIDGET;
+    }
+    if (this.targetPage.length > 0 || this.targetTab >= 0 || this.targetOpenSourceRepoDialog) {
+      return HomeLoadFlowEntryReason.ROUTE_PARAM;
+    }
+    return HomeLoadFlowEntryReason.NORMAL;
+  }
+
+  private mapHomePrimaryTab(tabIndex: number): HomeLoadFlowPrimaryTab {
+    if (tabIndex === TabIndex.HOME) {
+      return HomeLoadFlowPrimaryTab.HOME;
+    }
+    if (tabIndex === TabIndex.LIBRARY) {
+      return HomeLoadFlowPrimaryTab.LIBRARY;
+    }
+    if (tabIndex === TabIndex.DISCOVER) {
+      return HomeLoadFlowPrimaryTab.DISCOVER;
+    }
+    if (tabIndex === TabIndex.SOURCE) {
+      return HomeLoadFlowPrimaryTab.SOURCE;
+    }
+    if (tabIndex === TabIndex.BOOK_SOURCE) {
+      return HomeLoadFlowPrimaryTab.BOOK_SOURCE;
+    }
+    if (tabIndex === TabIndex.SETTINGS) {
+      return HomeLoadFlowPrimaryTab.SETTINGS;
+    }
+    return HomeLoadFlowPrimaryTab.UNKNOWN;
+  }
+
+  private resolveHomePrimaryTab(): HomeLoadFlowPrimaryTab {
+    if (this.targetOpenSourceRepoDialog) {
+      return HomeLoadFlowPrimaryTab.SOURCE;
+    }
+    if (this.targetTab >= TabIndex.HOME && this.targetTab <= TabIndex.KOMGA) {
+      return this.mapHomePrimaryTab(this.targetTab);
+    }
+
+    const normalizedTargetPage: string = this.targetPage.toLowerCase();
+    if (normalizedTargetPage.indexOf('source') >= 0) {
+      if (normalizedTargetPage.indexOf('novel') >= 0 || normalizedTargetPage.indexOf('book') >= 0) {
+        return HomeLoadFlowPrimaryTab.BOOK_SOURCE;
+      }
+      return HomeLoadFlowPrimaryTab.SOURCE;
+    }
+    if (normalizedTargetPage.indexOf('discover') >= 0 || normalizedTargetPage.indexOf('explore') >= 0) {
+      return HomeLoadFlowPrimaryTab.DISCOVER;
+    }
+    if (normalizedTargetPage.indexOf('setting') >= 0 || normalizedTargetPage.indexOf('backup') >= 0 ||
+      normalizedTargetPage.indexOf('management') >= 0) {
+      return HomeLoadFlowPrimaryTab.SETTINGS;
+    }
+
+    const widgetTarget: string = this.resolveHomeWidgetTarget().toLowerCase();
+    if (widgetTarget === 'library' || widgetTarget === 'open_library') {
+      return HomeLoadFlowPrimaryTab.LIBRARY;
+    }
+    if (widgetTarget === 'inspiration' || widgetTarget === 'open_inspiration') {
+      return HomeLoadFlowPrimaryTab.DISCOVER;
+    }
+    if (widgetTarget === 'search' || widgetTarget === 'open_search') {
+      return HomeLoadFlowPrimaryTab.HOME;
+    }
+    if (widgetTarget === 'downloads' || widgetTarget === 'open_downloads') {
+      return HomeLoadFlowPrimaryTab.SETTINGS;
+    }
+
+    return this.mapHomePrimaryTab(this.currentTabIndex);
+  }
+
+  private isHomeSourcePrimaryTab(tab: HomeLoadFlowPrimaryTab): boolean {
+    return tab === HomeLoadFlowPrimaryTab.SOURCE || tab === HomeLoadFlowPrimaryTab.BOOK_SOURCE;
+  }
+
+  private ensureHomeLoadFlow(): void {
+    try {
+      if (this.homeLoadFlowId.length > 0) {
+        return;
+      }
+      this.homeLoadStartedAt = Date.now();
+      this.homeLoadEntryReason = this.resolveHomeLoadEntryReason();
+      this.homeLoadPrimaryTab = this.resolveHomePrimaryTab();
+      const info: HomeLoadFlowSessionInfo = new HomeLoadFlowSessionInfo();
+      info.sessionId = this.homeLoadFlowMonitor.createSessionId('home_load');
+      info.startedAt = this.homeLoadStartedAt;
+      info.entryReason = this.homeLoadEntryReason;
+      info.primaryTab = this.homeLoadPrimaryTab;
+      info.routeTarget = this.targetPage;
+      info.widgetTarget = this.resolveHomeWidgetTarget();
+      info.privacyMode = this.isPrivacyMode;
+      info.sfwMode = this.contentFilterManager.isSFWModeEnabled();
+      this.homeLoadFlowId = this.homeLoadFlowMonitor.ensureSession(info);
+    } catch (error) {
+      logger.warn(TAG, `初始化首页冷启动链路失败: ${String(error)}`);
+    }
+  }
+
+  private recordHomeLoadFlow(
+    eventType: HomeLoadFlowEventType,
+    stage: HomeLoadFlowStage,
+    reason: string,
+    elapsedMs: number = 0,
+    success: boolean = true,
+    severity: HomeLoadFlowSeverity = HomeLoadFlowSeverity.INFO,
+    itemCount: number = 0,
+    changedCount: number = 0,
+    skippedCount: number = 0,
+    reload: boolean = false,
+    taskName: string = '',
+    metricName: string = '',
+    metricValue: number = 0,
+    metricUnit: string = 'ms'
+  ): void {
+    try {
+      this.ensureHomeLoadFlow();
+      const event: HomeLoadFlowEvent = this.homeLoadFlowMonitor.createEvent(
+        this.homeLoadFlowId,
+        eventType,
+        stage,
+        reason
+      );
+      event.elapsedMs = elapsedMs;
+      event.success = success;
+      event.severity = severity;
+      event.entryReason = this.homeLoadEntryReason;
+      event.primaryTab = this.homeLoadPrimaryTab;
+      event.routeTarget = this.targetPage;
+      event.widgetTarget = this.resolveHomeWidgetTarget();
+      event.privacyMode = this.isPrivacyMode;
+      event.sfwMode = this.contentFilterManager.isSFWModeEnabled();
+      event.itemCount = itemCount;
+      event.changedCount = changedCount;
+      event.skippedCount = skippedCount;
+      event.reload = reload;
+      event.taskName = taskName;
+      event.detail = reason;
+      if (!success) {
+        event.errorMessage = reason;
+      }
+      if (metricName.length > 0) {
+        event.metricName = metricName;
+        event.metricValue = metricValue;
+        event.metricUnit = metricUnit;
+      }
+      this.homeLoadFlowMonitor.record(event);
+    } catch (error) {
+      logger.warn(TAG, `记录首页冷启动链路事件失败: ${String(error)}`);
+    }
+  }
+
+  private recordHomeFirstScreenReady(reason: string, itemCount: number): void {
+    if (this.homeFirstScreenReadyRecorded) {
+      return;
+    }
+    this.homeFirstScreenReadyRecorded = true;
+    const elapsedMs: number = this.homeLoadStartedAt > 0 ? Date.now() - this.homeLoadStartedAt : 0;
+    this.recordHomeLoadFlow(
+      HomeLoadFlowEventType.FIRST_SCREEN_READY,
+      HomeLoadFlowStage.FIRST_SCREEN,
+      reason,
+      elapsedMs,
+      true,
+      HomeLoadFlowSeverity.INFO,
+      itemCount,
+      0,
+      0,
+      false,
+      'first_screen',
+      'home_first_screen_ready',
+      elapsedMs,
+      'ms'
+    );
+  }
+
+  private async yieldHomeStartupSlice(): Promise<void> {
+    await new Promise<void>((resolve: () => void) => setTimeout(resolve, 16));
+  }
+
+  private async initializeHomeStartupConfig(): Promise<void> {
+    const startTime: number = Date.now();
+    this.recordHomeLoadFlow(
+      HomeLoadFlowEventType.CONFIG_LOAD_STARTED,
+      HomeLoadFlowStage.CONFIG,
+      'home_startup_config_started'
+    );
+    try {
+      this.loadBottomBarStyle('aboutToAppear');
+      this.loadBottomBarAnimationSetting('aboutToAppear');
+      await this.loadVisibleTabs();
+      await this.loadLibraryViewMode();
+      this.recordHomeLoadFlow(
+        HomeLoadFlowEventType.CONFIG_LOAD_COMPLETED,
+        HomeLoadFlowStage.CONFIG,
+        'home_startup_config_completed',
+        Date.now() - startTime,
+        true,
+        HomeLoadFlowSeverity.INFO,
+        this.cachedVisibleTabConfigs.length
+      );
+    } catch (error) {
+      this.recordHomeLoadFlow(
+        HomeLoadFlowEventType.CONFIG_LOAD_FAILED,
+        HomeLoadFlowStage.CONFIG,
+        'home_startup_config_failed',
+        Date.now() - startTime,
+        false,
+        HomeLoadFlowSeverity.WARN,
+        0,
+        0,
+        0,
+        false,
+        'startup_config'
+      );
+      logger.warn(TAG, `首页启动配置加载失败: ${String(error)}`);
+    }
+  }
+
+  private async runHomeDeferredTask(
+    taskName: string,
+    stage: HomeLoadFlowStage,
+    startEventType: HomeLoadFlowEventType,
+    completeEventType: HomeLoadFlowEventType,
+    failedEventType: HomeLoadFlowEventType,
+    task: () => Promise<void>
+  ): Promise<boolean> {
+    const startTime: number = Date.now();
+    this.recordHomeLoadFlow(startEventType, stage, `${taskName}_started`, 0, true, HomeLoadFlowSeverity.INFO, 0, 0, 0, false, taskName);
+    try {
+      await task();
+      this.recordHomeLoadFlow(
+        completeEventType,
+        stage,
+        `${taskName}_completed`,
+        Date.now() - startTime,
+        true,
+        HomeLoadFlowSeverity.INFO,
+        0,
+        0,
+        0,
+        false,
+        taskName
+      );
+      return true;
+    } catch (error) {
+      this.recordHomeLoadFlow(
+        failedEventType,
+        stage,
+        `${taskName}_failed:${String(error)}`,
+        Date.now() - startTime,
+        false,
+        HomeLoadFlowSeverity.WARN,
+        0,
+        0,
+        0,
+        false,
+        taskName
+      );
+      logger.warn(TAG, `首页冷启动延迟任务失败: task=${taskName}, reason=${String(error)}`);
+      return false;
+    }
+  }
+
+  private async initializeHomeSourceData(trigger: string): Promise<void> {
+    if (this.startupSourceTasksCompleted) {
+      this.recordHomeLoadFlow(
+        HomeLoadFlowEventType.SOURCE_PREPARE_COMPLETED,
+        HomeLoadFlowStage.SOURCE,
+        `source_prepare_already_completed:${trigger}`,
+        0,
+        true,
+        HomeLoadFlowSeverity.DEBUG,
+        this.filteredSourceList.length,
+        0,
+        1,
+        false,
+        'source_prepare'
+      );
+      return;
+    }
+    if (this.startupSourceTasksScheduled) {
+      return;
+    }
+    this.startupSourceTasksScheduled = true;
+    const success: boolean = await this.runHomeDeferredTask(
+      'source_prepare',
+      HomeLoadFlowStage.SOURCE,
+      HomeLoadFlowEventType.SOURCE_PREPARE_STARTED,
+      HomeLoadFlowEventType.SOURCE_PREPARE_COMPLETED,
+      HomeLoadFlowEventType.SOURCE_PREPARE_FAILED,
+      async (): Promise<void> => {
+        await this.initializeRepositoryManager();
+        await this.checkSourceUpdates();
+      }
+    );
+    this.startupSourceTasksCompleted = success;
+    if (!success) {
+      this.startupSourceTasksScheduled = false;
+    }
+  }
+
+  private async prepareHomeDiscoverData(trigger: string): Promise<void> {
+    if (this.startupDiscoverPrepared) {
+      return;
+    }
+    const success: boolean = await this.runHomeDeferredTask(
+      'discover_prepare',
+      HomeLoadFlowStage.DISCOVER,
+      HomeLoadFlowEventType.DISCOVER_PREPARE_STARTED,
+      HomeLoadFlowEventType.DISCOVER_PREPARE_COMPLETED,
+      HomeLoadFlowEventType.DISCOVER_PREPARE_FAILED,
+      async (): Promise<void> => {
+        await this.extractTagsAndAuthors();
+        this.applyDiscoverFilter();
+      }
+    );
+    this.startupDiscoverPrepared = success;
+    if (success) {
+      logger.info(TAG, `发现页数据已准备完成: trigger=${trigger}`);
+    }
+  }
+
   private shouldDisplayTabConfig(config: TabConfig): boolean {
     if (this.isSourceFeatureTab(config.index) && !this.sourceFeaturesEnabled) {
       return false;
@@ -1610,15 +1970,32 @@ struct MainMenuPage {
       logger.info(TAG, `类型书架初始化完成，共 ${this.typeShelves.length} 个书架`);
     });
 
-    // 加载可见标签配置
-    this.loadVisibleTabs();
-
-    // 加载底栏样式与动画设置
-    this.loadBottomBarStyle('aboutToAppear');
-    this.loadBottomBarAnimationSetting('aboutToAppear');
-
     // 处理路由参数
     this.handleRouteParams();
+    this.isPrivacyMode = this.privacyModeManager.isInPrivacyMode();
+    this.ensureHomeLoadFlow();
+    this.recordHomeLoadFlow(
+      HomeLoadFlowEventType.ENTRY_RECEIVED,
+      HomeLoadFlowStage.ENTRY,
+      'about_to_appear_entry_received'
+    );
+    this.recordHomeLoadFlow(
+      HomeLoadFlowEventType.ROUTE_PARAMS_PARSED,
+      HomeLoadFlowStage.ENTRY,
+      'route_params_parsed'
+    );
+    this.recordHomeLoadFlow(
+      HomeLoadFlowEventType.PRIMARY_TAB_SELECTED,
+      HomeLoadFlowStage.ENTRY,
+      'primary_tab_selected',
+      0,
+      true,
+      HomeLoadFlowSeverity.INFO,
+      this.currentTabIndex
+    );
+
+    // 加载可见标签、底栏样式与书库视图模式配置
+    void this.initializeHomeStartupConfig();
 
     // 快捷入口冷启动：尽早开始目标路由，减少 MainMenuPage 闪现
     if (this.startupRoutePending) {
@@ -1736,10 +2113,7 @@ struct MainMenuPage {
     this.loadVersionInfo();
     this.initializeUserManualIfNeeded(); // 首次运行时添加使用手册
     this.checkAndShowChangelog(); // 新版本首次启动显示更新日志
-    this.initializeContentData(); // 加载漫画、电子书并提取标签作者
-    void this.loadLibraryViewMode();
-    this.initializeRepositoryManager(); // 初始化仓库管理器（会在完成后自动加载图源列表）
-    this.checkSourceUpdates(); // 检查图源更新
+    void this.initializeContentData(); // 加载首屏关键内容，后台补全其他链路
 
     // 初始化响应式布局
     this.initializeResponsiveLayout();
@@ -2284,7 +2658,7 @@ struct MainMenuPage {
       let handled: boolean = false;
 
       if (route === 'page') {
-        handled = this.handleDeepLinkPageRoute();
+        handled = await this.handleDeepLinkPageRoute();
       } else if (route === 'source') {
         handled = await this.handleDeepLinkSourceRoute();
       } else if (route === 'detail') {
@@ -2315,15 +2689,44 @@ struct MainMenuPage {
     }
   }
 
-  private handleDeepLinkPageRoute(): boolean {
+  private async handleDeepLinkPageRoute(): Promise<boolean> {
     const pageName: string = AppStorage.get<string>('deepLinkPageName') || '';
     if (!pageName) {
       logger.warn(TAG, '🔗 页面路由参数不完整');
       return false;
     }
+
+    const pageAction: string = AppStorage.get<string>('deepLinkPageAction') || '';
+    if (pageName === 'SourceFeatureSettingsSubPage' && pageAction === 'enableSourceFeatures') {
+      const enabled: boolean = await this.enableSourceFeaturesFromDeepLink();
+      if (!enabled) {
+        return false;
+      }
+    }
+
     this.pathStack.pushPathByName(pageName, undefined);
-    logger.info(TAG, `🔗 页面路由跳转: ${pageName}`);
+    logger.info(TAG, `🔗 页面路由跳转: ${pageName}, action=${pageAction}`);
     return true;
+  }
+
+  private async enableSourceFeaturesFromDeepLink(): Promise<boolean> {
+    try {
+      if (!this.settingsManager.isInitialized()) {
+        await this.settingsManager.initialize();
+      }
+
+      await this.settingsManager.setBoolean(SettingKeys.SOURCE_SETTINGS_VISIBLE, true);
+      await this.settingsManager.setBoolean(SettingKeys.SOURCE_FEATURES_ENABLED, true);
+      this.settingsManager.syncToAppStorage();
+      AppStorage.setOrCreate('source_settings_visible', true);
+      AppStorage.setOrCreate('source_features_enabled', true);
+      this.sourceFeaturesEnabled = true;
+      logger.info(TAG, '🔗 Deep Link 已开启源功能设置显示和源功能');
+      return true;
+    } catch (error) {
+      logger.error(TAG, `🔗 Deep Link 开启源功能设置失败: ${String(error)}`);
+      return false;
+    }
   }
 
   /**
@@ -6291,6 +6694,131 @@ struct MainMenuPage {
     });
   }
 
+  private updateHomeStableDataSource<T>(
+    name: string,
+    dataSource: BasicDataSource<T>,
+    data: T[],
+    keyBuilder: (item: T, index: number) => string,
+    signatureBuilder: (item: T, index: number) => string
+  ): BasicDataSourceStableUpdateResult {
+    const startTime: number = Date.now();
+    this.recordHomeLoadFlow(
+      HomeLoadFlowEventType.DATASOURCE_UPDATE_STARTED,
+      HomeLoadFlowStage.DATASOURCE,
+      `${name}_datasource_update_started`,
+      0,
+      true,
+      HomeLoadFlowSeverity.DEBUG,
+      data.length,
+      0,
+      0,
+      false,
+      name
+    );
+    try {
+      const result: BasicDataSourceStableUpdateResult = dataSource.setDataStable(data, keyBuilder, signatureBuilder);
+      const eventType: HomeLoadFlowEventType = result.skipped
+        ? HomeLoadFlowEventType.DATASOURCE_UPDATE_SKIPPED
+        : HomeLoadFlowEventType.DATASOURCE_UPDATE_COMPLETED;
+      this.recordHomeLoadFlow(
+        eventType,
+        HomeLoadFlowStage.DATASOURCE,
+        `${name}_datasource_update_${result.reason}`,
+        Date.now() - startTime,
+        true,
+        HomeLoadFlowSeverity.DEBUG,
+        result.totalCount,
+        result.changedCount,
+        result.skipped ? result.totalCount : 0,
+        result.reloaded,
+        name
+      );
+      return result;
+    } catch (error) {
+      logger.warn(TAG, `稳定更新DataSource失败，回退全量刷新: name=${name}, reason=${String(error)}`);
+      dataSource.setData(data);
+      const fallbackResult: BasicDataSourceStableUpdateResult = new BasicDataSourceStableUpdateResult();
+      fallbackResult.reloaded = true;
+      fallbackResult.changedCount = data.length;
+      fallbackResult.totalCount = data.length;
+      fallbackResult.reason = 'fallback_reload';
+      this.recordHomeLoadFlow(
+        HomeLoadFlowEventType.ERROR,
+        HomeLoadFlowStage.DATASOURCE,
+        `${name}_datasource_update_failed:${String(error)}`,
+        Date.now() - startTime,
+        false,
+        HomeLoadFlowSeverity.WARN,
+        data.length,
+        data.length,
+        0,
+        true,
+        name
+      );
+      return fallbackResult;
+    }
+  }
+
+  private getMangaDataSourceKey(manga: Manga, _index: number): string {
+    return String(manga.id || '');
+  }
+
+  private getMangaDataSourceSignature(manga: Manga, _index: number): string {
+    const progress: ReadingProgress = manga.readingProgress;
+    const contentType: string = manga.contentType ? manga.contentType : '';
+    return `${manga.id}|${manga.title}|${manga.coverImagePath}|${manga.status}|${manga.isFavorite ? 1 : 0}|${contentType}|${progress.currentChapterId}|${progress.currentPageIndex}|${progress.lastReadAt}|${progress.readingStatus}|${manga.addedToLibraryAt}`;
+  }
+
+  private getEBookDataSourceKey(ebook: EBook, _index: number): string {
+    return String(ebook.id || '');
+  }
+
+  private getEBookDataSourceSignature(ebook: EBook, _index: number): string {
+    const title: string = ebook.metadata ? ebook.metadata.title : '';
+    const coverPath: string = ebook.metadata ? ebook.metadata.coverImagePath : '';
+    const author: string = ebook.metadata ? ebook.metadata.author : '';
+    return `${ebook.id}|${title}|${coverPath}|${author}|${ebook.status}|${ebook.isFavorite ? 1 : 0}|${ebook.readingProgress.progress}|${ebook.readingProgress.currentPosition}|${ebook.readingProgress.lastReadTime}|${ebook.addTime}`;
+  }
+
+  private getNovelDataSourceKey(novel: NovelBook, _index: number): string {
+    return String(novel.id || '');
+  }
+
+  private getNovelDataSourceSignature(novel: NovelBook, _index: number): string {
+    const coverLocalPath: string = novel.coverLocalPath ? novel.coverLocalPath : '';
+    const coverUrl: string = novel.coverUrl ? novel.coverUrl : '';
+    return `${novel.id}|${novel.name}|${novel.author}|${coverLocalPath}|${coverUrl}|${novel.readStatus}|${novel.isFavorite ? 1 : 0}|${novel.lastReadChapterId}|${novel.lastReadChapterIndex}|${novel.lastReadPosition}|${novel.lastReadTime}|${novel.chapterCount}|${novel.createTime}`;
+  }
+
+  private getShelfMixedDataSourceKey(item: ShelfMixedItem, _index: number): string {
+    return `${item.type}|${item.id}`;
+  }
+
+  private getShelfMixedDataSourceSignature(item: ShelfMixedItem, index: number): string {
+    let coverSignature: string = '';
+    if (item.type === 'manga' || item.type === 'pdfebook') {
+      const manga: Manga = item.data as Manga;
+      coverSignature = this.getMangaDataSourceSignature(manga, index);
+    } else if (item.type === 'ebook') {
+      const ebook: EBook = item.data as EBook;
+      coverSignature = this.getEBookDataSourceSignature(ebook, index);
+    } else {
+      const novel: NovelBook = item.data as NovelBook;
+      coverSignature = this.getNovelDataSourceSignature(novel, index);
+    }
+    return `${item.type}|${item.id}|${item.name}|${item.lastReadTime}|${item.addTime}|${item.isNSFW ? 1 : 0}|${coverSignature}`;
+  }
+
+  private getSourceDataSourceKey(source: SourceInfo, _index: number): string {
+    return String(source.id);
+  }
+
+  private getSourceDataSourceSignature(source: SourceInfo, _index: number): string {
+    const pkg: string = source.pkg ? source.pkg : '';
+    const iconPath: string = source.iconPath ? source.iconPath : '';
+    return `${source.id}|${source.name}|${source.type}|${pkg}|${source.baseUrl}|${source.version}|${source.language}|${source.isEnabled ? 1 : 0}|${source.priority}|${source.lastUpdateTime}|${iconPath}|${source.requireProxy ? 1 : 0}|${source.isPinned ? 1 : 0}|${source.isNSFW ? 1 : 0}|${source.supportsPopular ? 1 : 0}|${source.supportsLatest ? 1 : 0}|${source.supportsFilter ? 1 : 0}`;
+  }
+
   // --- 预计算缓存更新方法（Phase 0 性能优化） ---
   private updateCategoryFilteredLists(): void {
     const catId = this.selectedCategoryId
@@ -6298,9 +6826,27 @@ struct MainMenuPage {
       this.categoryFilteredMangaList = this.filteredMangaList
       this.categoryFilteredEbookList = this.filteredEbookList
       this.categoryFilteredNovelList = this.filteredNovelList
-      this.categoryMangaDS.setData(this.categoryFilteredMangaList)
-      this.categoryEbookDS.setData(this.categoryFilteredEbookList)
-      this.categoryNovelDS.setData(this.categoryFilteredNovelList)
+      this.updateHomeStableDataSource<Manga>(
+        'category_manga',
+        this.categoryMangaDS,
+        this.categoryFilteredMangaList,
+        (item: Manga, index: number): string => this.getMangaDataSourceKey(item, index),
+        (item: Manga, index: number): string => this.getMangaDataSourceSignature(item, index)
+      )
+      this.updateHomeStableDataSource<EBook>(
+        'category_ebook',
+        this.categoryEbookDS,
+        this.categoryFilteredEbookList,
+        (item: EBook, index: number): string => this.getEBookDataSourceKey(item, index),
+        (item: EBook, index: number): string => this.getEBookDataSourceSignature(item, index)
+      )
+      this.updateHomeStableDataSource<NovelBook>(
+        'category_novel',
+        this.categoryNovelDS,
+        this.categoryFilteredNovelList,
+        (item: NovelBook, index: number): string => this.getNovelDataSourceKey(item, index),
+        (item: NovelBook, index: number): string => this.getNovelDataSourceSignature(item, index)
+      )
       return
     }
     const isDefault = catId === 'default'
@@ -6316,19 +6862,49 @@ struct MainMenuPage {
       return this.categoryManager.isItemInCategory(novel.id, ContentType.NOVEL, catId) ||
         (isDefault && this.categoryManager.getUncategorizedItemKey(novel.id, ContentType.NOVEL))
     })
-    this.categoryMangaDS.setData(this.categoryFilteredMangaList)
-    this.categoryEbookDS.setData(this.categoryFilteredEbookList)
-    this.categoryNovelDS.setData(this.categoryFilteredNovelList)
+    this.updateHomeStableDataSource<Manga>(
+      'category_manga',
+      this.categoryMangaDS,
+      this.categoryFilteredMangaList,
+      (item: Manga, index: number): string => this.getMangaDataSourceKey(item, index),
+      (item: Manga, index: number): string => this.getMangaDataSourceSignature(item, index)
+    )
+    this.updateHomeStableDataSource<EBook>(
+      'category_ebook',
+      this.categoryEbookDS,
+      this.categoryFilteredEbookList,
+      (item: EBook, index: number): string => this.getEBookDataSourceKey(item, index),
+      (item: EBook, index: number): string => this.getEBookDataSourceSignature(item, index)
+    )
+    this.updateHomeStableDataSource<NovelBook>(
+      'category_novel',
+      this.categoryNovelDS,
+      this.categoryFilteredNovelList,
+      (item: NovelBook, index: number): string => this.getNovelDataSourceKey(item, index),
+      (item: NovelBook, index: number): string => this.getNovelDataSourceSignature(item, index)
+    )
   }
 
   private updateLibraryDefaultMixedItems(): void {
     this.libraryDefaultMixedItems = this.getLibraryDefaultMixedItems()
-    this.libraryDefaultMixedDS.setData(this.libraryDefaultMixedItems)
+    this.updateHomeStableDataSource<ShelfMixedItem>(
+      'library_default_mixed',
+      this.libraryDefaultMixedDS,
+      this.libraryDefaultMixedItems,
+      (item: ShelfMixedItem, index: number): string => this.getShelfMixedDataSourceKey(item, index),
+      (item: ShelfMixedItem, index: number): string => this.getShelfMixedDataSourceSignature(item, index)
+    )
   }
 
   private updateCustomShelfMixedItems(): void {
     this.customShelfMixedItems = this.getCustomShelfMixedItems()
-    this.customShelfMixedDS.setData(this.customShelfMixedItems)
+    this.updateHomeStableDataSource<ShelfMixedItem>(
+      'custom_shelf_mixed',
+      this.customShelfMixedDS,
+      this.customShelfMixedItems,
+      (item: ShelfMixedItem, index: number): string => this.getShelfMixedDataSourceKey(item, index),
+      (item: ShelfMixedItem, index: number): string => this.getShelfMixedDataSourceSignature(item, index)
+    )
   }
 
   private updateAllCachedLists(): void {
@@ -6338,7 +6914,13 @@ struct MainMenuPage {
   }
 
   private updateSourceListDS(): void {
-    this.sourceListDS.setData(this.filteredSourceList)
+    this.updateHomeStableDataSource<SourceInfo>(
+      'source_list',
+      this.sourceListDS,
+      this.filteredSourceList,
+      (item: SourceInfo, index: number): string => this.getSourceDataSourceKey(item, index),
+      (item: SourceInfo, index: number): string => this.getSourceDataSourceSignature(item, index)
+    )
   }
 
   private updateShelfDetailDS(): void {
@@ -6372,9 +6954,27 @@ struct MainMenuPage {
     }
     this.shelfCombinedEBookList = combined
 
-    this.shelfMangaDS.setData(this.shelfFilteredMangaList)
-    this.shelfEBookDS.setData(this.shelfCombinedEBookList)
-    this.shelfNovelDS.setData(this.shelfFilteredNovelList)
+    this.updateHomeStableDataSource<Manga>(
+      'shelf_manga',
+      this.shelfMangaDS,
+      this.shelfFilteredMangaList,
+      (item: Manga, index: number): string => this.getMangaDataSourceKey(item, index),
+      (item: Manga, index: number): string => this.getMangaDataSourceSignature(item, index)
+    )
+    this.updateHomeStableDataSource<ShelfMixedItem>(
+      'shelf_ebook',
+      this.shelfEBookDS,
+      this.shelfCombinedEBookList,
+      (item: ShelfMixedItem, index: number): string => this.getShelfMixedDataSourceKey(item, index),
+      (item: ShelfMixedItem, index: number): string => this.getShelfMixedDataSourceSignature(item, index)
+    )
+    this.updateHomeStableDataSource<NovelBook>(
+      'shelf_novel',
+      this.shelfNovelDS,
+      this.shelfFilteredNovelList,
+      (item: NovelBook, index: number): string => this.getNovelDataSourceKey(item, index),
+      (item: NovelBook, index: number): string => this.getNovelDataSourceSignature(item, index)
+    )
   }
 
   private getLibraryDefaultMixedItems(): ShelfMixedItem[] {
@@ -6548,19 +7148,126 @@ struct MainMenuPage {
    * 确保按正确顺序加载数据
    */
   private async initializeContentData(): Promise<void> {
+    const startupStartTime: number = Date.now();
     try {
       logger.info(TAG, '开始初始化内容数据...');
 
-      const keyPathStartTime = Date.now();
-      await this.loadMangaList();
-      await Promise.all([
-        this.loadEBookList(),
-        this.loadNovelList()
-      ]);
-      logger.info(TAG, `内容数据关键路径加载完成: duration=${Date.now() - keyPathStartTime}ms`);
+      if (this.isHomeSourcePrimaryTab(this.homeLoadPrimaryTab)) {
+        await this.initializeHomeSourceData('first_screen_source_tab');
+        this.recordHomeFirstScreenReady('source_first_screen_ready', this.filteredSourceList.length);
+        this.scheduleDeferredStartupContentTasks();
+        return;
+      }
+
+      const mangaStartTime: number = Date.now();
+      this.recordHomeLoadFlow(
+        HomeLoadFlowEventType.LIBRARY_DB_QUERY_STARTED,
+        HomeLoadFlowStage.LIBRARY_DB,
+        'manga_library_query_started',
+        0,
+        true,
+        HomeLoadFlowSeverity.INFO,
+        0,
+        0,
+        0,
+        false,
+        'load_manga_list'
+      );
+      await this.loadMangaList(false);
+      this.startupMangaLoadedInCriticalPath = true;
+      this.recordHomeLoadFlow(
+        HomeLoadFlowEventType.LIBRARY_DB_QUERY_COMPLETED,
+        HomeLoadFlowStage.LIBRARY_DB,
+        'manga_library_query_completed',
+        Date.now() - mangaStartTime,
+        true,
+        HomeLoadFlowSeverity.INFO,
+        this.mangaList.length,
+        0,
+        0,
+        false,
+        'load_manga_list'
+      );
+
+      if (this.homeLoadPrimaryTab === HomeLoadFlowPrimaryTab.DISCOVER) {
+        await this.runHomeDeferredTask(
+          'load_ebook_for_discover_first_screen',
+          HomeLoadFlowStage.LIBRARY_DB,
+          HomeLoadFlowEventType.LIBRARY_DB_QUERY_STARTED,
+          HomeLoadFlowEventType.LIBRARY_DB_QUERY_COMPLETED,
+          HomeLoadFlowEventType.LIBRARY_DB_QUERY_FAILED,
+          async (): Promise<void> => {
+            await this.loadEBookList();
+            this.startupEBookLoadedInCriticalPath = true;
+          }
+        );
+        await this.runHomeDeferredTask(
+          'load_novel_for_discover_first_screen',
+          HomeLoadFlowStage.LIBRARY_DB,
+          HomeLoadFlowEventType.LIBRARY_DB_QUERY_STARTED,
+          HomeLoadFlowEventType.LIBRARY_DB_QUERY_COMPLETED,
+          HomeLoadFlowEventType.LIBRARY_DB_QUERY_FAILED,
+          async (): Promise<void> => {
+            await this.loadNovelList();
+            this.startupNovelLoadedInCriticalPath = true;
+          }
+        );
+        await this.prepareHomeDiscoverData('first_screen_discover_tab');
+        this.recordHomeFirstScreenReady(
+          'discover_first_screen_ready',
+          this.discoveredMangaList.length + this.discoveredEBookList.length + this.discoveredNovelList.length
+        );
+        this.scheduleDeferredStartupContentTasks();
+        return;
+      }
+
+      if (this.homeLoadPrimaryTab === HomeLoadFlowPrimaryTab.LIBRARY &&
+        this.libraryContentType === LibraryContentType.EBOOK) {
+        await this.runHomeDeferredTask(
+          'load_ebook_for_library_first_screen',
+          HomeLoadFlowStage.LIBRARY_DB,
+          HomeLoadFlowEventType.LIBRARY_DB_QUERY_STARTED,
+          HomeLoadFlowEventType.LIBRARY_DB_QUERY_COMPLETED,
+          HomeLoadFlowEventType.LIBRARY_DB_QUERY_FAILED,
+          async (): Promise<void> => {
+            await this.loadEBookList();
+            this.startupEBookLoadedInCriticalPath = true;
+          }
+        );
+      } else if (this.homeLoadPrimaryTab === HomeLoadFlowPrimaryTab.LIBRARY &&
+        this.libraryContentType === LibraryContentType.NOVEL) {
+        await this.runHomeDeferredTask(
+          'load_novel_for_library_first_screen',
+          HomeLoadFlowStage.LIBRARY_DB,
+          HomeLoadFlowEventType.LIBRARY_DB_QUERY_STARTED,
+          HomeLoadFlowEventType.LIBRARY_DB_QUERY_COMPLETED,
+          HomeLoadFlowEventType.LIBRARY_DB_QUERY_FAILED,
+          async (): Promise<void> => {
+            await this.loadNovelList();
+            this.startupNovelLoadedInCriticalPath = true;
+          }
+        );
+      }
+
+      this.recordHomeFirstScreenReady('library_first_screen_ready', this.libraryDefaultMixedItems.length);
+      logger.info(TAG, `内容数据首屏关键路径完成: duration=${Date.now() - startupStartTime}ms`);
       this.scheduleDeferredStartupContentTasks();
     } catch (error) {
       logger.error(TAG, `初始化内容数据失败: ${String(error)}`);
+      this.recordHomeLoadFlow(
+        HomeLoadFlowEventType.ERROR,
+        HomeLoadFlowStage.FIRST_SCREEN,
+        `initialize_content_data_failed:${String(error)}`,
+        Date.now() - startupStartTime,
+        false,
+        HomeLoadFlowSeverity.ERROR,
+        0,
+        0,
+        0,
+        false,
+        'initialize_content_data'
+      );
+      this.scheduleDeferredStartupContentTasks();
     }
   }
 
@@ -6578,17 +7285,108 @@ struct MainMenuPage {
     const deferredStartTime = Date.now();
     try {
       logger.info(TAG, '开始执行冷启动后台补全任务');
-      await this.extractTagsAndAuthors();
-      await this.cleanupOrphanedShelfMappings();
+      if (!this.startupMangaLoadedInCriticalPath) {
+        await this.runHomeDeferredTask(
+          'load_manga_deferred',
+          HomeLoadFlowStage.DEFERRED,
+          HomeLoadFlowEventType.DEFERRED_TASK_STARTED,
+          HomeLoadFlowEventType.DEFERRED_TASK_COMPLETED,
+          HomeLoadFlowEventType.DEFERRED_TASK_FAILED,
+          async (): Promise<void> => {
+            await this.loadMangaList(false);
+            this.startupMangaLoadedInCriticalPath = true;
+          }
+        );
+        await this.yieldHomeStartupSlice();
+      }
+      if (!this.startupEBookLoadedInCriticalPath) {
+        await this.runHomeDeferredTask(
+          'load_ebook_deferred',
+          HomeLoadFlowStage.DEFERRED,
+          HomeLoadFlowEventType.DEFERRED_TASK_STARTED,
+          HomeLoadFlowEventType.DEFERRED_TASK_COMPLETED,
+          HomeLoadFlowEventType.DEFERRED_TASK_FAILED,
+          async (): Promise<void> => {
+            await this.loadEBookList();
+            this.startupEBookLoadedInCriticalPath = true;
+          }
+        );
+        await this.yieldHomeStartupSlice();
+      }
+      if (!this.startupNovelLoadedInCriticalPath) {
+        await this.runHomeDeferredTask(
+          'load_novel_deferred',
+          HomeLoadFlowStage.DEFERRED,
+          HomeLoadFlowEventType.DEFERRED_TASK_STARTED,
+          HomeLoadFlowEventType.DEFERRED_TASK_COMPLETED,
+          HomeLoadFlowEventType.DEFERRED_TASK_FAILED,
+          async (): Promise<void> => {
+            await this.loadNovelList();
+            this.startupNovelLoadedInCriticalPath = true;
+          }
+        );
+        await this.yieldHomeStartupSlice();
+      }
       const recentReadingAlreadyLoaded = this.recentReadingList.length > 0 ||
         this.recentEBookList.length > 0 ||
         this.recentNovelList.length > 0;
       if (!recentReadingAlreadyLoaded) {
-        await this.loadRecentReadingList();
+        await this.runHomeDeferredTask(
+          'load_recent_reading',
+          HomeLoadFlowStage.DEFERRED,
+          HomeLoadFlowEventType.DEFERRED_TASK_STARTED,
+          HomeLoadFlowEventType.DEFERRED_TASK_COMPLETED,
+          HomeLoadFlowEventType.DEFERRED_TASK_FAILED,
+          async (): Promise<void> => {
+            await this.loadRecentReadingList();
+          }
+        );
+        await this.yieldHomeStartupSlice();
       }
+      await this.prepareHomeDiscoverData('deferred_startup');
+      await this.yieldHomeStartupSlice();
+      await this.runHomeDeferredTask(
+        'cleanup_orphaned_shelf_mappings',
+        HomeLoadFlowStage.DEFERRED,
+        HomeLoadFlowEventType.DEFERRED_TASK_STARTED,
+        HomeLoadFlowEventType.DEFERRED_TASK_COMPLETED,
+        HomeLoadFlowEventType.DEFERRED_TASK_FAILED,
+        async (): Promise<void> => {
+          await this.cleanupOrphanedShelfMappings();
+        }
+      );
+      await this.yieldHomeStartupSlice();
+      if (!this.startupSourceTasksCompleted) {
+        await this.initializeHomeSourceData('deferred_startup');
+        await this.yieldHomeStartupSlice();
+      }
+      await this.runHomeDeferredTask(
+        'preload_network_covers',
+        HomeLoadFlowStage.COVER,
+        HomeLoadFlowEventType.COVER_RESOLVE_STARTED,
+        HomeLoadFlowEventType.COVER_RESOLVE_COMPLETED,
+        HomeLoadFlowEventType.COVER_RESOLVE_FAILED,
+        async (): Promise<void> => {
+          await this.preloadNetworkCovers(this.mangaList);
+        }
+      );
       logger.info(TAG, `冷启动后台补全任务完成: duration=${Date.now() - deferredStartTime}ms`);
+      this.homeLoadFlowMonitor.endSession(this.homeLoadFlowId, 'deferred_tasks_completed');
     } catch (error) {
       logger.error(TAG, `冷启动后台补全任务失败: ${String(error)}`);
+      this.recordHomeLoadFlow(
+        HomeLoadFlowEventType.DEFERRED_TASK_FAILED,
+        HomeLoadFlowStage.DEFERRED,
+        `deferred_startup_failed:${String(error)}`,
+        Date.now() - deferredStartTime,
+        false,
+        HomeLoadFlowSeverity.ERROR,
+        0,
+        0,
+        0,
+        false,
+        'run_deferred_startup_content_tasks'
+      );
     }
   }
   
@@ -6737,9 +7535,27 @@ struct MainMenuPage {
    * 同步发现页 DataSource（LazyForEach）
    */
   private syncDiscoverDataSources(): void {
-    this.discoveredMangaDS.setData(this.discoveredMangaList);
-    this.discoveredEBookDS.setData(this.discoveredEBookList);
-    this.discoveredNovelDS.setData(this.discoveredNovelList);
+    this.updateHomeStableDataSource<Manga>(
+      'discover_manga',
+      this.discoveredMangaDS,
+      this.discoveredMangaList,
+      (item: Manga, index: number): string => this.getMangaDataSourceKey(item, index),
+      (item: Manga, index: number): string => this.getMangaDataSourceSignature(item, index)
+    );
+    this.updateHomeStableDataSource<EBook>(
+      'discover_ebook',
+      this.discoveredEBookDS,
+      this.discoveredEBookList,
+      (item: EBook, index: number): string => this.getEBookDataSourceKey(item, index),
+      (item: EBook, index: number): string => this.getEBookDataSourceSignature(item, index)
+    );
+    this.updateHomeStableDataSource<NovelBook>(
+      'discover_novel',
+      this.discoveredNovelDS,
+      this.discoveredNovelList,
+      (item: NovelBook, index: number): string => this.getNovelDataSourceKey(item, index),
+      (item: NovelBook, index: number): string => this.getNovelDataSourceSignature(item, index)
+    );
   }
 
   /**
@@ -9546,7 +10362,7 @@ struct MainMenuPage {
    * 优化：不加载章节信息，书库只需要基本信息即可
    * 章节数据在进入详情页时再加载，这样可以大幅提升书库加载速度
    */
-  private async loadMangaList(): Promise<void> {
+  private async loadMangaList(preloadCovers: boolean = true): Promise<void> {
     try {
       this.loadingState.mangaList = true;
       logger.info(TAG, '开始加载漫画列表（不加载章节信息）...');
@@ -9567,8 +10383,10 @@ struct MainMenuPage {
       this.mangaList = favoriteMangaList;
       logger.info(TAG, `成功加载 ${this.mangaList.length} 部漫画（未加载章节）`);
 
-      // 预加载网络封面图片（支持AVIF格式）
-      this.preloadNetworkCovers(this.mangaList);
+      // 预加载网络封面图片（支持AVIF格式）。冷启动首屏路径会延迟到后台补全阶段执行。
+      if (preloadCovers) {
+        void this.preloadNetworkCovers(this.mangaList);
+      }
 
       // 应用筛选
       this.applyLibraryFilter();
@@ -9588,25 +10406,67 @@ struct MainMenuPage {
    * 预加载网络封面图片（支持AVIF格式）
    * 对于网络图片，使用CoverImageManager预加载到PixelMap
    */
-  private preloadNetworkCovers(mangaList: Manga[]): void {
+  private buildHomeCoverPreloadFailureKey(manga: Manga, coverUrl: string): string {
+    return `home_cover_preload|${manga.id}|${coverUrl}`;
+  }
+
+  private async preloadNetworkCovers(mangaList: Manga[]): Promise<void> {
     const coverManager = getCoverImageManager();
     const networkCovers: string[] = [];
+    const failureKeys: string[] = [];
     
     for (const manga of mangaList) {
       const coverUrl = manga.coverImagePath;
       if (coverUrl && (coverUrl.startsWith('http://') || coverUrl.startsWith('https://'))) {
+        const failureKey: string = this.buildHomeCoverPreloadFailureKey(manga, coverUrl);
+        if (this.homeCoverFailureTtlCache.shouldSkipBackground(failureKey, false)) {
+          this.recordHomeLoadFlow(
+            HomeLoadFlowEventType.COVER_FAILURE_TTL_HIT,
+            HomeLoadFlowStage.COVER,
+            `cover_preload_ttl_hit:${manga.id}`,
+            0,
+            true,
+            HomeLoadFlowSeverity.DEBUG,
+            1,
+            0,
+            1,
+            false,
+            'preload_network_covers'
+          );
+          continue;
+        }
         networkCovers.push(coverUrl);
+        failureKeys.push(failureKey);
       }
     }
     
     if (networkCovers.length > 0) {
       logger.info(TAG, `开始预加载 ${networkCovers.length} 个网络封面图片`);
-      // 异步预加载，不阻塞UI
-      coverManager.preloadCovers(networkCovers).then(() => {
+      try {
+        await coverManager.preloadCovers(networkCovers);
+        for (let index: number = 0; index < failureKeys.length; index++) {
+          this.homeCoverFailureTtlCache.clearKey(failureKeys[index]);
+        }
         logger.info(TAG, `网络封面预加载完成`);
-      }).catch((e: Error) => {
-        logger.warn(TAG, `网络封面预加载部分失败: ${e.message}`);
-      });
+      } catch (error) {
+        for (let index: number = 0; index < failureKeys.length; index++) {
+          this.homeCoverFailureTtlCache.recordFailure(failureKeys[index], String(error));
+        }
+        this.recordHomeLoadFlow(
+          HomeLoadFlowEventType.COVER_FAILURE_TTL_RECORDED,
+          HomeLoadFlowStage.COVER,
+          `cover_preload_failure_recorded:${String(error)}`,
+          0,
+          false,
+          HomeLoadFlowSeverity.WARN,
+          failureKeys.length,
+          0,
+          0,
+          false,
+          'preload_network_covers'
+        );
+        logger.warn(TAG, `网络封面预加载部分失败: ${String(error)}`);
+      }
     }
   }
 
@@ -18050,6 +18910,60 @@ struct MainMenuPage {
     return firstChapter;
   }
 
+  private async hasOnlineChapterLocalPageCache(chapterId: string): Promise<boolean> {
+    if (!chapterId || chapterId.length <= 0) {
+      return false;
+    }
+    try {
+      const pages: OnlinePageInfo[] = await this.dataManager.getOnlineChapterPages(chapterId);
+      for (let i: number = 0; i < pages.length; i++) {
+        const page: OnlinePageInfo = pages[i];
+        const localPath: string = typeof page.localPath === 'string' ? page.localPath.trim() : '';
+        if (localPath.length > 0) {
+          logger.info(TAG, `MainMenu在线章节命中本地页缓存: chapterId=${chapterId}, pageIndex=${i}, pageCount=${pages.length}`);
+          return true;
+        }
+      }
+      return false;
+    } catch (error) {
+      logger.warn(TAG, `MainMenu检查在线章节本地页缓存失败: chapterId=${chapterId}, ${String(error)}`);
+      return false;
+    }
+  }
+
+  private async resolveOnlineMangaReaderContentType(
+    chapterId: string,
+    loadedChapter: MangaChapter | undefined,
+    chapterInfo: OnlineChapterInfo | null,
+    caller: string
+  ): Promise<MangaReaderContentType> {
+    const loadedDownloaded: boolean = loadedChapter !== undefined ? loadedChapter.isDownloaded === true : false;
+    const loadedLocalPath: string = loadedChapter !== undefined && typeof loadedChapter.localPath === 'string'
+      ? loadedChapter.localPath.trim()
+      : '';
+    const chapterDownloaded: boolean = chapterInfo !== null ? chapterInfo.isDownloaded === true : false;
+    const chapterDownloadPath: string = chapterInfo !== null && typeof chapterInfo.downloadPath === 'string'
+      ? chapterInfo.downloadPath.trim()
+      : '';
+    const hasDownloadMetadata: boolean = loadedDownloaded ||
+      loadedLocalPath.length > 0 ||
+      chapterDownloaded ||
+      chapterDownloadPath.length > 0;
+    const hasLocalPageCache: boolean = hasDownloadMetadata ? false : await this.hasOnlineChapterLocalPageCache(chapterId);
+    const contentType: MangaReaderContentType = hasDownloadMetadata || hasLocalPageCache
+      ? MangaReaderContentType.OnlineDownloaded
+      : MangaReaderContentType.OnlineUndownloaded;
+
+    logger.info(
+      TAG,
+      `MainMenu在线章节缓存判定: caller=${caller}, chapterId=${chapterId}, ` +
+        `loadedDownloaded=${loadedDownloaded}, loadedLocalPath=${loadedLocalPath.length > 0}, ` +
+        `chapterDownloaded=${chapterDownloaded}, chapterDownloadPath=${chapterDownloadPath.length > 0}, ` +
+        `hasLocalPageCache=${hasLocalPageCache}, contentType=${String(contentType)}`
+    );
+    return contentType;
+  }
+
   private clampMangaPageIndex(manga: Manga, chapterId: string, pageIndex: number): number {
     const safePageIndex = pageIndex >= 0 ? pageIndex : 0;
     const chapter = this.findLoadedMangaChapter(manga, chapterId);
@@ -18223,7 +19137,7 @@ struct MainMenuPage {
     const applyUpdates = () => {
       this.incrementalUpdateMangaList(this.mangaList, mergedList);
       void this.applyLibraryFilter();
-      this.preloadNetworkCovers(this.mangaList);
+      void this.preloadNetworkCovers(this.mangaList);
     };
 
     if (enableCollectionLayoutAnimation) {
@@ -24478,15 +25392,19 @@ struct MainMenuPage {
         if (hasWebSource) {
           const firstLoadedChapter = this.getFirstLoadedMangaChapter(manga);
           if (firstLoadedChapter) {
+            const ct: MangaReaderContentType = await this.resolveOnlineMangaReaderContentType(
+              firstLoadedChapter.id,
+              firstLoadedChapter,
+              null,
+              'animation_first_loaded'
+            );
             readerParams = {
               manga: manga,
               mangaId: manga.id,
               chapterId: firstLoadedChapter.id,
               pageIndex: 0,
               fromPage: 'MainMenuPage',
-              contentType: firstLoadedChapter.isDownloaded
-                ? MangaReaderContentType.OnlineDownloaded
-                : MangaReaderContentType.OnlineUndownloaded,
+              contentType: ct,
               sourceId: sourceIdNum,
               sourceName: sourceNameVal,
               sourcePkg: manga.sourceInfo?.sourcePkg
@@ -24496,7 +25414,7 @@ struct MainMenuPage {
             if (onlineChapterInfos && onlineChapterInfos.length > 0) {
               let firstChapterId: string = onlineChapterInfos[0].id;
               let minChapterNumber: number = onlineChapterInfos[0].chapterNumber;
-              let firstChapterInfo = onlineChapterInfos[0];
+              let firstChapterInfo: OnlineChapterInfo = onlineChapterInfos[0];
               for (let i: number = 1; i < onlineChapterInfos.length; i++) {
                 const info = onlineChapterInfos[i];
                 if (info.chapterNumber < minChapterNumber) {
@@ -24505,9 +25423,12 @@ struct MainMenuPage {
                   firstChapterInfo = info;
                 }
               }
-              const ct: MangaReaderContentType = firstChapterInfo.isDownloaded
-                ? MangaReaderContentType.OnlineDownloaded
-                : MangaReaderContentType.OnlineUndownloaded;
+              const ct: MangaReaderContentType = await this.resolveOnlineMangaReaderContentType(
+                firstChapterId,
+                undefined,
+                firstChapterInfo,
+                'animation_first_database'
+              );
 
               readerParams = {
                 manga: manga,
@@ -24572,16 +25493,20 @@ struct MainMenuPage {
         if (hasWebSource) {
           const loadedTargetChapter = this.findLoadedMangaChapter(manga, target.chapterId);
           if (loadedTargetChapter) {
-            ct2 = loadedTargetChapter.isDownloaded
-              ? MangaReaderContentType.OnlineDownloaded
-              : MangaReaderContentType.OnlineUndownloaded;
+            ct2 = await this.resolveOnlineMangaReaderContentType(
+              target.chapterId,
+              loadedTargetChapter,
+              null,
+              'animation_resume_loaded'
+            );
           } else {
             const targetChapterInfo = await this.dataManager.getOnlineChapterById(target.chapterId);
-            if (targetChapterInfo && targetChapterInfo.isDownloaded) {
-              ct2 = MangaReaderContentType.OnlineDownloaded;
-            } else {
-              ct2 = MangaReaderContentType.OnlineUndownloaded;
-            }
+            ct2 = await this.resolveOnlineMangaReaderContentType(
+              target.chapterId,
+              undefined,
+              targetChapterInfo,
+              'animation_resume_database'
+            );
           }
         }
         readerParams = {
@@ -26873,16 +27798,21 @@ struct MainMenuPage {
           if (onlineChapterInfos && onlineChapterInfos.length > 0) {
             let firstChapterId: string = onlineChapterInfos[0].id;
             let minChapterNumber: number = onlineChapterInfos[0].chapterNumber;
+            let firstChapterInfo: OnlineChapterInfo = onlineChapterInfos[0];
             for (let i: number = 1; i < onlineChapterInfos.length; i++) {
               const info = onlineChapterInfos[i];
               if (info.chapterNumber < minChapterNumber) {
                 minChapterNumber = info.chapterNumber;
                 firstChapterId = info.id;
+                firstChapterInfo = info;
               }
             }
-            const ct: MangaReaderContentType = onlineChapterInfos[0].isDownloaded
-              ? MangaReaderContentType.OnlineDownloaded
-              : MangaReaderContentType.OnlineUndownloaded;
+            const ct: MangaReaderContentType = await this.resolveOnlineMangaReaderContentType(
+              firstChapterId,
+              undefined,
+              firstChapterInfo,
+              'direct_first_database'
+            );
 
             const paramsFallback: MangaReaderPageParams = {
               manga: manga,
@@ -26943,11 +27873,22 @@ struct MainMenuPage {
       // [重构] 根据是否为在线漫画选择章节查询方法
       let ct2: MangaReaderContentType = MangaReaderContentType.Local;
       if (hasWebSource) {
-        const targetChapterInfo = await this.dataManager.getOnlineChapterById(target.chapterId);
-        if (targetChapterInfo && targetChapterInfo.isDownloaded) {
-          ct2 = MangaReaderContentType.OnlineDownloaded;
+        const loadedTargetChapter = this.findLoadedMangaChapter(manga, target.chapterId);
+        if (loadedTargetChapter) {
+          ct2 = await this.resolveOnlineMangaReaderContentType(
+            target.chapterId,
+            loadedTargetChapter,
+            null,
+            'direct_resume_loaded'
+          );
         } else {
-          ct2 = MangaReaderContentType.OnlineUndownloaded;
+          const targetChapterInfo = await this.dataManager.getOnlineChapterById(target.chapterId);
+          ct2 = await this.resolveOnlineMangaReaderContentType(
+            target.chapterId,
+            undefined,
+            targetChapterInfo,
+            'direct_resume_database'
+          );
         }
       }
       const params: MangaReaderPageParams = {
@@ -31661,9 +32602,11 @@ struct MainMenuPage {
         this.silentRefreshDiscoverData();
         break;
       case TabIndex.SOURCE:
+        void this.initializeHomeSourceData('tab_switched_to_source');
         this.silentRefreshSources();
         break;
       case TabIndex.BOOK_SOURCE:
+        void this.initializeHomeSourceData('tab_switched_to_book_source');
         this.bookSourceTabRefreshSignal++;
         break;
       case TabIndex.SUWAYOMI:

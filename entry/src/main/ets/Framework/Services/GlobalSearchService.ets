@@ -22,6 +22,13 @@ import { SourceDetailSearchExecutor, SourceDetailSearchResult, getSourceDetailSe
 import { LegadoBookSourceType } from '../Novel/LegadoSourceTypes';
 import { SettingsManager } from '../Managers/SettingsManager';
 import { GlobalSearchScheduler, GlobalSearchQueuedTask } from '../Search/GlobalSearchScheduler';
+import { GlobalSearchFlowMonitor, getGlobalSearchFlowMonitor } from '../Search/GlobalSearchFlowMonitor';
+import {
+  GlobalSearchFlowEvent,
+  GlobalSearchFlowEventType,
+  GlobalSearchFlowSessionInfo,
+  GlobalSearchFlowSeverity
+} from '../Search/GlobalSearchFlowTypes';
 import {
   GlobalSearchCancelSignal,
   GlobalSearchMetrics,
@@ -189,6 +196,7 @@ export class GlobalSearchService {
   private sourceDetailSearchExecutor: SourceDetailSearchExecutor;
   private settingsManager: SettingsManager;
   private indexManager: GlobalSearchIndexManager;
+  private flowMonitor: GlobalSearchFlowMonitor;
   private sessionCounter: number = 0;
   private runtimeCache: Map<string, GlobalSearchRuntimeCacheEntry> = new Map();
   private inFlightRequests: Map<string, Promise<UnifiedSearchItem[]>> = new Map();
@@ -206,6 +214,7 @@ export class GlobalSearchService {
     this.sourceDetailSearchExecutor = getSourceDetailSearchExecutor();
     this.settingsManager = SettingsManager.getInstance();
     this.indexManager = getGlobalSearchIndexManager();
+    this.flowMonitor = getGlobalSearchFlowMonitor();
   }
 
   /**
@@ -556,6 +565,14 @@ export class GlobalSearchService {
     const sessionId: string = filter.sessionId && filter.sessionId.length > 0 ? filter.sessionId : this.createSessionId();
     const signal: GlobalSearchCancelSignal = new GlobalSearchCancelSignal();
     const normalizedFilter: SearchFilterConfig = this.normalizeFilterConfig(filter, sessionId);
+    const sessionInfo: GlobalSearchFlowSessionInfo = this.buildFlowSessionInfo(sessionId, keyword, normalizedFilter, 'GlobalSearchService');
+    this.flowMonitor.ensureSession(sessionInfo);
+    const boundEvent: GlobalSearchFlowEvent = this.flowMonitor.createEvent(sessionId, GlobalSearchFlowEventType.SESSION_BOUND, 'create_search_session');
+    boundEvent.keyword = keyword;
+    boundEvent.contentType = normalizedFilter.contentType;
+    boundEvent.sourceType = normalizedFilter.sourceType;
+    boundEvent.detail = `timeout=${normalizedFilter.perSourceTimeoutMs}/${normalizedFilter.globalTimeoutMs}, localLimit=${normalizedFilter.localResultLimit}, onlineLimit=${normalizedFilter.onlineResultLimitPerSource}, runtimeCache=${normalizedFilter.enableRuntimeCache}`;
+    this.flowMonitor.record(boundEvent);
     const completion: Promise<SearchSourceGroup[]> = this.runSearchSession(
       sessionId,
       keyword,
@@ -576,13 +593,16 @@ export class GlobalSearchService {
   }
 
   public getCachedFullSearchResult(keyword: string, filter: SearchFilterConfig): SearchSourceGroup[] | null {
+    const flowSessionId: string = filter.sessionId && filter.sessionId.length > 0 ? filter.sessionId : '';
     const cacheKey: string = this.buildFullResultCacheKey(keyword, this.normalizeFilterConfig(filter, 'full_result_cache_lookup'));
     const entry: GlobalSearchFullResultCacheEntry | undefined = this.fullResultCache.get(cacheKey);
     if (!entry) {
+      this.recordFullResultCacheEvent(flowSessionId, keyword, cacheKey, GlobalSearchFlowEventType.FULL_CACHE_MISS, 0, 0);
       return null;
     }
     logger.info(TAG, `命中完整搜索结果运行期缓存: key=${cacheKey}, groups=${entry.groups.length}, items=${entry.itemCount}`);
     entry.createTime = Date.now();
+    this.recordFullResultCacheEvent(flowSessionId, keyword, cacheKey, GlobalSearchFlowEventType.FULL_CACHE_HIT, entry.groups.length, entry.itemCount);
     return this.cloneSearchGroupsForProgress(entry.groups, true);
   }
 
@@ -603,6 +623,16 @@ export class GlobalSearchService {
     this.fullResultCache.set(cacheKey, entry);
     this.trimFullResultCache();
     logger.info(TAG, `完整搜索结果已写入运行期缓存: key=${cacheKey}, groups=${snapshot.length}, items=${entry.itemCount}`);
+    const flowSessionId: string = normalizedFilter.sessionId && normalizedFilter.sessionId.length > 0 ? normalizedFilter.sessionId : '';
+    if (flowSessionId.length > 0) {
+      const event: GlobalSearchFlowEvent = this.flowMonitor.createEvent(flowSessionId, GlobalSearchFlowEventType.RUNTIME_CACHE_WRITTEN, 'full_result_cache_store');
+      event.keyword = keyword;
+      event.cacheKey = cacheKey;
+      event.itemCount = entry.itemCount;
+      event.totalGroups = snapshot.length;
+      event.detail = 'full_result_cache';
+      this.flowMonitor.record(event);
+    }
   }
 
   private canCacheFullSearchResult(groups: SearchSourceGroup[]): boolean {
@@ -612,6 +642,26 @@ export class GlobalSearchService {
       }
     }
     return true;
+  }
+
+  private recordFullResultCacheEvent(
+    sessionId: string,
+    keyword: string,
+    cacheKey: string,
+    eventType: GlobalSearchFlowEventType,
+    groupCount: number,
+    itemCount: number
+  ): void {
+    if (!sessionId || sessionId.length <= 0) {
+      return;
+    }
+    const event: GlobalSearchFlowEvent = this.flowMonitor.createEvent(sessionId, eventType, 'full_result_cache');
+    event.keyword = keyword;
+    event.cacheKey = cacheKey;
+    event.totalGroups = groupCount;
+    event.itemCount = itemCount;
+    event.cacheHit = eventType === GlobalSearchFlowEventType.FULL_CACHE_HIT;
+    this.flowMonitor.record(event);
   }
 
   private async runSearchSession(
@@ -629,11 +679,20 @@ export class GlobalSearchService {
       localConcurrency: DEFAULT_LOCAL_CONCURRENCY,
       networkConcurrency: Math.max(1, Math.min(filter.maxConcurrent || DEFAULT_NETWORK_CONCURRENCY, DEFAULT_NETWORK_CONCURRENCY)),
       webViewConcurrency: DEFAULT_WEBVIEW_CONCURRENCY,
-      suwayomiConcurrency: DEFAULT_SUWAYOMI_CONCURRENCY
+      suwayomiConcurrency: DEFAULT_SUWAYOMI_CONCURRENCY,
+      flowSessionId: sessionId
     });
 
     await this.buildSessionTasks(sessionId, keyword, filter, signal, scheduler, groups, tasks, metrics, onProgress, onPatch);
     metrics.begin(sessionId, keyword, groups.length);
+    const tasksBuiltEvent: GlobalSearchFlowEvent = this.flowMonitor.createEvent(sessionId, GlobalSearchFlowEventType.TASKS_BUILT, 'build_session_tasks');
+    tasksBuiltEvent.keyword = keyword;
+    tasksBuiltEvent.contentType = filter.contentType;
+    tasksBuiltEvent.sourceType = filter.sourceType;
+    tasksBuiltEvent.totalGroups = groups.length;
+    tasksBuiltEvent.itemCount = tasks.length;
+    tasksBuiltEvent.detail = `tasks=${tasks.length}, maxConcurrent=${filter.maxConcurrent}`;
+    this.flowMonitor.record(tasksBuiltEvent);
 
     logger.info(TAG, `开始全局搜索v2: session=${sessionId}, keyword="${keyword}", groups=${groups.length}`);
     this.emitSnapshot(onProgress, 0, groups.length, '', groups, false);
@@ -650,6 +709,16 @@ export class GlobalSearchService {
       signal.cancel('global_timeout');
       this.sourceDetailSearchExecutor.cancelGlobalSearchWork('global_timeout');
       this.finishRemainingGroupsAsTimeout(groups, metrics);
+      const timeoutEvent: GlobalSearchFlowEvent = this.flowMonitor.createEvent(sessionId, GlobalSearchFlowEventType.GLOBAL_TIMEOUT, 'global_timeout');
+      timeoutEvent.keyword = keyword;
+      timeoutEvent.totalGroups = groups.length;
+      timeoutEvent.completedGroups = metrics.completedGroups;
+      timeoutEvent.elapsedMs = metrics.getDurationMs();
+      timeoutEvent.success = false;
+      timeoutEvent.timedOut = true;
+      timeoutEvent.errorMessage = `timeout ${globalTimeoutMs}ms`;
+      timeoutEvent.severity = GlobalSearchFlowSeverity.ERROR;
+      this.flowMonitor.record(timeoutEvent);
     }
 
     for (const group of groups) {
@@ -670,6 +739,24 @@ export class GlobalSearchService {
       this.emitPatch(onPatch, donePatch, metrics);
     }
     this.logMetricsIfEnabled(metrics);
+    const completedEvent: GlobalSearchFlowEvent = this.flowMonitor.createEvent(sessionId, GlobalSearchFlowEventType.RESULT_COMPLETED, signal.isCancelled() ? signal.getReason() : 'completed');
+    completedEvent.keyword = keyword;
+    completedEvent.contentType = filter.contentType;
+    completedEvent.sourceType = filter.sourceType;
+    completedEvent.completedGroups = groups.length;
+    completedEvent.totalGroups = groups.length;
+    completedEvent.resultCount = resultCount;
+    completedEvent.elapsedMs = metrics.getDurationMs();
+    completedEvent.metricName = 'global_search_session_duration';
+    completedEvent.metricValue = completedEvent.elapsedMs;
+    completedEvent.metricUnit = 'ms';
+    completedEvent.success = !runResult.timedOut;
+    if (runResult.timedOut) {
+      completedEvent.severity = GlobalSearchFlowSeverity.WARN;
+    }
+    this.flowMonitor.record(completedEvent);
+    const endReason: string = runResult.timedOut ? 'global_timeout' : (signal.isCancelled() ? signal.getReason() : 'completed');
+    this.flowMonitor.endSession(sessionId, endReason);
     return groups;
   }
 
@@ -739,7 +826,7 @@ export class GlobalSearchService {
           const timeoutMs: number = isWebViewSource ? DEFAULT_WEBVIEW_TIMEOUT_MS : (filter.perSourceTimeoutMs || DEFAULT_NETWORK_TIMEOUT_MS);
           const cacheKey: string = this.buildRuntimeCacheKey('manga', sourceId, keyword);
           this.addSessionTask(sessionId, group, taskKind, timeoutMs, groups, tasks, scheduler, signal, metrics, onProgress, onPatch, async (): Promise<UnifiedSearchItem[]> => {
-            return await this.searchWithRuntimeCache(cacheKey, filter.enableRuntimeCache === true, async (): Promise<UnifiedSearchItem[]> => {
+            return await this.searchWithRuntimeCache(sessionId, keyword, group, cacheKey, filter.enableRuntimeCache === true, async (): Promise<UnifiedSearchItem[]> => {
               const items: UnifiedSearchItem[] = await this.searchOnlineManga(numSourceId, keyword, 1, source || undefined, signal, searchGeneration);
               return this.limitItems(items, onlineLimit);
             });
@@ -757,7 +844,7 @@ export class GlobalSearchService {
           groups.push(group);
           const cacheKey: string = this.buildRuntimeCacheKey('suwayomi', 'library', keyword);
           this.addSessionTask(sessionId, group, GlobalSearchTaskKind.SUWAYOMI, filter.perSourceTimeoutMs || DEFAULT_NETWORK_TIMEOUT_MS, groups, tasks, scheduler, signal, metrics, onProgress, onPatch, async (): Promise<UnifiedSearchItem[]> => {
-            return await this.searchWithRuntimeCache(cacheKey, filter.enableRuntimeCache === true, async (): Promise<UnifiedSearchItem[]> => {
+            return await this.searchWithRuntimeCache(sessionId, keyword, group, cacheKey, filter.enableRuntimeCache === true, async (): Promise<UnifiedSearchItem[]> => {
               const items: UnifiedSearchItem[] = await this.searchSuwayomi(keyword);
               return this.limitItems(items, onlineLimit);
             });
@@ -779,7 +866,7 @@ export class GlobalSearchService {
           groups.push(group);
           const cacheKey: string = this.buildRuntimeCacheKey('novel', sourceId, keyword);
           this.addSessionTask(sessionId, group, GlobalSearchTaskKind.NOVEL, filter.perSourceTimeoutMs || DEFAULT_NETWORK_TIMEOUT_MS, groups, tasks, scheduler, signal, metrics, onProgress, onPatch, async (): Promise<UnifiedSearchItem[]> => {
-            return await this.searchWithRuntimeCache(cacheKey, filter.enableRuntimeCache === true, async (): Promise<UnifiedSearchItem[]> => {
+            return await this.searchWithRuntimeCache(sessionId, keyword, group, cacheKey, filter.enableRuntimeCache === true, async (): Promise<UnifiedSearchItem[]> => {
               const items: UnifiedSearchItem[] = await this.searchOnlineNovel(sourceId, keyword);
               return this.limitItems(items, onlineLimit);
             });
@@ -807,12 +894,16 @@ export class GlobalSearchService {
       taskId: group.groupId,
       taskName: group.groupName,
       kind: kind,
+      flowSessionId: sessionId,
       run: async (): Promise<void> => {
+        const taskStartedAt: number = Date.now();
         if (signal.isCancelled()) {
           metrics.cancelledGroups++;
           group.isSearching = false;
+          this.recordTaskEvent(sessionId, group, kind, GlobalSearchFlowEventType.TASK_CANCELLED, metrics, 0, 0, true, signal.getReason(), true, false);
           return;
         }
+        this.recordTaskEvent(sessionId, group, kind, GlobalSearchFlowEventType.TASK_STARTED, metrics, 0, 0, true, '', false, false);
         this.emitGroupPatch(sessionId, group, GlobalSearchPatchType.GROUP_START, metrics, onPatch);
         const result: GlobalSearchTimeoutResult<UnifiedSearchItem[]> = await scheduler.waitWithTimeout<UnifiedSearchItem[]>(
           searchWork(),
@@ -822,20 +913,38 @@ export class GlobalSearchService {
         if (signal.isCancelled() && !result.timedOut) {
           metrics.cancelledGroups++;
           group.isSearching = false;
+          this.recordTaskEvent(sessionId, group, kind, GlobalSearchFlowEventType.TASK_CANCELLED, metrics, Date.now() - taskStartedAt, 0, true, signal.getReason(), true, false);
           return;
         }
         if (result.completed) {
           group.items = result.value ? result.value : [];
           group.hasError = false;
           group.errorMessage = undefined;
+          const elapsedMs: number = Date.now() - taskStartedAt;
+          this.recordTaskEvent(sessionId, group, kind, GlobalSearchFlowEventType.TASK_SUCCEEDED, metrics, elapsedMs, group.items.length, true, '', false, false);
+          if (group.items.length > 0 && !metrics.firstResultEmitted) {
+            metrics.firstResultEmitted = true;
+            const firstResultEvent: GlobalSearchFlowEvent = this.flowMonitor.createEvent(sessionId, GlobalSearchFlowEventType.FIRST_RESULT, group.groupName);
+            firstResultEvent.groupId = group.groupId;
+            firstResultEvent.groupName = group.groupName;
+            firstResultEvent.taskKind = kind;
+            firstResultEvent.itemCount = group.items.length;
+            firstResultEvent.elapsedMs = metrics.startTime > 0 ? Date.now() - metrics.startTime : elapsedMs;
+            firstResultEvent.metricName = 'global_search_first_result';
+            firstResultEvent.metricValue = firstResultEvent.elapsedMs;
+            firstResultEvent.metricUnit = 'ms';
+            this.flowMonitor.record(firstResultEvent);
+          }
         } else {
           group.items = [];
           group.hasError = true;
           group.errorMessage = result.timedOut ? '搜索超时' : result.errorMessage;
           if (result.timedOut) {
             metrics.timeoutGroups++;
+            this.recordTaskEvent(sessionId, group, kind, GlobalSearchFlowEventType.TASK_TIMEOUT, metrics, Date.now() - taskStartedAt, 0, false, group.errorMessage || '', false, true);
           } else {
             metrics.failedGroups++;
+            this.recordTaskEvent(sessionId, group, kind, GlobalSearchFlowEventType.TASK_FAILED, metrics, Date.now() - taskStartedAt, 0, false, group.errorMessage || '', false, false);
           }
         }
         group.isSearching = false;
@@ -845,15 +954,57 @@ export class GlobalSearchService {
         this.emitSnapshot(onProgress, metrics.completedGroups, metrics.totalGroups, group.groupName, groups, false);
       }
     };
+    this.recordTaskEvent(sessionId, group, kind, GlobalSearchFlowEventType.TASK_QUEUED, metrics, 0, 0, true, `timeout=${timeoutMs}ms`, false, false);
     tasks.push(task);
+  }
+
+  private recordTaskEvent(
+    sessionId: string,
+    group: SearchSourceGroup,
+    kind: GlobalSearchTaskKind,
+    eventType: GlobalSearchFlowEventType,
+    metrics: GlobalSearchMetrics,
+    elapsedMs: number,
+    itemCount: number,
+    success: boolean,
+    detailOrError: string,
+    cancelled: boolean,
+    timedOut: boolean
+  ): void {
+    const event: GlobalSearchFlowEvent = this.flowMonitor.createEvent(sessionId, eventType, group.groupName);
+    event.groupId = group.groupId;
+    event.groupName = group.groupName;
+    event.taskId = group.groupId;
+    event.taskKind = kind;
+    event.sourceType = group.sourceType;
+    event.sourceName = group.groupName;
+    event.completedGroups = metrics.completedGroups;
+    event.totalGroups = metrics.totalGroups;
+    event.itemCount = itemCount;
+    event.elapsedMs = elapsedMs;
+    event.success = success;
+    event.cancelled = cancelled;
+    event.timedOut = timedOut;
+    if (success) {
+      event.detail = detailOrError;
+    } else {
+      event.errorMessage = detailOrError;
+      event.severity = timedOut ? GlobalSearchFlowSeverity.ERROR : GlobalSearchFlowSeverity.WARN;
+    }
+    if (elapsedMs > 0) {
+      event.metricName = 'global_search_task_duration';
+      event.metricValue = elapsedMs;
+      event.metricUnit = 'ms';
+    }
+    this.flowMonitor.record(event);
   }
 
   private normalizeFilterConfig(filter: SearchFilterConfig, sessionId: string): SearchFilterConfig {
     const config: SearchFilterConfig = {
       contentType: filter.contentType,
       sourceType: filter.sourceType,
-      selectedMangaSources: filter.selectedMangaSources,
-      selectedNovelSources: filter.selectedNovelSources,
+      selectedMangaSources: filter.selectedMangaSources.slice(),
+      selectedNovelSources: filter.selectedNovelSources.slice(),
       enableSuwayomi: filter.enableSuwayomi,
       maxConcurrent: filter.maxConcurrent > 0 ? filter.maxConcurrent : DEFAULT_NETWORK_CONCURRENCY,
       sessionId: sessionId,
@@ -893,6 +1044,26 @@ export class GlobalSearchService {
     return `gsearch_${Date.now()}_${this.sessionCounter}`;
   }
 
+  private buildFlowSessionInfo(
+    sessionId: string,
+    keyword: string,
+    filter: SearchFilterConfig,
+    pageInstanceId: string
+  ): GlobalSearchFlowSessionInfo {
+    const info: GlobalSearchFlowSessionInfo = new GlobalSearchFlowSessionInfo();
+    info.sessionId = sessionId;
+    info.keyword = keyword;
+    info.contentType = filter.contentType;
+    info.sourceType = filter.sourceType;
+    info.selectedMangaSourceCount = filter.selectedMangaSources.length;
+    info.selectedNovelSourceCount = filter.selectedNovelSources.length;
+    info.enableSuwayomi = filter.enableSuwayomi;
+    info.maxConcurrent = filter.maxConcurrent;
+    info.pageInstanceId = pageInstanceId;
+    info.startedAt = Date.now();
+    return info;
+  }
+
   private findSourceById(sources: SourceInfo[], sourceId: number): SourceInfo | null {
     for (const source of sources) {
       if (source.id === sourceId) {
@@ -903,6 +1074,9 @@ export class GlobalSearchService {
   }
 
   private async searchWithRuntimeCache(
+    sessionId: string,
+    keyword: string,
+    group: SearchSourceGroup,
     cacheKey: string,
     enabled: boolean,
     work: () => Promise<UnifiedSearchItem[]>
@@ -914,12 +1088,15 @@ export class GlobalSearchService {
     const cached: GlobalSearchRuntimeCacheEntry | undefined = this.runtimeCache.get(cacheKey);
     if (cached && Date.now() - cached.createTime <= RUNTIME_CACHE_TTL_MS) {
       logger.debug(TAG, `命中全局搜索运行期缓存: ${cacheKey}, count=${cached.items.length}`);
+      this.recordRuntimeCacheEvent(sessionId, keyword, group, cacheKey, GlobalSearchFlowEventType.RUNTIME_CACHE_HIT, cached.items.length, true, 'runtime_cache_hit');
       return cached.items;
     }
+    this.recordRuntimeCacheEvent(sessionId, keyword, group, cacheKey, GlobalSearchFlowEventType.RUNTIME_CACHE_MISS, 0, false, 'runtime_cache_miss');
 
     const inFlight: Promise<UnifiedSearchItem[]> | undefined = this.inFlightRequests.get(cacheKey);
     if (inFlight) {
       logger.debug(TAG, `复用全局搜索进行中请求: ${cacheKey}`);
+      this.recordRuntimeCacheEvent(sessionId, keyword, group, cacheKey, GlobalSearchFlowEventType.RUNTIME_CACHE_IN_FLIGHT_REUSED, 0, true, 'in_flight_reused');
       return await inFlight;
     }
 
@@ -930,6 +1107,7 @@ export class GlobalSearchService {
         items: items
       };
       this.runtimeCache.set(cacheKey, entry);
+      this.recordRuntimeCacheEvent(sessionId, keyword, group, cacheKey, GlobalSearchFlowEventType.RUNTIME_CACHE_WRITTEN, items.length, true, 'runtime_cache_written');
       return items;
     });
     this.inFlightRequests.set(cacheKey, promise);
@@ -942,6 +1120,32 @@ export class GlobalSearchService {
 
   private buildRuntimeCacheKey(sourceType: string, sourceId: string, keyword: string): string {
     return `${sourceType}_${sourceId}_${keyword.trim().toLowerCase()}`;
+  }
+
+  private recordRuntimeCacheEvent(
+    sessionId: string,
+    keyword: string,
+    group: SearchSourceGroup,
+    cacheKey: string,
+    eventType: GlobalSearchFlowEventType,
+    itemCount: number,
+    cacheHit: boolean,
+    reason: string
+  ): void {
+    if (!sessionId || sessionId.length <= 0) {
+      return;
+    }
+    const event: GlobalSearchFlowEvent = this.flowMonitor.createEvent(sessionId, eventType, reason);
+    event.keyword = keyword;
+    event.groupId = group.groupId;
+    event.groupName = group.groupName;
+    event.sourceType = group.sourceType;
+    event.sourceName = group.groupName;
+    event.cacheKey = cacheKey;
+    event.cacheHit = cacheHit;
+    event.itemCount = itemCount;
+    event.detail = reason;
+    this.flowMonitor.record(event);
   }
 
   private buildFullResultCacheKey(keyword: string, filter: SearchFilterConfig): string {

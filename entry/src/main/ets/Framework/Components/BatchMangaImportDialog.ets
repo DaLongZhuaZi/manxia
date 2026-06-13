@@ -14,6 +14,7 @@ import { fileIo } from '@kit.CoreFileKit';
 import { MangaImportMode, ChapterInfo, ParsedArchiveStructure, PrefilledComicInfo, ExistingMangaCandidate } from './MangaImportDialog';
 import { ScraperDialog, ScraperDialogConfig, ScraperDialogResult } from './ScraperDialog';
 import { ScraperContentType } from '../Scraper/ScraperTypes';
+import { ImportFlowContentType, ImportFlowEvent, ImportFlowEventType, ImportFlowSeverity } from '../Import/ImportFlowTypes';
 
 const TAG = 'BatchMangaImportDialog';
 
@@ -180,6 +181,7 @@ export struct BatchMangaImportDialog {
   // 回调函数
   onConfirm: (result: BatchMangaImportDialogResult) => void = () => {};
   onCancel: () => void = () => {};
+  onFlowEvent: (event: ImportFlowEvent) => void = () => {};
   // 解析文件结构的回调
   parseFileStructure: (fileUri: string) => Promise<ParsedArchiveStructure | null> = async () => null;
   // 解析ComicInfo.xml的回调
@@ -264,17 +266,29 @@ export struct BatchMangaImportDialog {
     this.analyzeProgress = 0;
     
     const totalFiles = this.files.length;
+    this.emitFlowEvent(ImportFlowEventType.ARCHIVE_PARSE_STARTED, 'batch_analysis_started', true, '', '', 0, totalFiles, 0);
     
     for (let i = 0; i < this.files.length; i++) {
       const file = this.files[i];
       this.analyzeMessage = `正在解析 (${i + 1}/${totalFiles}): ${file.fileName}`;
       this.analyzeProgress = ((i + 1) / totalFiles) * 80;
+      const startedAt: number = Date.now();
       
       try {
         // 解析文件结构
         const structure = await this.parseFileStructure(file.fileUri);
         file.parsedStructure = structure;
         file.isParsing = false;
+        this.emitFlowEvent(
+          ImportFlowEventType.ARCHIVE_PARSE_COMPLETED,
+          'batch_file_parsed',
+          true,
+          file.fileName,
+          structure ? `chapters=${structure.detectedChapters.length}, pages=${structure.totalImageCount}` : 'empty_structure',
+          i + 1,
+          totalFiles,
+          Date.now() - startedAt
+        );
         
         if (!structure) {
           logger.warn(TAG, `文件结构解析返回空: ${file.fileName}`);
@@ -316,9 +330,20 @@ export struct BatchMangaImportDialog {
         file.isParsing = false;
         file.parseError = String(error);
         logger.error(TAG, `解析文件失败: ${file.fileName}`, String(error));
+        this.emitFlowEvent(
+          ImportFlowEventType.ARCHIVE_PARSE_FAILED,
+          'batch_file_parse_failed',
+          false,
+          file.fileName,
+          String(error),
+          i + 1,
+          totalFiles,
+          Date.now() - startedAt
+        );
         // 确保UI更新
         this.files = this.files.slice();
       }
+      await this.yieldToUi();
     }
     
     // 智能分组
@@ -329,6 +354,41 @@ export struct BatchMangaImportDialog {
     this.analyzeMessage = '分析完成';
     this.analyzeProgress = 100;
     this.isAnalyzing = false;
+    this.emitFlowEvent(ImportFlowEventType.METADATA_DETECTED, 'batch_analysis_completed', true, '', `groups=${this.groups.length}`, totalFiles, totalFiles, 0);
+  }
+
+  private async yieldToUi(): Promise<void> {
+    await new Promise<void>((resolve: () => void) => {
+      setTimeout(() => {
+        resolve();
+      }, 0);
+    });
+  }
+
+  private emitFlowEvent(
+    eventType: ImportFlowEventType,
+    reason: string,
+    success: boolean,
+    fileName: string,
+    detail: string,
+    currentIndex: number,
+    totalCount: number,
+    elapsedMs: number
+  ): void {
+    const event: ImportFlowEvent = new ImportFlowEvent();
+    event.eventType = eventType;
+    event.reason = reason;
+    event.success = success;
+    event.severity = success ? ImportFlowSeverity.INFO : ImportFlowSeverity.ERROR;
+    event.contentType = ImportFlowContentType.MANGA;
+    event.fileName = fileName;
+    event.fileCount = this.files.length;
+    event.batchMode = true;
+    event.currentIndex = currentIndex;
+    event.totalCount = totalCount;
+    event.elapsedMs = elapsedMs;
+    event.detail = detail;
+    this.onFlowEvent(event);
   }
 
   /**
@@ -967,6 +1027,7 @@ export struct BatchMangaImportDialog {
         .height(24)
         .fillColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
         .onClick(() => {
+          this.emitFlowEvent(ImportFlowEventType.DIALOG_CANCELLED, 'batch_dialog_close_icon', true, '', '', 0, this.files.length, 0);
           this.onCancel();
           this.controller.close();
         })
@@ -2541,6 +2602,7 @@ export struct BatchMangaImportDialog {
         .layoutWeight(1)
         .fontFamily(this.appFontFamily)
         .onClick(() => {
+          this.emitFlowEvent(ImportFlowEventType.DIALOG_CANCELLED, 'batch_dialog_cancelled', true, '', '', 0, this.files.length, 0);
           this.onCancel();
           this.controller.close();
         })
@@ -2556,6 +2618,7 @@ export struct BatchMangaImportDialog {
         .onClick(() => {
           if (this.validateForm()) {
             const result = this.buildResult();
+            this.emitFlowEvent(ImportFlowEventType.DIALOG_CONFIRMED, 'batch_dialog_confirmed', true, '', `groups=${result.groups.length}`, result.groups.length, result.groups.length, 0);
             this.onConfirm(result);
             this.controller.close();
           }

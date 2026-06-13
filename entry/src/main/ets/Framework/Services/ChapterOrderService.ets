@@ -126,6 +126,11 @@ export class ChapterOrderService {
     const identity = this.resolveIdentity(content);
     const storedRows = await this.queryStoredRows(identity);
     if (storedRows.length === 0) {
+      logger.info(
+        TAG,
+        `章节排序重置跳过: contentType=${identity.contentType}, kind=${identity.contentKind}, ` +
+          `contentId=${identity.contentId}, sourceId=${identity.sourceId}, reason=noStoredOverride`
+      );
       return {
         success: true,
         message: '当前没有自定义章节顺序',
@@ -134,36 +139,35 @@ export class ChapterOrderService {
       };
     }
 
-    const currentRefs = this.buildStableRefs(content.chapters);
-    const sourceRefs: StableChapterRef[] = [];
-    const usedKeys: string[] = [];
-
-    for (let order = 0; order < currentRefs.length + storedRows.length; order++) {
-      for (let i = 0; i < storedRows.length; i++) {
-        const row = storedRows[i];
-        if (row.originalOrderIndex === order) {
-          const ref = this.findRefByStableKey(currentRefs, row.stableKey);
-          if (ref !== null && !this.stringArrayIncludes(usedKeys, ref.stableKey)) {
-            sourceRefs.push(ref);
-            usedKeys.push(ref.stableKey);
-          }
-        }
-      }
-    }
-
-    for (let i = 0; i < currentRefs.length; i++) {
-      const ref = currentRefs[i];
-      if (!this.stringArrayIncludes(usedKeys, ref.stableKey)) {
-        sourceRefs.push(ref);
-      }
-    }
-
-    const orderedChapters: UnifiedChapter[] = [];
-    for (let i = 0; i < sourceRefs.length; i++) {
-      orderedChapters.push(sourceRefs[i].chapter);
-    }
+    const orderedChapters: UnifiedChapter[] = this.buildSourceOrderChapters(content, storedRows);
+    logger.info(
+      TAG,
+      `开始重置章节排序为来源顺序: contentType=${identity.contentType}, kind=${identity.contentKind}, ` +
+        `contentId=${identity.contentId}, sourceId=${identity.sourceId}, storedRows=${storedRows.length}, ` +
+        `chapters=${orderedChapters.length}`
+    );
 
     return this.persistOrderInternal(content, orderedChapters, false);
+  }
+
+  public async buildSourceOrderDraft(content: UnifiedContent): Promise<UnifiedChapter[]> {
+    const identity = this.resolveIdentity(content);
+    const storedRows = await this.queryStoredRows(identity);
+    if (storedRows.length === 0) {
+      logger.info(
+        TAG,
+        `生成来源顺序草稿: contentType=${identity.contentType}, kind=${identity.contentKind}, ` +
+          `contentId=${identity.contentId}, sourceId=${identity.sourceId}, mode=currentOrder, chapters=${content.chapters.length}`
+      );
+      return this.cloneUnifiedChapterArray(content.chapters);
+    }
+    logger.info(
+      TAG,
+      `生成来源顺序草稿: contentType=${identity.contentType}, kind=${identity.contentKind}, ` +
+        `contentId=${identity.contentId}, sourceId=${identity.sourceId}, mode=storedOriginalOrder, ` +
+        `storedRows=${storedRows.length}, chapters=${content.chapters.length}`
+    );
+    return this.buildSourceOrderChapters(content, storedRows);
   }
 
   public rebuildContentWithOrder(content: UnifiedContent, orderedChapters: UnifiedChapter[]): UnifiedContent {
@@ -244,6 +248,46 @@ export class ChapterOrderService {
     };
 
     return rebuiltContent;
+  }
+
+  private buildSourceOrderChapters(content: UnifiedContent, storedRows: StoredChapterOrderRow[]): UnifiedChapter[] {
+    const currentRefs = this.buildStableRefs(content.chapters);
+    const sourceRefs: StableChapterRef[] = [];
+    const usedKeys: string[] = [];
+
+    for (let order = 0; order < currentRefs.length + storedRows.length; order++) {
+      for (let i = 0; i < storedRows.length; i++) {
+        const row = storedRows[i];
+        if (row.originalOrderIndex === order) {
+          const ref = this.findRefByStableKey(currentRefs, row.stableKey);
+          if (ref !== null && !this.stringArrayIncludes(usedKeys, ref.stableKey)) {
+            sourceRefs.push(ref);
+            usedKeys.push(ref.stableKey);
+          }
+        }
+      }
+    }
+
+    for (let i = 0; i < currentRefs.length; i++) {
+      const ref = currentRefs[i];
+      if (!this.stringArrayIncludes(usedKeys, ref.stableKey)) {
+        sourceRefs.push(ref);
+      }
+    }
+
+    const orderedChapters: UnifiedChapter[] = [];
+    for (let i = 0; i < sourceRefs.length; i++) {
+      orderedChapters.push(sourceRefs[i].chapter);
+    }
+    return orderedChapters;
+  }
+
+  private cloneUnifiedChapterArray(chapters: UnifiedChapter[]): UnifiedChapter[] {
+    const result: UnifiedChapter[] = [];
+    for (let i = 0; i < chapters.length; i++) {
+      result.push(this.cloneUnifiedChapter(chapters[i], chapters[i].index));
+    }
+    return result;
   }
 
   private async persistOrderInternal(

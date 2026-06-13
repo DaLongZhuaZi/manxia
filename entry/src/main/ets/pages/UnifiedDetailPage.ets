@@ -52,7 +52,6 @@ import {
   ChapterSortOrder,
   ChapterDisplayMode,
   OriginalBookInfo,
-  ChapterOrderPlan,
   ChapterOrderPersistResult
 } from '../Models/UnifiedContentModels';
 
@@ -187,6 +186,13 @@ import { openEBookReaderRouterPage } from '../Framework/Adapters/EBookReaderRout
 import { openEBookReaderInIsolatedAbility } from '../Framework/Reader/EBookReaderAbilityLauncher';
 import { openNovelReaderInIsolatedAbility } from '../Framework/Reader/NovelReaderAbilityLauncher';
 import { openReadAloudPlayerInIsolatedAbility } from '../Framework/ReadAloud/ReadAloudPlayerAbilityLauncher';
+import { DetailOpenFlowMonitor } from '../Framework/Reader/DetailOpenFlowMonitor';
+import {
+  DetailOpenFlowEventType,
+  DetailOpenFlowSeverity,
+  DetailOpenFlowSessionInfo,
+  DetailOpenFlowTargetKind
+} from '../Framework/Reader/DetailOpenFlowTypes';
 
 import { startBookOpenTransitionWithComponentId, EBookBackgroundSettings } from '../components/BookTransitionOverlay';
 import { AppGuideOverlay, GuideHighlightRect } from '../Framework/Components/AppGuideOverlay';
@@ -198,6 +204,7 @@ import { ReadAloudCacheDialogComponent } from '../Framework/Components/ReadAloud
 import { TrackingSettingsDialogComponent, UnifiedDetailTrackingTargetInfo } from '../Framework/Components/TrackingSettingsDialogComponent';
 import { NovelSettingsDialogComponent } from '../Framework/Components/NovelSettingsDialogComponent';
 import { DownloadDialogComponent } from '../Framework/Components/DownloadDialogComponent';
+import { ChapterOrderDialogComponent } from '../Framework/Components/ChapterOrderDialogComponent';
 import { ShareLinkDialogComponent } from '../Framework/Components/ShareLinkDialogComponent';
 import { ChangeSourceDialogComponent } from '../Framework/Components/ChangeSourceDialogComponent';
 import { CacheConfirmDialogComponent, CacheConfirmConfig } from '../Framework/Components/CacheConfirmDialogComponent';
@@ -478,10 +485,8 @@ export struct UnifiedDetailPage {
   @State chapterFilter: ChapterFilterType = ChapterFilterType.ALL;
   @State chapterSortOrder: ChapterSortOrder = ChapterSortOrder.ASCENDING;
   @State chapterDisplayMode: ChapterDisplayMode = ChapterDisplayMode.LIST;
-  @State isChapterOrderEditing: boolean = false;
   @State isChapterOrderSaving: boolean = false;
-  @State chapterOrderDraft: UnifiedChapter[] = [];
-  @State chapterOrderStatusText: string = '';
+  @State chapterOrderDialogLoadSignal: number = 0;
   
   // 书架相关状态
   private typeShelfManager: TypeShelfManager = getTypeShelfManager();
@@ -1057,7 +1062,7 @@ export struct UnifiedDetailPage {
 
   private isReadActionBusy(): boolean {
     return this.isOpeningOnlineEBookDownloadDetail || this.isOnlineEBookRecoveryInProgress ||
-      this.isLoading || this.isChaptersLoading || this.isChapterOrderEditing || this.isChapterOrderSaving;
+      this.isLoading || this.isChaptersLoading || this.isChapterOrderSaving;
   }
 
   private clearOnlineEBookRecoveryTimer(): void {
@@ -1634,8 +1639,8 @@ export struct UnifiedDetailPage {
     if (!this.content) {
       return;
     }
-    if (this.isChapterOrderEditing || this.isChapterOrderSaving) {
-      this.getUIContext().getPromptAction().showToast({ message: '请先完成章节排序', duration: 1500 });
+    if (this.isChapterOrderSaving) {
+      this.getUIContext().getPromptAction().showToast({ message: '章节排序正在保存', duration: 1500 });
       return;
     }
     if (this.content.contentType === UnifiedContentType.NOVEL) {
@@ -2188,6 +2193,13 @@ export struct UnifiedDetailPage {
 
   aboutToAppear(): void {
     this.applyPageDisplayMode(DisplayMode.STATUS_SAFE_BOTTOM_IMMERSIVE);
+    const hostContext = this.getUIContext().getHostContext();
+    if (hostContext) {
+      const abilityContext = hostContext as common.UIAbilityContext;
+      this.cacheStatusService.setContext(abilityContext);
+      this.unifiedDownloadManager.setContext(abilityContext);
+      logger.info(TAG, '统一详情页已初始化缓存/下载共享上下文');
+    }
     this.loadGlobalChapterSortOrderPreference();
     ThemeAwareHelper.initializeThemeAware(this.componentId, this.themeState, (theme: ThemeType) => {
       logger.info(TAG, `主题切换: ${theme}`);
@@ -2805,8 +2817,8 @@ export struct UnifiedDetailPage {
       this.isRefreshing = false;
       return;
     }
-    if (this.isChapterOrderEditing || this.isChapterOrderSaving) {
-      this.getUIContext().getPromptAction().showToast({ message: '请先完成章节排序', duration: 1500 });
+    if (this.isChapterOrderSaving) {
+      this.getUIContext().getPromptAction().showToast({ message: '章节排序正在保存', duration: 1500 });
       this.isRefreshing = false;
       return;
     }
@@ -3916,7 +3928,7 @@ export struct UnifiedDetailPage {
    */
   private startReading(chapterIndex: number): void {
     if (!this.content || !this.pageParams) return;
-    if (this.isChapterOrderEditing || this.isChapterOrderSaving) {
+    if (this.isChapterOrderSaving) {
       return;
     }
 
@@ -4085,7 +4097,7 @@ export struct UnifiedDetailPage {
       readerParams.sourcePkg = this.content.sourcePkg || this.pageParams?.sourcePkg || undefined;
       
       // 判断章节是否已下载
-      const isDownloaded = chapter.isDownloaded || false;
+      const isDownloaded = this.isChapterFullyCached(chapter.id);
       readerParams.contentType = isDownloaded ? MangaReaderContentType.OnlineDownloaded : MangaReaderContentType.OnlineUndownloaded;
       
       // 对于WebView图源，需要传递外部章节ID
@@ -4142,17 +4154,113 @@ export struct UnifiedDetailPage {
     );
   }
 
+  private startDetailOpenFlowSession(
+    targetKind: DetailOpenFlowTargetKind,
+    chapterIndex: number,
+    chapterId: string,
+    chapterTitle: string,
+    routeName: string,
+    reason: string
+  ): string {
+    if (!this.content) {
+      return '';
+    }
+    const info = new DetailOpenFlowSessionInfo();
+    info.targetKind = targetKind;
+    info.contentId = this.content.id;
+    info.contentTitle = this.content.title;
+    info.chapterId = chapterId;
+    info.chapterTitle = chapterTitle;
+    info.chapterIndex = chapterIndex;
+    info.routeName = routeName;
+    info.sourcePage = 'UnifiedDetailPage';
+    const monitor = DetailOpenFlowMonitor.getInstance();
+    const sessionId = monitor.startSession(info);
+    this.recordDetailOpenFlowEvent(
+      sessionId,
+      DetailOpenFlowEventType.ENTRY_REQUEST,
+      targetKind,
+      chapterIndex,
+      chapterId,
+      chapterTitle,
+      routeName,
+      reason,
+      true,
+      ''
+    );
+    return sessionId;
+  }
+
+  private recordDetailOpenFlowEvent(
+    sessionId: string,
+    eventType: DetailOpenFlowEventType,
+    targetKind: DetailOpenFlowTargetKind,
+    chapterIndex: number,
+    chapterId: string,
+    chapterTitle: string,
+    routeName: string,
+    reason: string,
+    success: boolean,
+    detail: string
+  ): void {
+    if (sessionId.length <= 0) {
+      return;
+    }
+    const event = DetailOpenFlowMonitor.getInstance().createEvent(
+      sessionId,
+      eventType,
+      this.content ? this.content.id : '',
+      chapterId,
+      chapterIndex,
+      reason
+    );
+    event.targetKind = targetKind;
+    event.chapterTitle = chapterTitle;
+    event.routeName = routeName;
+    event.success = success;
+    event.detail = detail;
+    if (!success) {
+      event.severity = DetailOpenFlowSeverity.ERROR;
+      event.errorMessage = detail;
+    }
+    DetailOpenFlowMonitor.getInstance().record(event);
+  }
+
+  private resolveDetailOpenTargetKindForEBook(ebook: EBook | null, routeName: string): DetailOpenFlowTargetKind {
+    if (ebook && ebook.format === EBookFormat.TXT) {
+      return DetailOpenFlowTargetKind.TXT_NOVEL;
+    }
+    if (routeName === 'EpubWebViewReaderPage') {
+      return DetailOpenFlowTargetKind.EPUB_WEBVIEW;
+    }
+    return DetailOpenFlowTargetKind.EBOOK;
+  }
+
   /**
    * 打开电子书阅读器
    */
   private openEBookReader(chapterIndex: number, autoStartReadAloud: boolean = false): void {
     if (!this.content) return;
     const originalEBook = EBookAdapter.getOriginalEBook(this.content);
+    const ebookRouteName = resolveEBookReaderRouteName(originalEBook);
+    const chapter = this.content.chapters.length > chapterIndex ? this.content.chapters[chapterIndex] : null;
+    const chapterId = chapter ? chapter.id : '';
+    const chapterTitle = chapter ? chapter.title : '';
+    const detailTargetKind = this.resolveDetailOpenTargetKindForEBook(originalEBook, ebookRouteName);
+    const detailOpenFlowId = this.startDetailOpenFlowSession(
+      detailTargetKind,
+      chapterIndex,
+      chapterId,
+      chapterTitle,
+      originalEBook && originalEBook.format === EBookFormat.TXT ? 'NovelReaderPage' : ebookRouteName,
+      autoStartReadAloud ? 'ebook_read_aloud_request' : 'ebook_reader_request'
+    );
 
     // EBookReaderParams只需要bookId，章节索引通过阅读进度恢复
     const params: EBookReaderParams = {
       bookId: this.content.id,
-      readerTitle: this.content.title
+      readerTitle: this.content.title,
+      readerOpenFlowId: detailOpenFlowId
     };
     if (autoStartReadAloud) {
       params.autoStartReadAloud = true;
@@ -4167,9 +4275,24 @@ export struct UnifiedDetailPage {
     const txtNovelReaderParams = originalEBook
       ? buildNovelReaderParamsFromTxtEBook(originalEBook, coverComponentId)
       : null;
+    if (txtNovelReaderParams) {
+      txtNovelReaderParams.readerOpenFlowId = detailOpenFlowId;
+    }
     const ebookBackground = this.getUnifiedEBookTransitionBackground();
     
     logger.info(TAG, `触发电子书翻开过渡动画: coverPath=${coverPath}, componentId=${coverComponentId}, 有背景设置=${ebookBackground ? '是' : '否'}`);
+    this.recordDetailOpenFlowEvent(
+      detailOpenFlowId,
+      DetailOpenFlowEventType.TRANSITION_START,
+      detailTargetKind,
+      chapterIndex,
+      chapterId,
+      chapterTitle,
+      originalEBook && originalEBook.format === EBookFormat.TXT ? 'NovelReaderPage' : ebookRouteName,
+      'book_open_transition_start',
+      true,
+      `coverComponentId=${coverComponentId}`
+    );
     startBookOpenTransitionWithComponentId(
       coverPath,
       coverComponentId,
@@ -4178,7 +4301,6 @@ export struct UnifiedDetailPage {
       () => {
         // 动画完成时触发导航
         logger.info(TAG, '电子书翻开过渡动画触发导航');
-        const ebookRouteName = resolveEBookReaderRouteName(originalEBook);
         const signalStats = inspectEBookImagePageSignals(originalEBook);
         const firstChapter = originalEBook && originalEBook.chapters.length > 0
           ? originalEBook.chapters[0]
@@ -4200,10 +4322,34 @@ export struct UnifiedDetailPage {
             txtNovelReaderParams.autoOpenReadAloudPlayer = true;
           }
           txtNovelReaderParams.readerTitle = this.content?.title || '';
+          this.recordDetailOpenFlowEvent(
+            detailOpenFlowId,
+            DetailOpenFlowEventType.NAVIGATION_DISPATCHED,
+            detailTargetKind,
+            chapterIndex,
+            chapterId,
+            chapterTitle,
+            'NovelReaderPage',
+            'transition_complete_navigation',
+            true,
+            `autoReadAloud=${autoStartReadAloud === true}`
+          );
           if (!openNovelReaderInIsolatedAbility(this.getUIContext(), this.pathStack, txtNovelReaderParams, TAG, false)) {
             this.navigateWithManagedWindowTransition('NovelReaderPage', txtNovelReaderParams);
           }
         } else {
+          this.recordDetailOpenFlowEvent(
+            detailOpenFlowId,
+            DetailOpenFlowEventType.NAVIGATION_DISPATCHED,
+            detailTargetKind,
+            chapterIndex,
+            chapterId,
+            chapterTitle,
+            ebookRouteName,
+            'transition_complete_navigation',
+            true,
+            `route=${ebookRouteName}, autoReadAloud=${autoStartReadAloud === true}`
+          );
           if (!openEBookReaderInIsolatedAbility(this.getUIContext(), this.pathStack, params, TAG, false)) {
             if (ebookRouteName === 'EBookReaderPage') {
               openEBookReaderRouterPage(this.getUIContext(), params, TAG);
@@ -4243,6 +4389,15 @@ export struct UnifiedDetailPage {
       return;
     }
 
+    const detailOpenFlowId = this.startDetailOpenFlowSession(
+      DetailOpenFlowTargetKind.NOVEL,
+      chapterIndex,
+      chapter.id,
+      chapter.title,
+      'NovelReaderPage',
+      'novel_reader_request'
+    );
+
     const params: NovelReaderPageParams = {
       sourceId,
       bookUrl: this.content.id,
@@ -4253,7 +4408,8 @@ export struct UnifiedDetailPage {
       totalChapters: this.content.totalChapters,
       tocUrl: originalBook?.tocUrl,
       author: this.content.author,
-      coverUrl: this.content.coverUrl
+      coverUrl: this.content.coverUrl,
+      readerOpenFlowId: detailOpenFlowId
     };
 
     // 触发翻开过渡动画
@@ -4264,6 +4420,18 @@ export struct UnifiedDetailPage {
     params.coverComponentId = coverComponentId;
     
     logger.info(TAG, `触发小说翻开过渡动画: coverPath=${coverPath}, componentId=${coverComponentId}, transitionBookId=${transitionBookId}`);
+    this.recordDetailOpenFlowEvent(
+      detailOpenFlowId,
+      DetailOpenFlowEventType.TRANSITION_START,
+      DetailOpenFlowTargetKind.NOVEL,
+      chapterIndex,
+      chapter.id,
+      chapter.title,
+      'NovelReaderPage',
+      'book_open_transition_start',
+      true,
+      `coverComponentId=${coverComponentId}`
+    );
     startBookOpenTransitionWithComponentId(
       coverPath,
       coverComponentId,
@@ -4273,6 +4441,18 @@ export struct UnifiedDetailPage {
         // 动画完成时触发导航
         logger.info(TAG, '小说翻开过渡动画触发导航');
         params.readerTitle = this.content?.title || '';
+        this.recordDetailOpenFlowEvent(
+          detailOpenFlowId,
+          DetailOpenFlowEventType.NAVIGATION_DISPATCHED,
+          DetailOpenFlowTargetKind.NOVEL,
+          chapterIndex,
+          chapter.id,
+          chapter.title,
+          'NovelReaderPage',
+          'transition_complete_navigation',
+          true,
+          ''
+        );
         if (!openNovelReaderInIsolatedAbility(this.getUIContext(), this.pathStack, params, TAG, false)) {
           this.navigateWithManagedWindowTransition('NovelReaderPage', params);
         }
@@ -4346,6 +4526,14 @@ export struct UnifiedDetailPage {
     const sourceType: LegadoBookSourceType = this.getNovelSourceTypeById(sourceId, this.content.id);
     const shouldDisableTransition = sourceType === LegadoBookSourceType.AUDIO;
     const readAloudCoverComponentId = shouldDisableTransition ? undefined : `cover_${this.componentId}`;
+    const detailOpenFlowId = this.startDetailOpenFlowSession(
+      DetailOpenFlowTargetKind.READ_ALOUD,
+      chapterIndex,
+      chapter.id,
+      chapter.title,
+      sourceType === LegadoBookSourceType.AUDIO ? 'ReadAloudPlayerPage' : 'NovelReaderPage',
+      sourceType === LegadoBookSourceType.AUDIO ? 'audio_source_read_aloud_request' : 'novel_read_aloud_request'
+    );
 
     const params: NovelReaderPageParams = {
       sourceId,
@@ -4358,13 +4546,26 @@ export struct UnifiedDetailPage {
       tocUrl: originalBook?.tocUrl,
       author: this.content.author,
       coverUrl: this.content.coverUrl,
-      coverComponentId: readAloudCoverComponentId
+      coverComponentId: readAloudCoverComponentId,
+      readerOpenFlowId: detailOpenFlowId
     };
 
     if (sourceType === LegadoBookSourceType.AUDIO) {
       params.autoStartReadAloud = true;
       AppStorage.setOrCreate('ReadAloudPlayerOpeningAt', Date.now());
       logger.info(TAG, `开始听书直达播放器页: 章节索引=${chapterIndex}, 图源=${sourceId}, 章节地址=${params.chapterUrl}`);
+      this.recordDetailOpenFlowEvent(
+        detailOpenFlowId,
+        DetailOpenFlowEventType.NAVIGATION_DISPATCHED,
+        DetailOpenFlowTargetKind.READ_ALOUD,
+        chapterIndex,
+        chapter.id,
+        chapter.title,
+        'ReadAloudPlayerPage',
+        'direct_audio_navigation',
+        true,
+        `sourceId=${sourceId}`
+      );
       openReadAloudPlayerInIsolatedAbility(
         this.getUIContext(),
         this.pathStack,
@@ -4378,6 +4579,18 @@ export struct UnifiedDetailPage {
     params.autoStartReadAloud = true;
     params.autoOpenReadAloudPlayer = true;
     params.readerTitle = this.content.title;
+    this.recordDetailOpenFlowEvent(
+      detailOpenFlowId,
+      DetailOpenFlowEventType.NAVIGATION_DISPATCHED,
+      DetailOpenFlowTargetKind.READ_ALOUD,
+      chapterIndex,
+      chapter.id,
+      chapter.title,
+      'NovelReaderPage',
+      'read_aloud_reader_navigation',
+      true,
+      ''
+    );
     if (!openNovelReaderInIsolatedAbility(this.getUIContext(), this.pathStack, params, TAG)) {
       this.navigateWithManagedWindowTransition('NovelReaderPage', params);
     }
@@ -4393,16 +4606,39 @@ export struct UnifiedDetailPage {
     }
     const safeChapterIndex = Math.max(0, Math.min(chapterIndex, Math.max(ebook.chapters.length, 1) - 1));
     const chapter = ebook.chapters[safeChapterIndex];
+    const chapterId = chapter ? chapter.id : `local_txt_chapter_${safeChapterIndex}`;
+    const chapterTitle = chapter ? chapter.title : `Chapter ${safeChapterIndex + 1}`;
+    const detailOpenFlowId = this.startDetailOpenFlowSession(
+      DetailOpenFlowTargetKind.READ_ALOUD,
+      safeChapterIndex,
+      chapterId,
+      chapterTitle,
+      'NovelReaderPage',
+      'local_txt_read_aloud_request'
+    );
     const params = buildNovelReaderParamsFromTxtEBook(ebook, `cover_${this.componentId}`);
     params.chapterIndex = safeChapterIndex;
-    params.chapterUrl = chapter?.id || `local_txt_chapter_${safeChapterIndex}`;
-    params.chapterTitle = chapter?.title || `Chapter ${safeChapterIndex + 1}`;
+    params.chapterUrl = chapterId;
+    params.chapterTitle = chapterTitle;
+    params.readerOpenFlowId = detailOpenFlowId;
     if ((ebook.readingProgress?.currentChapterIndex ?? -1) !== safeChapterIndex) {
       params.chapterPageIndex = 0;
     }
     params.autoStartReadAloud = true;
     params.autoOpenReadAloudPlayer = true;
     params.readerTitle = this.content.title;
+    this.recordDetailOpenFlowEvent(
+      detailOpenFlowId,
+      DetailOpenFlowEventType.NAVIGATION_DISPATCHED,
+      DetailOpenFlowTargetKind.READ_ALOUD,
+      safeChapterIndex,
+      chapterId,
+      chapterTitle,
+      'NovelReaderPage',
+      'local_txt_read_aloud_navigation',
+      true,
+      ''
+    );
     if (!openNovelReaderInIsolatedAbility(this.getUIContext(), this.pathStack, params, TAG)) {
       this.navigateWithManagedWindowTransition('NovelReaderPage', params);
     }
@@ -4787,133 +5023,138 @@ export struct UnifiedDetailPage {
     }
     try {
       this.content = await this.chapterOrderService.applyStoredOrder(this.content);
-      if (this.isChapterOrderEditing) {
-        this.chapterOrderDraft = this.cloneChapterArray(this.content.chapters);
-      }
     } catch (error) {
       logger.error(TAG, `应用章节排序失败: ${String(error)}`);
     }
   }
 
-  private beginChapterOrderEditing(): void {
+  private openChapterOrderDialog(): void {
     if (!this.content || this.isChaptersLoading || this.isChapterOrderSaving) {
+      logger.warn(
+        TAG,
+        `打开章节排序对话框被拦截: hasContent=${this.content !== null}, ` +
+          `isChaptersLoading=${this.isChaptersLoading}, isChapterOrderSaving=${this.isChapterOrderSaving}`
+      );
       return;
     }
-    this.chapterOrderDraft = this.cloneChapterArray(this.content.chapters);
-    this.isChapterOrderEditing = true;
-    this.chapterOrderStatusText = '编辑模式会显示完整章节列表，保存后写入数据库';
+    logger.info(
+      TAG,
+      `打开章节排序对话框: contentId=${this.content.id}, contentType=${this.content.contentType}, ` +
+        `sourceId=${this.content.sourceId}, chapters=${this.content.chapters.length}`
+    );
+    this.chapterOrderDialogLoadSignal++;
   }
 
-  private cancelChapterOrderEditing(): void {
-    if (this.isChapterOrderSaving) {
-      return;
+  private async saveChapterOrderDraft(orderedChapters: UnifiedChapter[]): Promise<ChapterOrderPersistResult> {
+    if (!this.content || this.isChapterOrderSaving) {
+      return {
+        success: false,
+        message: '当前内容不可排序',
+        movedCount: 0,
+        cacheResult: {
+          textCacheMoved: 0,
+          audioCacheMoved: 0,
+          remoteReadAloudCacheMoved: 0,
+          failedKeys: [],
+          warnings: []
+        }
+      };
     }
-    this.isChapterOrderEditing = false;
-    this.chapterOrderDraft = [];
-    this.chapterOrderStatusText = '';
-  }
-
-  private async saveChapterOrderDraft(): Promise<void> {
-    if (!this.content || !this.isChapterOrderEditing || this.isChapterOrderSaving) {
-      return;
-    }
-    const plan = this.chapterOrderService.buildPlan(this.content, this.chapterOrderDraft);
-    if (plan.movedCount === 0) {
-      this.cancelChapterOrderEditing();
-      this.getUIContext().getPromptAction().showToast({ message: '章节顺序未变化', duration: 1500 });
-      return;
-    }
-
     this.isChapterOrderSaving = true;
-    this.chapterOrderStatusText = '正在保存章节顺序...';
     try {
-      const result: ChapterOrderPersistResult = await this.chapterOrderService.persistOrder(this.content, this.chapterOrderDraft);
-      this.chapterOrderStatusText = result.message;
-      if (!result.success) {
-        this.getUIContext().getPromptAction().showToast({ message: result.message, duration: 2200 });
-        return;
+      logger.info(
+        TAG,
+        `开始保存章节排序草稿: contentId=${this.content.id}, contentType=${this.content.contentType}, ` +
+          `sourceId=${this.content.sourceId}, orderedChapters=${orderedChapters.length}`
+      );
+      const sourceOrderDraft: UnifiedChapter[] = await this.chapterOrderService.buildSourceOrderDraft(this.content);
+      const shouldResetToSource = this.isSameChapterOrder(orderedChapters, sourceOrderDraft) &&
+        !this.isSameChapterOrder(this.content.chapters, sourceOrderDraft);
+      const plan = this.chapterOrderService.buildPlan(this.content, orderedChapters);
+      logger.info(
+        TAG,
+        `章节排序保存计划已生成: contentId=${this.content.id}, moved=${plan.movedCount}, ` +
+          `items=${plan.items.length}, shouldResetToSource=${shouldResetToSource}`
+      );
+      if (plan.movedCount === 0) {
+        logger.info(TAG, `章节排序草稿未变化: contentId=${this.content.id}, chapters=${orderedChapters.length}`);
+        this.getUIContext().getPromptAction().showToast({ message: '章节顺序未变化', duration: 1500 });
+        return {
+          success: true,
+          message: '章节顺序未变化',
+          movedCount: 0,
+          cacheResult: {
+            textCacheMoved: 0,
+            audioCacheMoved: 0,
+            remoteReadAloudCacheMoved: 0,
+            failedKeys: [],
+            warnings: []
+          }
+        };
       }
 
-      this.content = this.chapterOrderService.rebuildContentWithOrder(this.content, this.chapterOrderDraft);
+      const result: ChapterOrderPersistResult = shouldResetToSource
+        ? await this.chapterOrderService.resetOrder(this.content)
+        : await this.chapterOrderService.persistOrder(this.content, orderedChapters);
+      if (!result.success) {
+        logger.warn(
+          TAG,
+          `章节排序保存失败: contentId=${this.content.id}, resetToSource=${shouldResetToSource}, message=${result.message}`
+        );
+        this.getUIContext().getPromptAction().showToast({ message: result.message, duration: 2200 });
+        return result;
+      }
+
+      this.content = this.chapterOrderService.rebuildContentWithOrder(this.content, orderedChapters);
       this.normalizeCurrentContentReadProgress();
-      this.isChapterOrderEditing = false;
-      this.chapterOrderDraft = [];
       await this.loadCacheStatus();
       this.readAloudCacheLoadSignal++;
+      logger.info(
+        TAG,
+        `章节排序保存成功: contentId=${this.content.id}, resetToSource=${shouldResetToSource}, ` +
+          `moved=${result.movedCount}, textCacheMoved=${result.cacheResult.textCacheMoved}, ` +
+          `audioCacheMoved=${result.cacheResult.audioCacheMoved}, remoteAudioCacheMoved=${result.cacheResult.remoteReadAloudCacheMoved}`
+      );
       this.getUIContext().getPromptAction().showToast({ message: result.message, duration: 1800 });
+      return result;
     } catch (error) {
       const message = `保存章节排序失败: ${String(error)}`;
-      this.chapterOrderStatusText = message;
       logger.error(TAG, message);
       this.getUIContext().getPromptAction().showToast({ message: message, duration: 2200 });
+      return {
+        success: false,
+        message: message,
+        movedCount: 0,
+        cacheResult: {
+          textCacheMoved: 0,
+          audioCacheMoved: 0,
+          remoteReadAloudCacheMoved: 0,
+          failedKeys: [],
+          warnings: []
+        }
+      };
     } finally {
       this.isChapterOrderSaving = false;
     }
   }
 
-  private async resetChapterOrderToSource(): Promise<void> {
-    if (!this.content || this.isChapterOrderSaving) {
-      return;
+  private async buildChapterSourceOrderDraft(): Promise<UnifiedChapter[]> {
+    if (!this.content) {
+      return [];
     }
-    this.isChapterOrderSaving = true;
-    this.chapterOrderStatusText = '正在恢复来源顺序...';
-    try {
-      const result: ChapterOrderPersistResult = await this.chapterOrderService.resetOrder(this.content);
-      this.chapterOrderStatusText = result.message;
-      if (result.success) {
-        this.isChapterOrderEditing = false;
-        this.chapterOrderDraft = [];
-        await this.loadContent();
-      }
-      this.getUIContext().getPromptAction().showToast({ message: result.message, duration: 1800 });
-    } catch (error) {
-      const message = `恢复来源顺序失败: ${String(error)}`;
-      this.chapterOrderStatusText = message;
-      logger.error(TAG, message);
-      this.getUIContext().getPromptAction().showToast({ message: message, duration: 2200 });
-    } finally {
-      this.isChapterOrderSaving = false;
-    }
+    return await this.chapterOrderService.buildSourceOrderDraft(this.content);
   }
 
-  private moveChapterOrderDraftItem(fromIndex: number, targetIndex: number): void {
-    if (!this.isChapterOrderEditing || this.isChapterOrderSaving) {
-      return;
+  private isSameChapterOrder(left: UnifiedChapter[], right: UnifiedChapter[]): boolean {
+    if (left.length !== right.length) {
+      return false;
     }
-    const count = this.chapterOrderDraft.length;
-    if (count <= 1 || fromIndex < 0 || fromIndex >= count) {
-      return;
-    }
-    let normalizedTarget = targetIndex;
-    if (normalizedTarget < 0) {
-      normalizedTarget = 0;
-    }
-    if (normalizedTarget >= count) {
-      normalizedTarget = count - 1;
-    }
-    if (normalizedTarget === fromIndex) {
-      return;
-    }
-
-    const moving = this.chapterOrderDraft[fromIndex];
-    const withoutMoving: UnifiedChapter[] = [];
-    for (let i = 0; i < count; i++) {
-      if (i !== fromIndex) {
-        withoutMoving.push(this.chapterOrderDraft[i]);
+    for (let i = 0; i < left.length; i++) {
+      if (left[i].id !== right[i].id || left[i].originalData !== right[i].originalData) {
+        return false;
       }
     }
-
-    const nextDraft: UnifiedChapter[] = [];
-    for (let i = 0; i <= withoutMoving.length; i++) {
-      if (i === normalizedTarget) {
-        nextDraft.push(moving);
-      }
-      if (i < withoutMoving.length) {
-        nextDraft.push(withoutMoving[i]);
-      }
-    }
-    this.chapterOrderDraft = nextDraft;
-    this.chapterOrderStatusText = this.getChapterOrderSummaryText();
+    return true;
   }
 
   private cloneChapterArray(chapters: UnifiedChapter[]): UnifiedChapter[] {
@@ -4924,45 +5165,12 @@ export struct UnifiedDetailPage {
     return result;
   }
 
-  private getChapterDisplayIndex(chapter: UnifiedChapter, listIndex: number): number {
-    if (this.isChapterOrderEditing) {
-      return listIndex;
-    }
+  private getChapterDisplayIndex(chapter: UnifiedChapter): number {
     return chapter.index;
-  }
-
-  private getChapterOrderSummaryText(): string {
-    if (!this.content || !this.isChapterOrderEditing) {
-      return '';
-    }
-    const plan: ChapterOrderPlan = this.chapterOrderService.buildPlan(this.content, this.chapterOrderDraft);
-    const readingText = this.isLastReadIndexRemapped(plan) ? '，阅读进度会重映射' : '';
-    return `移动 ${plan.movedCount} 章，缓存索引迁移 ${plan.remaps.length} 项${readingText}`;
-  }
-
-  private isLastReadIndexRemapped(plan: ChapterOrderPlan): boolean {
-    if (!this.content) {
-      return false;
-    }
-    const lastIndex = this.content.lastReadChapterIndex;
-    if (!Number.isFinite(lastIndex) || lastIndex < 0) {
-      return false;
-    }
-    const safeLastIndex = Math.floor(lastIndex);
-    for (let i = 0; i < plan.remaps.length; i++) {
-      if (plan.remaps[i].oldIndex === safeLastIndex) {
-        return true;
-      }
-    }
-    return false;
   }
 
   private getFilteredChapters(): UnifiedChapter[] {
     if (!this.content) return [];
-
-    if (this.isChapterOrderEditing) {
-      return this.cloneChapterArray(this.chapterOrderDraft);
-    }
 
     let chapters = this.cloneChapterArray(this.content.chapters);
 
@@ -5741,8 +5949,11 @@ export struct UnifiedDetailPage {
    * 判断章节是否完全缓存
    */
   private isChapterFullyCached(chapterId: string): boolean {
-    if (this.isChapterFullyCachedInStats(this.cacheStats, chapterId)) {
-      return true;
+    if (this.cacheStats && this.cacheStats.chapterStats) {
+      return this.isChapterFullyCachedInStats(this.cacheStats, chapterId);
+    }
+    if (this.isOnlineManga()) {
+      return false;
     }
     // 回退到 chapter.isDownloaded
     const chapter = this.content?.chapters.find(c => c.id === chapterId);
@@ -5877,6 +6088,37 @@ export struct UnifiedDetailPage {
       return `${this.cacheStats.cachedPageCount} 页`;
     }
     return `${this.cacheStats.cachedPageCount}/已知${this.cacheStats.totalPageCount}`;
+  }
+
+  private getMangaPartialCacheChapterCount(): number {
+    if (!this.cacheStats || !this.cacheStats.chapterStats) {
+      return 0;
+    }
+    let partialCount: number = 0;
+    for (let i = 0; i < this.cacheStats.chapterStats.length; i++) {
+      if (this.cacheStats.chapterStats[i].isPartiallyCached === true) {
+        partialCount++;
+      }
+    }
+    return partialCount;
+  }
+
+  private getMangaCacheChapterSummaryText(): string {
+    if (!this.cacheStats) {
+      return '0/0';
+    }
+    const partialCount: number = this.getMangaPartialCacheChapterCount();
+    if (partialCount > 0) {
+      return `${this.cacheStats.cachedChapterCount}完整/${partialCount}部分`;
+    }
+    return `${this.cacheStats.cachedChapterCount}/${this.cacheStats.totalChapterCount}`;
+  }
+
+  private getMangaCacheChapterSummaryLabel(): string {
+    if (this.getMangaPartialCacheChapterCount() > 0) {
+      return `共${this.cacheStats?.totalChapterCount || 0}章`;
+    }
+    return '完整缓存章节';
   }
 
   private resetActiveMangaDownloadTaskIds(): void {
@@ -7892,7 +8134,7 @@ export struct UnifiedDetailPage {
             .padding({ left: 16, right: 16 })
             .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('comp_background_tertiary', this.themeState.currentTheme))
             .borderRadius(18)
-            .enabled(!this.isRefetchingManga && !this.isChapterOrderEditing && !this.isChapterOrderSaving)
+            .enabled(!this.isRefetchingManga && !this.isChapterOrderSaving)
             .onClick(() => {
               void this.refetchOnlineMangaInfo();
             })
@@ -8230,12 +8472,14 @@ export struct UnifiedDetailPage {
 
           Row({ space: 16 }) {
             Column({ space: 4 }) {
-              Text(`${this.cacheStats.cachedChapterCount}/${this.cacheStats.totalChapterCount}`)
+              Text(this.cacheStats.contentType === CacheContentType.MANGA
+                ? this.getMangaCacheChapterSummaryText()
+                : `${this.cacheStats.cachedChapterCount}/${this.cacheStats.totalChapterCount}`)
                 .fontSize(20)
                 .fontWeight(FontWeight.Bold)
                 .fontFamily(this.appFontFamily)
                 .fontColor(ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme))
-              Text(this.cacheStats.contentType === CacheContentType.MANGA ? '已缓存章节' : this.getNovelCachedCountLabel())
+              Text(this.cacheStats.contentType === CacheContentType.MANGA ? this.getMangaCacheChapterSummaryLabel() : this.getNovelCachedCountLabel())
                 .fontSize(11)
                 .fontFamily(this.appFontFamily)
                 .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_muted', this.themeState.currentTheme))
@@ -8796,85 +9040,41 @@ export struct UnifiedDetailPage {
 
             Row({ space: 8 }) {
               if (!this.isChaptersLoading) {
-                if (this.isChapterOrderEditing) {
-                  Button() {
-                    Text('取消')
-                      .fontSize(12)
-                      .fontFamily(this.appFontFamily)
-                      .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
-                  }
-                  .height(32)
-                  .padding({ left: 10, right: 10 })
-                  .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('comp_background_tertiary', this.themeState.currentTheme))
-                  .borderRadius(14)
-                  .enabled(!this.isChapterOrderSaving)
-                  .onClick(() => this.cancelChapterOrderEditing())
+                Button() {
+                  SymbolGlyph(this.chapterSortOrder === ChapterSortOrder.ASCENDING
+                    ? $r('sys.symbol.arrow_up')
+                    : $r('sys.symbol.arrow_down'))
+                    .fontSize(16)
+                    .fontColor([ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme)])
+                }
+                .width(32)
+                .height(32)
+                .backgroundColor(Color.Transparent)
+                .enabled(!this.isChapterOrderSaving)
+                .onClick(() => {
+                  this.toggleGlobalChapterSortOrder();
+                })
 
-                  Button() {
-                    Text('来源顺序')
-                      .fontSize(12)
-                      .fontFamily(this.appFontFamily)
-                      .fontColor(ThemeAwareHelper.getTestManagementThemedColor('accent_orange', this.themeState.currentTheme))
-                  }
-                  .height(32)
-                  .padding({ left: 10, right: 10 })
-                  .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('accent_orange', this.themeState.currentTheme) + '15')
-                  .borderRadius(14)
-                  .enabled(!this.isChapterOrderSaving)
-                  .onClick(() => {
-                    void this.resetChapterOrderToSource();
-                  })
-
-                  Button() {
-                    Row({ space: 4 }) {
-                      if (this.isChapterOrderSaving) {
-                        LoadingProgress()
-                          .width(12)
-                          .height(12)
-                          .color(Color.White)
-                      }
-                      Text(this.isChapterOrderSaving ? '保存中' : '保存')
-                        .fontSize(12)
-                        .fontFamily(this.appFontFamily)
-                        .fontColor(Color.White)
+                Button() {
+                  Row({ space: 4 }) {
+                    if (this.isChapterOrderSaving) {
+                      LoadingProgress()
+                        .width(12)
+                        .height(12)
+                        .color(ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme))
                     }
-                  }
-                  .height(32)
-                  .padding({ left: 12, right: 12 })
-                  .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme))
-                  .borderRadius(14)
-                  .enabled(!this.isChapterOrderSaving)
-                  .onClick(() => {
-                    void this.saveChapterOrderDraft();
-                  })
-                } else {
-                  Button() {
-                    SymbolGlyph(this.chapterSortOrder === ChapterSortOrder.ASCENDING
-                      ? $r('sys.symbol.arrow_up')
-                      : $r('sys.symbol.arrow_down'))
-                      .fontSize(16)
-                      .fontColor([ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme)])
-                  }
-                  .width(32)
-                  .height(32)
-                  .backgroundColor(Color.Transparent)
-                  .onClick(() => {
-                    this.toggleGlobalChapterSortOrder();
-                  })
-
-                  Button() {
-                    Text('排序')
+                    Text(this.isChapterOrderSaving ? '保存中' : '排序')
                       .fontSize(12)
                       .fontFamily(this.appFontFamily)
                       .fontColor(ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme))
                   }
-                  .height(32)
-                  .padding({ left: 10, right: 10 })
-                  .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme) + '15')
-                  .borderRadius(14)
-                  .enabled(!this.isChapterOrderSaving)
-                  .onClick(() => this.beginChapterOrderEditing())
                 }
+                .height(32)
+                .padding({ left: 10, right: 10 })
+                .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme) + '15')
+                .borderRadius(14)
+                .enabled(!this.isChapterOrderSaving)
+                .onClick(() => this.openChapterOrderDialog())
               }
 
               Button() {
@@ -8901,14 +9101,6 @@ export struct UnifiedDetailPage {
             }
           }
           .width('100%')
-
-          if (this.isChapterOrderEditing && this.isChapterListExpanded) {
-            Text(this.chapterOrderStatusText || this.getChapterOrderSummaryText())
-              .fontSize(12)
-              .fontFamily(this.appFontFamily)
-              .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
-              .width('100%')
-          }
 
           if (this.isChapterListExpanded) {
             Column() {
@@ -9049,8 +9241,8 @@ export struct UnifiedDetailPage {
     if (!this.content || !this.pageParams || !this.isOnlineManga()) {
       return;
     }
-    if (this.isChapterOrderEditing || this.isChapterOrderSaving) {
-      this.getUIContext().getPromptAction().showToast({ message: '请先完成章节排序', duration: 1500 });
+    if (this.isChapterOrderSaving) {
+      this.getUIContext().getPromptAction().showToast({ message: '章节排序正在保存', duration: 1500 });
       return;
     }
 
@@ -9279,8 +9471,8 @@ export struct UnifiedDetailPage {
     if (!this.content || selectedIndexes.length === 0) {
       return;
     }
-    if (this.isChapterOrderEditing || this.isChapterOrderSaving) {
-      this.getUIContext().getPromptAction().showToast({ message: '请先完成章节排序', duration: 1500 });
+    if (this.isChapterOrderSaving) {
+      this.getUIContext().getPromptAction().showToast({ message: '章节排序正在保存', duration: 1500 });
       return;
     }
 
@@ -9380,7 +9572,7 @@ export struct UnifiedDetailPage {
         continue;
       }
       const chapter = content.chapters[idx];
-      const isCached = this.isChapterFullyCachedInStats(freshCacheStats, chapter.id) || chapter.isDownloaded === true;
+      const isCached = this.isChapterFullyCachedInStats(freshCacheStats, chapter.id);
       if (isCached) {
         skippedCachedCount++;
         continue;
@@ -9675,75 +9867,15 @@ export struct UnifiedDetailPage {
     return '未知';
   }
 
-  @Builder
-  buildChapterOrderControls(draftIndex: number) {
-    Row({ space: 4 }) {
-      Button() {
-        Text('顶')
-          .fontSize(10)
-          .fontFamily(this.appFontFamily)
-          .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
-      }
-      .width(28)
-      .height(28)
-      .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('comp_background_tertiary', this.themeState.currentTheme))
-      .borderRadius(8)
-      .enabled(!this.isChapterOrderSaving && draftIndex > 0)
-      .onClick(() => this.moveChapterOrderDraftItem(draftIndex, 0))
-
-      Button() {
-        SymbolGlyph($r('sys.symbol.arrow_up'))
-          .fontSize(12)
-          .fontColor([ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme)])
-      }
-      .width(28)
-      .height(28)
-      .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('comp_background_tertiary', this.themeState.currentTheme))
-      .borderRadius(8)
-      .enabled(!this.isChapterOrderSaving && draftIndex > 0)
-      .onClick(() => this.moveChapterOrderDraftItem(draftIndex, draftIndex - 1))
-
-      Button() {
-        SymbolGlyph($r('sys.symbol.arrow_down'))
-          .fontSize(12)
-          .fontColor([ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme)])
-      }
-      .width(28)
-      .height(28)
-      .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('comp_background_tertiary', this.themeState.currentTheme))
-      .borderRadius(8)
-      .enabled(!this.isChapterOrderSaving && draftIndex < this.chapterOrderDraft.length - 1)
-      .onClick(() => this.moveChapterOrderDraftItem(draftIndex, draftIndex + 1))
-
-      Button() {
-        Text('底')
-          .fontSize(10)
-          .fontFamily(this.appFontFamily)
-          .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
-      }
-      .width(28)
-      .height(28)
-      .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('comp_background_tertiary', this.themeState.currentTheme))
-      .borderRadius(8)
-      .enabled(!this.isChapterOrderSaving && draftIndex < this.chapterOrderDraft.length - 1)
-      .onClick(() => this.moveChapterOrderDraftItem(draftIndex, this.chapterOrderDraft.length - 1))
-    }
-    .flexShrink(0)
-  }
-
   /**
    * 漫画章节列表（显示图片数量、阅读进度、更新时间等）
    */
   @Builder
   buildMangaChapterList() {
     List() {
-      ForEach(this.getFilteredChapters(), (chapter: UnifiedChapter, draftIndex: number) => {
+      ForEach(this.getFilteredChapters(), (chapter: UnifiedChapter) => {
         ListItem() {
           Row({ space: 12 }) {
-            if (this.isChapterOrderEditing) {
-              this.buildChapterOrderControls(draftIndex)
-            }
-
             // 左侧：已读指示器
             Column() {
               if (chapter.isRead) {
@@ -9768,7 +9900,7 @@ export struct UnifiedDetailPage {
               // 章节号 + 清理后的标题
               Row({ space: 6 }) {
                 // 固定的章节号前缀
-                Text(this.cleanChapterTitle(chapter.title, this.getChapterDisplayIndex(chapter, draftIndex))[0])
+                Text(this.cleanChapterTitle(chapter.title, this.getChapterDisplayIndex(chapter))[0])
                   .fontSize(13)
                   .fontFamily(this.appFontFamily)
                   .fontWeight(FontWeight.Medium)
@@ -9778,7 +9910,7 @@ export struct UnifiedDetailPage {
                   .flexShrink(0)
                 
                 // 清理后的真实标题
-                Text(this.cleanChapterTitle(chapter.title, this.getChapterDisplayIndex(chapter, draftIndex))[1])
+                Text(this.cleanChapterTitle(chapter.title, this.getChapterDisplayIndex(chapter))[1])
                   .fontSize(12)
                   .fontFamily(this.appFontFamily)
                   .fontWeight(chapter.isRead ? FontWeight.Normal : FontWeight.Medium)
@@ -9843,7 +9975,7 @@ export struct UnifiedDetailPage {
           .width('100%')
           .padding({ top: 12, bottom: 12 })
           .onClick(() => {
-            if (!this.isChapterOrderEditing && !this.isChapterOrderSaving) {
+            if (!this.isChapterOrderSaving) {
               this.startReading(chapter.index);
             }
           })
@@ -9863,16 +9995,12 @@ export struct UnifiedDetailPage {
   @Builder
   buildNovelChapterList() {
     List() {
-      ForEach(this.getFilteredChapters(), (chapter: UnifiedChapter, draftIndex: number) => {
+      ForEach(this.getFilteredChapters(), (chapter: UnifiedChapter) => {
         ListItem() {
           Row({ space: 12 }) {
-            if (this.isChapterOrderEditing) {
-              this.buildChapterOrderControls(draftIndex)
-            }
-
             // 左侧：章节序号和已读状态
             Column() {
-              Text(`${this.getChapterDisplayIndex(chapter, draftIndex) + 1}`)
+              Text(`${this.getChapterDisplayIndex(chapter) + 1}`)
                 .fontSize(12)
                 .fontFamily(this.appFontFamily)
                 .fontColor(this.isNovelChapterReadForDisplay(chapter)
@@ -9938,7 +10066,7 @@ export struct UnifiedDetailPage {
           .width('100%')
           .padding({ top: 10, bottom: 10 })
           .onClick(() => {
-            if (!this.isChapterOrderEditing && !this.isChapterOrderSaving) {
+            if (!this.isChapterOrderSaving) {
               this.startReading(chapter.index);
             }
           })
@@ -9957,13 +10085,9 @@ export struct UnifiedDetailPage {
   @Builder
   buildEBookChapterList() {
     List() {
-      ForEach(this.getFilteredChapters(), (chapter: UnifiedChapter, draftIndex: number) => {
+      ForEach(this.getFilteredChapters(), (chapter: UnifiedChapter) => {
         ListItem() {
           Row({ space: 12 }) {
-            if (this.isChapterOrderEditing) {
-              this.buildChapterOrderControls(draftIndex)
-            }
-
             // 左侧：章节信息
             Column({ space: 4 }) {
               // 章节标题
@@ -10010,7 +10134,7 @@ export struct UnifiedDetailPage {
           .width('100%')
           .padding({ top: 12, bottom: 12 })
           .onClick(() => {
-            if (!this.isChapterOrderEditing && !this.isChapterOrderSaving) {
+            if (!this.isChapterOrderSaving) {
               this.startReading(chapter.index);
             }
           })
@@ -11138,6 +11262,20 @@ export struct UnifiedDetailPage {
           getNovelDownloadedTagLabel: () => this.getNovelDownloadedTagLabel(),
           getNovelCacheCountActionLabel: (count: number) => this.getNovelCacheCountActionLabel(count),
           isCurrentNovelAudioSource: () => this.isCurrentNovelAudioSource()
+        })
+
+        // 章节排序对话框
+        ChapterOrderDialogComponent({
+          content: this.content,
+          themeState: this.themeState,
+          loadSignal: this.chapterOrderDialogLoadSignal,
+          isSaving: this.isChapterOrderSaving,
+          onConfirm: async (orderedChapters: UnifiedChapter[]) => {
+            return await this.saveChapterOrderDraft(orderedChapters);
+          },
+          onRequestSourceOrder: async () => {
+            return await this.buildChapterSourceOrderDraft();
+          }
         })
 
         // 分享链接对话框

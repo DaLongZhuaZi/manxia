@@ -122,7 +122,10 @@ struct EBookReaderAbilityPage {
       autoOpenReadAloudPlayer: source.autoOpenReadAloudPlayer,
       readerHostMode: READER_ABILITY_HOST_MULTITON,
       readerInstanceId: this.readerInstanceId,
-      readerTitle: source.readerTitle
+      readerTitle: source.readerTitle,
+      originImportId: source.originImportId,
+      originImportKind: source.originImportKind,
+      readerOpenFlowId: source.readerOpenFlowId
     };
     return params;
   }

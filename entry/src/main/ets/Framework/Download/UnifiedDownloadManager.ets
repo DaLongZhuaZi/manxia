@@ -12,6 +12,16 @@ import { getNovelChapterCacheManager, NovelChapterCacheManager, DownloadProgress
 import { LegadoChapter } from '../Novel/LegadoSourceTypes';
 import { AppNotificationManager } from '../Managers/NotificationManager';
 import { common } from '@kit.AbilityKit';
+import { DownloadCacheFlowMonitor, getDownloadCacheFlowMonitor } from './DownloadCacheFlowMonitor';
+import {
+  DownloadCacheContentType,
+  DownloadCacheEntrySource,
+  DownloadCacheFlowEvent,
+  DownloadCacheFlowEventType,
+  DownloadCacheFlowSessionInfo,
+  DownloadCacheFlowSeverity,
+  DownloadCacheFlowStage
+} from './DownloadCacheFlowTypes';
 
 const TAG = 'UnifiedDownloadManager';
 
@@ -69,6 +79,7 @@ export interface UnifiedDownloadTask {
   // 来源信息
   sourceId?: number;
   sourceName?: string;
+  downloadCacheFlowId?: string;
 }
 
 /**
@@ -92,6 +103,7 @@ export interface MangaChapterDownloadParams {
   sourceId: number;
   imageUrls?: string[];
   pageListFetcher?: PageListFetcher;
+  downloadCacheFlowId?: string;
 }
 
 /**
@@ -104,6 +116,7 @@ export interface NovelChapterDownloadParams {
   chapters: LegadoChapter[];
   startIndex: number;
   endIndex: number;
+  downloadCacheFlowId?: string;
 }
 
 /**
@@ -115,6 +128,7 @@ export interface MangaChapterDownloadItem {
   chapterIndex: number;
   imageUrls?: string[];
   pageListFetcher?: PageListFetcher;
+  downloadCacheFlowId?: string;
 }
 
 /**
@@ -164,6 +178,7 @@ export class UnifiedDownloadManager {
   private mangaDownloadManager: MangaDownloadManager;
   private novelCacheManager: NovelChapterCacheManager;
   private notificationManager: AppNotificationManager;
+  private downloadCacheFlowMonitor: DownloadCacheFlowMonitor;
   
   // 统一任务列表
   private unifiedTasks: Map<string, UnifiedDownloadTask> = new Map();
@@ -181,6 +196,7 @@ export class UnifiedDownloadManager {
     this.mangaDownloadManager = MangaDownloadManager.getInstance();
     this.novelCacheManager = getNovelChapterCacheManager();
     this.notificationManager = AppNotificationManager.getInstance();
+    this.downloadCacheFlowMonitor = getDownloadCacheFlowMonitor();
     
     logger.info(TAG, '统一下载管理器初始化');
   }
@@ -208,6 +224,33 @@ export class UnifiedDownloadManager {
    * @returns 任务ID
    */
   public async downloadMangaChapter(params: MangaChapterDownloadParams): Promise<string> {
+    const startedAt: number = Date.now();
+    const flowId: string = this.ensureDownloadCacheFlow(
+      params.downloadCacheFlowId || '',
+      DownloadCacheEntrySource.UNIFIED_DOWNLOAD_MANAGER,
+      DownloadCacheContentType.MANGA,
+      params.mangaId,
+      params.mangaTitle,
+      params.chapterId,
+      params.chapterTitle,
+      '',
+      params.sourceId,
+      params.imageUrls ? params.imageUrls.length : 0,
+      false
+    );
+    this.recordDownloadCacheFlow(
+      flowId,
+      DownloadCacheFlowEventType.TASK_CREATE_REQUEST,
+      DownloadCacheFlowStage.TASK,
+      'unified_manga_task_create_request',
+      params,
+      '',
+      true,
+      '',
+      0,
+      0,
+      0
+    );
     try {
       logger.info(TAG, `创建漫画章节下载任务: ${params.mangaTitle} - ${params.chapterTitle}`);
 
@@ -216,6 +259,19 @@ export class UnifiedDownloadManager {
         logger.info(
           TAG,
           `统一漫画下载任务去重命中: manga=${params.mangaId}, chapter=${params.chapterId}, taskId=${existingTask.id}`
+        );
+        this.recordDownloadCacheFlow(
+          flowId,
+          DownloadCacheFlowEventType.TASK_DEDUP_HIT,
+          DownloadCacheFlowStage.TASK,
+          'unified_manga_task_dedup_hit',
+          params,
+          existingTask.id,
+          true,
+          '',
+          Date.now() - startedAt,
+          existingTask.downloadedCount,
+          existingTask.totalCount
         );
         this.registerMangaProgressCallback(existingTask.id);
         return existingTask.id;
@@ -231,7 +287,9 @@ export class UnifiedDownloadManager {
           params.chapterId,
           params.chapterTitle,
           params.imageUrls,
-          params.sourceId
+          params.sourceId,
+          undefined,
+          flowId
         );
       } else if (params.pageListFetcher) {
         // 需要延迟获取图片列表
@@ -241,7 +299,8 @@ export class UnifiedDownloadManager {
           params.chapterId,
           params.chapterTitle,
           params.sourceId,
-          params.pageListFetcher
+          params.pageListFetcher,
+          flowId
         );
       } else {
         throw new Error('缺少图片URL列表或获取方法');
@@ -261,16 +320,43 @@ export class UnifiedDownloadManager {
         downloadedCount: 0,
         totalCount: params.imageUrls?.length || 0,
         createdTime: Date.now(),
-        sourceId: params.sourceId
+        sourceId: params.sourceId,
+        downloadCacheFlowId: flowId
       };
       
       this.registerUnifiedTask(unifiedTask);
+      this.recordDownloadCacheFlow(
+        flowId,
+        DownloadCacheFlowEventType.TASK_CREATED,
+        DownloadCacheFlowStage.TASK,
+        'unified_manga_task_created',
+        params,
+        taskId,
+        true,
+        '',
+        Date.now() - startedAt,
+        0,
+        unifiedTask.totalCount
+      );
       
       // 注册进度回调
       this.registerMangaProgressCallback(taskId);
       
       return taskId;
     } catch (error) {
+      this.recordDownloadCacheFlow(
+        flowId,
+        DownloadCacheFlowEventType.ERROR,
+        DownloadCacheFlowStage.TASK,
+        'unified_manga_task_create_failed',
+        params,
+        '',
+        false,
+        String(error),
+        Date.now() - startedAt,
+        0,
+        0
+      );
       logger.error(TAG, `创建漫画下载任务失败: ${String(error)}`);
       throw error as Error;
     }
@@ -285,6 +371,20 @@ export class UnifiedDownloadManager {
     sourceId: number,
     chapters: MangaChapterDownloadItem[]
   ): Promise<MangaBatchDownloadResult> {
+    const batchStartedAt: number = Date.now();
+    const batchFlowId: string = this.ensureDownloadCacheFlow(
+      '',
+      DownloadCacheEntrySource.UNIFIED_DOWNLOAD_MANAGER,
+      DownloadCacheContentType.MANGA,
+      mangaId,
+      mangaTitle,
+      '',
+      '',
+      '',
+      sourceId,
+      chapters.length,
+      true
+    );
     const taskIds: string[] = [];
     const failedChapters: MangaBatchDownloadFailure[] = [];
     
@@ -298,7 +398,8 @@ export class UnifiedDownloadManager {
           chapterIndex: chapter.chapterIndex,
           sourceId,
           imageUrls: chapter.imageUrls,
-          pageListFetcher: chapter.pageListFetcher
+          pageListFetcher: chapter.pageListFetcher,
+          downloadCacheFlowId: chapter.downloadCacheFlowId || ''
         });
         if (!taskIds.includes(taskId)) {
           taskIds.push(taskId);
@@ -311,6 +412,23 @@ export class UnifiedDownloadManager {
           reason: reason
         };
         failedChapters.push(failure);
+        const failedEvent: DownloadCacheFlowEvent = this.downloadCacheFlowMonitor.createEvent(
+          batchFlowId,
+          DownloadCacheFlowEventType.ERROR,
+          DownloadCacheFlowStage.TASK,
+          'unified_batch_chapter_create_failed'
+        );
+        failedEvent.entrySource = DownloadCacheEntrySource.UNIFIED_DOWNLOAD_MANAGER;
+        failedEvent.contentType = DownloadCacheContentType.MANGA;
+        failedEvent.contentId = mangaId;
+        failedEvent.contentTitle = mangaTitle;
+        failedEvent.chapterId = chapter.chapterId;
+        failedEvent.chapterTitle = chapter.chapterTitle;
+        failedEvent.sourceId = sourceId;
+        failedEvent.success = false;
+        failedEvent.severity = DownloadCacheFlowSeverity.ERROR;
+        failedEvent.errorMessage = reason;
+        this.safeRecordDownloadCacheFlowEvent(failedEvent);
         logger.error(TAG, `创建漫画下载章节任务失败: ${chapter.chapterTitle}, ${reason}`);
       }
     }
@@ -325,6 +443,24 @@ export class UnifiedDownloadManager {
       TAG,
       `批量漫画下载任务创建完成: manga=${mangaTitle}, requested=${chapters.length}, created=${result.createdCount}, failed=${result.failedCount}`
     );
+    const completedEvent: DownloadCacheFlowEvent = this.downloadCacheFlowMonitor.createEvent(
+      batchFlowId,
+      DownloadCacheFlowEventType.BATCH_TASK_CREATE_COMPLETED,
+      DownloadCacheFlowStage.TASK,
+      'unified_batch_manga_task_create_completed'
+    );
+    completedEvent.entrySource = DownloadCacheEntrySource.UNIFIED_DOWNLOAD_MANAGER;
+    completedEvent.contentType = DownloadCacheContentType.MANGA;
+    completedEvent.contentId = mangaId;
+    completedEvent.contentTitle = mangaTitle;
+    completedEvent.sourceId = sourceId;
+    completedEvent.currentIndex = result.createdCount;
+    completedEvent.totalCount = chapters.length;
+    completedEvent.failedCount = result.failedCount;
+    completedEvent.elapsedMs = Date.now() - batchStartedAt;
+    completedEvent.detail = `created=${result.createdCount}, failed=${result.failedCount}`;
+    this.safeRecordDownloadCacheFlowEvent(completedEvent);
+    this.downloadCacheFlowMonitor.endSession(batchFlowId, 'batch_task_create_completed');
     return result;
   }
   
@@ -341,6 +477,15 @@ export class UnifiedDownloadManager {
           task.progress = progress;
           task.downloadedCount = downloaded;
           task.totalCount = total;
+          this.recordTaskFlowEvent(
+            task,
+            DownloadCacheFlowEventType.CALLBACK_NOTIFIED,
+            DownloadCacheFlowStage.TASK,
+            'manga_progress_callback',
+            true,
+            '',
+            0
+          );
 
           if (sourceTask && sourceTask.status === TaskStatus.COMPLETED) {
             if (task.status !== UnifiedTaskStatus.COMPLETED) {
@@ -380,6 +525,20 @@ export class UnifiedDownloadManager {
    * 下载小说章节（批量）
    */
   public async downloadNovelChapters(params: NovelChapterDownloadParams): Promise<string> {
+    const startedAt: number = Date.now();
+    const flowId: string = this.ensureDownloadCacheFlow(
+      params.downloadCacheFlowId || '',
+      DownloadCacheEntrySource.UNIFIED_DOWNLOAD_MANAGER,
+      DownloadCacheContentType.NOVEL,
+      params.bookId,
+      params.bookTitle,
+      '',
+      '',
+      '',
+      0,
+      params.endIndex - params.startIndex + 1,
+      params.endIndex > params.startIndex
+    );
     try {
       logger.info(TAG, `创建小说下载任务: ${params.bookTitle}, 章节 ${params.startIndex}-${params.endIndex}`);
       
@@ -404,10 +563,25 @@ export class UnifiedDownloadManager {
         progress: 0,
         downloadedCount: 0,
         totalCount: totalCount,
-        createdTime: Date.now()
+        createdTime: Date.now(),
+        downloadCacheFlowId: flowId
       };
       
       this.registerUnifiedTask(unifiedTask);
+      const createdEvent: DownloadCacheFlowEvent = this.downloadCacheFlowMonitor.createEvent(
+        flowId,
+        DownloadCacheFlowEventType.TASK_CREATED,
+        DownloadCacheFlowStage.TASK,
+        'unified_novel_task_created'
+      );
+      createdEvent.entrySource = DownloadCacheEntrySource.UNIFIED_DOWNLOAD_MANAGER;
+      createdEvent.contentType = DownloadCacheContentType.NOVEL;
+      createdEvent.contentId = params.bookId;
+      createdEvent.contentTitle = params.bookTitle;
+      createdEvent.taskId = taskId;
+      createdEvent.totalCount = totalCount;
+      createdEvent.elapsedMs = Date.now() - startedAt;
+      this.safeRecordDownloadCacheFlowEvent(createdEvent);
       
       // 创建进度回调
       const callback: NovelDownloadCallback = {
@@ -419,6 +593,15 @@ export class UnifiedDownloadManager {
             task.progress = Math.round((current / total) * 100);
             this.updateTaskStatus(task, UnifiedTaskStatus.DOWNLOADING);
             task.chapterTitle = chapterTitle;
+            this.recordTaskFlowEvent(
+              task,
+              DownloadCacheFlowEventType.CALLBACK_NOTIFIED,
+              DownloadCacheFlowStage.TASK,
+              'novel_progress_callback',
+              true,
+              '',
+              0
+            );
             this.notifyProgress(task);
           }
         },
@@ -446,6 +629,21 @@ export class UnifiedDownloadManager {
       
       return taskId;
     } catch (error) {
+      const failedEvent: DownloadCacheFlowEvent = this.downloadCacheFlowMonitor.createEvent(
+        flowId,
+        DownloadCacheFlowEventType.ERROR,
+        DownloadCacheFlowStage.TASK,
+        'unified_novel_task_create_failed'
+      );
+      failedEvent.entrySource = DownloadCacheEntrySource.UNIFIED_DOWNLOAD_MANAGER;
+      failedEvent.contentType = DownloadCacheContentType.NOVEL;
+      failedEvent.contentId = params.bookId;
+      failedEvent.contentTitle = params.bookTitle;
+      failedEvent.success = false;
+      failedEvent.severity = DownloadCacheFlowSeverity.ERROR;
+      failedEvent.errorMessage = String(error);
+      failedEvent.elapsedMs = Date.now() - startedAt;
+      this.safeRecordDownloadCacheFlowEvent(failedEvent);
       logger.error(TAG, `创建小说下载任务失败: ${String(error)}`);
       throw error as Error;
     }
@@ -488,14 +686,41 @@ export class UnifiedDownloadManager {
         if (success) {
           this.updateTaskStatus(task, UnifiedTaskStatus.PAUSED);
         }
+        this.recordTaskFlowEvent(
+          task,
+          DownloadCacheFlowEventType.STATUS_CHANGED,
+          DownloadCacheFlowStage.TASK,
+          'pause_task',
+          success,
+          success ? '' : 'pause_failed',
+          0
+        );
         return success;
       } else if (task.type === UnifiedDownloadType.NOVEL) {
         this.novelCacheManager.pauseDownload(taskId);
         this.updateTaskStatus(task, UnifiedTaskStatus.PAUSED);
+        this.recordTaskFlowEvent(
+          task,
+          DownloadCacheFlowEventType.STATUS_CHANGED,
+          DownloadCacheFlowStage.TASK,
+          'pause_novel_task',
+          true,
+          '',
+          0
+        );
         return true;
       }
       return false;
     } catch (error) {
+      this.recordTaskFlowEvent(
+        task,
+        DownloadCacheFlowEventType.ERROR,
+        DownloadCacheFlowStage.TASK,
+        'pause_task_failed',
+        false,
+        String(error),
+        0
+      );
       logger.error(TAG, `暂停任务失败: ${String(error)}`);
       return false;
     }
@@ -517,6 +742,15 @@ export class UnifiedDownloadManager {
         if (success) {
           this.updateTaskStatus(task, UnifiedTaskStatus.PENDING);
         }
+        this.recordTaskFlowEvent(
+          task,
+          DownloadCacheFlowEventType.STATUS_CHANGED,
+          DownloadCacheFlowStage.TASK,
+          'resume_task',
+          success,
+          success ? '' : 'resume_failed',
+          0
+        );
         return success;
       } else if (task.type === UnifiedDownloadType.NOVEL) {
         // 小说恢复需要重新创建任务
@@ -525,6 +759,15 @@ export class UnifiedDownloadManager {
       }
       return false;
     } catch (error) {
+      this.recordTaskFlowEvent(
+        task,
+        DownloadCacheFlowEventType.ERROR,
+        DownloadCacheFlowStage.TASK,
+        'resume_task_failed',
+        false,
+        String(error),
+        0
+      );
       logger.error(TAG, `恢复任务失败: ${String(error)}`);
       return false;
     }
@@ -547,11 +790,29 @@ export class UnifiedDownloadManager {
         this.novelCacheManager.cancelDownload(taskId);
       }
       
+      this.recordTaskFlowEvent(
+        task,
+        DownloadCacheFlowEventType.STATUS_CHANGED,
+        DownloadCacheFlowStage.TASK,
+        'cancel_task',
+        true,
+        '',
+        0
+      );
       this.unregisterUnifiedTask(taskId);
       
       logger.info(TAG, `任务已取消: ${taskId}`);
       return true;
     } catch (error) {
+      this.recordTaskFlowEvent(
+        task,
+        DownloadCacheFlowEventType.ERROR,
+        DownloadCacheFlowStage.TASK,
+        'cancel_task_failed',
+        false,
+        String(error),
+        0
+      );
       logger.error(TAG, `取消任务失败: ${String(error)}`);
       return false;
     }
@@ -719,6 +980,122 @@ export class UnifiedDownloadManager {
   public unregisterGlobalCallback(callback: UnifiedDownloadCallback): void {
     this.globalCallbacks.delete(callback);
   }
+
+  private ensureDownloadCacheFlow(
+    requestedFlowId: string,
+    entrySource: DownloadCacheEntrySource,
+    contentType: DownloadCacheContentType,
+    contentId: string,
+    contentTitle: string,
+    chapterId: string,
+    chapterTitle: string,
+    taskId: string,
+    sourceId: number,
+    totalCount: number,
+    batchMode: boolean
+  ): string {
+    const flowId: string = requestedFlowId.length > 0
+      ? requestedFlowId
+      : this.downloadCacheFlowMonitor.createSessionId('download_cache');
+    const info: DownloadCacheFlowSessionInfo = new DownloadCacheFlowSessionInfo();
+    info.sessionId = flowId;
+    info.entrySource = entrySource;
+    info.contentType = contentType;
+    info.contentId = contentId;
+    info.contentTitle = contentTitle;
+    info.chapterId = chapterId;
+    info.chapterTitle = chapterTitle;
+    info.taskId = taskId;
+    info.sourceId = sourceId;
+    info.batchMode = batchMode;
+    info.totalCount = totalCount;
+    info.pageName = 'UnifiedDownloadManager';
+    return this.downloadCacheFlowMonitor.ensureSession(info);
+  }
+
+  private recordDownloadCacheFlow(
+    flowId: string,
+    eventType: DownloadCacheFlowEventType,
+    stage: DownloadCacheFlowStage,
+    reason: string,
+    params: MangaChapterDownloadParams,
+    taskId: string,
+    success: boolean,
+    errorMessage: string,
+    elapsedMs: number,
+    downloadedCount: number,
+    totalCount: number
+  ): void {
+    const event: DownloadCacheFlowEvent = this.downloadCacheFlowMonitor.createEvent(flowId, eventType, stage, reason);
+    event.entrySource = DownloadCacheEntrySource.UNIFIED_DOWNLOAD_MANAGER;
+    event.contentType = DownloadCacheContentType.MANGA;
+    event.contentId = params.mangaId;
+    event.contentTitle = params.mangaTitle;
+    event.chapterId = params.chapterId;
+    event.chapterTitle = params.chapterTitle;
+    event.taskId = taskId;
+    event.sourceId = params.sourceId;
+    event.success = success;
+    event.severity = success ? DownloadCacheFlowSeverity.INFO : DownloadCacheFlowSeverity.ERROR;
+    event.errorMessage = errorMessage;
+    event.elapsedMs = elapsedMs;
+    event.downloadedCount = downloadedCount;
+    event.totalCount = totalCount;
+    event.detail = `hasUrls=${params.imageUrls !== undefined && params.imageUrls.length > 0}, hasFetcher=${params.pageListFetcher !== undefined}`;
+    this.safeRecordDownloadCacheFlowEvent(event);
+  }
+
+  private recordTaskFlowEvent(
+    task: UnifiedDownloadTask,
+    eventType: DownloadCacheFlowEventType,
+    stage: DownloadCacheFlowStage,
+    reason: string,
+    success: boolean,
+    errorMessage: string,
+    elapsedMs: number
+  ): void {
+    if (!task.downloadCacheFlowId || task.downloadCacheFlowId.length <= 0) {
+      return;
+    }
+    const event: DownloadCacheFlowEvent = this.downloadCacheFlowMonitor.createEvent(task.downloadCacheFlowId, eventType, stage, reason);
+    event.entrySource = DownloadCacheEntrySource.UNIFIED_DOWNLOAD_MANAGER;
+    event.contentType = this.mapUnifiedDownloadTypeToFlowContentType(task.type);
+    event.contentId = task.contentId;
+    event.contentTitle = task.contentTitle;
+    event.chapterId = task.chapterId || '';
+    event.chapterTitle = task.chapterTitle || '';
+    event.taskId = task.id;
+    event.sourceId = task.sourceId || 0;
+    event.success = success;
+    event.severity = success ? DownloadCacheFlowSeverity.DEBUG : DownloadCacheFlowSeverity.ERROR;
+    event.errorMessage = errorMessage;
+    event.elapsedMs = elapsedMs;
+    event.downloadedCount = task.downloadedCount;
+    event.totalCount = task.totalCount;
+    event.detail = `status=${task.status}, progress=${task.progress}`;
+    this.safeRecordDownloadCacheFlowEvent(event);
+  }
+
+  private mapUnifiedDownloadTypeToFlowContentType(type: UnifiedDownloadType): DownloadCacheContentType {
+    if (type === UnifiedDownloadType.MANGA) {
+      return DownloadCacheContentType.MANGA;
+    }
+    if (type === UnifiedDownloadType.NOVEL) {
+      return DownloadCacheContentType.NOVEL;
+    }
+    if (type === UnifiedDownloadType.EBOOK) {
+      return DownloadCacheContentType.EBOOK;
+    }
+    return DownloadCacheContentType.UNKNOWN;
+  }
+
+  private safeRecordDownloadCacheFlowEvent(event: DownloadCacheFlowEvent): void {
+    try {
+      this.downloadCacheFlowMonitor.record(event);
+    } catch (error) {
+      logger.warn(TAG, `下载缓存链路记录失败: ${String(error)}`);
+    }
+  }
   
   /**
    * 通知进度更新
@@ -730,6 +1107,15 @@ export class UnifiedDownloadManager {
       return;
     }
     this.lastProgressNotifyAtByTaskId.set(task.id, now);
+    this.recordTaskFlowEvent(
+      task,
+      DownloadCacheFlowEventType.CALLBACK_NOTIFIED,
+      DownloadCacheFlowStage.TASK,
+      'unified_notify_progress',
+      true,
+      '',
+      0
+    );
 
     // 任务特定回调
     const callback = this.callbacks.get(task.id);
@@ -825,9 +1211,19 @@ export class UnifiedDownloadManager {
     if (task.status === status) {
       return;
     }
+    const previousStatus: UnifiedTaskStatus = task.status;
     this.removeTaskIdFromIndex(this.taskIdsByStatus, task.status, task.id);
     task.status = status;
     this.addTaskIdToIndex(this.taskIdsByStatus, task.status, task.id);
+    this.recordTaskFlowEvent(
+      task,
+      DownloadCacheFlowEventType.STATUS_CHANGED,
+      DownloadCacheFlowStage.TASK,
+      `status_${previousStatus}_to_${status}`,
+      true,
+      '',
+      0
+    );
   }
 
   private getIndexedTasks(taskIds: Set<string> | undefined): UnifiedDownloadTask[] {
@@ -854,6 +1250,15 @@ export class UnifiedDownloadManager {
    */
   private notifyComplete(task: UnifiedDownloadTask): void {
     this.lastProgressNotifyAtByTaskId.delete(task.id);
+    this.recordTaskFlowEvent(
+      task,
+      DownloadCacheFlowEventType.CALLBACK_NOTIFIED,
+      DownloadCacheFlowStage.TASK,
+      'unified_notify_complete',
+      true,
+      '',
+      0
+    );
     const callback = this.callbacks.get(task.id);
     if (callback) {
       try {
@@ -878,6 +1283,15 @@ export class UnifiedDownloadManager {
    */
   private notifyError(task: UnifiedDownloadTask, error: string): void {
     this.lastProgressNotifyAtByTaskId.delete(task.id);
+    this.recordTaskFlowEvent(
+      task,
+      DownloadCacheFlowEventType.CALLBACK_NOTIFIED,
+      DownloadCacheFlowStage.TASK,
+      'unified_notify_error',
+      false,
+      error,
+      0
+    );
     const callback = this.callbacks.get(task.id);
     if (callback) {
       try {

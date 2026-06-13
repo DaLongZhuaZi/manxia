@@ -27,7 +27,7 @@ import { SettingsPanelSurfaceHelper } from './settings/SettingsPanelSurfaceHelpe
 const TAG = 'AboutPage';
 const TITLE_BAR_HEIGHT_MINI: number = 56;
 const APP_TEST_INVITE_URL = 'https://appgallery.huawei.com/apptest/4PlqU4ygat3';
-const APP_GALLERY_INVITE_URL = 'https://appgallery.huawei.com/apptest/join/960c21d20aa4dd8955f0c9ac3c0e4a33?invitationCode=8vTXct0EstJ';
+const APP_GALLERY_INVITE_URL = 'https://appgallery.huawei.com/apptest/join/47992ff53f9dcf81a861afea3fcb827c?invitationCode=8vTXct0EstJ';
 
 interface InviteTestLinkOption {
   label: string;

@@ -23,6 +23,15 @@ import {
 import { TaskCancelSignal } from '../Task/BackgroundTaskManager';
 import { ImportFilenameIntelligenceService } from './ImportFilenameIntelligenceService';
 import { MangaReadFlowImportReport, MangaReadFlowImportReporter } from '../Reader/MangaReadFlowImportReporter';
+import { ImportFlowMonitor, getImportFlowMonitor } from '../Import/ImportFlowMonitor';
+import {
+  ImportFlowContentType,
+  ImportFlowEntrySource,
+  ImportFlowEvent,
+  ImportFlowEventType,
+  ImportFlowSessionInfo,
+  ImportFlowSeverity
+} from '../Import/ImportFlowTypes';
 
 const TAG = 'PdfImportService';
 const PDF_IMPORT_DIR_NAME = 'pdf_import';
@@ -36,12 +45,14 @@ export interface ExecutePdfImportOptions {
   cancelSignal?: TaskCancelSignal;
   onProgress?: (current: number, total: number, message: string) => void;
   sourceId?: string;
+  importFlowId?: string;
 }
 
 export class PdfImportService {
   private static instance: PdfImportService | null = null;
   private dataManager: DataManager = DataManager.getInstance();
   private filenameIntelligenceService: ImportFilenameIntelligenceService = ImportFilenameIntelligenceService.getInstance();
+  private importFlowMonitor: ImportFlowMonitor = getImportFlowMonitor();
 
   public static getInstance(): PdfImportService {
     if (!PdfImportService.instance) {
@@ -113,6 +124,7 @@ export class PdfImportService {
   }
 
   public async executeImport(options: ExecutePdfImportOptions): Promise<PdfImportResult> {
+    const importFlowId: string = this.ensurePdfImportFlow(options);
     const emitProgress = (current: number, message: string): void => {
       if (options.onProgress) {
         options.onProgress(current, 100, message);
@@ -122,7 +134,10 @@ export class PdfImportService {
     try {
       this.throwIfCancelled(options.cancelSignal);
       emitProgress(2, '正在准备PDF文件...');
+      const copyStartedAt: number = Date.now();
+      this.recordImportFlowEvent(importFlowId, ImportFlowEventType.COPY_STARTED, 'pdf_copy_started', options.fileUri, '', options.dialogResult.title, true, '', 0, 0);
       const sandboxPath = await this.copyPdfToSandbox(options.fileUri, options.filesDir, options.cancelSignal);
+      this.recordImportFlowEvent(importFlowId, ImportFlowEventType.COPY_COMPLETED, 'pdf_copy_completed', options.fileUri, sandboxPath, options.dialogResult.title, true, '', Date.now() - copyStartedAt, 0);
 
       this.throwIfCancelled(options.cancelSignal);
       const outputDir = this.resolveOutputDir(options.filesDir, options.outputDir);
@@ -134,6 +149,8 @@ export class PdfImportService {
       let existingMangaId: string | undefined = undefined;
       if (isSingleChapter) {
         emitProgress(8, '正在检查是否存在同名漫画...');
+        const duplicateStartedAt: number = Date.now();
+        this.recordImportFlowEvent(importFlowId, ImportFlowEventType.DUPLICATE_DETECT_STARTED, 'pdf_duplicate_detect_started', sandboxPath, outputDir, options.dialogResult.title, true, '', 0, 0);
         existingMangaId = await this.findExistingMangaByTitle(options.dialogResult.title);
         if (existingMangaId) {
           const hasChapter = await this.checkChapterExists(existingMangaId, options.dialogResult.chapterNumber || 1);
@@ -141,6 +158,7 @@ export class PdfImportService {
             throw new Error(`漫画"${options.dialogResult.title}"已存在第${options.dialogResult.chapterNumber || 1}话，请修改章节编号`);
           }
         }
+        this.recordImportFlowEvent(importFlowId, ImportFlowEventType.DUPLICATE_DETECT_COMPLETED, 'pdf_duplicate_detect_completed', sandboxPath, outputDir, options.dialogResult.title, true, existingMangaId || '', Date.now() - duplicateStartedAt, 0);
       }
 
       const importer = new PdfToMangaImporter({
@@ -159,10 +177,13 @@ export class PdfImportService {
       });
 
       emitProgress(10, '正在转换PDF...');
+      const convertStartedAt: number = Date.now();
+      this.recordImportFlowEvent(importFlowId, ImportFlowEventType.PDF_CONVERT_STARTED, 'pdf_convert_started', sandboxPath, outputDir, options.dialogResult.title, true, '', 0, 0);
       const result = await importer.import();
       if (!result.success) {
         throw new Error(result.errorMessage || 'PDF转换失败');
       }
+      this.recordImportFlowEvent(importFlowId, ImportFlowEventType.PDF_CONVERT_COMPLETED, 'pdf_convert_completed', sandboxPath, outputDir, options.dialogResult.title, true, `pages=${result.totalPages || 0}`, Date.now() - convertStartedAt, result.totalPages || 0);
 
       if (result.comicInfo) {
         result.comicInfo.title = options.dialogResult.title;
@@ -172,14 +193,20 @@ export class PdfImportService {
       }
 
       emitProgress(95, '正在保存到数据库...');
+      const dbStartedAt: number = Date.now();
+      this.recordImportFlowEvent(importFlowId, ImportFlowEventType.DB_WRITE_STARTED, 'pdf_db_write_started', sandboxPath, outputDir, options.dialogResult.title, true, '', 0, result.totalPages || 0);
       await this.savePdfImportToDatabase(
         result,
         options.dialogResult.contentType,
         options.sourceId || 'local_pdf'
       );
+      this.recordImportFlowEvent(importFlowId, ImportFlowEventType.DB_WRITE_COMPLETED, 'pdf_db_write_completed', sandboxPath, outputDir, options.dialogResult.title, true, `mangaId=${result.mangaId || ''}, chapterId=${result.chapterId || ''}`, Date.now() - dbStartedAt, result.totalPages || 0);
       result.originImportId = this.recordPdfImportFlow(options.fileUri, options.dialogResult, result, true, '', '');
 
       emitProgress(100, '导入完成');
+      if (!options.importFlowId || options.importFlowId.length <= 0) {
+        this.importFlowMonitor.endSession(importFlowId, 'pdf_service_import_completed');
+      }
       return result;
     } catch (error) {
       const errorMessage = error instanceof Error ? error.message : String(error);
@@ -190,8 +217,58 @@ export class PdfImportService {
         totalPages: 0
       };
       this.recordPdfImportFlow(options.fileUri, options.dialogResult, failedResult, false, errorMessage, 'execute_import_failed');
+      this.recordImportFlowEvent(importFlowId, ImportFlowEventType.PDF_TASK_FAILED, 'pdf_execute_import_failed', options.fileUri, '', options.dialogResult.title, false, errorMessage, 0, 0);
+      if (!options.importFlowId || options.importFlowId.length <= 0) {
+        this.importFlowMonitor.endSession(importFlowId, 'pdf_service_import_failed');
+      }
       throw error as Error;
     }
+  }
+
+  private ensurePdfImportFlow(options: ExecutePdfImportOptions): string {
+    const info: ImportFlowSessionInfo = new ImportFlowSessionInfo();
+    info.sessionId = options.importFlowId || '';
+    info.entrySource = ImportFlowEntrySource.UNKNOWN;
+    info.contentType = ImportFlowContentType.PDF;
+    info.sourceUri = options.fileUri;
+    info.targetPath = options.outputDir || '';
+    info.displayName = options.dialogResult.title;
+    info.fileCount = 1;
+    info.batchMode = false;
+    info.pageName = 'PdfImportService';
+    info.startedAt = Date.now();
+    return this.importFlowMonitor.ensureSession(info);
+  }
+
+  private recordImportFlowEvent(
+    sessionId: string,
+    eventType: ImportFlowEventType,
+    reason: string,
+    sourceUri: string,
+    targetPath: string,
+    displayName: string,
+    success: boolean,
+    detail: string,
+    elapsedMs: number,
+    pageCount: number
+  ): void {
+    const event: ImportFlowEvent = new ImportFlowEvent();
+    event.sessionId = sessionId;
+    event.eventType = eventType;
+    event.reason = reason;
+    event.contentType = ImportFlowContentType.PDF;
+    event.sourceUri = sourceUri;
+    event.targetPath = targetPath;
+    event.displayName = displayName;
+    event.success = success;
+    event.severity = success ? ImportFlowSeverity.INFO : ImportFlowSeverity.ERROR;
+    event.detail = detail;
+    event.elapsedMs = elapsedMs;
+    event.pageCount = pageCount;
+    if (!success) {
+      event.errorMessage = detail;
+    }
+    this.importFlowMonitor.record(event);
   }
 
   private recordPdfImportFlow(

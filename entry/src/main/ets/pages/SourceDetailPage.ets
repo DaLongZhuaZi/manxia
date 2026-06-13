@@ -54,19 +54,21 @@ import {
 } from '../Framework/Services/SourceDetailSearchExecutor';
 import { getLegadoMangaSourceBridge } from '../Framework/Novel/LegadoMangaSourceBridge';
 import { eventBus, GameEvent, IEventPayload, MangaFavoriteChangedPayload } from '../Framework/EventBus';
+import { GlobalSearchFlowMonitor, getGlobalSearchFlowMonitor } from '../Framework/Search/GlobalSearchFlowMonitor';
+import {
+  GlobalSearchFlowEvent,
+  GlobalSearchFlowEventType,
+  GlobalSearchFlowSeverity
+} from '../Framework/Search/GlobalSearchFlowTypes';
+import {
+  buildGlobalSearchCacheKey,
+  buildLegacyGlobalSearchCacheKey,
+  GlobalSearchCacheData,
+  GlobalSearchCachedComicInfo
+} from '../Framework/Search/GlobalSearchCacheBridge';
 
 
 const TAG = 'SourceDetailPage';
-
-function buildGlobalSearchCacheKey(sourceId: number, keyword: string): string {
-  const normalizedKeyword = keyword.trim().toLowerCase();
-  let hash = 0;
-  for (let i = 0; i < normalizedKeyword.length; i++) {
-    hash = ((hash << 5) - hash) + normalizedKeyword.charCodeAt(i);
-    hash = hash & hash;
-  }
-  return `global_search_cache_${sourceId}_${Math.abs(hash).toString(36)}`;
-}
 
 /**
  * 显示模式枚举
@@ -431,6 +433,7 @@ export struct SourceDetailPage {
   private mangaSourceEngine: MangaSourceEngine | null = null;
   private webViewSourceManager: WebViewSourceManager = WebViewSourceManager.getInstance();
   private sourceDetailSearchExecutor: SourceDetailSearchExecutor = getSourceDetailSearchExecutor();
+  private globalSearchFlowMonitor: GlobalSearchFlowMonitor = getGlobalSearchFlowMonitor();
   private authManager: WebViewAuthManager = WebViewAuthManager.getInstance();
   private debugWebViewBallStartX: number = 24;
   private debugWebViewBallStartY: number = 180;
@@ -487,9 +490,10 @@ export struct SourceDetailPage {
         const searchKeyword = param.searchKeyword as string | undefined;
         const searchType = param.searchType as string | undefined;
         const fromGlobalSearch = param.fromGlobalSearch as boolean | undefined;  // 是否来自全局搜索
+        const globalSearchSessionId = param.globalSearchSessionId as string | undefined;
         
         // 异步初始化
-        void this.initializePageWithParams(initialTab, searchKeyword, searchType, fromGlobalSearch);
+        void this.initializePageWithParams(initialTab, searchKeyword, searchType, fromGlobalSearch, globalSearchSessionId);
       }
     }
     
@@ -515,10 +519,11 @@ export struct SourceDetailPage {
     initialTab?: string,
     searchKeyword?: string,
     searchType?: string,
-    fromGlobalSearch?: boolean
+    fromGlobalSearch?: boolean,
+    globalSearchSessionId?: string
   ): Promise<void> {
     await this.loadSourceDebugMode();
-    await this.initializeAsyncWithParams(initialTab, searchKeyword, searchType, fromGlobalSearch);
+    await this.initializeAsyncWithParams(initialTab, searchKeyword, searchType, fromGlobalSearch, globalSearchSessionId);
   }
 
   private async initializeAsync(): Promise<void> {
@@ -529,7 +534,7 @@ export struct SourceDetailPage {
    * 异步初始化（带参数版本）
    * @param fromGlobalSearch 是否来自全局搜索，如果是则优先使用缓存结果
    */
-  private async initializeAsyncWithParams(initialTab?: string, searchKeyword?: string, searchType?: string, fromGlobalSearch?: boolean): Promise<void> {
+  private async initializeAsyncWithParams(initialTab?: string, searchKeyword?: string, searchType?: string, fromGlobalSearch?: boolean, globalSearchSessionId?: string): Promise<void> {
     try {
       // 首先加载 sourceName（用于页面跳转参数传递）
       await this.loadSourceName();
@@ -610,9 +615,12 @@ export struct SourceDetailPage {
       // 加载漫画列表（如果是搜索标签，执行搜索）
       if (this.currentTabId === 'search' && searchKeyword) {
         // 【关键】如果来自全局搜索，尝试使用缓存结果
-        if (fromGlobalSearch && this.tryLoadFromGlobalSearchCache(searchKeyword)) {
+        if (fromGlobalSearch && this.tryLoadFromGlobalSearchCache(searchKeyword, globalSearchSessionId || '')) {
           logger.info(TAG, '使用全局搜索缓存结果');
         } else {
+          if (fromGlobalSearch) {
+            this.recordGlobalSearchCacheEvent(globalSearchSessionId || '', GlobalSearchFlowEventType.DETAIL_CACHE_FALLBACK_SEARCH, searchKeyword, '', true, 'fallback_perform_search');
+          }
           await this.performSearch();
         }
       } else if (this.isLegadoMangaBridgeSource && this.currentTabId === 'search') {
@@ -699,12 +707,12 @@ export struct SourceDetailPage {
    * @param keyword 搜索关键词
    * @returns 是否成功加载
    */
-  private tryLoadFromGlobalSearchCache(keyword: string): boolean {
+  private tryLoadFromGlobalSearchCache(keyword: string, globalSearchSessionId: string): boolean {
     try {
-      const cacheKey = buildGlobalSearchCacheKey(this.sourceId, keyword);
-      const legacyCacheKey = `global_search_cache_${this.sourceId}`;
-      let activeCacheKey = cacheKey;
-      let cacheStr = AppStorage.get<string>(cacheKey);
+      const cacheKey: string = buildGlobalSearchCacheKey(this.sourceId, keyword);
+      const legacyCacheKey: string = buildLegacyGlobalSearchCacheKey(this.sourceId);
+      let activeCacheKey: string = cacheKey;
+      let cacheStr: string | undefined = AppStorage.get<string>(cacheKey);
       if (!cacheStr) {
         cacheStr = AppStorage.get<string>(legacyCacheKey);
         activeCacheKey = legacyCacheKey;
@@ -712,30 +720,17 @@ export struct SourceDetailPage {
       
       if (!cacheStr) {
         logger.info(TAG, `未找到全局搜索缓存: ${cacheKey}`);
+        this.recordGlobalSearchCacheEvent(globalSearchSessionId, GlobalSearchFlowEventType.DETAIL_CACHE_MISS, keyword, cacheKey, true, 'cache_not_found');
         return false;
       }
-      
-      interface CachedComicInfo {
-        id: string;
-        title: string;
-        author: string;
-        coverUrl: string;
-        description: string;
-        url: string;
-        status: string;
-      }
-      interface SearchCacheData {
-        keyword: string;
-        results: CachedComicInfo[];
-        timestamp: number;
-      }
-      
-      const cacheData: SearchCacheData = SafeUtils.parseObj(cacheStr) as SearchCacheData;
+      const cacheData: GlobalSearchCacheData = SafeUtils.parseObj(cacheStr) as GlobalSearchCacheData;
+      const flowSessionId: string = globalSearchSessionId.length > 0 ? globalSearchSessionId : (cacheData.globalSearchSessionId || '');
       
       // 检查关键词是否匹配
       if (cacheData.keyword !== keyword) {
         logger.info(TAG, `缓存关键词不匹配: 缓存="${cacheData.keyword}", 当前="${keyword}"`);
         AppStorage.delete(activeCacheKey);
+        this.recordGlobalSearchCacheEvent(flowSessionId, GlobalSearchFlowEventType.DETAIL_CACHE_KEYWORD_MISMATCH, keyword, activeCacheKey, true, `cached=${cacheData.keyword}`);
         return false;
       }
       
@@ -744,11 +739,12 @@ export struct SourceDetailPage {
       if (cacheAge > 5 * 60 * 1000) {
         logger.info(TAG, `全局搜索缓存已过期: ${cacheAge}ms`);
         AppStorage.delete(activeCacheKey);
+        this.recordGlobalSearchCacheEvent(flowSessionId, GlobalSearchFlowEventType.DETAIL_CACHE_EXPIRED, keyword, activeCacheKey, true, `age=${cacheAge}`);
         return false;
       }
       
       // 转换为 ComicInfo 格式
-      const comics: ComicInfo[] = cacheData.results.map((item: CachedComicInfo): ComicInfo => ({
+      const comics: ComicInfo[] = cacheData.results.map((item: GlobalSearchCachedComicInfo): ComicInfo => ({
         id: item.id,
         title: item.title,
         author: item.author,
@@ -768,6 +764,7 @@ export struct SourceDetailPage {
       this.lastSearchKeyword = keyword;
       
       logger.info(TAG, `成功加载全局搜索缓存: ${comics.length} 条结果`);
+      this.recordGlobalSearchCacheEvent(flowSessionId, GlobalSearchFlowEventType.DETAIL_CACHE_HIT, keyword, activeCacheKey, true, `items=${comics.length}`);
       
       // 清除缓存（一次性使用）
       AppStorage.delete(activeCacheKey);
@@ -775,8 +772,38 @@ export struct SourceDetailPage {
       return true;
     } catch (error) {
       logger.error(TAG, `加载全局搜索缓存失败: ${error}`);
+      this.recordGlobalSearchCacheEvent(globalSearchSessionId, GlobalSearchFlowEventType.DETAIL_CACHE_PARSE_FAILED, keyword, '', false, String(error));
       return false;
     }
+  }
+
+  private recordGlobalSearchCacheEvent(
+    sessionId: string,
+    eventType: GlobalSearchFlowEventType,
+    keyword: string,
+    cacheKey: string,
+    success: boolean,
+    detailOrError: string
+  ): void {
+    if (!sessionId || sessionId.length <= 0) {
+      return;
+    }
+    const event: GlobalSearchFlowEvent = this.globalSearchFlowMonitor.createEvent(sessionId, eventType, 'source_detail_cache');
+    event.keyword = keyword;
+    event.sourceId = String(this.sourceId);
+    event.sourceName = this.sourceName;
+    event.cacheKey = cacheKey;
+    event.cacheHit = eventType === GlobalSearchFlowEventType.DETAIL_CACHE_HIT;
+    event.success = success;
+    if (success) {
+      event.detail = detailOrError;
+    } else {
+      event.errorMessage = detailOrError;
+      event.severity = eventType === GlobalSearchFlowEventType.DETAIL_CACHE_PARSE_FAILED
+        ? GlobalSearchFlowSeverity.ERROR
+        : GlobalSearchFlowSeverity.WARN;
+    }
+    this.globalSearchFlowMonitor.record(event);
   }
 
   /**

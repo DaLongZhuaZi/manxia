@@ -18,7 +18,13 @@ import { ReplaceScope, NovelReplaceRuleManager, AddRuleParams } from '../Framewo
 import { LegadoChapter, LegadoBook, LegadoBookSourceType } from '../Framework/Novel/LegadoSourceTypes';
 import { NovelReaderPageParams } from './NovelBookshelfPage';
 import { NovelBook, NovelReadStatus } from '../Models/NovelModels';
-import { TextReaderComponent, PaginationMode, TextReaderHighlightRange } from '../components/TextReaderComponent';
+import {
+  TextReaderComponent,
+  PaginationMode,
+  TextReaderFlowEvent,
+  TextReaderFlowEventName,
+  TextReaderHighlightRange
+} from '../components/TextReaderComponent';
 import { TextFontSettingsPanel } from '../components/TextFontSettingsPanel';
 import { TextBackgroundSettingsPanel } from '../components/TextBackgroundSettingsPanel';
 import { TextReadingSettingsPanel2 } from '../components/TextReadingSettingsPanel2';
@@ -84,6 +90,17 @@ import { READER_ABILITY_HOST_MULTITON } from '../Framework/Reader/MangaReaderAbi
 import { openReadAloudPlayerInIsolatedAbility } from '../Framework/ReadAloud/ReadAloudPlayerAbilityLauncher';
 import { distributedReadingService } from '../Framework/Distributed/DistributedReadingService';
 import { distributedDataSyncManager, SyncReadingState } from '../Framework/Distributed/DistributedDataSyncManager';
+import { DetailOpenFlowMonitor } from '../Framework/Reader/DetailOpenFlowMonitor';
+import {
+  DetailOpenFlowEventType,
+  DetailOpenFlowTargetKind
+} from '../Framework/Reader/DetailOpenFlowTypes';
+import { NovelReadFlowMonitor } from '../Framework/Reader/NovelReadFlowMonitor';
+import {
+  NovelReadFlowEventType,
+  NovelReadFlowSessionInfo,
+  NovelReadFlowSeverity
+} from '../Framework/Reader/NovelReadFlowTypes';
 
 const TAG = 'NovelReaderPage';
 const NOVEL_SETTINGS_STORE = 'novel_settings';
@@ -157,6 +174,9 @@ export struct NovelReaderPage {
   private sourceCoverComponentId: string = '';
   private readerHostMode: string = '';
   private readerInstanceId: string = '';
+  private readerOpenFlowId: string = '';
+  private novelReadFlowId: string = '';
+  private novelReadLoadStartedAt: number = 0;
   private hasNotifiedTransitionReaderReady: boolean = false;
   private isCloseTransitionNavigating: boolean = false;
 
@@ -342,6 +362,10 @@ export struct NovelReaderPage {
       cancelTransition();
     } else {
       logger.info(TAG, '页面销毁：关闭动画进行中，跳过cancelTransition');
+    }
+    if (this.novelReadFlowId.length > 0) {
+      NovelReadFlowMonitor.getInstance().endSession(this.novelReadFlowId, 'about_to_disappear');
+      this.novelReadFlowId = '';
     }
   }
 
@@ -665,6 +689,148 @@ export struct NovelReaderPage {
     this.reportTransitionLoadingProgress(1, `ready_${reason}`);
     setReaderReady();
     logger.info(TAG, `📖 已通知过渡动画阅读器就绪: ${reason}`);
+    this.recordNovelReadFlowEvent(NovelReadFlowEventType.READER_READY, reason, 0, true, '');
+    this.markDetailOpenReaderReady(reason, true, '');
+  }
+
+  private startNovelReadFlowSession(reason: string): void {
+    if (this.novelReadFlowId.length > 0) {
+      return;
+    }
+    const info = new NovelReadFlowSessionInfo();
+    info.readerOpenFlowId = this.readerOpenFlowId;
+    info.sourceId = this.sourceId;
+    info.bookId = this.bookId;
+    info.bookTitle = this.bookName;
+    info.chapterId = this.chapterId;
+    info.chapterTitle = this.chapterTitle;
+    info.chapterIndex = this.currentChapterIndex;
+    info.totalChapters = this.totalChapters;
+    info.readerHostMode = this.readerHostMode;
+    info.readerInstanceId = this.readerInstanceId;
+    this.novelReadFlowId = NovelReadFlowMonitor.getInstance().startSession(info);
+    this.recordNovelReadFlowEvent(NovelReadFlowEventType.PARAM_BOUND, reason, 0, true, `host=${this.readerHostMode}, instance=${this.readerInstanceId}`);
+  }
+
+  private recordNovelReadFlowEvent(
+    eventType: NovelReadFlowEventType,
+    reason: string,
+    elapsedMs: number,
+    success: boolean,
+    detail: string
+  ): void {
+    if (this.novelReadFlowId.length <= 0) {
+      this.startNovelReadFlowSession('auto_start_for_event');
+    }
+    if (this.novelReadFlowId.length <= 0) {
+      return;
+    }
+    const event = NovelReadFlowMonitor.getInstance().createEvent(
+      this.novelReadFlowId,
+      eventType,
+      this.bookId,
+      this.chapterId,
+      this.currentChapterIndex,
+      reason
+    );
+    event.readerOpenFlowId = this.readerOpenFlowId;
+    event.sourceId = this.sourceId;
+    event.chapterTitle = this.chapterTitle;
+    event.pageIndex = this.currentPageIndex;
+    event.pageCount = this.currentChapterTotalPages;
+    event.elapsedMs = Math.max(0, elapsedMs);
+    event.success = success;
+    event.detail = detail;
+    if (!success) {
+      event.severity = NovelReadFlowSeverity.ERROR;
+      event.errorMessage = detail;
+    }
+    if (event.elapsedMs > 0) {
+      event.metricName = `novel_read.${eventType}`;
+      event.metricValue = event.elapsedMs;
+      event.metricUnit = 'ms';
+    }
+    NovelReadFlowMonitor.getInstance().record(event);
+  }
+
+  private handleTextReaderFlowEvent(event: TextReaderFlowEvent): void {
+    if (this.novelReadFlowId.length <= 0) {
+      this.startNovelReadFlowSession('text_reader_flow_event');
+    }
+    if (this.novelReadFlowId.length <= 0) {
+      return;
+    }
+    let eventType = NovelReadFlowEventType.PAGINATION_STARTED;
+    if (event.eventName === TextReaderFlowEventName.PAGINATION_CACHE_HIT) {
+      eventType = NovelReadFlowEventType.PAGINATION_CACHE_HIT;
+    } else if (event.eventName === TextReaderFlowEventName.PAGINATION_COMPLETED) {
+      eventType = NovelReadFlowEventType.PAGINATION_COMPLETED;
+    } else if (event.eventName === TextReaderFlowEventName.PAGINATION_FAILED) {
+      eventType = NovelReadFlowEventType.PAGINATION_FAILED;
+    }
+    const flowEvent = NovelReadFlowMonitor.getInstance().createEvent(
+      this.novelReadFlowId,
+      eventType,
+      this.bookId,
+      this.chapterId,
+      this.currentChapterIndex,
+      event.reason
+    );
+    flowEvent.readerOpenFlowId = this.readerOpenFlowId;
+    flowEvent.sourceId = this.sourceId;
+    flowEvent.chapterTitle = this.chapterTitle;
+    flowEvent.pageIndex = event.pageIndex;
+    flowEvent.pageCount = event.pageCount;
+    flowEvent.elapsedMs = event.elapsedMs;
+    flowEvent.success = event.success;
+    flowEvent.detail = event.detail;
+    flowEvent.errorMessage = event.errorMessage;
+    if (!event.success) {
+      flowEvent.severity = NovelReadFlowSeverity.ERROR;
+    }
+    if (event.elapsedMs > 0) {
+      flowEvent.metricName = `novel_read.${eventType}`;
+      flowEvent.metricValue = event.elapsedMs;
+      flowEvent.metricUnit = 'ms';
+    }
+    NovelReadFlowMonitor.getInstance().record(flowEvent);
+  }
+
+  private resolveDetailOpenTargetKind(): DetailOpenFlowTargetKind {
+    if (this.shouldAutoStartReadAloud || this.shouldAutoOpenReadAloudPlayer) {
+      return DetailOpenFlowTargetKind.READ_ALOUD;
+    }
+    if (this.isLocalTxtNovelMode()) {
+      return DetailOpenFlowTargetKind.TXT_NOVEL;
+    }
+    return DetailOpenFlowTargetKind.NOVEL;
+  }
+
+  private markDetailOpenReaderReady(reason: string, success: boolean, detail: string): void {
+    if (this.readerOpenFlowId.length <= 0) {
+      return;
+    }
+    const event = DetailOpenFlowMonitor.getInstance().createEvent(
+      this.readerOpenFlowId,
+      success ? DetailOpenFlowEventType.READER_READY : DetailOpenFlowEventType.READER_FAILED,
+      this.bookId,
+      this.chapterId,
+      this.currentChapterIndex,
+      reason
+    );
+    event.targetKind = this.resolveDetailOpenTargetKind();
+    event.routeName = 'NovelReaderPage';
+    event.chapterTitle = this.chapterTitle;
+    event.elapsedMs = DetailOpenFlowMonitor.getInstance().getSessionElapsedMs(this.readerOpenFlowId);
+    event.success = success;
+    event.detail = detail;
+    if (!success) {
+      event.errorMessage = detail;
+    }
+    DetailOpenFlowMonitor.getInstance().record(event);
+    if (success) {
+      DetailOpenFlowMonitor.getInstance().endSession(this.readerOpenFlowId, reason);
+    }
   }
 
   /**
@@ -1596,6 +1762,8 @@ export struct NovelReaderPage {
   }
 
   async loadContent(): Promise<void> {
+    const loadStartedAt = Date.now();
+    this.novelReadLoadStartedAt = loadStartedAt;
     this.hasNotifiedTransitionReaderReady = false;
     this.transitionLoadingProgress = 0;
     this.isLoading = true;
@@ -1604,6 +1772,7 @@ export struct NovelReaderPage {
     this.isCurrentPageBookmarked = false;
     this.currentPageBookmarkId = '';
     this.reportTransitionLoadingProgress(0.06, 'load_start');
+    this.recordNovelReadFlowEvent(NovelReadFlowEventType.LOAD_STARTED, 'load_content_start', 0, true, '');
     try {
       // [优化] 确保净化规则管理器已初始化并加载最新规则
       this.setupFullscreenMode();
@@ -1614,12 +1783,28 @@ export struct NovelReaderPage {
       await ruleManager.initialize();
       await ruleManager.refreshRules();
       this.reportTransitionLoadingProgress(0.2, 'rules_ready');
+      this.recordNovelReadFlowEvent(
+        NovelReadFlowEventType.RULES_READY,
+        'rules_ready',
+        Math.max(0, Date.now() - loadStartedAt),
+        true,
+        ''
+      );
       
       // 加载章节列表（如果还没有加载）
+      const chapterListStartedAt = Date.now();
+      const hadChapterList = this.chapterList.length > 0;
       if (this.chapterList.length === 0) {
         await this.loadChapterList();
       }
       this.reportTransitionLoadingProgress(0.38, 'chapter_list_ready');
+      this.recordNovelReadFlowEvent(
+        NovelReadFlowEventType.CHAPTER_LIST_READY,
+        hadChapterList ? 'chapter_list_existing' : 'chapter_list_loaded',
+        Math.max(0, Date.now() - chapterListStartedAt),
+        this.chapterList.length > 0,
+        `chapters=${this.chapterList.length}`
+      );
       
       const currentChapter = this.chapterList[this.currentChapterIndex];
       if (currentChapter) {
@@ -1629,6 +1814,7 @@ export struct NovelReaderPage {
       }
       
       // Prefer preparsed chapter content when available to avoid duplicate parsing.
+      const chapterContentStartedAt = Date.now();
       const preparsedContent = this.preparsedChapterContent.get(this.currentChapterIndex);
       if (preparsedContent !== undefined) {
         this.preparsedChapterContent.delete(this.currentChapterIndex);
@@ -1636,6 +1822,13 @@ export struct NovelReaderPage {
         this.updatePreparedTextChapterState(this.currentChapterIndex, preparsedContent);
         logger.info(TAG, `hit preparsed chapter cache: index=${this.currentChapterIndex}`);
         this.reportTransitionLoadingProgress(0.62, 'chapter_content_ready');
+        this.recordNovelReadFlowEvent(
+          NovelReadFlowEventType.CHAPTER_CONTENT_READY,
+          'preparsed_cache_hit',
+          Math.max(0, Date.now() - chapterContentStartedAt),
+          true,
+          `contentLength=${this.content.length}`
+        );
       } else {
         const rawContent = await this.getRawChapterContent(this.currentChapterIndex);
         if (rawContent) {
@@ -1644,6 +1837,13 @@ export struct NovelReaderPage {
           logger.info(TAG, `chapter content is empty: ${this.chapterTitle}`);
         }
         this.reportTransitionLoadingProgress(0.62, 'chapter_content_ready');
+        this.recordNovelReadFlowEvent(
+          NovelReadFlowEventType.CHAPTER_CONTENT_READY,
+          rawContent ? 'chapter_content_loaded' : 'chapter_content_empty',
+          Math.max(0, Date.now() - chapterContentStartedAt),
+          rawContent !== null && rawContent !== undefined && rawContent.length > 0,
+          rawContent ? `rawLength=${rawContent.length}` : 'rawContentEmpty'
+        );
 
         if (!rawContent) {
           this.content = 'Load failed, please retry';
@@ -1659,6 +1859,13 @@ export struct NovelReaderPage {
         }
       }
       this.reportTransitionLoadingProgress(0.76, 'content_processed');
+      this.recordNovelReadFlowEvent(
+        NovelReadFlowEventType.CONTENT_PROCESSED,
+        'content_processed',
+        Math.max(0, Date.now() - loadStartedAt),
+        true,
+        `contentLength=${this.content.length}`
+      );
       await this.refreshCurrentChapterHighlightRanges('load_content');
       
       // 加载阅读进度
@@ -1671,6 +1878,13 @@ export struct NovelReaderPage {
       this.updateReadAloudContextByPosition();
       this.tryHandleAutoReadAloudEntry();
       this.reportTransitionLoadingProgress(0.9, 'progress_restored');
+      this.recordNovelReadFlowEvent(
+        NovelReadFlowEventType.PROGRESS_RESTORED,
+        'progress_restored',
+        Math.max(0, Date.now() - loadStartedAt),
+        true,
+        `page=${this.currentPageIndex}, startOffset=${this.currentPageStartCharIndex}`
+      );
       this.scheduleCrossChapterPrefetch();
       this.syncOverallReadProgress('load_content_success');
       this.refreshCurrentNovelBookmarkState('load_content_success');
@@ -1683,6 +1897,13 @@ export struct NovelReaderPage {
       this.isCurrentPageBookmarked = false;
       this.currentPageBookmarkId = '';
       this.reportTransitionLoadingProgress(0.9, 'load_failed_fallback');
+      this.recordNovelReadFlowEvent(
+        NovelReadFlowEventType.ERROR,
+        'load_content_failed',
+        Math.max(0, Date.now() - loadStartedAt),
+        false,
+        String(error)
+      );
       this.syncOverallReadProgress('load_content_failed');
     }
     this.isLoading = false;
@@ -2127,6 +2348,13 @@ export struct NovelReaderPage {
     this.syncOverallReadProgress('page_change');
     this.refreshCurrentNovelBookmarkState('page_change');
     logger.info(TAG, `页面切换: ${pageIndex + 1}/${totalPages}`);
+    this.recordNovelReadFlowEvent(
+      NovelReadFlowEventType.PAGE_CHANGED,
+      'page_change',
+      0,
+      true,
+      `page=${pageIndex + 1}/${totalPages}`
+    );
 
     // 页码变化立即落库，避免短时阅读/异常退出时进度丢失
     const now = Date.now();
@@ -2136,6 +2364,13 @@ export struct NovelReaderPage {
 
   onChapterChange(chapterIndex: number, switchIntent: TextChapterSwitchIntent = TextChapterSwitchIntent.DEFAULT): void {
     logger.info(TAG, `章节切换请求: ${chapterIndex}, intent=${switchIntent}`);
+    this.recordNovelReadFlowEvent(
+      NovelReadFlowEventType.CHAPTER_SWITCH,
+      `chapter_change_${switchIntent}`,
+      0,
+      true,
+      `target=${chapterIndex}`
+    );
     void this.handleReaderChapterChange(chapterIndex, switchIntent);
   }
 
@@ -2452,6 +2687,7 @@ export struct NovelReaderPage {
       return;
     }
 
+    const saveStartedAt = Date.now();
     try {
       const candidateNow = Date.now();
       const now = candidateNow > this.lastProgressReadTime ? candidateNow : (this.lastProgressReadTime + 1);
@@ -2492,6 +2728,13 @@ export struct NovelReaderPage {
         ebook.readingProgress.lastReadTime = progress.lastReadTime;
         ebook.readingProgress.totalReadingTime = progress.totalReadingTime;
         logger.debug(TAG, `保存本地 TXT 小说阅读进度: chapter=${this.currentChapterIndex}, page=${this.currentPageIndex}`);
+        this.recordNovelReadFlowEvent(
+          NovelReadFlowEventType.PROGRESS_SAVED,
+          'local_txt_progress_saved',
+          Math.max(0, Date.now() - saveStartedAt),
+          true,
+          `page=${this.currentPageIndex}`
+        );
         return;
       }
       const progress: NovelReadProgress = {
@@ -2523,8 +2766,22 @@ export struct NovelReaderPage {
       );
       
       logger.debug(TAG, `保存阅读进度: 章节${this.currentChapterIndex}, 页面${this.currentPageIndex}`);
+      this.recordNovelReadFlowEvent(
+        NovelReadFlowEventType.PROGRESS_SAVED,
+        'progress_saved',
+        Math.max(0, Date.now() - saveStartedAt),
+        true,
+        `page=${this.currentPageIndex}`
+      );
     } catch (error) {
       logger.error(TAG, `保存阅读进度失败: ${String(error)}`);
+      this.recordNovelReadFlowEvent(
+        NovelReadFlowEventType.PROGRESS_SAVED,
+        'progress_save_failed',
+        Math.max(0, Date.now() - saveStartedAt),
+        false,
+        String(error)
+      );
     }
   }
 
@@ -2627,7 +2884,10 @@ export struct NovelReaderPage {
       coverUrl: this.bookCoverUrl,
       content: this.content,
       pageIndex: this.currentPageIndex,
-      resumeCharIndex: safeResumeCharIndex
+      resumeCharIndex: safeResumeCharIndex,
+      readerOpenFlowId: this.readerOpenFlowId,
+      sourceId: this.sourceId,
+      totalChapters: this.totalChapters
     });
   }
 
@@ -4029,6 +4289,7 @@ export struct NovelReaderPage {
         this.sourceCoverComponentId = param.coverComponentId || '';
         this.readerHostMode = param.readerHostMode || '';
         this.readerInstanceId = param.readerInstanceId || '';
+        this.readerOpenFlowId = param.readerOpenFlowId || '';
         this.sourceId = param.sourceId;
         this.localEbook = null;
         this.localEbookId = param.localEbookId
@@ -4085,6 +4346,7 @@ export struct NovelReaderPage {
         this.bookCoverUrl = param.coverUrl || '';
         this.shouldAutoStartReadAloud = param.autoStartReadAloud === true;
         this.shouldAutoOpenReadAloudPlayer = param.autoOpenReadAloudPlayer === true;
+        this.startNovelReadFlowSession('nav_destination_ready');
         this.syncOverallReadProgress('on_ready_params');
         AppStorage.setOrCreate('ReadAloudCurrentHostPage', 'NovelReaderPage');
         void this.initializeReaderAfterReady();
@@ -4148,6 +4410,9 @@ export struct NovelReaderPage {
       enableNovelAnnotations: true,
       novelHighlightRanges: this.currentChapterHighlightRanges,
       paginationMode: this.getReaderPaginationMode(),
+      onFlowEvent: (event: TextReaderFlowEvent) => {
+        this.handleTextReaderFlowEvent(event);
+      },
       pendingSeekChapterIndex: this.pendingSeekChapterIndex,
       pendingSeekChapterFraction: this.pendingSeekChapterFraction,
       onPageChange: (pageIndex: number, totalPages: number) => this.onPageChange(pageIndex, totalPages),

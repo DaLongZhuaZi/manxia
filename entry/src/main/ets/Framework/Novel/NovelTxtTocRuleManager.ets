@@ -8,10 +8,13 @@
  */
 
 import { logger } from '../../Utils/Logger';
+import { SettingsManager } from '../Managers/SettingsManager';
 import { getNovelDataManager } from './NovelDataManager';
 import { DEFAULT_TXT_TOC_RULES as SETTINGS_TXT_TOC_RULES, TxtTocRule as SettingsTxtTocRule } from './NovelSettingsManager';
 
 const TAG = 'NovelTxtTocRuleManager';
+const ENHANCED_BUILT_IN_RULE_VERSION_KEY = 'novel_txt_toc_enhanced_builtin_rules_version';
+const ENHANCED_BUILT_IN_RULE_VERSION = '2026-06-12_multilingual_comic_photo_v2';
 
 /**
  * TXT目录规则
@@ -103,6 +106,9 @@ export class NovelTxtTocRuleManager {
       // 如果没有规则，导入默认规则
       if (this.rules.size === 0) {
         await this.importDefaultRules();
+        await this.markEnhancedBuiltInRulesSynced();
+      } else {
+        await this.syncEnhancedBuiltInRules();
       }
       
       this.compilePatterns();
@@ -129,6 +135,64 @@ export class NovelTxtTocRuleManager {
       await this.addRule(params);
     }
     logger.info(TAG, `已导入 ${DEFAULT_TXT_TOC_RULES.length} 条默认TXT目录规则`);
+  }
+
+  private async syncEnhancedBuiltInRules(): Promise<void> {
+    const settingsManager = SettingsManager.getInstance();
+    const syncedVersion = settingsManager.getString(ENHANCED_BUILT_IN_RULE_VERSION_KEY, '');
+    if (syncedVersion === ENHANCED_BUILT_IN_RULE_VERSION) {
+      return;
+    }
+
+    let nextSerialNumber = this.getNextSerialNumber();
+    let addedCount = 0;
+    for (let i = 0; i < DEFAULT_TXT_TOC_RULES.length; i++) {
+      const rule = DEFAULT_TXT_TOC_RULES[i];
+      if (!this.isEnhancedBuiltInRule(rule) || this.hasRuleWithName(rule.name)) {
+        continue;
+      }
+      const params: AddTxtTocRuleParams = {
+        name: rule.name,
+        rule: rule.rule,
+        example: rule.example,
+        serialNumber: nextSerialNumber,
+        enabled: rule.enabled !== false
+      };
+      await this.addRule(params);
+      nextSerialNumber++;
+      addedCount++;
+    }
+
+    await this.markEnhancedBuiltInRulesSynced();
+    logger.info(TAG, `增强内置TXT目录规则同步完成: version=${ENHANCED_BUILT_IN_RULE_VERSION}, added=${addedCount}`);
+  }
+
+  private async markEnhancedBuiltInRulesSynced(): Promise<void> {
+    const settingsManager = SettingsManager.getInstance();
+    await settingsManager.setString(ENHANCED_BUILT_IN_RULE_VERSION_KEY, ENHANCED_BUILT_IN_RULE_VERSION);
+  }
+
+  private isEnhancedBuiltInRule(rule: AddTxtTocRuleParams): boolean {
+    return rule.name.indexOf('多语言目录') === 0 || rule.name.indexOf('漫画写真目录') === 0;
+  }
+
+  private hasRuleWithName(name: string): boolean {
+    for (const rule of this.rules.values()) {
+      if (rule.name === name) {
+        return true;
+      }
+    }
+    return false;
+  }
+
+  private getNextSerialNumber(): number {
+    let maxSerialNumber = -1;
+    for (const rule of this.rules.values()) {
+      if (rule.serialNumber > maxSerialNumber) {
+        maxSerialNumber = rule.serialNumber;
+      }
+    }
+    return maxSerialNumber + 1;
   }
 
   /**
@@ -610,6 +674,7 @@ export class NovelTxtTocRuleManager {
     
     // 导入默认规则
     await this.importDefaultRules();
+    await this.markEnhancedBuiltInRulesSynced();
     this.compilePatterns();
     
     logger.info(TAG, '已重置为默认TXT目录规则');

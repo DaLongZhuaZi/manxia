@@ -125,6 +125,9 @@ struct DownloadManagerPage {
   private dataManager: DataManager = DataManager.getInstance();
   private hostContext: common.UIAbilityContext | null = null;
   private updateTimer: number = -1;
+  private lastDownloadTaskSignature: string = '';
+  private lastCacheListSignature: string = '';
+  private isCacheListLoadPending: boolean = false;
   private readonly contentTypeTabOrder: DownloadContentTypeTab[] = ['downloads', 'manga_cache', 'migration', 'file_structure'];
 
   private onMangaCacheUpdated: (payload: IEventPayload) => void = (payload: IEventPayload): void => {
@@ -195,21 +198,7 @@ struct DownloadManagerPage {
       // 同时加载缓存列表
       this.loadCacheLists();
       
-      // 转换为页面使用的格式
-      this.downloadTasks = tasks.map((task: DownloadTaskInfo) => {
-        return {
-          id: task.id,
-          mangaTitle: task.mangaTitle,
-          chapterTitle: task.chapterTitle,
-          progress: task.progress,
-          status: this.convertTaskStatus(task.status),
-          totalPages: task.totalCount,
-          downloadedPages: task.downloadedCount,
-          failedPages: task.failedPageIndexes?.length || 0,
-          speed: this.calculateSpeed(task),
-          remainingTime: this.calculateRemainingTime(task)
-        } as DownloadTask;
-      });
+      this.applyDownloadTasks(tasks);
       
       this.isLoading = false;
       logger.info(TAG, `加载了 ${this.downloadTasks.length} 个下载任务`);
@@ -240,20 +229,43 @@ struct DownloadManagerPage {
    */
   private refreshTasks(): void {
     const tasks = this.downloadManager.getAllTasks();
-    this.downloadTasks = tasks.map((task: DownloadTaskInfo) => {
-      return {
-        id: task.id,
-        mangaTitle: task.mangaTitle,
-        chapterTitle: task.chapterTitle,
-        progress: task.progress,
-        status: this.convertTaskStatus(task.status),
-        totalPages: task.totalCount,
-        downloadedPages: task.downloadedCount,
-        failedPages: task.failedPageIndexes?.length || 0,
-        speed: this.calculateSpeed(task),
-        remainingTime: this.calculateRemainingTime(task)
-      } as DownloadTask;
+    this.applyDownloadTasks(tasks);
+  }
+
+  private applyDownloadTasks(tasks: DownloadTaskInfo[]): void {
+    const mappedTasks: DownloadTask[] = tasks.map((task: DownloadTaskInfo) => {
+      return this.toDownloadTask(task);
     });
+    const signature: string = this.buildDownloadTaskSignature(mappedTasks);
+    if (signature === this.lastDownloadTaskSignature) {
+      return;
+    }
+    this.lastDownloadTaskSignature = signature;
+    this.downloadTasks = mappedTasks;
+  }
+
+  private toDownloadTask(task: DownloadTaskInfo): DownloadTask {
+    return {
+      id: task.id,
+      mangaTitle: task.mangaTitle,
+      chapterTitle: task.chapterTitle,
+      progress: task.progress,
+      status: this.convertTaskStatus(task.status),
+      totalPages: task.totalCount,
+      downloadedPages: task.downloadedCount,
+      failedPages: task.failedPageIndexes?.length || 0,
+      speed: this.calculateSpeed(task),
+      remainingTime: this.calculateRemainingTime(task)
+    } as DownloadTask;
+  }
+
+  private buildDownloadTaskSignature(tasks: DownloadTask[]): string {
+    const parts: string[] = new Array<string>();
+    for (let i = 0; i < tasks.length; i++) {
+      const task = tasks[i];
+      parts.push(`${task.id}:${task.status}:${task.progress}:${task.downloadedPages}:${task.failedPages}:${task.totalPages}`);
+    }
+    return parts.join('|');
   }
   
   /**
@@ -315,6 +327,11 @@ struct DownloadManagerPage {
    * [改进] 直接从数据库查询所有有缓存的漫画，不再依赖文件系统扫描
    */
   private async loadCacheLists(): Promise<void> {
+    if (this.isCacheListLoadPending) {
+      logger.debug(TAG, '缓存列表加载已在进行，跳过重复请求');
+      return;
+    }
+    this.isCacheListLoadPending = true;
     this.isCacheLoading = true;
     try {
       // [改进] 直接从数据库获取所有有缓存的漫画
@@ -343,14 +360,30 @@ struct DownloadManagerPage {
           }
         }
       }
-      this.mangaCacheList = mangaCacheList;
+      const cacheListSignature: string = this.buildCacheListSignature(mangaCacheList);
+      if (cacheListSignature !== this.lastCacheListSignature) {
+        this.lastCacheListSignature = cacheListSignature;
+        this.mangaCacheList = mangaCacheList;
+      }
       
       logger.info(TAG, `加载了 ${this.mangaCacheList.length} 个漫画缓存`);
     } catch (error) {
       logger.error(TAG, `加载缓存列表失败: ${String(error)}`);
     } finally {
+      this.isCacheListLoadPending = false;
       this.isCacheLoading = false;
     }
+  }
+
+  private buildCacheListSignature(items: ContentCacheStats[]): string {
+    const parts: string[] = new Array<string>();
+    for (let i = 0; i < items.length; i++) {
+      const item = items[i];
+      parts.push(
+        `${item.contentType}:${item.sourceId}:${item.contentId}:${item.cachedChapterCount}:${item.totalChapterCount}:${item.cachedPageCount}:${item.totalPageCount}:${item.cacheSize}`
+      );
+    }
+    return parts.join('|');
   }
   
   /**

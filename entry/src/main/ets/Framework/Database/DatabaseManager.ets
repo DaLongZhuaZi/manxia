@@ -183,6 +183,7 @@ export class DatabaseManager {
       'ONLINE_COMIC_INDEX',
       'ONLINE_CHAPTER',
       'ONLINE_CHAPTER_INDEX',
+      'ONLINE_CHAPTER_CACHE_STATE',
       'ONLINE_PAGE',
       'ONLINE_READ_HISTORY',
       'TRACK_RECORD',
@@ -218,6 +219,7 @@ export class DatabaseManager {
       CREATE_TABLE_SQL.ONLINE_COMIC_UNIQUE_INDEX as string,
       CREATE_TABLE_SQL.ONLINE_CHAPTER as string,
       CREATE_TABLE_SQL.ONLINE_CHAPTER_UNIQUE_INDEX as string,
+      CREATE_TABLE_SQL.ONLINE_CHAPTER_CACHE_STATE as string,
       CREATE_TABLE_SQL.ONLINE_PAGE as string
       , CREATE_TABLE_SQL.ONLINE_READ_HISTORY as string,
       CREATE_TABLE_SQL.TRACK_RECORD as string,
@@ -988,6 +990,10 @@ export class DatabaseManager {
       // 直接设置属性，绕过setRecordProperty的类型转换问题
       if (columnName === 'id') {
         record.id = value;
+      } else if (columnName === 'mangaId') {
+        record.mangaId = value;
+      } else if (columnName === 'mangaTitle') {
+        record.mangaTitle = value;
       } else if (columnName === 'comicId') {
         record.comicId = value;
       } else if (columnName === 'externalId') {
@@ -1038,12 +1044,34 @@ export class DatabaseManager {
         record.chapterIndex = value;
       } else if (columnName === 'pageCount') {
         record.pageCount = value;
+      } else if (columnName === 'chapterPageCount') {
+        record.chapterPageCount = value;
       } else if (columnName === 'isDownloaded') {
         record.isDownloaded = value;
       } else if (columnName === 'downloadPath') {
         record.downloadPath = value;
       } else if (columnName === 'publishTime') {
         record.publishTime = value;
+      } else if (columnName === 'archivePath') {
+        record.archivePath = value;
+      } else if (columnName === 'storageType') {
+        record.storageType = value;
+      } else if (columnName === 'cachedPageCount') {
+        record.cachedPageCount = value;
+      } else if (columnName === 'totalPageCount') {
+        record.totalPageCount = value;
+      } else if (columnName === 'archiveSize') {
+        record.archiveSize = value;
+      } else if (columnName === 'imageEntryCount') {
+        record.imageEntryCount = value;
+      } else if (columnName === 'hasComicInfo') {
+        record.hasComicInfo = value;
+      } else if (columnName === 'failedPageIndexes') {
+        record.failedPageIndexes = value;
+      } else if (columnName === 'lastScanTime') {
+        record.lastScanTime = value;
+      } else if (columnName === 'cacheStatus') {
+        record.cacheStatus = value;
       } else if (columnName === 'index') {
         record.index = value;
       } else if (columnName === 'imageUrl') {
@@ -1204,6 +1232,8 @@ export class DatabaseManager {
         record.type = value;
       } else if (columnName === 'requireProxy') {
         record.requireProxy = value;
+      } else if (columnName === 'sourceName') {
+        record.sourceName = value;
       } else if (columnName === 'sourcePkg') {
         record.sourcePkg = value;
       } else if (columnName === 'isNSFW') {
@@ -1228,6 +1258,8 @@ export class DatabaseManager {
     const m = new Map<string, (record: GenericQueryRecord, value: DatabaseValue) => void>();
     // 通用字段
     m.set('id', (r: GenericQueryRecord, v: DatabaseValue): void => { r.id = v; });
+    m.set('mangaId', (r: GenericQueryRecord, v: DatabaseValue): void => { r.mangaId = v; });
+    m.set('mangaTitle', (r: GenericQueryRecord, v: DatabaseValue): void => { r.mangaTitle = v; });
     m.set('comicId', (r: GenericQueryRecord, v: DatabaseValue): void => { r.comicId = v; });
     m.set('externalId', (r: GenericQueryRecord, v: DatabaseValue): void => { r.externalId = v; });
     m.set('chapterId', (r: GenericQueryRecord, v: DatabaseValue): void => { r.chapterId = v; });
@@ -1275,10 +1307,20 @@ export class DatabaseManager {
     m.set('chapterIndex', (r: GenericQueryRecord, v: DatabaseValue): void => { r.chapterIndex = v; });
     m.set('chapterNumber', (r: GenericQueryRecord, v: DatabaseValue): void => { r.chapterNumber = v; });
     m.set('pageCount', (r: GenericQueryRecord, v: DatabaseValue): void => { r.pageCount = v; });
+    m.set('chapterPageCount', (r: GenericQueryRecord, v: DatabaseValue): void => { r.chapterPageCount = v; });
     m.set('isDownloaded', (r: GenericQueryRecord, v: DatabaseValue): void => { r.isDownloaded = v; });
     m.set('downloadPath', (r: GenericQueryRecord, v: DatabaseValue): void => { r.downloadPath = v; });
     m.set('publishTime', (r: GenericQueryRecord, v: DatabaseValue): void => { r.publishTime = v; });
     m.set('url', (r: GenericQueryRecord, v: DatabaseValue): void => { r.url = v; });
+    m.set('archivePath', (r: GenericQueryRecord, v: DatabaseValue): void => { r.archivePath = v; });
+    m.set('storageType', (r: GenericQueryRecord, v: DatabaseValue): void => { r.storageType = v; });
+    m.set('cachedPageCount', (r: GenericQueryRecord, v: DatabaseValue): void => { r.cachedPageCount = v; });
+    m.set('totalPageCount', (r: GenericQueryRecord, v: DatabaseValue): void => { r.totalPageCount = v; });
+    m.set('archiveSize', (r: GenericQueryRecord, v: DatabaseValue): void => { r.archiveSize = v; });
+    m.set('imageEntryCount', (r: GenericQueryRecord, v: DatabaseValue): void => { r.imageEntryCount = v; });
+    m.set('hasComicInfo', (r: GenericQueryRecord, v: DatabaseValue): void => { r.hasComicInfo = v; });
+    m.set('failedPageIndexes', (r: GenericQueryRecord, v: DatabaseValue): void => { r.failedPageIndexes = v; });
+    m.set('lastScanTime', (r: GenericQueryRecord, v: DatabaseValue): void => { r.lastScanTime = v; });
     // page 字段
     m.set('index', (r: GenericQueryRecord, v: DatabaseValue): void => { r.index = v; });
     m.set('imageUrl', (r: GenericQueryRecord, v: DatabaseValue): void => { r.imageUrl = v; });
@@ -1303,6 +1345,7 @@ export class DatabaseManager {
     m.set('iconPath', (r: GenericQueryRecord, v: DatabaseValue): void => { r.iconPath = v; });
     m.set('type', (r: GenericQueryRecord, v: DatabaseValue): void => { r.type = v; });
     m.set('requireProxy', (r: GenericQueryRecord, v: DatabaseValue): void => { r.requireProxy = v; });
+    m.set('sourceName', (r: GenericQueryRecord, v: DatabaseValue): void => { r.sourceName = v; });
     m.set('sourcePkg', (r: GenericQueryRecord, v: DatabaseValue): void => { r.sourcePkg = v; });
     m.set('version', (r: GenericQueryRecord, v: DatabaseValue): void => { r.version = v; });
     // 隐私/NSFW

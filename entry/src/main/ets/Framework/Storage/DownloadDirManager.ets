@@ -14,6 +14,7 @@ import { SettingsManager, SettingKeys } from '../Managers/SettingsManager';
 const TAG = 'DownloadDirManager';
 const DOWNLOAD_SYNC_DIR_PATH_KEY = 'downloadSyncDirPath';
 const DOWNLOAD_SYNC_DIR_URI_KEY = 'downloadSyncDirUri';
+const MANXIA_DOWNLOAD_APP_DIR = 'com.dlzz.manxia';
 
 /**
  * Download目录信息
@@ -22,6 +23,32 @@ export interface DownloadDirInfo {
   path: string;      // 文件系统路径
   uri: string;       // URI（用于后续访问）
   isInitialized: boolean;
+}
+
+export interface DownloadPathProbeResult {
+  path: string;
+  exists: boolean;
+  isDirectory: boolean;
+  isFile: boolean;
+  fileSize: number;
+}
+
+export interface OnlineMangaArchivePathRequest {
+  sourceId: string;
+  sourceName: string;
+  sourcePkg: string;
+  mangaTitle: string;
+  chapterTitle: string;
+  chapterId: string;
+  chapterNumber?: string;
+  externalChapterId: string;
+  storedArchivePath?: string;
+}
+
+export interface OnlineMangaArchiveLookupResult {
+  archivePath: string;
+  matchedBy: string;
+  candidates: string[];
 }
 
 /**
@@ -84,6 +111,27 @@ export class DownloadDirManager {
   }
 
   /**
+   * 获取应用专属Download根目录。
+   * 如果用户授权的是系统Download根目录，则实际业务目录为 Download/com.dlzz.manxia。
+   */
+  public getManagedRootPath(ensureExists: boolean = false): string {
+    if (!this.isReady()) {
+      return '';
+    }
+    const rawRoot = this.normalizeDirectoryPath(this.downloadDirPath);
+    if (rawRoot.length <= 0) {
+      return '';
+    }
+    const root = this.pathEndsWithSegment(rawRoot, MANXIA_DOWNLOAD_APP_DIR)
+      ? rawRoot
+      : `${rawRoot}/${MANXIA_DOWNLOAD_APP_DIR}`;
+    if (ensureExists) {
+      this.ensureAbsoluteDirectory(root);
+    }
+    return root;
+  }
+
+  /**
    * 获取Download目录URI
    */
   public getUri(): string {
@@ -136,7 +184,13 @@ export class DownloadDirManager {
       return true;
     }
 
-    const savedPath = AppStorage.get<string>(DOWNLOAD_SYNC_DIR_PATH_KEY);
+    let savedPath = AppStorage.get<string>(DOWNLOAD_SYNC_DIR_PATH_KEY);
+    let savedUri = AppStorage.get<string>(DOWNLOAD_SYNC_DIR_URI_KEY);
+    if (!savedPath || savedPath.length === 0) {
+      const settingsManager = SettingsManager.getInstance();
+      savedPath = settingsManager.getString(SettingKeys.DOWNLOAD_SYNC_DIR_PATH, '');
+      savedUri = settingsManager.getString(SettingKeys.DOWNLOAD_SYNC_DIR_URI, '');
+    }
     if (!savedPath || savedPath.length === 0) {
       return false;
     }
@@ -146,7 +200,6 @@ export class DownloadDirManager {
       return false;
     }
 
-    const savedUri = AppStorage.get<string>(DOWNLOAD_SYNC_DIR_URI_KEY);
     this.setDirInfo(savedPath, savedUri ? savedUri : '', false);
     logger.info(TAG, `已恢复Download目录访问状态: ${savedPath}`);
     return true;
@@ -261,9 +314,11 @@ export class DownloadDirManager {
       throw new Error('Download目录未初始化');
     }
 
-    const fullPath = relativePath.startsWith(this.downloadDirPath)
-      ? relativePath
-      : `${this.downloadDirPath}/${relativePath}`;
+    const normalizedRelative = this.normalizeDirectoryPath(relativePath);
+    const managedRoot = this.getManagedRootPath(true);
+    const fullPath = this.isAbsoluteFileSystemPath(normalizedRelative)
+      ? normalizedRelative
+      : `${managedRoot}/${normalizedRelative}`;
     try {
       const stat = SafeFileUtils.statSync(fullPath);
       if (!stat.isDirectory()) {
@@ -312,6 +367,99 @@ export class DownloadDirManager {
     return `${chapterDir}/${fileName}`;
   }
 
+  public buildStandardOnlineMangaArchivePath(request: OnlineMangaArchivePathRequest): string {
+    const root = this.getManagedRootPath(false);
+    if (root.length <= 0) {
+      return '';
+    }
+    const sourceSegment = this.resolvePrimarySourceSegment(request);
+    const mangaDir = this.sanitizeFolderName(request.mangaTitle.length > 0 ? request.mangaTitle : 'unknown_manga');
+    const chapterDir = this.sanitizeFolderName(request.chapterTitle.length > 0 ? request.chapterTitle : 'unknown_chapter');
+    const fileName = this.buildArchiveFileName(request.chapterTitle, request.chapterId);
+    return `${root}/manga/${sourceSegment}/${mangaDir}/${chapterDir}/${fileName}`;
+  }
+
+  public buildOnlineMangaArchiveCandidates(request: OnlineMangaArchivePathRequest): string[] {
+    const candidates: string[] = [];
+    const normalizedStoredPath = this.normalizeFileSystemPath(request.storedArchivePath || '');
+    if (normalizedStoredPath.length > 0) {
+      candidates.push(normalizedStoredPath);
+    }
+    const roots = this.resolveArchiveLookupRoots();
+    const sourceSegments = this.resolveArchiveSourceSegments(request);
+    const fileNames = this.resolveArchiveFileNames(request);
+    const mangaDir = this.sanitizeFolderName(request.mangaTitle.length > 0 ? request.mangaTitle : 'unknown_manga');
+    const chapterDir = this.sanitizeFolderName(request.chapterTitle.length > 0 ? request.chapterTitle : 'unknown_chapter');
+
+    for (let i = 0; i < roots.length; i++) {
+      const root = roots[i];
+      this.appendArchiveLayoutCandidates(candidates, `${root}/manga`, sourceSegments, mangaDir, chapterDir, fileNames);
+      this.appendArchiveLayoutCandidates(candidates, `${root}/online_archive`, sourceSegments, mangaDir, chapterDir, fileNames);
+      this.appendArchiveLayoutCandidates(candidates, root, sourceSegments, mangaDir, chapterDir, fileNames);
+      this.appendArchiveCrossSourceCandidates(candidates, `${root}/manga`, mangaDir, chapterDir, fileNames);
+      this.appendArchiveCrossSourceCandidates(candidates, `${root}/online_archive`, mangaDir, chapterDir, fileNames);
+    }
+    return this.deduplicatePaths(candidates);
+  }
+
+  public resolveExistingOnlineMangaArchive(request: OnlineMangaArchivePathRequest): OnlineMangaArchiveLookupResult {
+    const candidates = this.buildOnlineMangaArchiveCandidates(request);
+    for (let i = 0; i < candidates.length; i++) {
+      const candidate = candidates[i];
+      const probe = this.probePath(candidate);
+      if (probe.exists && probe.isFile && this.isCbzPath(candidate)) {
+        return this.createLookupResult(candidate, 'candidate_file', candidates);
+      }
+      if (probe.exists && probe.isDirectory) {
+        const discoveredInCandidate = this.findFirstCbzInDirectory(candidate);
+        if (discoveredInCandidate.length > 0) {
+          return this.createLookupResult(discoveredInCandidate, 'stored_directory_scan', candidates);
+        }
+      }
+
+      const parentDir = this.getParentDirectoryPath(candidate);
+      if (parentDir.length <= 0) {
+        continue;
+      }
+      const parentProbe = this.probePath(parentDir);
+      if (parentProbe.exists && parentProbe.isDirectory) {
+        const discovered = this.findFirstCbzInDirectory(parentDir);
+        if (discovered.length > 0) {
+          return this.createLookupResult(discovered, 'chapter_directory_scan', candidates);
+        }
+      }
+    }
+    return this.createLookupResult('', 'miss', candidates);
+  }
+
+  public probePath(path: string): DownloadPathProbeResult {
+    const normalizedPath = this.normalizeDirectoryPath(path);
+    const missing: DownloadPathProbeResult = {
+      path: normalizedPath,
+      exists: false,
+      isDirectory: false,
+      isFile: false,
+      fileSize: 0
+    };
+    if (normalizedPath.length <= 0 || !SafeFileUtils.accessSync(normalizedPath)) {
+      return missing;
+    }
+    try {
+      const stat = SafeFileUtils.statSyncStrict(normalizedPath);
+      const result: DownloadPathProbeResult = {
+        path: normalizedPath,
+        exists: true,
+        isDirectory: stat.isDirectory(),
+        isFile: !stat.isDirectory(),
+        fileSize: stat.size
+      };
+      return result;
+    } catch (error) {
+      logger.warn(TAG, `探测Download路径失败: ${normalizedPath}, ${String(error)}`);
+      return missing;
+    }
+  }
+
   /**
    * 获取图片保存路径
    */
@@ -330,6 +478,268 @@ export class DownloadDirManager {
       .replace(/\s+/g, ' ')           // 合并多个空格
       .trim()                          // 去除首尾空格
       .substring(0, 100);              // 限制长度
+  }
+
+  private resolvePrimarySourceSegment(request: OnlineMangaArchivePathRequest): string {
+    if (request.sourceName.trim().length > 0) {
+      return this.sanitizeFolderName(request.sourceName);
+    }
+    if (request.sourcePkg.trim().length > 0) {
+      return this.sanitizeFolderName(request.sourcePkg);
+    }
+    if (request.sourceId.trim().length > 0) {
+      return this.sanitizeFolderName(`source_${request.sourceId}`);
+    }
+    return 'unknown_source';
+  }
+
+  private resolveArchiveSourceSegments(request: OnlineMangaArchivePathRequest): string[] {
+    const segments: string[] = [];
+    this.appendSanitizedSegment(segments, request.sourceName);
+    this.appendSanitizedSegment(segments, request.sourcePkg);
+    this.appendSanitizedSegment(segments, request.sourceId);
+    if (request.sourceId.trim().length > 0) {
+      this.appendSanitizedSegment(segments, `source_${request.sourceId}`);
+    }
+    this.appendSanitizedSegment(segments, 'unknown_source');
+    return segments;
+  }
+
+  private resolveArchiveFileNames(request: OnlineMangaArchivePathRequest): string[] {
+    const fileNames: string[] = [];
+    this.appendArchiveFileName(fileNames, request.chapterTitle);
+    this.appendArchiveFileName(fileNames, request.externalChapterId);
+    this.appendArchiveFileName(fileNames, request.chapterNumber || '');
+    this.appendArchiveFileName(fileNames, request.chapterId);
+    this.appendArchiveFileName(fileNames, 'chapter');
+    return fileNames;
+  }
+
+  private appendArchiveLayoutCandidates(
+    candidates: string[],
+    rootPath: string,
+    sourceSegments: string[],
+    mangaDir: string,
+    chapterDir: string,
+    fileNames: string[]
+  ): void {
+    const root = this.normalizeDirectoryPath(rootPath);
+    if (root.length <= 0) {
+      return;
+    }
+    for (let i = 0; i < fileNames.length; i++) {
+      const fileName = fileNames[i];
+      candidates.push(`${root}/${mangaDir}/${chapterDir}/${fileName}`);
+      for (let j = 0; j < sourceSegments.length; j++) {
+        candidates.push(`${root}/${sourceSegments[j]}/${mangaDir}/${chapterDir}/${fileName}`);
+      }
+    }
+  }
+
+  private appendArchiveCrossSourceCandidates(
+    candidates: string[],
+    sourceRootPath: string,
+    mangaDir: string,
+    chapterDir: string,
+    fileNames: string[]
+  ): void {
+    const sourceRoot = this.normalizeDirectoryPath(sourceRootPath);
+    const rootProbe = this.probePath(sourceRoot);
+    if (!rootProbe.exists || !rootProbe.isDirectory) {
+      return;
+    }
+
+    try {
+      const sourceEntries = SafeFileUtils.listFileSync(sourceRoot);
+      for (let i = 0; i < sourceEntries.length; i++) {
+        const sourcePath = `${sourceRoot}/${sourceEntries[i]}`;
+        const sourceProbe = this.probePath(sourcePath);
+        if (!sourceProbe.exists || !sourceProbe.isDirectory) {
+          continue;
+        }
+        for (let j = 0; j < fileNames.length; j++) {
+          candidates.push(`${sourcePath}/${mangaDir}/${chapterDir}/${fileNames[j]}`);
+        }
+      }
+    } catch (error) {
+      logger.warn(TAG, `扫描Download图源目录候选失败: ${sourceRoot}, ${String(error)}`);
+    }
+  }
+
+  private appendSanitizedSegment(segments: string[], rawSegment: string): void {
+    const trimmed = rawSegment.trim();
+    if (trimmed.length <= 0) {
+      return;
+    }
+    const segment = this.sanitizeFolderName(trimmed);
+    for (let i = 0; i < segments.length; i++) {
+      if (segments[i] === segment) {
+        return;
+      }
+    }
+    segments.push(segment);
+  }
+
+  private appendArchiveFileName(fileNames: string[], rawName: string): void {
+    const trimmed = rawName.trim();
+    if (trimmed.length <= 0) {
+      return;
+    }
+    const fileName = this.buildArchiveFileName(trimmed, '');
+    for (let i = 0; i < fileNames.length; i++) {
+      if (fileNames[i] === fileName) {
+        return;
+      }
+    }
+    fileNames.push(fileName);
+  }
+
+  private buildArchiveFileName(rawName: string, fallbackName: string): string {
+    const name = rawName.trim().length > 0 ? rawName : fallbackName;
+    const sanitized = this.sanitizeFolderName(name.length > 0 ? name : 'chapter');
+    return `${sanitized}.cbz`;
+  }
+
+  private resolveArchiveLookupRoots(): string[] {
+    const roots: string[] = [];
+    if (!this.isReady()) {
+      return roots;
+    }
+    const managedRoot = this.getManagedRootPath(false);
+    if (managedRoot.length > 0) {
+      roots.push(managedRoot);
+    }
+    const rawRoot = this.normalizeDirectoryPath(this.downloadDirPath);
+    if (rawRoot.length > 0) {
+      roots.push(rawRoot);
+    }
+    return this.deduplicatePaths(roots);
+  }
+
+  private createLookupResult(archivePath: string, matchedBy: string, candidates: string[]): OnlineMangaArchiveLookupResult {
+    const result: OnlineMangaArchiveLookupResult = {
+      archivePath: archivePath,
+      matchedBy: matchedBy,
+      candidates: candidates
+    };
+    return result;
+  }
+
+  private findFirstCbzInDirectory(directoryPath: string): string {
+    const normalizedDirectory = this.normalizeDirectoryPath(directoryPath);
+    const probe = this.probePath(normalizedDirectory);
+    if (!probe.exists || !probe.isDirectory) {
+      return '';
+    }
+    try {
+      const entries = SafeFileUtils.listFileSync(normalizedDirectory);
+      entries.sort((left: string, right: string) => {
+        return left.localeCompare(right);
+      });
+      for (let i = 0; i < entries.length; i++) {
+        const fullPath = `${normalizedDirectory}/${entries[i]}`;
+        const fileProbe = this.probePath(fullPath);
+        if (fileProbe.exists && fileProbe.isFile && this.isCbzPath(fullPath)) {
+          return fullPath;
+        }
+      }
+    } catch (error) {
+      logger.warn(TAG, `扫描章节CBZ目录失败: ${normalizedDirectory}, ${String(error)}`);
+    }
+    return '';
+  }
+
+  private isCbzPath(path: string): boolean {
+    return path.toLowerCase().endsWith('.cbz');
+  }
+
+  private ensureAbsoluteDirectory(path: string): void {
+    const normalizedPath = this.normalizeDirectoryPath(path);
+    if (normalizedPath.length <= 0) {
+      return;
+    }
+    try {
+      const stat = SafeFileUtils.statSyncStrict(normalizedPath);
+      if (!stat.isDirectory()) {
+        throw new Error('路径不是目录');
+      }
+    } catch (_error) {
+      SafeFileUtils.mkdirSync(normalizedPath, true);
+      logger.debug(TAG, `应用专属Download目录已创建: ${normalizedPath}`);
+    }
+  }
+
+  private normalizeDirectoryPath(path: string): string {
+    let normalized = this.normalizeFileSystemPath(path).replace(/\\/g, '/');
+    while (normalized.length > 1 && normalized.endsWith('/')) {
+      normalized = normalized.substring(0, normalized.length - 1);
+    }
+    return normalized;
+  }
+
+  private normalizeFileSystemPath(path: string): string {
+    const trimmed = path.trim();
+    if (trimmed.length === 0) {
+      return '';
+    }
+    if (trimmed.startsWith('file://')) {
+      return trimmed.substring(7);
+    }
+    if (trimmed.startsWith('/')) {
+      return trimmed;
+    }
+    if (trimmed.startsWith('storage/') || trimmed.startsWith('data/')) {
+      return `/${trimmed}`;
+    }
+    return trimmed;
+  }
+
+  private isAbsoluteFileSystemPath(path: string): boolean {
+    const normalized = this.normalizeDirectoryPath(path);
+    if (normalized.startsWith('/')) {
+      return true;
+    }
+    return normalized.length >= 3 &&
+      normalized.charAt(1) === ':' &&
+      normalized.charAt(2) === '/';
+  }
+
+  private getParentDirectoryPath(path: string): string {
+    const normalized = this.normalizeDirectoryPath(path);
+    const slashIndex = normalized.lastIndexOf('/');
+    if (slashIndex <= 0) {
+      return '';
+    }
+    return normalized.substring(0, slashIndex);
+  }
+
+  private pathEndsWithSegment(path: string, segment: string): boolean {
+    const parts = this.normalizeDirectoryPath(path).split('/');
+    if (parts.length <= 0) {
+      return false;
+    }
+    return parts[parts.length - 1] === segment;
+  }
+
+  private deduplicatePaths(paths: string[]): string[] {
+    const result: string[] = [];
+    for (let i = 0; i < paths.length; i++) {
+      const currentPath = this.normalizeDirectoryPath(paths[i]);
+      if (currentPath.length <= 0) {
+        continue;
+      }
+      let exists = false;
+      for (let j = 0; j < result.length; j++) {
+        if (result[j] === currentPath) {
+          exists = true;
+          break;
+        }
+      }
+      if (!exists) {
+        result.push(currentPath);
+      }
+    }
+    return result;
   }
 
   /**

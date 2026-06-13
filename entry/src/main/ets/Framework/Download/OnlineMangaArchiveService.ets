@@ -8,12 +8,17 @@ import { zlib } from '@kit.BasicServicesKit';
 import { common } from '@kit.AbilityKit';
 import { util } from '@kit.ArkTS';
 import fs from '@ohos.file.fs';
+import { MinizipNative } from '@ohos/minizip';
 import { logger } from '../../Utils/Logger';
 import { MetadataXmlGenerator, MangaMetadata } from '../../Utils/MetadataXmlGenerator';
 import { DataManager, OnlineChapterInfo, OnlineComicInfo, OnlinePageInfo } from '../Data/DataManager';
 import { DatabaseManager } from '../Database/DatabaseManager';
-import { GenericQueryRecord } from '../Database/DatabaseTypes';
-import { DownloadDirManager } from '../Storage/DownloadDirManager';
+import { DatabaseValue, GenericQueryRecord } from '../Database/DatabaseTypes';
+import {
+  DownloadDirManager,
+  OnlineMangaArchiveLookupResult,
+  OnlineMangaArchivePathRequest
+} from '../Storage/DownloadDirManager';
 import { PermanentImageCacheManager } from '../Cache/PermanentImageCacheManager';
 import { generateDbId } from '../Utils/UUIDGenerator';
 import { eventBus, GameEvent, MangaCacheUpdatedPayload } from '../EventBus';
@@ -170,6 +175,57 @@ interface ExistingOrphanChapterRecord {
   downloadPath: string;
 }
 
+interface ArchiveEntryReadInfo {
+  entryNames: string[];
+  comicInfoXml: string;
+}
+
+export enum OnlineChapterArchiveCacheStatus {
+  NONE = 'none',
+  PARTIAL = 'partial',
+  COMPLETE = 'complete',
+  STALE = 'stale'
+}
+
+export enum OnlineChapterArchiveStorageType {
+  NONE = 'none',
+  CBZ = 'cbz',
+  LEGACY_PAGES = 'legacy_pages'
+}
+
+export interface OnlineArchiveCacheState {
+  archivePath: string;
+  archiveSize: number;
+  totalPageCount: number;
+  downloadedPageCount: number;
+  failedPageIndexes: number[];
+  isPartialArchive: boolean;
+  hasComicInfo: boolean;
+  imageEntryCount: number;
+  cacheStatus: OnlineChapterArchiveCacheStatus;
+  storageType: OnlineChapterArchiveStorageType;
+}
+
+export interface OnlineChapterArchiveCacheStateRecord {
+  chapterId: string;
+  comicId: string;
+  sourceId: string;
+  sourceName: string;
+  sourcePkg: string;
+  archivePath: string;
+  cacheStatus: OnlineChapterArchiveCacheStatus;
+  storageType: OnlineChapterArchiveStorageType;
+  cachedPageCount: number;
+  totalPageCount: number;
+  archiveSize: number;
+  imageEntryCount: number;
+  hasComicInfo: boolean;
+  failedPageIndexes: string;
+  lastScanTime: number;
+  createTime: number;
+  updateTime: number;
+}
+
 export class OnlineMangaArchiveService {
   private static instance: OnlineMangaArchiveService | null = null;
   private context: common.UIAbilityContext | null = null;
@@ -181,6 +237,7 @@ export class OnlineMangaArchiveService {
   private activeReaderArchiveChapterIds: Set<string> = new Set<string>();
   private pendingReaderArchiveChapterIds: Set<string> = new Set<string>();
   private activeArchiveLocks: Set<string> = new Set<string>();
+  private archiveLookupMissLogKeys: Set<string> = new Set<string>();
   private archiveTempSequence: number = 0;
 
   private constructor() {}
@@ -203,6 +260,239 @@ export class OnlineMangaArchiveService {
 
   public fileExists(path: string): boolean {
     return this.pathExists(path);
+  }
+
+  public async getOnlineChapterArchiveCacheState(chapterId: string): Promise<OnlineChapterArchiveCacheStateRecord | null> {
+    const rows = await this.databaseManager.querySql(
+      'SELECT chapterId, comicId, sourceId, sourceName, sourcePkg, archivePath, cacheStatus, storageType, cachedPageCount, totalPageCount, archiveSize, imageEntryCount, hasComicInfo, failedPageIndexes, lastScanTime, createTime, updateTime FROM online_chapter_cache_state WHERE chapterId = ?',
+      [chapterId]
+    );
+    if (rows.length <= 0) {
+      return null;
+    }
+    return this.convertCacheStateRecord(rows[0] as GenericQueryRecord);
+  }
+
+  public async getOnlineComicArchiveCacheStates(comicId: string): Promise<OnlineChapterArchiveCacheStateRecord[]> {
+    const rows = await this.databaseManager.querySql(
+      'SELECT chapterId, comicId, sourceId, sourceName, sourcePkg, archivePath, cacheStatus, storageType, cachedPageCount, totalPageCount, archiveSize, imageEntryCount, hasComicInfo, failedPageIndexes, lastScanTime, createTime, updateTime FROM online_chapter_cache_state WHERE comicId = ?',
+      [comicId]
+    );
+    const states: OnlineChapterArchiveCacheStateRecord[] = [];
+    for (let i = 0; i < rows.length; i++) {
+      states.push(this.convertCacheStateRecord(rows[i] as GenericQueryRecord));
+    }
+    return states;
+  }
+
+  public async syncOnlineComicArchiveStatus(comicId: string, reason: string = 'comic_archive_status_sync'): Promise<OnlineChapterArchiveCacheStateRecord[]> {
+    const chapters = await this.dataManager.getOnlineComicChapters(comicId);
+    const states: OnlineChapterArchiveCacheStateRecord[] = [];
+    for (let i = 0; i < chapters.length; i++) {
+      try {
+        const archiveState = await this.syncOnlineChapterArchiveStatus(chapters[i].id, reason);
+        const stateRecord = await this.getOnlineChapterArchiveCacheState(chapters[i].id);
+        if (stateRecord !== null) {
+          states.push(stateRecord);
+        } else if (archiveState !== null) {
+          // 状态表写入失败时尽量不让批量同步中断调用方。
+          logger.warn(TAG, `在线章节缓存状态记录缺失: chapter=${chapters[i].id}, reason=${reason}`);
+        }
+      } catch (error) {
+        logger.warn(TAG, `在线章节归档批量同步跳过单章: chapter=${chapters[i].id}, reason=${reason}, ${String(error)}`);
+      }
+      await this.yieldArchiveBatch(i);
+    }
+    return states;
+  }
+
+  public async clearOnlineComicArchiveCache(comicId: string): Promise<void> {
+    const chapters = await this.dataManager.getOnlineComicChapters(comicId);
+    const comic = await this.dataManager.getOnlineComicInfoById(comicId);
+    const archivePaths: string[] = [];
+    for (let i = 0; i < chapters.length; i++) {
+      this.appendArchivePathForCleanup(archivePaths, chapters[i].downloadPath || '');
+      const stateRecord = await this.getOnlineChapterArchiveCacheState(chapters[i].id);
+      if (stateRecord !== null) {
+        this.appendArchivePathForCleanup(archivePaths, stateRecord.archivePath);
+      }
+      const lookup = comic !== null
+        ? this.resolveArchiveLookup(comic, chapters[i])
+        : null;
+      if (lookup !== null && lookup.archivePath.length > 0) {
+        this.appendArchivePathForCleanup(archivePaths, lookup.archivePath);
+      }
+      await this.yieldArchiveBatch(i);
+    }
+
+    for (let i = 0; i < archivePaths.length; i++) {
+      this.deleteFileIfExists(archivePaths[i]);
+      this.deleteArchiveTempFiles(archivePaths[i]);
+      logger.info(TAG, `已清理在线漫画CBZ缓存文件族: ${archivePaths[i]}`);
+    }
+
+    await this.databaseManager.beginTransaction();
+    try {
+      await this.databaseManager.executeSql(
+        'DELETE FROM online_chapter_cache_state WHERE comicId = ?',
+        [comicId]
+      );
+      await this.databaseManager.executeSql(
+        'UPDATE online_chapter SET isDownloaded = 0, downloadPath = NULL, updateTime = ? WHERE comicId = ?',
+        [Date.now(), comicId]
+      );
+      await this.databaseManager.executeSql(
+        'UPDATE online_page SET isDownloaded = 0 WHERE chapterId IN (SELECT id FROM online_chapter WHERE comicId = ?)',
+        [comicId]
+      );
+      await this.databaseManager.commit();
+    } catch (error) {
+      await this.databaseManager.rollBack();
+      throw error as Error;
+    }
+    logger.info(TAG, `在线漫画归档缓存状态已清理: comicId=${comicId}, archives=${archivePaths.length}`);
+  }
+
+  private appendArchivePathForCleanup(paths: string[], rawPath: string): void {
+    const normalizedPath = this.normalizeFileSystemPath(rawPath);
+    if (normalizedPath.length <= 0 || !this.isCbzPath(normalizedPath)) {
+      return;
+    }
+    if (!paths.includes(normalizedPath)) {
+      paths.push(normalizedPath);
+    }
+  }
+
+  private convertCacheStateRecord(row: GenericQueryRecord): OnlineChapterArchiveCacheStateRecord {
+    const statusText = this.databaseValueToString(row.cacheStatus);
+    const storageTypeText = this.databaseValueToString(row.storageType);
+    const record: OnlineChapterArchiveCacheStateRecord = {
+      chapterId: this.databaseValueToString(row.chapterId),
+      comicId: this.databaseValueToString(row.comicId),
+      sourceId: this.databaseValueToString(row.sourceId),
+      sourceName: this.databaseValueToString(row.sourceName),
+      sourcePkg: this.databaseValueToString(row.sourcePkg),
+      archivePath: this.databaseValueToString(row.archivePath),
+      cacheStatus: this.normalizeArchiveCacheStatus(statusText),
+      storageType: this.normalizeArchiveStorageType(storageTypeText),
+      cachedPageCount: this.databaseValueToNumber(row.cachedPageCount),
+      totalPageCount: this.databaseValueToNumber(row.totalPageCount),
+      archiveSize: this.databaseValueToNumber(row.archiveSize),
+      imageEntryCount: this.databaseValueToNumber(row.imageEntryCount),
+      hasComicInfo: this.databaseValueToNumber(row.hasComicInfo) === 1,
+      failedPageIndexes: this.databaseValueToString(row.failedPageIndexes),
+      lastScanTime: this.databaseValueToNumber(row.lastScanTime),
+      createTime: this.databaseValueToNumber(row.createTime),
+      updateTime: this.databaseValueToNumber(row.updateTime)
+    };
+    return record;
+  }
+
+  private normalizeArchiveCacheStatus(value: string): OnlineChapterArchiveCacheStatus {
+    if (value === OnlineChapterArchiveCacheStatus.COMPLETE) {
+      return OnlineChapterArchiveCacheStatus.COMPLETE;
+    }
+    if (value === OnlineChapterArchiveCacheStatus.PARTIAL) {
+      return OnlineChapterArchiveCacheStatus.PARTIAL;
+    }
+    if (value === OnlineChapterArchiveCacheStatus.STALE) {
+      return OnlineChapterArchiveCacheStatus.STALE;
+    }
+    return OnlineChapterArchiveCacheStatus.NONE;
+  }
+
+  private normalizeArchiveStorageType(value: string): OnlineChapterArchiveStorageType {
+    if (value === OnlineChapterArchiveStorageType.CBZ) {
+      return OnlineChapterArchiveStorageType.CBZ;
+    }
+    if (value === OnlineChapterArchiveStorageType.LEGACY_PAGES) {
+      return OnlineChapterArchiveStorageType.LEGACY_PAGES;
+    }
+    return OnlineChapterArchiveStorageType.NONE;
+  }
+
+  private databaseValueToString(value: DatabaseValue | undefined): string {
+    if (value === undefined || value === null) {
+      return '';
+    }
+    return String(value);
+  }
+
+  private databaseValueToNumber(value: DatabaseValue | undefined): number {
+    if (value === undefined || value === null) {
+      return 0;
+    }
+    if (typeof value === 'number') {
+      return this.isUsableNumber(value) ? Math.floor(value) : 0;
+    }
+    const parsed = Number(String(value));
+    return this.isUsableNumber(parsed) ? Math.floor(parsed) : 0;
+  }
+
+  private isUsableNumber(value: number): boolean {
+    return value === value && value !== Infinity && value !== -Infinity;
+  }
+
+  public async resolveExistingArchiveForOnlineChapter(chapterId: string): Promise<string> {
+    const archiveState = await this.syncOnlineChapterArchiveStatus(chapterId, 'resolve_existing_archive');
+    return archiveState ? archiveState.archivePath : '';
+  }
+
+  public async syncOnlineChapterArchiveStatus(
+    chapterId: string,
+    reason: string = 'archive_status_sync'
+  ): Promise<OnlineArchiveCacheState | null> {
+    let stage = 'normalize';
+    const normalizedChapterId = chapterId.trim();
+    if (normalizedChapterId.length === 0) {
+      return null;
+    }
+
+    try {
+      stage = 'load_chapter';
+      const chapter = await this.dataManager.getOnlineChapterById(normalizedChapterId);
+      if (!chapter) {
+        logger.warn(TAG, `归档状态同步跳过：章节不存在 chapterId=${normalizedChapterId}`);
+        return null;
+      }
+
+      stage = 'load_comic';
+      const comic = await this.dataManager.getOnlineComicInfoById(chapter.comicId);
+      if (!comic) {
+        logger.warn(TAG, `归档状态同步跳过：漫画不存在 comicId=${chapter.comicId}`);
+        return null;
+      }
+
+      stage = 'resolve_stored_download_path';
+      let archivePath = this.resolveArchivePathFromStoredDownloadPath(chapter.downloadPath || '', chapter);
+
+      stage = 'resolve_download_directory_archive';
+      if (archivePath.length <= 0) {
+        archivePath = await this.resolveExistingArchiveForChapter(comic, chapter);
+      }
+
+      if (archivePath.length <= 0) {
+        stage = 'persist_miss_state';
+        await this.persistOnlineArchiveLookupMiss(comic, chapter, reason);
+        await this.logArchiveLookupMiss(comic, chapter, reason);
+        return null;
+      }
+
+      stage = 'resolve_known_page_count';
+      const knownPageCount = await this.resolveKnownOnlineChapterPageCount(chapter.id);
+      stage = 'inspect_archive';
+      const archiveState = this.inspectArchiveCacheState(archivePath, chapter, knownPageCount);
+      stage = 'persist_archive_state';
+      await this.persistOnlineArchiveCacheState(comic, chapter, archiveState);
+      logger.info(
+        TAG,
+        `在线章节归档状态已同步: chapter=${chapter.title}, status=${archiveState.cacheStatus}, pages=${archiveState.downloadedPageCount}/${archiveState.totalPageCount}, reason=${reason}, path=${archiveState.archivePath}`
+      );
+      return archiveState;
+    } catch (error) {
+      logger.warn(TAG, `同步在线章节归档状态失败: chapterId=${normalizedChapterId}, stage=${stage}, reason=${reason}, ${String(error)}`);
+      throw error as Error;
+    }
   }
 
   /**
@@ -374,15 +664,46 @@ export class OnlineMangaArchiveService {
     const pageInfos = request.pages.slice().sort((left: OnlinePageInfo, right: OnlinePageInfo) => {
       return left.pageNumber - right.pageNumber;
     });
+    const archiveReadInfo = this.readArchiveEntryInfo(request.archivePath);
+    const archiveXmlPageCount = archiveReadInfo.comicInfoXml.length > 0
+      ? this.parsePositiveIntegerXmlField(archiveReadInfo.comicInfoXml, 'PageCount')
+      : 0;
+    const rawArchiveFailedPageIndexes = archiveReadInfo.comicInfoXml.length > 0
+      ? this.parseFailedPageIndexes(archiveReadInfo.comicInfoXml)
+      : [];
+    const totalOutputPageCount = pageInfos.length > 0
+      ? Math.max(pageInfos.length, imageFiles.length, archiveXmlPageCount)
+      : imageFiles.length;
+    const archiveFailedPageIndexes = this.normalizeFailedPageIndexesForTotal(
+      rawArchiveFailedPageIndexes,
+      totalOutputPageCount
+    );
+    if (pageInfos.length <= 0 && archiveXmlPageCount > imageFiles.length) {
+      logger.warn(
+        TAG,
+        `部分CBZ缺少在线页表，无法生成缺页网络地址: archive=${request.archivePath}, images=${imageFiles.length}, xmlPages=${archiveXmlPageCount}`
+      );
+    }
+    const hasFullImageSequence = totalOutputPageCount > 0 && imageFiles.length >= totalOutputPageCount;
+    let imageCursor = 0;
 
     // 检测是否为部分归档（占位图文件大小通常 <= 200 字节）
     const PLACEHOLDER_SIZE_THRESHOLD = 200;
 
-    for (let i = 0; i < imageFiles.length; i++) {
+    for (let i = 0; i < totalOutputPageCount; i++) {
       const pageInfo = i < pageInfos.length ? pageInfos[i] : null;
-      const localPath = imageFiles[i];
-      const fileSize = this.getFileSize(localPath);
-      const isPlaceholder = fileSize > 0 && fileSize <= PLACEHOLDER_SIZE_THRESHOLD;
+      const isMarkedFailed = archiveFailedPageIndexes.includes(i);
+      let localPath = '';
+      if (hasFullImageSequence) {
+        localPath = i < imageFiles.length ? imageFiles[i] : '';
+      } else if (!isMarkedFailed && imageCursor < imageFiles.length) {
+        localPath = imageFiles[imageCursor];
+        imageCursor++;
+      }
+      const hasLocalFile = localPath.length > 0;
+      const fileSize = hasLocalFile ? this.getFileSize(localPath) : 0;
+      const isPlaceholder = isMarkedFailed || !hasLocalFile ||
+        (fileSize > 0 && fileSize <= PLACEHOLDER_SIZE_THRESHOLD);
       const page: OnlineArchiveExtractedPage = {
         pageId: pageInfo ? pageInfo.id : `${request.chapterId}_archive_${i}`,
         pageIndex: i,
@@ -466,14 +787,14 @@ export class OnlineMangaArchiveService {
       const expectedPageCount = Math.max(pageInfos.length, chapter.pageCount || 0);
       const currentArchivePath = this.normalizeFileSystemPath(chapter.downloadPath || '');
       if (currentArchivePath.length > 0 && this.isCbzPath(currentArchivePath) && this.pathExists(currentArchivePath)) {
-        await this.markOnlineChapterArchived(chapter.id, currentArchivePath, expectedPageCount);
-        if (!chapter.isDownloaded) {
+        const archiveState = await this.syncOnlineChapterArchiveStatus(chapter.id, 'reader_existing_archive');
+        if (!chapter.isDownloaded || (archiveState !== null && archiveState.isPartialArchive)) {
           this.publishMangaCacheUpdated(comic, chapter, currentArchivePath, reason);
         }
         return {
           archivePath: currentArchivePath,
           archiveSize: this.getFileSize(currentArchivePath),
-          pageCount: expectedPageCount
+          pageCount: archiveState ? archiveState.totalPageCount : expectedPageCount
         };
       }
 
@@ -482,10 +803,12 @@ export class OnlineMangaArchiveService {
         return null;
       }
 
-      const recoveredArchivePath = this.resolveExistingArchiveForChapter(comic, chapter);
+      const recoveredArchivePath = await this.resolveExistingArchiveForChapter(comic, chapter);
       if (recoveredArchivePath.length > 0) {
-        const recoveredPageCount = Math.max(expectedPageCount, chapter.pageCount || 0);
-        await this.markOnlineChapterArchived(chapter.id, recoveredArchivePath, recoveredPageCount);
+        const archiveState = await this.syncOnlineChapterArchiveStatus(chapter.id, 'reader_recovered_archive');
+        const recoveredPageCount = archiveState
+          ? archiveState.totalPageCount
+          : Math.max(expectedPageCount, chapter.pageCount || 0);
         this.publishMangaCacheUpdated(comic, chapter, recoveredArchivePath, reason);
         logger.info(TAG, `阅读缓存归档恢复已有CBZ: chapter=${chapter.title}, path=${recoveredArchivePath}`);
         return {
@@ -518,6 +841,7 @@ export class OnlineMangaArchiveService {
       });
 
       await this.markOnlineChapterArchived(chapter.id, result.archivePath, result.pageCount);
+      await this.syncOnlineChapterArchiveStatus(chapter.id, 'reader_archive_created_state_sync');
       this.publishMangaCacheUpdated(comic, chapter, result.archivePath, reason);
       logger.info(TAG, `阅读缓存已归档为CBZ: chapter=${chapter.title}, path=${result.archivePath}`);
       return result;
@@ -538,16 +862,19 @@ export class OnlineMangaArchiveService {
   private async markOnlineChapterArchived(
     chapterId: string,
     archivePath: string,
-    pageCount: number
+    pageCount: number,
+    markAllPages: boolean = true
   ): Promise<void> {
     await this.databaseManager.executeSql(
       'UPDATE online_chapter SET isDownloaded = 1, downloadPath = ?, pageCount = ?, updateTime = ? WHERE id = ?',
       [archivePath, pageCount, Date.now(), chapterId]
     );
-    await this.databaseManager.executeSql(
-      'UPDATE online_page SET isDownloaded = 1 WHERE chapterId = ?',
-      [chapterId]
-    );
+    if (markAllPages) {
+      await this.databaseManager.executeSql(
+        'UPDATE online_page SET isDownloaded = 1 WHERE chapterId = ?',
+        [chapterId]
+      );
+    }
   }
 
   private publishMangaCacheUpdated(
@@ -557,7 +884,7 @@ export class OnlineMangaArchiveService {
     reason: string
   ): void {
     const numericSourceId = Number(comic.sourceId);
-    const sourceId = Number.isFinite(numericSourceId) ? numericSourceId : 0;
+    const sourceId = this.isUsableNumber(numericSourceId) ? numericSourceId : 0;
     eventBus.publish(
       GameEvent.MANGA_CACHE_UPDATED,
       new MangaCacheUpdatedPayload(
@@ -659,20 +986,17 @@ export class OnlineMangaArchiveService {
       }
 
       const pageInfos = await this.dataManager.getOnlineChapterPages(chapter.id);
-      const recoveredArchivePath = this.resolveExistingArchiveForChapter(comic, chapter);
+      const recoveredArchivePath = await this.resolveExistingArchiveForChapter(comic, chapter);
       if (recoveredArchivePath.length > 0) {
-        const recoveredPageCount = Math.max(pageInfos.length, chapter.pageCount || 0);
-        await this.databaseManager.executeSql(
-          'UPDATE online_chapter SET isDownloaded = 1, downloadPath = ?, pageCount = ?, updateTime = ? WHERE id = ?',
-          [recoveredArchivePath, recoveredPageCount, Date.now(), chapter.id]
-        );
-        await this.databaseManager.executeSql(
-          'UPDATE online_page SET isDownloaded = 1 WHERE chapterId = ?',
-          [chapter.id]
-        );
+        const archiveState = await this.syncOnlineChapterArchiveStatus(chapter.id, 'legacy_migration_recovered_archive');
+        const recoveredPageCount = archiveState
+          ? archiveState.totalPageCount
+          : Math.max(pageInfos.length, chapter.pageCount || 0);
 
         fallbackItem.status = OnlineArchiveMigrationStatus.MIGRATED;
-        fallbackItem.message = '已恢复未完成的CBZ临时归档';
+        fallbackItem.message = archiveState && archiveState.isPartialArchive
+          ? '已恢复部分CBZ归档'
+          : '已恢复完整CBZ归档';
         fallbackItem.archivePath = recoveredArchivePath;
         fallbackItem.archiveSize = this.getFileSize(recoveredArchivePath);
         fallbackItem.pageCount = recoveredPageCount;
@@ -716,6 +1040,7 @@ export class OnlineMangaArchiveService {
         'UPDATE online_page SET isDownloaded = 1 WHERE chapterId = ?',
         [chapter.id]
       );
+      await this.syncOnlineChapterArchiveStatus(chapter.id, 'legacy_migration_created_archive_state_sync');
 
       fallbackItem.status = OnlineArchiveMigrationStatus.MIGRATED;
       fallbackItem.message = '迁移完成';
@@ -862,7 +1187,7 @@ export class OnlineMangaArchiveService {
     }
 
     const sourceNumericId = Number(comic.sourceId);
-    if (!Number.isFinite(sourceNumericId)) {
+    if (!this.isUsableNumber(sourceNumericId)) {
       return '';
     }
 
@@ -1181,6 +1506,7 @@ export class OnlineMangaArchiveService {
         'UPDATE online_page SET isDownloaded = 1 WHERE chapterId = ?',
         [chapterId]
       );
+      await this.syncOnlineChapterArchiveStatus(chapterId, 'orphan_migration_created_archive_state_sync');
 
       item.status = OnlineArchiveMigrationStatus.MIGRATED;
       item.message = `已从本地目录恢复数据库记录并迁移CBZ: ${candidate.rootType}`;
@@ -1589,6 +1915,15 @@ export class OnlineMangaArchiveService {
     return normalized;
   }
 
+  private getParentDirectoryPath(path: string): string {
+    const normalized = this.normalizeDirectoryPath(path);
+    const slashIndex = normalized.lastIndexOf('/');
+    if (slashIndex <= 0) {
+      return '';
+    }
+    return normalized.substring(0, slashIndex);
+  }
+
   private isDirectoryPath(path: string): boolean {
     try {
       if (!this.pathExists(path)) {
@@ -1702,25 +2037,93 @@ export class OnlineMangaArchiveService {
     return `${archiveDir}/${fileName}`;
   }
 
-  private resolveArchivePathCandidates(comic: OnlineComicInfo, chapter: OnlineChapterInfo): string[] {
-    const sourceSegment = comic.sourceName.length > 0
-      ? comic.sourceName
-      : (comic.sourcePkg.length > 0 ? comic.sourcePkg : `source_${comic.sourceId}`);
-    const fileName = `${this.sanitizePathSegment(chapter.title.length > 0 ? chapter.title : chapter.id)}.cbz`;
-    const paths: string[] = [];
+  private buildArchivePathRequest(comic: OnlineComicInfo, chapter: OnlineChapterInfo): OnlineMangaArchivePathRequest {
+    const request: OnlineMangaArchivePathRequest = {
+      sourceId: comic.sourceId,
+      sourceName: comic.sourceName,
+      sourcePkg: comic.sourcePkg,
+      mangaTitle: comic.title,
+      chapterTitle: chapter.title,
+      chapterId: chapter.id,
+      chapterNumber: chapter.chapterNumber > 0 ? String(chapter.chapterNumber) : '',
+      externalChapterId: chapter.externalId,
+      storedArchivePath: chapter.downloadPath || ''
+    };
+    return request;
+  }
 
-    if (this.downloadDirManager.isReady()) {
-      const publicArchiveDir = this.downloadDirManager.getMangaArchiveDirectoryPath(
-        sourceSegment,
-        comic.title,
-        chapter.title
-      );
-      paths.push(`${publicArchiveDir}/${fileName}`);
+  private resolveArchivePathFromStoredDownloadPath(rawDownloadPath: string, chapter: OnlineChapterInfo): string {
+    const storedPath = this.normalizeFileSystemPath(rawDownloadPath);
+    if (storedPath.length <= 0) {
+      return '';
     }
 
-    const privateArchiveDir = this.getPrivateArchiveDirectory(sourceSegment, comic.title, chapter.title);
-    paths.push(`${privateArchiveDir}/${fileName}`);
-    return this.deduplicatePaths(paths);
+    if (this.isCbzPath(storedPath)) {
+      if (this.pathExists(storedPath)) {
+        return storedPath;
+      }
+      return this.recoverArchiveTempFile(storedPath);
+    }
+
+    if (this.isDirectoryPath(storedPath)) {
+      const archiveInDirectory = this.findCbzArchiveInDirectory(storedPath);
+      if (archiveInDirectory.length > 0) {
+        logger.info(TAG, `通过online_chapter.downloadPath目录发现CBZ: chapter=${chapter.title}, path=${archiveInDirectory}`);
+        return archiveInDirectory;
+      }
+      const fileNames = this.resolveArchiveLookupFileNames(chapter);
+      for (let i = 0; i < fileNames.length; i++) {
+        const archivePath = `${this.normalizeDirectoryPath(storedPath)}/${fileNames[i]}`;
+        if (this.pathExists(archivePath)) {
+          return archivePath;
+        }
+        const recoveredArchivePath = this.recoverArchiveTempFile(archivePath);
+        if (recoveredArchivePath.length > 0) {
+          return recoveredArchivePath;
+        }
+      }
+    }
+
+    const parentPath = this.getParentDirectoryPath(storedPath);
+    if (parentPath.length > 0 && this.isDirectoryPath(parentPath)) {
+      const archiveInParent = this.findCbzArchiveInDirectory(parentPath);
+      if (archiveInParent.length > 0) {
+        logger.info(TAG, `通过online_chapter.downloadPath父目录发现CBZ: chapter=${chapter.title}, path=${archiveInParent}`);
+        return archiveInParent;
+      }
+    }
+
+    return '';
+  }
+
+  private resolveArchiveLookup(comic: OnlineComicInfo, chapter: OnlineChapterInfo): OnlineMangaArchiveLookupResult {
+    const request = this.buildArchivePathRequest(comic, chapter);
+    return this.downloadDirManager.resolveExistingOnlineMangaArchive(request);
+  }
+
+  private resolveArchiveLookupFileNames(chapter: OnlineChapterInfo): string[] {
+    const fileNames: string[] = [];
+    this.appendArchiveLookupFileName(fileNames, chapter.title);
+    this.appendArchiveLookupFileName(fileNames, chapter.externalId);
+    this.appendArchiveLookupFileName(fileNames, chapter.id);
+    if (chapter.chapterNumber > 0) {
+      this.appendArchiveLookupFileName(fileNames, String(chapter.chapterNumber));
+    }
+    return fileNames;
+  }
+
+  private appendArchiveLookupFileName(fileNames: string[], rawName: string): void {
+    const trimmed = rawName.trim();
+    if (trimmed.length <= 0) {
+      return;
+    }
+    const fileName = `${this.sanitizePathSegment(trimmed)}.cbz`;
+    for (let i = 0; i < fileNames.length; i++) {
+      if (fileNames[i] === fileName) {
+        return;
+      }
+    }
+    fileNames.push(fileName);
   }
 
   private deduplicatePaths(paths: string[]): string[] {
@@ -1741,20 +2144,510 @@ export class OnlineMangaArchiveService {
     return result;
   }
 
-  private resolveExistingArchiveForChapter(comic: OnlineComicInfo, chapter: OnlineChapterInfo): string {
-    const archivePaths = this.resolveArchivePathCandidates(comic, chapter);
-    for (let i = 0; i < archivePaths.length; i++) {
-      const archivePath = archivePaths[i];
-      if (this.pathExists(archivePath)) {
-        return archivePath;
-      }
-
-      const recoveredPath = this.recoverArchiveTempFile(archivePath);
-      if (recoveredPath.length > 0) {
-        return recoveredPath;
-      }
+  private async resolveExistingArchiveForChapter(comic: OnlineComicInfo, chapter: OnlineChapterInfo): Promise<string> {
+    const lookup = this.resolveArchiveLookup(comic, chapter);
+    if (lookup.archivePath.length > 0) {
+      logger.info(TAG, `统一Download目录管理器命中在线漫画CBZ: chapter=${chapter.title}, matchedBy=${lookup.matchedBy}, path=${lookup.archivePath}`);
+      return lookup.archivePath;
     }
     return '';
+  }
+
+  private async logArchiveLookupMiss(comic: OnlineComicInfo, chapter: OnlineChapterInfo, reason: string): Promise<void> {
+    const normalizedReason = reason.length > 0 ? reason : 'unspecified';
+    const logKey = `${normalizedReason}:${chapter.id}`;
+    if (this.archiveLookupMissLogKeys.has(logKey)) {
+      return;
+    }
+    if (normalizedReason === 'cache_status' && this.archiveLookupMissLogKeys.size >= 12) {
+      return;
+    }
+    this.archiveLookupMissLogKeys.add(logKey);
+
+    const lookup = this.resolveArchiveLookup(comic, chapter);
+    const candidates = lookup.candidates;
+    const samplePaths: string[] = [];
+    for (let i = 0; i < candidates.length && samplePaths.length < 8; i++) {
+      samplePaths.push(candidates[i]);
+    }
+
+    const downloadReady = this.downloadDirManager.isReady();
+    const downloadRoot = downloadReady ? this.normalizeDirectoryPath(this.downloadDirManager.getPath()) : '';
+    const contextRoot = this.context !== null ? this.normalizeDirectoryPath(this.context.filesDir) : '';
+    logger.warn(
+      TAG,
+      `未发现在线章节CBZ归档: reason=${normalizedReason}, manga=${comic.title}, chapter=${chapter.title}, chapterId=${chapter.id}, external=${chapter.externalId}, storedPath=${chapter.downloadPath || ''}, downloadReady=${downloadReady}, downloadRoot=${downloadRoot}, filesRoot=${contextRoot}, candidates=${candidates.length}, samples=${samplePaths.join(' | ')}`
+    );
+  }
+
+  private findCbzArchiveInDirectory(directoryPath: string): string {
+    const normalizedDirectory = this.normalizeDirectoryPath(directoryPath);
+    if (!this.isDirectoryPath(normalizedDirectory)) {
+      return '';
+    }
+
+    try {
+      const entries = SafeFileUtils.listFileSync(normalizedDirectory);
+      entries.sort((left: string, right: string) => {
+        return left.localeCompare(right);
+      });
+      for (let i = 0; i < entries.length; i++) {
+        const fullPath = `${normalizedDirectory}/${entries[i]}`;
+        if (!this.isCbzPath(fullPath)) {
+          continue;
+        }
+        const stat = SafeFileUtils.statSync(fullPath);
+        if (!stat.isDirectory()) {
+          return fullPath;
+        }
+      }
+    } catch (error) {
+      logger.warn(TAG, `扫描章节CBZ目录失败: ${normalizedDirectory}, ${String(error)}`);
+    }
+    return '';
+  }
+
+  private async resolveKnownOnlineChapterPageCount(chapterId: string): Promise<number> {
+    try {
+      const rows = await this.databaseManager.querySql(
+        'SELECT (SELECT COUNT(*) FROM online_page WHERE chapterId = ?) AS pageCount, (SELECT pageCount FROM online_chapter WHERE id = ?) AS chapterPageCount',
+        [chapterId, chapterId]
+      );
+      if (rows.length <= 0) {
+        return 0;
+      }
+      const row = rows[0] as GenericQueryRecord;
+      const pageCount = Number(row.pageCount || 0);
+      const chapterPageCount = Number(row.chapterPageCount || 0);
+      const safePageCount = this.isUsableNumber(pageCount) && pageCount > 0 ? Math.floor(pageCount) : 0;
+      const safeChapterPageCount = this.isUsableNumber(chapterPageCount) && chapterPageCount > 0 ? Math.floor(chapterPageCount) : 0;
+      return Math.max(safePageCount, safeChapterPageCount);
+    } catch (error) {
+      logger.warn(TAG, `查询在线章节页表数量失败: chapter=${chapterId}, ${String(error)}`);
+      return 0;
+    }
+  }
+
+  private inspectArchiveCacheState(
+    archivePath: string,
+    chapter: OnlineChapterInfo,
+    knownPageCount: number
+  ): OnlineArchiveCacheState {
+    const readInfo = this.readArchiveEntryInfo(archivePath);
+    const imageEntryCount = this.countArchiveImageEntries(readInfo.entryNames);
+    const hasReadableEntries = readInfo.entryNames.length > 0;
+    const hasComicInfo = readInfo.comicInfoXml.length > 0;
+
+    const xmlPageCount = hasComicInfo
+      ? this.parsePositiveIntegerXmlField(readInfo.comicInfoXml, 'PageCount')
+      : 0;
+    let failedPageIndexes = hasComicInfo
+      ? this.parseFailedPageIndexes(readInfo.comicInfoXml)
+      : [];
+    const downloadedPageCountFromXml = hasComicInfo
+      ? this.parsePositiveIntegerXmlField(readInfo.comicInfoXml, 'DownloadedPageCount')
+      : 0;
+    let totalPageCount = Math.max(xmlPageCount, chapter.pageCount || 0, knownPageCount, imageEntryCount);
+    failedPageIndexes = this.normalizeFailedPageIndexesForTotal(failedPageIndexes, totalPageCount);
+    let isPartialArchive = hasComicInfo && (
+      this.parseBooleanXmlField(readInfo.comicInfoXml, 'IsPartialArchive') ||
+        failedPageIndexes.length > 0
+    );
+
+    if (!hasReadableEntries) {
+      isPartialArchive = true;
+    }
+    if (totalPageCount > 0 && imageEntryCount < totalPageCount) {
+      isPartialArchive = true;
+    }
+
+    let downloadedPageCount = 0;
+    if (isPartialArchive) {
+      if (downloadedPageCountFromXml > 0) {
+        downloadedPageCount = downloadedPageCountFromXml;
+      } else if (totalPageCount > 0 && failedPageIndexes.length > 0) {
+        downloadedPageCount = totalPageCount - failedPageIndexes.length;
+      } else {
+        downloadedPageCount = imageEntryCount;
+      }
+    } else {
+      downloadedPageCount = totalPageCount > 0 ? totalPageCount : imageEntryCount;
+    }
+
+    if (totalPageCount <= 0 && downloadedPageCount > 0) {
+      totalPageCount = downloadedPageCount;
+    }
+    downloadedPageCount = this.clampPageCount(downloadedPageCount, totalPageCount);
+    const cacheStatus = this.resolveArchiveCacheStatus(isPartialArchive, downloadedPageCount, totalPageCount);
+
+    const state: OnlineArchiveCacheState = {
+      archivePath: archivePath,
+      archiveSize: this.getFileSize(archivePath),
+      totalPageCount: totalPageCount,
+      downloadedPageCount: downloadedPageCount,
+      failedPageIndexes: failedPageIndexes,
+      isPartialArchive: isPartialArchive,
+      hasComicInfo: hasComicInfo,
+      imageEntryCount: imageEntryCount,
+      cacheStatus: cacheStatus,
+      storageType: OnlineChapterArchiveStorageType.CBZ
+    };
+    return state;
+  }
+
+  private resolveArchiveCacheStatus(
+    isPartialArchive: boolean,
+    downloadedPageCount: number,
+    totalPageCount: number
+  ): OnlineChapterArchiveCacheStatus {
+    if (downloadedPageCount <= 0) {
+      return OnlineChapterArchiveCacheStatus.STALE;
+    }
+    if (totalPageCount > 0 && downloadedPageCount >= totalPageCount && !isPartialArchive) {
+      return OnlineChapterArchiveCacheStatus.COMPLETE;
+    }
+    if (totalPageCount <= 0 && downloadedPageCount > 0 && !isPartialArchive) {
+      return OnlineChapterArchiveCacheStatus.COMPLETE;
+    }
+    return OnlineChapterArchiveCacheStatus.PARTIAL;
+  }
+
+  private serializeFailedPageIndexes(indexes: number[]): string {
+    if (indexes.length <= 0) {
+      return '';
+    }
+    const normalized: number[] = [];
+    for (let i = 0; i < indexes.length; i++) {
+      const index = indexes[i];
+      if (!this.isUsableNumber(index) || index < 0) {
+        continue;
+      }
+      const safeIndex = Math.floor(index);
+      if (!normalized.includes(safeIndex)) {
+        normalized.push(safeIndex);
+      }
+    }
+    normalized.sort((left: number, right: number) => left - right);
+    const parts: string[] = [];
+    for (let i = 0; i < normalized.length; i++) {
+      parts.push(String(normalized[i]));
+    }
+    return parts.join(',');
+  }
+
+  private normalizeFailedPageIndexesForTotal(indexes: number[], totalPageCount: number): number[] {
+    const normalized: number[] = [];
+    if (indexes.length <= 0) {
+      return normalized;
+    }
+    const shouldConvertOneBased = totalPageCount > 0 && indexes.includes(totalPageCount);
+    for (let i = 0; i < indexes.length; i++) {
+      const rawIndex = indexes[i];
+      if (!this.isUsableNumber(rawIndex)) {
+        continue;
+      }
+      const convertedIndex = shouldConvertOneBased && rawIndex > 0
+        ? Math.floor(rawIndex) - 1
+        : Math.floor(rawIndex);
+      if (convertedIndex < 0) {
+        continue;
+      }
+      if (totalPageCount > 0 && convertedIndex >= totalPageCount) {
+        continue;
+      }
+      if (!normalized.includes(convertedIndex)) {
+        normalized.push(convertedIndex);
+      }
+    }
+    normalized.sort((left: number, right: number) => left - right);
+    return normalized;
+  }
+
+  private async persistOnlineArchiveCacheState(
+    comic: OnlineComicInfo,
+    chapter: OnlineChapterInfo,
+    archiveState: OnlineArchiveCacheState
+  ): Promise<void> {
+    const pageCount = archiveState.totalPageCount > 0
+      ? archiveState.totalPageCount
+      : (chapter.pageCount || archiveState.downloadedPageCount);
+    const isChapterFullyDownloaded = archiveState.cacheStatus === OnlineChapterArchiveCacheStatus.COMPLETE;
+    const downloadedPageIds = archiveState.isPartialArchive
+      ? await this.resolveDownloadedPageIdsForArchiveState(chapter.id, archiveState)
+      : [];
+    const now = Date.now();
+    const existingRecord = await this.getOnlineChapterArchiveCacheState(chapter.id);
+    const createTime = existingRecord !== null && existingRecord.createTime > 0 ? existingRecord.createTime : now;
+    const failedPageIndexesText = this.serializeFailedPageIndexes(archiveState.failedPageIndexes);
+
+    await this.databaseManager.beginTransaction();
+    try {
+      await this.databaseManager.executeSql(
+        `INSERT OR REPLACE INTO online_chapter_cache_state
+         (chapterId, comicId, sourceId, sourceName, sourcePkg, archivePath, cacheStatus, storageType, cachedPageCount, totalPageCount, archiveSize, imageEntryCount, hasComicInfo, failedPageIndexes, lastScanTime, createTime, updateTime)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        [
+          chapter.id,
+          chapter.comicId,
+          comic.sourceId,
+          comic.sourceName,
+          comic.sourcePkg,
+          archiveState.archivePath,
+          archiveState.cacheStatus,
+          archiveState.storageType,
+          archiveState.downloadedPageCount,
+          pageCount,
+          archiveState.archiveSize,
+          archiveState.imageEntryCount,
+          archiveState.hasComicInfo ? 1 : 0,
+          failedPageIndexesText,
+          now,
+          createTime,
+          now
+        ]
+      );
+      await this.databaseManager.executeSql(
+        'UPDATE online_chapter SET isDownloaded = ?, downloadPath = ?, pageCount = ?, updateTime = ? WHERE id = ?',
+        [
+          isChapterFullyDownloaded ? 1 : 0,
+          archiveState.archivePath,
+          pageCount,
+          now,
+          chapter.id
+        ]
+      );
+
+      if (isChapterFullyDownloaded) {
+        await this.databaseManager.executeSql(
+          'UPDATE online_page SET isDownloaded = 1 WHERE chapterId = ?',
+          [chapter.id]
+        );
+      } else {
+        await this.databaseManager.executeSql(
+          'UPDATE online_page SET isDownloaded = 0 WHERE chapterId = ?',
+          [chapter.id]
+        );
+        for (let i = 0; i < downloadedPageIds.length; i++) {
+          await this.databaseManager.executeSql(
+            'UPDATE online_page SET isDownloaded = 1 WHERE id = ?',
+            [downloadedPageIds[i]]
+          );
+        }
+      }
+
+      await this.databaseManager.commit();
+    } catch (error) {
+      await this.databaseManager.rollBack();
+      throw error as Error;
+    }
+  }
+
+  private async persistOnlineArchiveLookupMiss(
+    comic: OnlineComicInfo,
+    chapter: OnlineChapterInfo,
+    reason: string
+  ): Promise<void> {
+    const rawDownloadPath = this.normalizeFileSystemPath(chapter.downloadPath || '');
+    const stale = rawDownloadPath.length > 0 && this.isCbzPath(rawDownloadPath);
+    const cacheStatus = stale ? OnlineChapterArchiveCacheStatus.STALE : OnlineChapterArchiveCacheStatus.NONE;
+    const storageType = OnlineChapterArchiveStorageType.NONE;
+    const knownPageCount = Math.max(chapter.pageCount || 0, await this.resolveKnownOnlineChapterPageCount(chapter.id));
+    const now = Date.now();
+    const existingRecord = await this.getOnlineChapterArchiveCacheState(chapter.id);
+    const createTime = existingRecord !== null && existingRecord.createTime > 0 ? existingRecord.createTime : now;
+    await this.databaseManager.beginTransaction();
+    try {
+      await this.databaseManager.executeSql(
+        `INSERT OR REPLACE INTO online_chapter_cache_state
+         (chapterId, comicId, sourceId, sourceName, sourcePkg, archivePath, cacheStatus, storageType, cachedPageCount, totalPageCount, archiveSize, imageEntryCount, hasComicInfo, failedPageIndexes, lastScanTime, createTime, updateTime)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        [
+          chapter.id,
+          chapter.comicId,
+          comic.sourceId,
+          comic.sourceName,
+          comic.sourcePkg,
+          stale ? rawDownloadPath : '',
+          cacheStatus,
+          storageType,
+          0,
+          knownPageCount,
+          0,
+          0,
+          0,
+          '',
+          now,
+          createTime,
+          now
+        ]
+      );
+      await this.databaseManager.executeSql(
+        'UPDATE online_chapter SET isDownloaded = 0, downloadPath = ?, pageCount = ?, updateTime = ? WHERE id = ?',
+        [
+          stale ? rawDownloadPath : null,
+          knownPageCount,
+          now,
+          chapter.id
+        ]
+      );
+      await this.databaseManager.executeSql(
+        'UPDATE online_page SET isDownloaded = 0 WHERE chapterId = ?',
+        [chapter.id]
+      );
+      await this.databaseManager.commit();
+      logger.info(TAG, `在线章节归档缺失状态已记录: chapter=${chapter.title}, status=${cacheStatus}, reason=${reason}`);
+    } catch (error) {
+      await this.databaseManager.rollBack();
+      throw error as Error;
+    }
+  }
+
+  private async resolveDownloadedPageIdsForArchiveState(
+    chapterId: string,
+    archiveState: OnlineArchiveCacheState
+  ): Promise<string[]> {
+    const pages = await this.dataManager.getOnlineChapterPages(chapterId);
+    const downloadedPageIds: string[] = [];
+    if (pages.length <= 0 || archiveState.downloadedPageCount <= 0) {
+      return downloadedPageIds;
+    }
+
+    const failedPageIndexes = new Set<number>();
+    for (let i = 0; i < archiveState.failedPageIndexes.length; i++) {
+      failedPageIndexes.add(archiveState.failedPageIndexes[i]);
+    }
+    const hasFailedPageList = failedPageIndexes.size > 0;
+    const effectiveTotalPageCount = archiveState.totalPageCount > 0
+      ? archiveState.totalPageCount
+      : pages.length;
+
+    for (let i = 0; i < pages.length; i++) {
+      if (i >= effectiveTotalPageCount) {
+        break;
+      }
+      let isDownloaded = false;
+      if (hasFailedPageList) {
+        isDownloaded = !failedPageIndexes.has(i);
+      } else {
+        isDownloaded = i < archiveState.downloadedPageCount;
+      }
+      if (isDownloaded) {
+        downloadedPageIds.push(pages[i].id);
+      }
+    }
+    return downloadedPageIds;
+  }
+
+  private readArchiveEntryInfo(archivePath: string): ArchiveEntryReadInfo {
+    const emptyInfo: ArchiveEntryReadInfo = {
+      entryNames: [],
+      comicInfoXml: ''
+    };
+    try {
+      const minizip = new MinizipNative(archivePath);
+      const openCode = minizip.Open();
+      if (openCode !== 0) {
+        logger.warn(TAG, `读取CBZ条目失败: openCode=${openCode}, path=${archivePath}`);
+        return emptyInfo;
+      }
+
+      const entryNames = minizip.GetEntryNames();
+      let comicInfoXml = '';
+      for (let i = 0; i < entryNames.length; i++) {
+        const normalizedEntryName = this.normalizeArchiveEntryName(entryNames[i]);
+        if (normalizedEntryName === 'comicinfo.xml' || normalizedEntryName.endsWith('/comicinfo.xml')) {
+          const content = minizip.ExtractFileToJS(entryNames[i], '');
+          if (content !== undefined) {
+            comicInfoXml = this.decodeUtf8Text(content);
+          }
+          break;
+        }
+      }
+
+      const info: ArchiveEntryReadInfo = {
+        entryNames: entryNames,
+        comicInfoXml: comicInfoXml
+      };
+      return info;
+    } catch (error) {
+      logger.warn(TAG, `读取CBZ元数据失败: ${archivePath}, ${String(error)}`);
+      return emptyInfo;
+    }
+  }
+
+  private countArchiveImageEntries(entryNames: string[]): number {
+    let count = 0;
+    for (let i = 0; i < entryNames.length; i++) {
+      const normalizedEntryName = this.normalizeArchiveEntryName(entryNames[i]);
+      if (normalizedEntryName.length <= 0 || normalizedEntryName.endsWith('/')) {
+        continue;
+      }
+      if (this.isImagePath(normalizedEntryName)) {
+        count++;
+      }
+    }
+    return count;
+  }
+
+  private normalizeArchiveEntryName(entryName: string): string {
+    return entryName.replace(/\\/g, '/').replace(/^\/+/, '').trim().toLowerCase();
+  }
+
+  private decodeUtf8Text(content: ArrayBuffer): string {
+    const decoder = util.TextDecoder.create('utf-8', { ignoreBOM: true });
+    return decoder.decodeToString(new Uint8Array(content));
+  }
+
+  private parsePositiveIntegerXmlField(xmlContent: string, fieldName: string): number {
+    const value = this.extractXmlFieldText(xmlContent, fieldName);
+    if (value.length <= 0) {
+      return 0;
+    }
+    const parsed = Number(value);
+    if (!this.isUsableNumber(parsed) || parsed <= 0) {
+      return 0;
+    }
+    return Math.floor(parsed);
+  }
+
+  private parseBooleanXmlField(xmlContent: string, fieldName: string): boolean {
+    const value = this.extractXmlFieldText(xmlContent, fieldName).toLowerCase();
+    return value === 'true' || value === '1' || value === 'yes';
+  }
+
+  private parseFailedPageIndexes(xmlContent: string): number[] {
+    const value = this.extractXmlFieldText(xmlContent, 'FailedPages');
+    const indexes: number[] = [];
+    if (value.length <= 0) {
+      return indexes;
+    }
+    const parts = value.split(',');
+    for (let i = 0; i < parts.length; i++) {
+      const parsed = Number(parts[i].trim());
+      if (this.isUsableNumber(parsed) && parsed >= 0) {
+        indexes.push(Math.floor(parsed));
+      }
+    }
+    return indexes;
+  }
+
+  private extractXmlFieldText(xmlContent: string, fieldName: string): string {
+    const pattern = new RegExp(`<${fieldName}[^>]*>([\\s\\S]*?)<\\/${fieldName}>`, 'i');
+    const match = pattern.exec(xmlContent);
+    if (!match || match.length < 2) {
+      return '';
+    }
+    return match[1].trim();
+  }
+
+  private clampPageCount(pageCount: number, totalPageCount: number): number {
+    if (pageCount <= 0) {
+      return 0;
+    }
+    if (totalPageCount > 0 && pageCount > totalPageCount) {
+      return totalPageCount;
+    }
+    return pageCount;
   }
 
   private recoverArchiveTempFile(archivePath: string): string {

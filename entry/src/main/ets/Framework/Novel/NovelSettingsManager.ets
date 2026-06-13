@@ -154,7 +154,19 @@ export interface TxtTocItem {
 }
 
 /**
- * 默认TXT目录规则（内置，来自exportTxtTocRule.json）
+ * 内置章节规则片段
+ */
+const TXT_TOC_NUM_TOKEN: string = '(?:[\\d０-９]{1,5}|[〇零一二两三四五六七八九十百千万萬壹贰叁肆伍陆柒捌玖拾佰仟壱弐参]{1,12}|[IVXLCDMivxlcdm]{1,10})';
+const TXT_TOC_LINE_PREFIX: string = '^[ 　\\t]{0,4}';
+const TXT_TOC_LINE_SUFFIX: string = '.{0,45}$';
+const TXT_TOC_CJK_SPECIAL_TOKEN: string = '(?:序章|序幕|楔子|引子|前言|正文(?!完|结)|终章|終章|最终话|最終話|后记|後記|尾声|尾聲|番外|番外篇|番外編|外传|外傳|外伝|特别篇|特別篇|特別編|短篇|短編|短篇集|短編集|读切|読切|読み切り|おまけ|オマケ|単行本|单行本|コミックス|同人誌|同人志|同人本|正篇|正編|本篇|本編|总集篇|總集篇|総集編|特典|特典漫画|彩页|彩頁|カラー|カラーページ|巻頭カラー|センターカラー|卷首语|巻末おまけ)';
+const TXT_TOC_KR_SPECIAL_TOKEN: string = '(?:프롤로그|에필로그|외전|번외|특별편|후기|후일담|단행본|웹툰|만화|본편|특전|보너스|단편|총집편|스페셜|프리뷰|미리보기)';
+const TXT_TOC_EN_NUM_LABEL_TOKEN: string = '(?:[Cc]hapter|[Cc]hap\\.?|[Cc]h\\.?|[Ee]pisode|[Ee]p\\.?|[Pp]art|[Vv]olume|[Vv]ol\\.?|[Bb]ook|[Ss]eason|[Ii]ssue|[Nn]o\\.?|[Ff]ile|[Aa]ct|[Ss]tage|[Cc]ase|[Mm]ission|[Qq]uest|[Tt]rack|[Ll]og|[Mm]anga|[Cc]omic|[Ww]ebtoon|[Mm]anhwa|[Mm]anhua|[Tt]ank(?:o|ō)bon|[Dd]oujinshi|[Aa]nthology|[Mm]agazine|[Ss]erial|[Aa]rc)';
+const TXT_TOC_EN_SPECIAL_TOKEN: string = '(?:[Pp]rologue|[Ee]pilogue|[Ii]nterlude|[Ff]oreword|[Aa]fterword|[Ee]xtra|[Bb]onus|[Ss]pecial|[Ss]ide[ 　\\t-]*[Ss]tory|[Ss]ide[ 　\\t-]*[Cc]hapter|[Mm]ain[ 　\\t-]*[Ss]tory|[Aa]fter[ 　\\t-]*[Ss]tory|[Oo]make|[Oo]ne[ 　\\t-]*[Ss]hot|[Rr]aw|[Rr]aws|[Ss]can|[Ss]cans|[Ss]canlation|[Tt]ranslator[ 　\\t-]*[Nn]otes?|[Cc]redits?|[Cc]olor[ 　\\t-]*[Pp]ages?|[Cc]over|[Pp]in[ 　\\t-]*[Uu]p|[Dd]ouble[ 　\\t-]*[Pp]age[ 　\\t-]*[Ss]pread|[Ss]pread|[Pp]review|[Tt]easer|[Tt]railer)';
+const TXT_TOC_PHOTO_LABEL_TOKEN: string = '(?:写真集|寫真集|写真|寫真|フォトブック|デジタル写真集|デジタルフォトブック|グラビア|コスプレ|撮影会|レイヤー|画集|畫集|插画|插畫|插图|插圖|图集|圖集|套图|套圖|相册|相冊|화보|화보집|디지털화보|사진집|사진|코스프레|포트폴리오|일러스트|[Pp]hotobook|[Pp]hoto[ 　\\t-]*[Bb]ook|[Pp]hoto[ 　\\t-]*[Ss]et|[Dd]igital[ 　\\t-]*[Pp]hoto[ 　\\t-]*(?:[Bb]ook|[Ss]et)|[Gg]ravure|[Cc]osplay|[Cc]oser|[Ii]mage[ 　\\t-]*[Ss]et|[Gg]allery|[Aa]lbum|[Pp]ortfolio|[Ll]ook[ 　\\t-]*[Bb]ook|[Ss]hoot(?:ing)?|[Ii]dol[ 　\\t-]*[Pp]hoto[ 　\\t-]*[Bb]ook|[Aa]rt[ 　\\t-]*[Bb]ook|[Ii]llust(?:ration)?[ 　\\t-]*[Bb]ook|CG[ 　\\t-]*[Ss]et|[Ss]et)';
+
+/**
+ * 默认TXT目录规则（内置，来自exportTxtTocRule.json，并扩展多语言漫画/写真标题）
  */
 export const DEFAULT_TXT_TOC_RULES: TxtTocRule[] = [
   { id: '-1', name: '目录(去空白)', pattern: '(?<=[　\\s])(?:序章|楔子|正文(?!完|结)|终章|后记|尾声|番外|第\\s{0,4}[\\d〇零一二两三四五六七八九十百千万壹贰叁肆伍陆柒捌玖拾佰仟]+?\\s{0,4}(?:章|节(?!课)|卷|集(?![合和]))).{0,30}$', enabled: true, priority: 0, example: '第一章 假装第一章前面有空白但我不要' },
@@ -182,6 +194,121 @@ export const DEFAULT_TXT_TOC_RULES: TxtTocRule[] = [
   { id: '-23', name: '特定字符 标题 特定符号', pattern: '(?<=\\={3,6}).{1,40}?(?=\\=)', enabled: false, priority: 22, example: '===起这种标题干什么===' },
   { id: '-24', name: '字数分割 分节阅读', pattern: '(?<=[ 　\\t]{0,4})(?:.{0,15}分[页节章段]阅读[-_ ]|第\\s{0,4}[\\d零一二两三四五六七八九十百千万]{1,6}\\s{0,4}[页节]).{0,30}$', enabled: true, priority: 23, example: '分节|分页|分段阅读\n第一页' },
   { id: '-25', name: '通用规则', pattern: '(?im)^.{0,6}(?:[引楔]子|正文(?!完|结)|[引序前]言|[序终]章|扉页|[上中下][部篇卷]|卷首语|后记|尾声|番外|={2,4}|第\\s{0,4}[\\d〇零一二两三四五六七八九十百千万壹贰叁肆伍陆柒捌玖拾佰仟]+?\\s{0,4}(?:章|节(?!课)|卷|页[、 　]|集(?![合和])|部(?![分是门落])|篇(?!张))).{0,40}$|^.{0,6}[\\d〇零一二两三四五六七八九十百千万壹贰叁肆伍陆柒捌玖拾佰仟a-z]{1,8}[、. 　].{0,20}$', enabled: false, priority: 24, example: '激进规则,适配更多非常用格式' },
+  {
+    id: '-26',
+    name: '多语言目录(中日韩章节)',
+    pattern: TXT_TOC_LINE_PREFIX + '(?:' + TXT_TOC_CJK_SPECIAL_TOKEN + '|' +
+      '(?:第\\s{0,4})?' + TXT_TOC_NUM_TOKEN + '\\s{0,4}(?:章|章节|節|节|回|話|话|卷|巻|冊|册|集(?![合和])|部(?![分赛游])|篇(?!张)|幕|場|场|화|회|장|권|부|편)|' +
+      '제\\s{0,4}' + TXT_TOC_NUM_TOKEN + '\\s{0,4}(?:화|회|장|권|부|편)|시즌\\s{0,4}' + TXT_TOC_NUM_TOKEN + '|' +
+      '[上下中前後后][篇部卷編编])' + TXT_TOC_LINE_SUFFIX,
+    enabled: true,
+    priority: 25,
+    example: '第12話 番外編\n第３巻 巻末おまけ\n제12화 외전'
+  },
+  {
+    id: '-27',
+    name: '多语言目录(英文章节/卷集)',
+    pattern: TXT_TOC_LINE_PREFIX + TXT_TOC_EN_NUM_LABEL_TOKEN + '[ 　\\t]{0,4}(?:#|No\\.?|no\\.?)?[ 　\\t]{0,4}' +
+      TXT_TOC_NUM_TOKEN + '(?:[ 　\\t:：,.，、_—\\-].{0,50})?$',
+    enabled: true,
+    priority: 26,
+    example: 'Chapter 12 The Visitor\nVol.03 Bonus\nEpisode #8'
+  },
+  {
+    id: '-28',
+    name: '多语言目录(英文特典/扫图术语)',
+    pattern: TXT_TOC_LINE_PREFIX + TXT_TOC_EN_SPECIAL_TOKEN + '(?:[ 　\\t-]*(?:' + TXT_TOC_EN_NUM_LABEL_TOKEN +
+      '|#)?[ 　\\t]{0,4}' + TXT_TOC_NUM_TOKEN + ')?(?:[ 　\\t:：,.，、_—\\-].{0,50})?$',
+    enabled: true,
+    priority: 27,
+    example: 'Side Story 2\nOmake\nRaw Chapter 10\nScanlation Notes'
+  },
+  {
+    id: '-29',
+    name: '多语言目录(日文漫画术语)',
+    pattern: TXT_TOC_LINE_PREFIX + '(?:' + TXT_TOC_CJK_SPECIAL_TOKEN + '|' +
+      '(?:第\\s{0,4})?' + TXT_TOC_NUM_TOKEN + '\\s{0,4}(?:話|巻|卷|章|幕|部|編|編目)|' +
+      '(?:前編|中編|後編|最終話|最新話|番外編|外伝|特別編|おまけ|オマケ|読み切り|読切|短編|単行本|コミックス|巻末おまけ|カラー|カラーページ))' +
+      TXT_TOC_LINE_SUFFIX,
+    enabled: true,
+    priority: 28,
+    example: '第12話 番外編\n後編\n巻末おまけ漫画'
+  },
+  {
+    id: '-30',
+    name: '多语言目录(韩文Webtoon术语)',
+    pattern: TXT_TOC_LINE_PREFIX + '(?:' + TXT_TOC_KR_SPECIAL_TOKEN + '|' +
+      '(?:제\\s{0,4})?' + TXT_TOC_NUM_TOKEN + '\\s{0,4}(?:화|회|장|권|부|편)|시즌\\s{0,4}' + TXT_TOC_NUM_TOKEN +
+      '|에피소드\\s{0,4}' + TXT_TOC_NUM_TOKEN + ')' + TXT_TOC_LINE_SUFFIX,
+    enabled: true,
+    priority: 29,
+    example: '제7화\n시즌 2\n외전 특별편'
+  },
+  {
+    id: '-31',
+    name: '漫画写真目录(写真/画集/图集)',
+    pattern: TXT_TOC_LINE_PREFIX + '(?:' + TXT_TOC_PHOTO_LABEL_TOKEN + '(?:[ 　\\t]*(?:第\\s{0,4})?' + TXT_TOC_NUM_TOKEN +
+      '|[ 　\\t]*(?:#|No\\.?|no\\.?|Vol\\.?|vol\\.?)?[ 　\\t]{0,4}' + TXT_TOC_NUM_TOKEN + ')?|' +
+      '(?:Vol\\.?|vol\\.?|Set|set|Gallery|gallery|Album|album)[ 　\\t]{0,4}' + TXT_TOC_NUM_TOKEN +
+      '|(?:图集|圖集|套图|套圖|画集|畫集|写真集|화보|사진집)[ 　\\t]{0,4}' + TXT_TOC_NUM_TOKEN + ')' +
+      '(?:[ 　\\t:：,.，、_—\\-].{0,45})?$',
+    enabled: true,
+    priority: 30,
+    example: '写真集 Vol.2\nPhoto Set 03\n화보 12\n图集 001'
+  },
+  {
+    id: '-32',
+    name: '漫画写真目录(括号标签发布)',
+    pattern: TXT_TOC_LINE_PREFIX + '[\\[【(（]?(?:(?:' + TXT_TOC_EN_NUM_LABEL_TOKEN + ')[ 　\\t]{0,4}' +
+      TXT_TOC_NUM_TOKEN + '|第\\s{0,4}' + TXT_TOC_NUM_TOKEN + '\\s{0,4}(?:章|話|话|卷|巻|集)|' +
+      '제\\s{0,4}' + TXT_TOC_NUM_TOKEN + '\\s{0,4}(?:화|회|장)|' +
+      TXT_TOC_NUM_TOKEN + '\\s{0,4}(?:P|p|页|頁|ページ|쪽))[\\]】)）]?(?:[ 　\\t:：,.，、_—\\-].{0,50})?$',
+    enabled: true,
+    priority: 31,
+    example: '[Ch.001] Title\n【第12話】\n(Vol.02) Extra'
+  },
+  {
+    id: '-33',
+    name: '漫画写真目录(页码/图片序号备用)',
+    pattern: TXT_TOC_LINE_PREFIX + '(?:[Pp]age|[Pp]\\.?|页|頁|ページ|쪽|컷)[ 　\\t]{0,4}' +
+      TXT_TOC_NUM_TOKEN + '(?:[ 　\\t:：,.，、_—\\-].{0,35})?$',
+    enabled: false,
+    priority: 32,
+    example: 'Page 12\nP.003\nページ 8\n12쪽'
+  },
+  {
+    id: '-34',
+    name: '漫画写真目录(文件夹序号备用)',
+    pattern: TXT_TOC_LINE_PREFIX + '(?:' + TXT_TOC_NUM_TOKEN + '[ 　\\t._—\\-]+.{1,40}|[#＃]' +
+      TXT_TOC_NUM_TOKEN + '[ 　\\t._—\\-]*.{0,40})$',
+    enabled: false,
+    priority: 33,
+    example: '001 - cover\n#012 gallery'
+  },
+  {
+    id: '-35',
+    name: '多语言目录(漫画发布术语)',
+    pattern: TXT_TOC_LINE_PREFIX + '(?:(?:[Mm]anga|[Cc]omic|[Ww]ebtoon|[Mm]anhwa|[Mm]anhua|[Tt]ank(?:o|ō)bon|[Dd]oujinshi|' +
+      '[Aa]nthology|[Mm]agazine|[Ss]erial)[ 　\\t]*(?:' + TXT_TOC_EN_NUM_LABEL_TOKEN +
+      '|#|No\\.?|no\\.?|Vol\\.?|vol\\.?)?[ 　\\t]{0,4}' + TXT_TOC_NUM_TOKEN + '|' +
+      TXT_TOC_EN_SPECIAL_TOKEN + '|' + TXT_TOC_CJK_SPECIAL_TOKEN +
+      '(?:[ 　\\t]*(?:第\\s{0,4})?' + TXT_TOC_NUM_TOKEN + ')?|' +
+      TXT_TOC_KR_SPECIAL_TOKEN + '(?:[ 　\\t]*(?:제\\s{0,4})?' + TXT_TOC_NUM_TOKEN + ')?)' +
+      '(?:[ 　\\t:：,.，、_—\\-].{0,50})?$',
+    enabled: true,
+    priority: 34,
+    example: 'Tankobon Vol.2\nManhwa 12\nTranslator Notes\n同人誌 特典\n총집편'
+  },
+  {
+    id: '-36',
+    name: '漫画写真目录(写真发布术语)',
+    pattern: TXT_TOC_LINE_PREFIX + TXT_TOC_PHOTO_LABEL_TOKEN +
+      '(?:[ 　\\t]*(?:#|No\\.?|no\\.?|Vol\\.?|vol\\.?|Set|set)?[ 　\\t]{0,4}' +
+      TXT_TOC_NUM_TOKEN + ')?(?:[ 　\\t:：,.，、_—\\-].{0,45})?$',
+    enabled: true,
+    priority: 35,
+    example: 'Gravure Set 03\nCosplay 12\nデジタル写真集 Vol.2\n포트폴리오 4'
+  },
   { id: '-100', name: '默认分章规则', pattern: '', enabled: false, priority: 99, example: '兜底规则，请勿改动此内容' }
 ];
 

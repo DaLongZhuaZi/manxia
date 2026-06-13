@@ -17,6 +17,7 @@ import { util } from '@kit.ArkTS';
 import { ScraperDialog, ScraperDialogConfig, ScraperDialogResult } from './ScraperDialog';
 import { ScraperContentType } from '../Scraper/ScraperTypes';
 import { image } from '@kit.ImageKit';
+import { ImportFlowContentType, ImportFlowEvent, ImportFlowEventType, ImportFlowSeverity } from '../Import/ImportFlowTypes';
 
 const TAG = 'NovelImportDialog';
 
@@ -74,6 +75,7 @@ export struct NovelImportDialog {
   // 回调函数
   onConfirm: (result: NovelImportDialogResult) => void = () => {};
   onCancel: () => void = () => {};
+  onFlowEvent: (event: ImportFlowEvent) => void = () => {};
 
   // 表单状态
   @State title: string = '';
@@ -136,6 +138,29 @@ export struct NovelImportDialog {
     this.loadReplaceRules();
     this.loadFilePreview();
     this.generateDefaultCover();
+  }
+
+  private emitFlowEvent(
+    eventType: ImportFlowEventType,
+    reason: string,
+    success: boolean,
+    detail: string,
+    elapsedMs: number
+  ): void {
+    const event: ImportFlowEvent = new ImportFlowEvent();
+    event.eventType = eventType;
+    event.reason = reason;
+    event.success = success;
+    event.severity = success ? ImportFlowSeverity.INFO : ImportFlowSeverity.ERROR;
+    event.contentType = ImportFlowContentType.NOVEL;
+    event.sourceUri = this.filePath;
+    event.targetPath = this.folderPath;
+    event.displayName = this.title || this.defaultTitle;
+    event.fileName = this.defaultTitle;
+    event.chapterCount = this.allChapters.length;
+    event.elapsedMs = elapsedMs;
+    event.detail = detail;
+    this.onFlowEvent(event);
   }
 
   // 封面生成器常量（基于 ebook.webp 图片精确测量）
@@ -1072,6 +1097,8 @@ export struct NovelImportDialog {
     
     this.isLoadingPreview = true;
     this.previewError = '';
+    const startedAt: number = Date.now();
+    this.emitFlowEvent(ImportFlowEventType.TXT_PREVIEW_STARTED, 'txt_preview_started', true, '', 0);
     
     try {
       // 读取原始文件缓冲区
@@ -1088,10 +1115,12 @@ export struct NovelImportDialog {
       
       // 检测广告内容
       this.detectAdsInContent();
+      this.emitFlowEvent(ImportFlowEventType.TXT_PREVIEW_COMPLETED, 'txt_preview_completed', true, `chapters=${this.allChapters.length}, ads=${this.detectedAds.length}`, Date.now() - startedAt);
     } catch (e) {
       const error = e as Error;
       this.previewError = `读取文件失败: ${String(error)}`;
       logger.error(TAG, this.previewError);
+      this.emitFlowEvent(ImportFlowEventType.ERROR, 'txt_preview_failed', false, this.previewError, Date.now() - startedAt);
     } finally {
       this.isLoadingPreview = false;
     }
@@ -1250,17 +1279,21 @@ export struct NovelImportDialog {
   private async detectChapters(): Promise<void> {
     if (!this.fileContent) return;
     
+    const startedAt: number = Date.now();
+    this.emitFlowEvent(ImportFlowEventType.TXT_RULE_PARSE_STARTED, 'txt_rule_parse_started', true, `rule=${this.selectedTocRuleId || 'auto'}`, 0);
     try {
       // 使用选中的规则解析章节（空字符串表示使用所有启用规则）
       const chapters = this.tocRuleManager.parseChaptersByRuleId(this.fileContent, this.selectedTocRuleId);
       this.allChapters = chapters;  // 存储全部章节
       this.previewChapters = chapters;  // 显示全部章节
       logger.info(TAG, `检测到 ${chapters.length} 个章节，使用规则: ${this.selectedTocRuleId || '自动检测'}`);
+      this.emitFlowEvent(ImportFlowEventType.TXT_RULE_PARSE_COMPLETED, 'txt_rule_parse_completed', true, `rule=${this.selectedTocRuleId || 'auto'}, chapters=${chapters.length}`, Date.now() - startedAt);
     } catch (e) {
       const error = e as Error;
       logger.error(TAG, `章节检测失败: ${String(error)}`);
       this.allChapters = [];
       this.previewChapters = [];
+      this.emitFlowEvent(ImportFlowEventType.TXT_RULE_PARSE_FAILED, 'txt_rule_parse_failed', false, String(error), Date.now() - startedAt);
     }
   }
 
@@ -1371,6 +1404,7 @@ export struct NovelImportDialog {
           .fontSize(20)
           .fontColor([ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme)])
           .onClick(() => {
+            this.emitFlowEvent(ImportFlowEventType.DIALOG_CANCELLED, 'novel_dialog_close_icon', true, '', 0);
             this.onCancel();
             this.controller.close();
           })
@@ -1419,6 +1453,7 @@ export struct NovelImportDialog {
           .layoutWeight(1)
           .fontFamily(this.appFontFamily)
           .onClick(() => {
+            this.emitFlowEvent(ImportFlowEventType.DIALOG_CANCELLED, 'novel_dialog_cancelled', true, '', 0);
             this.onCancel();
             this.controller.close();
           })
@@ -1456,6 +1491,7 @@ export struct NovelImportDialog {
                 adLinesToRemove: adLines,
                 coverPath: this.customCoverPath || this.coverPath || undefined
               };
+              this.emitFlowEvent(ImportFlowEventType.DIALOG_CONFIRMED, 'novel_dialog_confirmed', true, `chapters=${this.allChapters.length}, replace=${this.enableReplaceRules}`, 0);
               this.onConfirm(result);
               this.controller.close();
             }

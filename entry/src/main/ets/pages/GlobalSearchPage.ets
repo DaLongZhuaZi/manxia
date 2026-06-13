@@ -47,6 +47,19 @@ import { SourceDetailSearchExecutor, getSourceDetailSearchExecutor } from '../Fr
 import { MangaDetailPageParams } from './MangaDetailPage';
 import { GlobalSearchSessionHandle } from '../Framework/Search/GlobalSearchSessionTypes';
 import { SearchResultDataSource } from '../Framework/Search/SearchResultDataSource';
+import { GlobalSearchFlowMonitor, getGlobalSearchFlowMonitor } from '../Framework/Search/GlobalSearchFlowMonitor';
+import {
+  GlobalSearchFlowEvent,
+  GlobalSearchFlowEventType,
+  GlobalSearchFlowSessionInfo,
+  GlobalSearchFlowSeverity
+} from '../Framework/Search/GlobalSearchFlowTypes';
+import {
+  buildGlobalSearchCacheKey,
+  createGlobalSearchCacheData,
+  GlobalSearchCacheData,
+  GlobalSearchCachedComicInfo
+} from '../Framework/Search/GlobalSearchCacheBridge';
 
 const TAG = 'GlobalSearchPage';
 const TITLE_BAR_HEIGHT_MINI: number = 56;
@@ -66,16 +79,6 @@ const SEARCH_RESULT_ITEM_HEIGHT: number = 184;
 const SEARCH_RESULT_EXPANDED_GRID_COLUMNS: number = 3;
 const SEARCH_RESULT_EXPANDED_GRID_COLUMN_GAP: number = 12;
 const SEARCH_RESULT_EXPANDED_GRID_ROW_GAP: number = 12;
-
-function buildGlobalSearchCacheKey(sourceId: number, keyword: string): string {
-  const normalizedKeyword = keyword.trim().toLowerCase();
-  let hash = 0;
-  for (let i = 0; i < normalizedKeyword.length; i++) {
-    hash = ((hash << 5) - hash) + normalizedKeyword.charCodeAt(i);
-    hash = hash & hash;
-  }
-  return `global_search_cache_${sourceId}_${Math.abs(hash).toString(36)}`;
-}
 
 // 源选择列表分页常量
 const SOURCE_DISPLAY_LIMIT = 20;  // 默认显示数量
@@ -189,6 +192,7 @@ export struct GlobalSearchPage {
   
   // 服务
   private searchService: GlobalSearchService = getGlobalSearchService();
+  private searchFlowMonitor: GlobalSearchFlowMonitor = getGlobalSearchFlowMonitor();
   private sourceDetailSearchExecutor: SourceDetailSearchExecutor = getSourceDetailSearchExecutor();
   private pathStack: NavPathStack = new NavPathStack();
   private lastProgressUpdate: number = 0;  // 上次进度更新时间戳
@@ -197,6 +201,9 @@ export struct GlobalSearchPage {
   private pendingProgressTotal: number = 0;
   private activeSearchToken: number = 0;
   private currentSearchHandle: GlobalSearchSessionHandle<SearchSourceGroup[]> | null = null;
+  private currentSearchFlowSessionId: string = '';
+  private currentSearchFlowStartTime: number = 0;
+  private lastFilteredGroupsSignature: string = '';
   private searchPreferenceSaveTimer: number = -1;
   
   // WebView 相关（用于后台搜索 WebView 格式图源）
@@ -547,6 +554,13 @@ export struct GlobalSearchPage {
 
   private cancelCurrentSearch(reason: string): void {
     if (this.currentSearchHandle) {
+      this.recordSearchFlowSimpleEvent(
+        this.currentSearchHandle.sessionId,
+        GlobalSearchFlowEventType.TASK_CANCELLED,
+        reason,
+        true,
+        `activeToken=${this.activeSearchToken}`
+      );
       this.currentSearchHandle.cancel(reason);
       this.currentSearchHandle = null;
     } else {
@@ -654,8 +668,11 @@ export struct GlobalSearchPage {
    */
   private updateFilteredGroups(): void {
     if (!this.searchKeyword || this.searchKeyword.trim().length === 0) {
-      this.filteredGroups = [];
-      this.filteredGroupDataSource.replaceData([]);
+      if (this.lastFilteredGroupsSignature.length > 0) {
+        this.filteredGroups = [];
+        this.filteredGroupDataSource.replaceData([]);
+        this.lastFilteredGroupsSignature = '';
+      }
       return;
     }
     
@@ -675,8 +692,26 @@ export struct GlobalSearchPage {
       groups = this.sortGroupsBySearchRelevance(groups);
     }
 
+    const nextSignature: string = this.buildFilteredGroupsSignature(groups);
+    if (nextSignature === this.lastFilteredGroupsSignature) {
+      return;
+    }
+    this.lastFilteredGroupsSignature = nextSignature;
     this.filteredGroups = groups;
     this.filteredGroupDataSource.replaceData(groups);
+  }
+
+  private buildFilteredGroupsSignature(groups: SearchSourceGroup[]): string {
+    const parts: string[] = [];
+    parts.push(this.searchKeyword.trim());
+    parts.push(this.contentTypeFilter);
+    parts.push(this.getEffectiveSourceTypeFilter());
+    for (const group of groups) {
+      const searchingFlag: string = group.isSearching ? '1' : '0';
+      const errorFlag: string = group.hasError ? '1' : '0';
+      parts.push(`${group.groupId}:${group.items.length}:${searchingFlag}:${errorFlag}:${group.errorMessage || ''}`);
+    }
+    return parts.join('|');
   }
 
   private cloneSearchGroup(group: SearchSourceGroup, forceCompleted: boolean): SearchSourceGroup {
@@ -772,6 +807,117 @@ export struct GlobalSearchPage {
       total += group.items.length;
     }
     return total;
+  }
+
+  private buildSearchFlowSessionInfo(
+    sessionId: string,
+    keyword: string,
+    filterConfig: SearchFilterConfig
+  ): GlobalSearchFlowSessionInfo {
+    const info: GlobalSearchFlowSessionInfo = new GlobalSearchFlowSessionInfo();
+    info.sessionId = sessionId;
+    info.keyword = keyword;
+    info.contentType = filterConfig.contentType;
+    info.sourceType = filterConfig.sourceType;
+    info.selectedMangaSourceCount = filterConfig.selectedMangaSources.length;
+    info.selectedNovelSourceCount = filterConfig.selectedNovelSources.length;
+    info.enableSuwayomi = filterConfig.enableSuwayomi;
+    info.maxConcurrent = filterConfig.maxConcurrent;
+    info.pageInstanceId = this.componentId;
+    info.startedAt = Date.now();
+    return info;
+  }
+
+  private recordSearchFlowSimpleEvent(
+    sessionId: string,
+    eventType: GlobalSearchFlowEventType,
+    reason: string,
+    success: boolean,
+    detail: string
+  ): void {
+    if (!sessionId || sessionId.length <= 0) {
+      return;
+    }
+    const event: GlobalSearchFlowEvent = this.searchFlowMonitor.createEvent(sessionId, eventType, reason);
+    event.keyword = this.searchKeyword.trim();
+    event.contentType = this.contentTypeFilter;
+    event.sourceType = this.getEffectiveSourceTypeFilter();
+    event.success = success;
+    event.detail = detail;
+    if (!success) {
+      event.errorMessage = detail;
+      event.severity = GlobalSearchFlowSeverity.WARN;
+    }
+    this.searchFlowMonitor.record(event);
+  }
+
+  private recordElapsedSearchFlowEvent(
+    sessionId: string,
+    eventType: GlobalSearchFlowEventType,
+    reason: string,
+    elapsedMs: number,
+    success: boolean,
+    detailOrError: string
+  ): void {
+    if (!sessionId || sessionId.length <= 0) {
+      return;
+    }
+    const event: GlobalSearchFlowEvent = this.searchFlowMonitor.createEvent(sessionId, eventType, reason);
+    event.keyword = this.searchKeyword.trim();
+    event.contentType = this.contentTypeFilter;
+    event.sourceType = this.getEffectiveSourceTypeFilter();
+    event.elapsedMs = elapsedMs;
+    event.success = success;
+    if (success) {
+      event.detail = detailOrError;
+    } else {
+      event.errorMessage = detailOrError;
+      event.severity = GlobalSearchFlowSeverity.ERROR;
+    }
+    event.metricName = `global_search_${eventType}`;
+    event.metricValue = elapsedMs;
+    event.metricUnit = 'ms';
+    this.searchFlowMonitor.record(event);
+  }
+
+  private recordSearchSnapshotEvent(
+    sessionId: string,
+    completed: number,
+    total: number,
+    itemCount: number,
+    isFinalSnapshot: boolean,
+    elapsedMs: number
+  ): void {
+    if (!sessionId || sessionId.length <= 0) {
+      return;
+    }
+    const event: GlobalSearchFlowEvent = this.searchFlowMonitor.createEvent(sessionId, GlobalSearchFlowEventType.SNAPSHOT_APPLIED, isFinalSnapshot ? 'final_snapshot' : 'progress_snapshot');
+    event.keyword = this.searchKeyword.trim();
+    event.contentType = this.contentTypeFilter;
+    event.sourceType = this.getEffectiveSourceTypeFilter();
+    event.completedGroups = completed;
+    event.totalGroups = total;
+    event.itemCount = itemCount;
+    event.elapsedMs = elapsedMs;
+    event.detail = `filteredGroups=${this.filteredGroups.length}, searching=${this.isSearchInProgress()}`;
+    event.metricName = 'global_search_snapshot_apply';
+    event.metricValue = elapsedMs;
+    event.metricUnit = 'ms';
+    this.searchFlowMonitor.record(event);
+  }
+
+  private recordSearchFlowError(sessionId: string, reason: string, errorMessage: string): void {
+    if (!sessionId || sessionId.length <= 0) {
+      return;
+    }
+    const event: GlobalSearchFlowEvent = this.searchFlowMonitor.createEvent(sessionId, GlobalSearchFlowEventType.ERROR, reason);
+    event.keyword = this.searchKeyword.trim();
+    event.contentType = this.contentTypeFilter;
+    event.sourceType = this.getEffectiveSourceTypeFilter();
+    event.success = false;
+    event.errorMessage = errorMessage;
+    event.severity = GlobalSearchFlowSeverity.ERROR;
+    this.searchFlowMonitor.record(event);
   }
 
   private sortGroupsBySearchRelevance(groups: SearchSourceGroup[]): SearchSourceGroup[] {
@@ -946,6 +1092,7 @@ export struct GlobalSearchPage {
     groups: SearchSourceGroup[],
     isFinalSnapshot: boolean
   ): void {
+    const applyStartedAt: number = Date.now();
     this.lastProgressUpdate = Date.now();
     if (isFinalSnapshot) {
       this.isSearching = false;
@@ -974,12 +1121,16 @@ export struct GlobalSearchPage {
       this.resultRevealPhase = 1;
     }
     this.syncSearchLoadingMotion();
+    const sessionId: string = this.currentSearchHandle ? this.currentSearchHandle.sessionId : this.currentSearchFlowSessionId;
+    this.recordSearchSnapshotEvent(sessionId, completed, total, nextItemCount, isFinalSnapshot, Date.now() - applyStartedAt);
   }
 
   private queueProgressSnapshot(completed: number, total: number, groups: SearchSourceGroup[]): void {
     this.pendingProgressGroups = groups;
     this.pendingProgressCompleted = completed;
     this.pendingProgressTotal = total;
+    const sessionId: string = this.currentSearchHandle ? this.currentSearchHandle.sessionId : this.currentSearchFlowSessionId;
+    this.recordSearchFlowSimpleEvent(sessionId, GlobalSearchFlowEventType.SNAPSHOT_QUEUED, 'results_scrolling', true, `completed=${completed}/${total}, groups=${groups.length}`);
   }
 
   private flushPendingProgressSnapshot(): void {
@@ -1159,10 +1310,24 @@ export struct GlobalSearchPage {
         maxConcurrent: this.maxConcurrent,
         sessionId: `global_search_page_${searchToken}_${Date.now()}`
       };
+      const flowSessionId: string = filterConfig.sessionId || '';
+      this.currentSearchFlowSessionId = flowSessionId;
+      this.currentSearchFlowStartTime = Date.now();
+      this.searchFlowMonitor.ensureSession(this.buildSearchFlowSessionInfo(flowSessionId, keyword, filterConfig));
+      this.recordSearchFlowSimpleEvent(flowSessionId, GlobalSearchFlowEventType.REQUEST_STARTED, 'perform_search', true, `token=${searchToken}`);
+      this.recordSearchFlowSimpleEvent(
+        flowSessionId,
+        GlobalSearchFlowEventType.FILTER_BOUND,
+        'filter_config',
+        true,
+        `contentType=${filterConfig.contentType}, sourceType=${filterConfig.sourceType}, mangaSources=${filterConfig.selectedMangaSources.length}, novelSources=${filterConfig.selectedNovelSources.length}, suwayomi=${filterConfig.enableSuwayomi}, maxConcurrent=${filterConfig.maxConcurrent}`
+      );
 
       const cachedGroups: SearchSourceGroup[] | null = this.searchService.getCachedFullSearchResult(keyword, filterConfig);
       if (cachedGroups !== null) {
         if (searchToken !== this.activeSearchToken) {
+          this.recordSearchFlowSimpleEvent(flowSessionId, GlobalSearchFlowEventType.STALE_RESULT_DROPPED, 'stale_full_cache_result', true, `token=${searchToken}, active=${this.activeSearchToken}`);
+          this.searchFlowMonitor.endSession(flowSessionId, 'stale_full_cache_result');
           logger.debug(TAG, `丢弃过期缓存搜索结果: "${keyword}"`);
           return;
         }
@@ -1179,6 +1344,8 @@ export struct GlobalSearchPage {
         this.syncSearchLoadingMotion();
         const cachedItemCount: number = this.countResultItems(cachedGroups);
         logger.info(TAG, `搜索命中完整结果缓存: "${keyword}", groups=${cachedGroups.length}, items=${cachedItemCount}`);
+        this.recordSearchFlowSimpleEvent(flowSessionId, GlobalSearchFlowEventType.RESULT_COMPLETED, 'full_cache_hit', true, `groups=${cachedGroups.length}, items=${cachedItemCount}`);
+        this.searchFlowMonitor.endSession(flowSessionId, 'full_cache_hit');
         return;
       }
 
@@ -1187,6 +1354,7 @@ export struct GlobalSearchPage {
       this.prepareOnlineSourceProgressStatus();
       this.sourceGroups = [];
       this.filteredGroups = [];
+      this.lastFilteredGroupsSignature = '';
       this.filteredGroupDataSource.replaceData([]);
       this.pendingProgressGroups = null;
       this.pendingProgressCompleted = 0;
@@ -1196,8 +1364,18 @@ export struct GlobalSearchPage {
       // 自动收起在线源列表
       this.showSourceExpanded = false;
       if (this.shouldWaitForMangaSourceWebView(effectiveSourceType)) {
-        await this.waitForWebViewReady();
+        const webViewWaitStartedAt: number = Date.now();
+        this.recordSearchFlowSimpleEvent(flowSessionId, GlobalSearchFlowEventType.WEBVIEW_WAIT_STARTED, 'prepare_webview', true, '');
+        try {
+          await this.waitForWebViewReady();
+          this.recordElapsedSearchFlowEvent(flowSessionId, GlobalSearchFlowEventType.WEBVIEW_WAIT_COMPLETED, 'prepare_webview', Date.now() - webViewWaitStartedAt, true, '');
+        } catch (webViewError) {
+          this.recordElapsedSearchFlowEvent(flowSessionId, GlobalSearchFlowEventType.WEBVIEW_WAIT_FAILED, 'prepare_webview_failed', Date.now() - webViewWaitStartedAt, false, String(webViewError));
+          throw new Error(String(webViewError));
+        }
         if (searchToken !== this.activeSearchToken) {
+          this.recordSearchFlowSimpleEvent(flowSessionId, GlobalSearchFlowEventType.STALE_RESULT_DROPPED, 'stale_after_webview_ready', true, `token=${searchToken}, active=${this.activeSearchToken}`);
+          this.searchFlowMonitor.endSession(flowSessionId, 'stale_after_webview_ready');
           logger.debug(TAG, `丢弃过期搜索准备结果: "${keyword}"`);
           return;
         }
@@ -1231,6 +1409,7 @@ export struct GlobalSearchPage {
       const results = await handle.completion;
 
       if (searchToken !== this.activeSearchToken) {
+        this.recordSearchFlowSimpleEvent(handle.sessionId, GlobalSearchFlowEventType.STALE_RESULT_DROPPED, 'stale_completion_result', true, `token=${searchToken}, active=${this.activeSearchToken}`);
         logger.debug(TAG, `丢弃过期搜索结果: "${keyword}"`);
         return;
       }
@@ -1247,8 +1426,10 @@ export struct GlobalSearchPage {
       
       const totalResults = results.reduce((sum, g) => sum + g.items.length, 0);
       logger.info(TAG, `搜索完成: ${results.length}个分组, ${totalResults}条结果`);
+      this.recordSearchFlowSimpleEvent(handle.sessionId, GlobalSearchFlowEventType.RESULT_COMPLETED, 'page_render_completed', true, `groups=${results.length}, items=${totalResults}`);
     } catch (error) {
       if (searchToken !== this.activeSearchToken) {
+        this.recordSearchFlowSimpleEvent(this.currentSearchFlowSessionId, GlobalSearchFlowEventType.STALE_RESULT_DROPPED, 'stale_exception', true, `token=${searchToken}, active=${this.activeSearchToken}, error=${String(error)}`);
         logger.debug(TAG, `忽略过期搜索异常: "${keyword}", ${String(error)}`);
         return;
       }
@@ -1264,6 +1445,8 @@ export struct GlobalSearchPage {
       this.resetOnlineSourceProgressStatus();
       this.allowSearchCoverPlaceholders = false;
       this.stopSearchLoadingMotion();
+      this.recordSearchFlowError(this.currentSearchFlowSessionId, 'perform_search_error', String(error));
+      this.searchFlowMonitor.endSession(this.currentSearchFlowSessionId, 'page_error');
     }
   }
 
@@ -1674,46 +1857,26 @@ export struct GlobalSearchPage {
         return;
       }
       
-      // 【关键】将搜索结果缓存到 AppStorage，避免 SourceDetailPage 重复搜索
-      // 定义缓存数据结构
-      interface CachedComicInfo {
-        id: string;
-        title: string;
-        author: string;
-        coverUrl: string;
-        description: string;
-        url: string;
-        status: string;
-      }
-      interface SearchCacheData {
-        keyword: string;
-        results: CachedComicInfo[];
-        timestamp: number;
-      }
-      
       // 转换 UnifiedSearchItem 为 SourceDetailPage 可用的 ComicInfo 格式
-      const cachedResults: CachedComicInfo[] = group.items.map((item: UnifiedSearchItem): CachedComicInfo => {
-        const result: CachedComicInfo = {
-          id: item.rawOnlineComic?.id || '',
-          title: item.title,
-          author: item.author || '',
-          coverUrl: item.coverUrl || '',
-          description: item.description || '',
-          url: item.rawOnlineComic?.url || '',
-          status: item.rawOnlineComic?.status || ''
-        };
+      const cachedResults: GlobalSearchCachedComicInfo[] = group.items.map((item: UnifiedSearchItem): GlobalSearchCachedComicInfo => {
+        const result: GlobalSearchCachedComicInfo = new GlobalSearchCachedComicInfo();
+        result.id = item.rawOnlineComic?.id || '';
+        result.title = item.title;
+        result.author = item.author || '';
+        result.coverUrl = item.coverUrl || '';
+        result.description = item.description || '';
+        result.url = item.rawOnlineComic?.url || '';
+        result.status = item.rawOnlineComic?.status || '';
         return result;
       });
       
       // 存储缓存，使用 sourceId 和 keyword 组合作为 key
-      const cacheKey = buildGlobalSearchCacheKey(sourceId, this.searchKeyword);
-      const cacheData: SearchCacheData = {
-        keyword: this.searchKeyword,
-        results: cachedResults,
-        timestamp: Date.now()
-      };
+      const cacheKey: string = buildGlobalSearchCacheKey(sourceId, this.searchKeyword);
+      const flowSessionId: string = this.currentSearchHandle ? this.currentSearchHandle.sessionId : this.currentSearchFlowSessionId;
+      const cacheData: GlobalSearchCacheData = createGlobalSearchCacheData(this.searchKeyword, cachedResults, flowSessionId);
       AppStorage.setOrCreate(cacheKey, JSON.stringify(cacheData));
       logger.info(TAG, `缓存搜索结果: ${cachedResults.length} 条, key=${cacheKey}`);
+      this.recordSearchFlowSimpleEvent(flowSessionId, GlobalSearchFlowEventType.DETAIL_CACHE_WRITTEN, 'open_source_search_page', true, `sourceId=${sourceId}, cacheKey=${cacheKey}, items=${cachedResults.length}`);
       
       // 跳转到 SourceDetailPage，传递 initialTab='search' 和 searchKeyword
       // 并标记来自全局搜索，让 SourceDetailPage 优先使用缓存
@@ -1722,18 +1885,22 @@ export struct GlobalSearchPage {
         initialTab: string;
         searchKeyword: string;
         fromGlobalSearch: boolean;  // 标记来自全局搜索
+        globalSearchSessionId?: string;
       }
       const navParam: SourceSearchNavParam = {
         sourceId: sourceId,
         initialTab: 'search',
         searchKeyword: this.searchKeyword,
-        fromGlobalSearch: true
+        fromGlobalSearch: true,
+        globalSearchSessionId: flowSessionId
       };
       
       stack.pushPath({ name: 'SourceDetailPage', param: navParam });
       logger.info(TAG, `跳转到图源搜索页: sourceId=${sourceId}, keyword="${this.searchKeyword}"`);
+      this.recordSearchFlowSimpleEvent(flowSessionId, GlobalSearchFlowEventType.NAVIGATE, 'open_source_search_page', true, `sourceId=${sourceId}, keyword="${this.searchKeyword}"`);
     } catch (error) {
       logger.error(TAG, `打开图源搜索页失败: ${error}`);
+      this.recordSearchFlowError(this.currentSearchFlowSessionId, 'open_source_search_page', String(error));
     }
   }
 

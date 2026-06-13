@@ -17,6 +17,13 @@ import {
 import { IReadAloudBackend, ReadAloudBackendFactory, ReadAloudPlaybackEvent, ReadAloudVoiceCatalog } from './ReadAloudBackends';
 import { ReadAloudAvailability } from './ReadAloudAvailability';
 import { ReadAloudMediaCommandListener, ReadAloudMediaSession } from './ReadAloudMediaSession';
+import { ReadAloudFlowMonitor } from './ReadAloudFlowMonitor';
+import {
+  ReadAloudFlowEventType,
+  ReadAloudFlowMode,
+  ReadAloudFlowSessionInfo,
+  ReadAloudFlowSeverity
+} from './ReadAloudFlowTypes';
 
 const TAG = 'ReadAloudController';
 const MEDIA_SKIP_CHARS: number = 420;
@@ -105,6 +112,8 @@ export class ReadAloudController {
   private backgroundKeepAliveTimer: number = -1;
   private sleepTimerHandle: number = -1;
   private sleepTimerEndAt: number = 0;
+  private readAloudFlowId: string = '';
+  private readAloudFlowBookId: string = '';
 
   private constructor() {
     this.bindBackendProgressListener();
@@ -178,6 +187,13 @@ export class ReadAloudController {
     this.syncProgressSnapshotFromBackend();
     this.updateBackgroundKeepAliveTimer();
     this.syncMediaSession();
+    this.recordReadAloudFlowEvent(
+      ReadAloudFlowEventType.CONTEXT_UPDATED,
+      'update_context',
+      0,
+      true,
+      `contentLength=${context.content.length}, page=${context.pageIndex}`
+    );
   }
 
   updatePageIndex(pageIndex: number): void {
@@ -203,8 +219,84 @@ export class ReadAloudController {
       coverUrl: this.context.coverUrl,
       content: this.context.content,
       pageIndex: this.context.pageIndex,
-      resumeCharIndex: this.context.resumeCharIndex
+      resumeCharIndex: this.context.resumeCharIndex,
+      readerOpenFlowId: this.context.readerOpenFlowId,
+      sourceId: this.context.sourceId,
+      totalChapters: this.context.totalChapters
     };
+  }
+
+  private ensureReadAloudFlowSession(reason: string): void {
+    if (!this.context) {
+      return;
+    }
+    if (this.readAloudFlowId.length > 0 && this.readAloudFlowBookId !== this.context.bookId) {
+      ReadAloudFlowMonitor.getInstance().endSession(this.readAloudFlowId, `context_changed_${reason}`);
+      this.readAloudFlowId = '';
+      this.readAloudFlowBookId = '';
+    }
+    if (this.readAloudFlowId.length > 0) {
+      return;
+    }
+    const info = new ReadAloudFlowSessionInfo();
+    info.readerOpenFlowId = this.context.readerOpenFlowId || '';
+    info.mode = ReadAloudFlowMode.NORMAL_TTS;
+    info.sourceId = this.context.sourceId || '';
+    info.bookId = this.context.bookId;
+    info.bookTitle = this.context.bookTitle || '';
+    info.chapterTitle = this.context.chapterTitle;
+    info.chapterIndex = this.context.chapterIndex;
+    info.totalChapters = this.context.totalChapters ?? 0;
+    info.pageIndex = this.context.pageIndex;
+    info.engineType = String(this.settings.engineType);
+    this.readAloudFlowId = ReadAloudFlowMonitor.getInstance().startSession(info);
+    this.readAloudFlowBookId = this.context.bookId;
+  }
+
+  private recordReadAloudFlowEvent(
+    eventType: ReadAloudFlowEventType,
+    reason: string,
+    elapsedMs: number,
+    success: boolean,
+    detail: string,
+    backendTaskName: string = '',
+    playerOperation: string = ''
+  ): void {
+    this.ensureReadAloudFlowSession(reason);
+    if (this.readAloudFlowId.length <= 0 || !this.context) {
+      return;
+    }
+    const event = ReadAloudFlowMonitor.getInstance().createEvent(
+      this.readAloudFlowId,
+      eventType,
+      ReadAloudFlowMode.NORMAL_TTS,
+      this.context.bookId,
+      this.context.chapterIndex,
+      reason
+    );
+    event.readerOpenFlowId = this.context.readerOpenFlowId || '';
+    event.sourceId = this.context.sourceId || '';
+    event.chapterTitle = this.context.chapterTitle;
+    event.totalChapters = this.context.totalChapters ?? 0;
+    event.pageIndex = this.context.pageIndex;
+    event.positionMs = this.currentPositionMs;
+    event.durationMs = this.totalDurationMs;
+    event.engineType = String(this.settings.engineType);
+    event.backendTaskName = backendTaskName;
+    event.playerOperation = playerOperation;
+    event.elapsedMs = Math.max(0, elapsedMs);
+    event.success = success;
+    event.detail = detail;
+    if (!success) {
+      event.severity = ReadAloudFlowSeverity.ERROR;
+      event.errorMessage = detail;
+    }
+    if (event.elapsedMs > 0) {
+      event.metricName = `read_aloud.${eventType}`;
+      event.metricValue = event.elapsedMs;
+      event.metricUnit = 'ms';
+    }
+    ReadAloudFlowMonitor.getInstance().record(event);
   }
 
   seekByChars(delta: number, reason: string = 'player_seek_by_chars'): void {
@@ -223,18 +315,23 @@ export class ReadAloudController {
     logger.info(TAG, `收到听书启动请求: reason=${reason}, engine=${this.settings.engineType}`);
     if (!this.settings.enabled) {
       logger.debug(TAG, '听书未启用，忽略启动请求');
+      this.recordReadAloudFlowEvent(ReadAloudFlowEventType.START_REQUESTED, reason, 0, false, 'settings_disabled');
       return;
     }
     if (!this.ensureEngineAvailableForStart()) {
+      this.recordReadAloudFlowEvent(ReadAloudFlowEventType.START_REQUESTED, reason, 0, false, 'engine_unavailable');
       return;
     }
     if (!this.context || !this.context.content || this.context.content.trim().length === 0) {
       logger.warn(TAG, '听书启动失败：当前没有可朗读内容');
+      this.recordReadAloudFlowEvent(ReadAloudFlowEventType.START_REQUESTED, reason, 0, false, 'content_empty');
       return;
     }
     if (this.playbackState === ReadAloudPlaybackState.PLAYING) {
+      this.recordReadAloudFlowEvent(ReadAloudFlowEventType.START_REQUESTED, reason, 0, true, 'already_playing');
       return;
     }
+    this.recordReadAloudFlowEvent(ReadAloudFlowEventType.START_REQUESTED, reason, 0, true, '');
     this.syncContextResumeCharFromSnapshot(`start_before_${reason}`);
 
     this.runBackendTask(
@@ -253,8 +350,10 @@ export class ReadAloudController {
   pause(reason: string = 'manual'): void {
     logger.info(TAG, `收到听书暂停请求: reason=${reason}`);
     if (this.playbackState !== ReadAloudPlaybackState.PLAYING) {
+      this.recordReadAloudFlowEvent(ReadAloudFlowEventType.PAUSE_REQUESTED, reason, 0, true, 'not_playing');
       return;
     }
+    this.recordReadAloudFlowEvent(ReadAloudFlowEventType.PAUSE_REQUESTED, reason, 0, true, '');
     this.runBackendTask(
       this.backend.pause(),
       `pause:${this.settings.engineType}`,
@@ -281,8 +380,10 @@ export class ReadAloudController {
       this.playbackState === ReadAloudPlaybackState.IDLE ||
       this.playbackState === ReadAloudPlaybackState.STOPPED
     ) {
+      this.recordReadAloudFlowEvent(ReadAloudFlowEventType.STOP_REQUESTED, reason, 0, true, 'already_stopped');
       return;
     }
+    this.recordReadAloudFlowEvent(ReadAloudFlowEventType.STOP_REQUESTED, reason, 0, true, '');
     this.runBackendTask(
       this.backend.stop(),
       `stop:${this.settings.engineType}`,
@@ -312,6 +413,13 @@ export class ReadAloudController {
     if (!this.context || !this.context.content || this.context.content.length <= 0) {
       return;
     }
+    this.recordReadAloudFlowEvent(
+      ReadAloudFlowEventType.SEEK_REQUESTED,
+      reason,
+      0,
+      true,
+      `positionMs=${Math.max(0, Math.floor(positionMs))}`
+    );
     const resolvedCharIndex = this.backend.resolveCharIndexByPositionMs(positionMs);
     if (resolvedCharIndex >= 0) {
       this.seekToCharIndex(resolvedCharIndex, reason);
@@ -339,6 +447,11 @@ export class ReadAloudController {
     this.syncProgressSnapshotFromBackend();
     this.changeState(ReadAloudPlaybackState.IDLE, 'release');
     this.mediaSession.release();
+    if (this.readAloudFlowId.length > 0) {
+      ReadAloudFlowMonitor.getInstance().endSession(this.readAloudFlowId, 'release');
+      this.readAloudFlowId = '';
+      this.readAloudFlowBookId = '';
+    }
   }
 
   getSnapshot(): ReadAloudStateSnapshot {
@@ -420,6 +533,13 @@ export class ReadAloudController {
     this.playbackState = nextState;
     this.syncUiStatusForState(reason);
     logger.info(TAG, `听书状态切换: ${prevState} -> ${nextState}, reason=${reason}`);
+    this.recordReadAloudFlowEvent(
+      ReadAloudFlowEventType.PLAYBACK_STATE_CHANGED,
+      reason,
+      0,
+      true,
+      `${prevState}->${nextState}`
+    );
     eventBus.publish(GameEvent.READ_ALOUD_STATE_CHANGED, this.createStatePayload(reason));
     this.updateBackgroundKeepAliveTimer();
     this.syncMediaSession();
@@ -525,6 +645,13 @@ export class ReadAloudController {
         this.syncMediaSession();
       }
       logger.info(TAG, `听书后端通知完成: reason=${event.reason}, char=${event.currentCharIndex}`);
+      this.recordReadAloudFlowEvent(
+        ReadAloudFlowEventType.PLAYBACK_STATE_CHANGED,
+        `backend_completed_${event.reason}`,
+        0,
+        true,
+        `char=${event.currentCharIndex}`
+      );
       return;
     }
 
@@ -539,6 +666,13 @@ export class ReadAloudController {
       }
       this.updateUiStatus('error', '听书已因错误暂停', this.formatReadAloudError(event.reason));
       logger.warn(TAG, `听书后端因错误暂停: reason=${event.reason}, char=${event.currentCharIndex}`);
+      this.recordReadAloudFlowEvent(
+        ReadAloudFlowEventType.ERROR,
+        `backend_paused_for_error_${event.reason}`,
+        0,
+        false,
+        `char=${event.currentCharIndex}`
+      );
     }
   }
 
@@ -713,13 +847,30 @@ export class ReadAloudController {
     onSuccess?: () => void,
     onError?: (error: Object | string) => void
   ): void {
+    const taskStartedAt = Date.now();
     task.then(() => {
+      this.recordReadAloudFlowEvent(
+        ReadAloudFlowEventType.BACKEND_TASK_COMPLETED,
+        taskName,
+        Math.max(0, Date.now() - taskStartedAt),
+        true,
+        '',
+        taskName
+      );
       if (onSuccess) {
         onSuccess();
       }
     }).catch((error: Object | string) => {
       const errorText = this.formatReadAloudError(error);
       logger.warn(TAG, `听书后端任务失败: ${taskName}, error=${errorText}`);
+      this.recordReadAloudFlowEvent(
+        ReadAloudFlowEventType.BACKEND_TASK_FAILED,
+        taskName,
+        Math.max(0, Date.now() - taskStartedAt),
+        false,
+        errorText,
+        taskName
+      );
       if (onError) {
         onError(error);
       }
