@@ -764,6 +764,205 @@ export class EpubCssBuilder {
       ::-webkit-scrollbar {
         display: none !important;
       }
+      `;
+  }
+
+  static buildPublisherLayoutCss(vpW: number, vpH: number, textSettings: EBookReadingSettings): string {
+    const backgroundColor = textSettings.backgroundColor ?? '#FFFFFF';
+    const backgroundCss = EpubCssBuilder.buildBackgroundCss(textSettings);
+    const mediaMaxWidth = Math.max(1, Math.round(vpW));
+    const mediaMaxHeight = Math.max(1, Math.round(vpH));
+    return `
+      ${backgroundCss}
+      html {
+        margin: 0 !important;
+        padding: 0 !important;
+        width: 100% !important;
+        min-width: 100% !important;
+        height: 100% !important;
+        min-height: 100% !important;
+        overflow: hidden !important;
+        overscroll-behavior: contain !important;
+        scroll-behavior: auto !important;
+        background-color: ${backgroundColor} !important;
+        -webkit-text-size-adjust: 100% !important;
+        text-size-adjust: 100% !important;
+      }
+      body {
+        position: relative !important;
+        z-index: 1 !important;
+        box-sizing: border-box !important;
+        max-width: 100% !important;
+        min-height: 100% !important;
+        overflow: hidden !important;
+        transform-origin: top center !important;
+      }
+      html[data-mnx-content-kind='publisher_layout'] body > * {
+        max-width: 100% !important;
+        box-sizing: border-box !important;
+      }
+      html[data-mnx-content-kind='publisher_layout'] .duokan-image-single,
+      html[data-mnx-content-kind='publisher_layout'] [class*='normal-center-single'] {
+        min-height: 0 !important;
+        max-height: 100vh !important;
+        box-sizing: border-box !important;
+      }
+      html[data-mnx-content-kind='publisher_layout'] img,
+      html[data-mnx-content-kind='publisher_layout'] svg,
+      html[data-mnx-content-kind='publisher_layout'] video,
+      html[data-mnx-content-kind='publisher_layout'] canvas {
+        max-width: ${mediaMaxWidth}px !important;
+        max-height: ${mediaMaxHeight}px !important;
+        object-fit: contain !important;
+        box-sizing: border-box !important;
+      }
+      html[data-mnx-content-kind='publisher_layout'] .duokan-image-single img,
+      html[data-mnx-content-kind='publisher_layout'] .illus img,
+      html[data-mnx-content-kind='publisher_layout'] img.w,
+      html[data-mnx-content-kind='publisher_layout'] img.h {
+        width: auto !important;
+        height: auto !important;
+      }
+      * {
+        -webkit-tap-highlight-color: transparent !important;
+      }
+      ::-webkit-scrollbar {
+        display: none !important;
+      }
+    `;
+  }
+
+  static buildCoverPageCss(vpW: number, vpH: number, textSettings: EBookReadingSettings): string {
+    const backgroundColor = textSettings.backgroundColor ?? '#FFFFFF';
+    const backgroundCss = EpubCssBuilder.buildBackgroundCss(textSettings);
+    const fallbackWidth = Math.max(1, Math.round(vpW));
+    const fallbackHeight = Math.max(1, Math.round(vpH));
+    const coverWidthCss = 'var(--mnx-cover-vw, var(--mnx-cover-fallback-vw, 100vw))';
+    const coverHeightCss = 'var(--mnx-cover-vh, var(--mnx-cover-fallback-vh, 100vh))';
+    return `
+      ${backgroundCss}
+      html {
+        --mnx-cover-fallback-vw: ${fallbackWidth}px;
+        --mnx-cover-fallback-vh: ${fallbackHeight}px;
+      }
+      html,
+      body {
+        margin: 0 !important;
+        padding: 0 !important;
+        width: ${coverWidthCss} !important;
+        min-width: ${coverWidthCss} !important;
+        max-width: ${coverWidthCss} !important;
+        height: ${coverHeightCss} !important;
+        min-height: ${coverHeightCss} !important;
+        max-height: ${coverHeightCss} !important;
+        overflow: hidden !important;
+        background-color: ${backgroundColor} !important;
+        box-sizing: border-box !important;
+        -webkit-text-size-adjust: 100% !important;
+        text-size-adjust: 100% !important;
+      }
+      body {
+        position: relative !important;
+        z-index: 1 !important;
+        display: flex !important;
+        align-items: center !important;
+        justify-content: center !important;
+        transform: none !important;
+        transform-origin: center center !important;
+        -webkit-transform: none !important;
+        -webkit-transform-origin: center center !important;
+        scale: 1 !important;
+        zoom: 1 !important;
+        contain: none !important;
+      }
+      body > *,
+      body .center,
+      body .illus,
+      body .cover,
+      body .cover-image,
+      body .front-cover,
+      body .duokan-image-single,
+      body div,
+      body figure,
+      body picture,
+      body section,
+      body article,
+      body main,
+      body p {
+        box-sizing: border-box !important;
+        position: static !important;
+        display: flex !important;
+        align-items: center !important;
+        justify-content: center !important;
+        width: ${coverWidthCss} !important;
+        max-width: ${coverWidthCss} !important;
+        height: ${coverHeightCss} !important;
+        max-height: ${coverHeightCss} !important;
+        min-height: 0 !important;
+        margin: 0 auto !important;
+        padding: 0 !important;
+        overflow: hidden !important;
+        text-indent: 0 !important;
+      }
+      body img,
+      body svg,
+      body image,
+      body video,
+      body canvas {
+        display: block !important;
+        position: static !important;
+        flex: 0 1 auto !important;
+        width: ${coverWidthCss} !important;
+        height: ${coverHeightCss} !important;
+        min-width: 0 !important;
+        min-height: 0 !important;
+        max-width: ${coverWidthCss} !important;
+        max-height: ${coverHeightCss} !important;
+        max-inline-size: ${coverWidthCss} !important;
+        max-block-size: ${coverHeightCss} !important;
+        object-fit: contain !important;
+        object-position: center center !important;
+        margin: auto !important;
+        padding: 0 !important;
+        transform: none !important;
+        -webkit-transform: none !important;
+        scale: 1 !important;
+        zoom: 1 !important;
+        box-sizing: border-box !important;
+      }
+      #__mnx_cover_proxy {
+        position: fixed !important;
+        left: 0 !important;
+        top: 0 !important;
+        right: auto !important;
+        bottom: auto !important;
+        width: ${coverWidthCss} !important;
+        height: ${coverHeightCss} !important;
+        min-width: ${coverWidthCss} !important;
+        min-height: ${coverHeightCss} !important;
+        max-width: ${coverWidthCss} !important;
+        max-height: ${coverHeightCss} !important;
+        display: block !important;
+        object-fit: contain !important;
+        object-position: center center !important;
+        margin: 0 !important;
+        padding: 0 !important;
+        border: 0 !important;
+        transform: none !important;
+        -webkit-transform: none !important;
+        scale: 1 !important;
+        zoom: 1 !important;
+        z-index: 2147483647 !important;
+        pointer-events: none !important;
+        background: transparent !important;
+        box-sizing: border-box !important;
+      }
+      * {
+        -webkit-tap-highlight-color: transparent !important;
+      }
+      ::-webkit-scrollbar {
+        display: none !important;
+      }
     `;
   }
 

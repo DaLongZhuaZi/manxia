@@ -1104,7 +1104,7 @@ export class BridgeJsBuilder {
           : '';
         var isVertical = window.__mnxIsVerticalLayout();
         var pageExtent = isVertical ? viewport.height : viewport.width;
-        if (contentKind === 'image_like') {
+        if (contentKind === 'image_like' || contentKind === 'publisher_layout' || contentKind === 'cover_page') {
           window.__mnxClearVirtualOffset();
           window.__mnxPageOffsets = [0];
           window.__mnxPaginationState = {

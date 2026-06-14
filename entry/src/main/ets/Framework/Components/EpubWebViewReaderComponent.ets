@@ -58,6 +58,28 @@ interface FixedLayoutDimension {
   h: number;
 }
 
+interface CoverPageFitDimension {
+  viewportW: number;
+  viewportH: number;
+  innerW: number;
+  innerH: number;
+  clientW: number;
+  clientH: number;
+  visualW: number;
+  visualH: number;
+  visualScale: number;
+  mediaW: number;
+  mediaH: number;
+  mediaLeft: number;
+  mediaTop: number;
+  sourceW: number;
+  sourceH: number;
+  cssW: string;
+  cssH: string;
+  objectFit: string;
+  proxy: string;
+}
+
 interface ViewportDims {
   w: number;
   h: number;
@@ -569,6 +591,8 @@ export struct EpubWebViewReaderComponent {
   private pendingThoughtPopupTimer: number = -1;
   private suppressNextTapEvent: boolean = false;
   private suppressNextTapResetTimer: number = -1;
+  private spineTransitionSnapshotPixelMap: image.PixelMap | null = null;
+  private spineTransitionSnapshotReleaseTimer: number = -1;
   private epubCurlCurrentPixelMap: image.PixelMap | null = null;
   private epubCurlNextPixelMap: image.PixelMap | null = null;
   private epubCurlAnimationTimer: number = -1;
@@ -617,6 +641,7 @@ export struct EpubWebViewReaderComponent {
   @State private viewportOpacity: number = 1;
   @State private viewportMatrix: matrix4.Matrix4Transit = matrix4.identity();
   @State private viewportBackgroundColor: string = DEFAULT_EBOOK_READING_SETTINGS.backgroundColor;
+  @State private showSpineTransitionSnapshotCover: boolean = false;
   @State private showEpubCurlSnapshotCover: boolean = false;
   @State private showEpubCurlEffect: boolean = false;
   @State private hideWebViewForEpubCurlCapture: boolean = false;
@@ -675,6 +700,10 @@ export struct EpubWebViewReaderComponent {
     this.clearAnnotationTransientTimers();
     this.resetViewportTransform();
     this.pendingSpineTransition = null;
+    this.clearSpineTransitionSnapshotReleaseTimer();
+    this.showSpineTransitionSnapshotCover = false;
+    this.releaseEpubCurlPixelMap(this.spineTransitionSnapshotPixelMap, 'spine_transition_disappear');
+    this.spineTransitionSnapshotPixelMap = null;
     this.resetEpubCurlState(true);
     this.uiContext = null;
   }
@@ -1130,7 +1159,7 @@ export struct EpubWebViewReaderComponent {
 
   private isCurrentSpineImageLike(): boolean {
     const layoutType = this.getCurrentSpineLayoutType();
-    if (layoutType === 'IMAGE_PAGE') {
+    if (layoutType === 'IMAGE_PAGE' || layoutType === 'COVER_PAGE') {
       return true;
     }
     const mediaType = this.getCurrentSpineMediaType();
@@ -1139,6 +1168,17 @@ export struct EpubWebViewReaderComponent {
     }
     const pathHint = this.getCurrentSpinePathHint().replace(/[#?].*$/, '');
     return IMAGE_RESOURCE_PATH_PATTERN.test(pathHint);
+  }
+
+  private isCurrentSpinePublisherLayout(): boolean {
+    const layoutType = this.getCurrentSpineLayoutType();
+    return layoutType === 'PUBLISHER_LAYOUT' ||
+      layoutType === 'PAGE_FIT_WINDOW' ||
+      layoutType === 'FIXED_LAYOUT_HTML';
+  }
+
+  private isCurrentSpineCoverPage(): boolean {
+    return this.getCurrentSpineLayoutType() === 'COVER_PAGE';
   }
 
   private clamp(value: number, min: number, max: number): number {
@@ -1367,6 +1407,14 @@ export struct EpubWebViewReaderComponent {
     return EpubCssBuilder.buildFixedCss(vpW, vpH, textSettings, vpState);
   }
 
+  private buildPublisherLayoutCss(vpW: number, vpH: number, textSettings: EBookReadingSettings): string {
+    return EpubCssBuilder.buildPublisherLayoutCss(vpW, vpH, textSettings);
+  }
+
+  private buildCoverPageCss(vpW: number, vpH: number, textSettings: EBookReadingSettings): string {
+    return EpubCssBuilder.buildCoverPageCss(vpW, vpH, textSettings);
+  }
+
   private buildBridgeJs(layoutKind: EpubPageLayoutKind): string {
     return BridgeJsBuilder.buildBridgeJs(layoutKind);
   }
@@ -1448,9 +1496,17 @@ export struct EpubWebViewReaderComponent {
     }
     this.viewportBackgroundColor = textSettings.backgroundColor ?? DEFAULT_EBOOK_READING_SETTINGS.backgroundColor;
     const preferImageLike = this.isCurrentSpineImageLike();
+    const preferCoverPage = this.isCurrentSpineCoverPage();
+    const preferPublisherLayout = this.isCurrentSpinePublisherLayout();
+    const hostViewportW = Math.max(1, Math.round(this.hostWidthVp > 1 ? this.hostWidthVp : (this.fallbackVpW > 1 ? this.fallbackVpW : vpW)));
+    const hostViewportH = Math.max(1, Math.round(this.hostHeightVp > 1 ? this.hostHeightVp : (this.fallbackVpH > 1 ? this.fallbackVpH : vpH)));
     const css = this.params.isFixedLayout
       ? this.buildFixedCss(vpW, vpH, textSettings)
-      : this.buildReflowCss(vpW, vpH, textSettings, pageSettings);
+      : (preferCoverPage
+        ? this.buildCoverPageCss(vpW, vpH, textSettings)
+        : (preferPublisherLayout
+        ? this.buildPublisherLayoutCss(vpW, vpH, textSettings)
+        : this.buildReflowCss(vpW, vpH, textSettings, pageSettings)));
     const escapedCss = this.escapeJsTemplate(css);
     const layoutKind = this.params.isFixedLayout
       ? 'horizontal_paged'
@@ -1460,12 +1516,16 @@ export struct EpubWebViewReaderComponent {
     const annotationBridge = this.buildAnnotationBridgeJs();
     logger.info(
       TAG,
-      `应用排版注入: source=${source}, notifyReady=${notifyReady}, fixed=${this.params.isFixedLayout}, pageOffset=${pageOffset}, vp=${vpW}x${vpH}, scale=${this.getViewportScale(vpW, vpH)}, safeTop=${this.params.contentSafeTopInset ?? 0}vp/${EpubCssBuilder.getContentSafeTopInsetCssPx(vpW, vpH, { hostWidthVp: this.hostWidthVp, hostHeightVp: this.hostHeightVp, fallbackVpW: this.fallbackVpW, fallbackVpH: this.fallbackVpH, lastVisualVpW: this.lastVisualVpW, lastVisualVpH: this.lastVisualVpH, contentSafeTopInset: this.params.contentSafeTopInset ?? 0, isFixedLayout: this.params.isFixedLayout, isCurrentSpineImageLike: false })}px, hint=${preferImageLike ? 'image_like' : 'text_like'}, layoutHint=${this.getCurrentSpineLayoutType() || 'n/a'}, mediaHint=${this.getCurrentSpineMediaType() || 'n/a'}, text(${this.describeTextSettings(textSettings)}), page(${this.describePageSettings(pageSettings)})`
+      `应用排版注入: source=${source}, notifyReady=${notifyReady}, fixed=${this.params.isFixedLayout}, cover=${preferCoverPage}, publisher=${preferPublisherLayout}, pageOffset=${pageOffset}, vp=${vpW}x${vpH}, scale=${this.getViewportScale(vpW, vpH)}, safeTop=${this.params.contentSafeTopInset ?? 0}vp/${EpubCssBuilder.getContentSafeTopInsetCssPx(vpW, vpH, { hostWidthVp: this.hostWidthVp, hostHeightVp: this.hostHeightVp, fallbackVpW: this.fallbackVpW, fallbackVpH: this.fallbackVpH, lastVisualVpW: this.lastVisualVpW, lastVisualVpH: this.lastVisualVpH, contentSafeTopInset: this.params.contentSafeTopInset ?? 0, isFixedLayout: this.params.isFixedLayout, isCurrentSpineImageLike: false })}px, hint=${preferCoverPage ? 'cover_page' : (preferPublisherLayout ? 'publisher_layout' : (preferImageLike ? 'image_like' : 'text_like'))}, layoutHint=${this.getCurrentSpineLayoutType() || 'n/a'}, mediaHint=${this.getCurrentSpineMediaType() || 'n/a'}, text(${this.describeTextSettings(textSettings)}), page(${this.describePageSettings(pageSettings)})`
     );
 
     const injectScript = `
       (function() {
         var head = document.head || document.getElementsByTagName('head')[0] || document.documentElement;
+        var mnxPreferCoverPage = ${preferCoverPage ? 'true' : 'false'};
+        var mnxPreferPublisherLayout = ${preferPublisherLayout ? 'true' : 'false'};
+        var mnxHostViewportWidth = ${hostViewportW};
+        var mnxHostViewportHeight = ${hostViewportH};
         var viewportMeta = document.querySelector('meta[name="viewport"]');
         if (!viewportMeta) {
           viewportMeta = document.createElement('meta');
@@ -2152,11 +2212,200 @@ export struct EpubWebViewReaderComponent {
           }
           return stats;
         };
+        window.__mnxPrepareCoverPage = function() {
+          if (!mnxPreferCoverPage || !document.body) {
+            return;
+          }
+          var cropProps = ['width','height','max-width','max-height','min-width','min-height',
+                           'object-fit','object-position','transform','transform-origin',
+                           '-webkit-transform','-webkit-transform-origin','scale','zoom','position'];
+          var root = document.documentElement;
+          var visualViewportWidth = window.visualViewport ? (window.visualViewport.width || 0) : 0;
+          var visualViewportHeight = window.visualViewport ? (window.visualViewport.height || 0) : 0;
+          var layoutWidth = Math.max(
+            window.innerWidth || 0,
+            root ? (root.clientWidth || 0) : 0,
+            document.body ? (document.body.clientWidth || 0) : 0
+          );
+          var layoutHeight = Math.max(
+            window.innerHeight || 0,
+            root ? (root.clientHeight || 0) : 0,
+            document.body ? (document.body.clientHeight || 0) : 0
+          );
+          if (layoutWidth <= 0) {
+            layoutWidth = Math.max(visualViewportWidth, mnxHostViewportWidth || 0);
+          }
+          if (layoutHeight <= 0) {
+            layoutHeight = Math.max(visualViewportHeight, mnxHostViewportHeight || 0);
+          }
+          var viewportWidth = Math.round(layoutWidth);
+          var viewportHeight = Math.round(layoutHeight);
+          viewportWidth = Math.max(1, viewportWidth);
+          viewportHeight = Math.max(1, viewportHeight);
+          if (root) {
+            root.style.setProperty('--mnx-cover-vw', viewportWidth + 'px');
+            root.style.setProperty('--mnx-cover-vh', viewportHeight + 'px');
+            root.setAttribute('data-mnx-cover-vw', String(viewportWidth));
+            root.setAttribute('data-mnx-cover-vh', String(viewportHeight));
+            root.setAttribute('data-mnx-cover-visual-vw', String(Math.round(visualViewportWidth)));
+            root.setAttribute('data-mnx-cover-visual-vh', String(Math.round(visualViewportHeight)));
+          }
+          var fitCoverMedia = function(mediaNode) {
+            if (!mediaNode || !mediaNode.style) {
+              return;
+            }
+            var tagName = mediaNode.tagName ? mediaNode.tagName.toUpperCase() : '';
+            var sourceWidth = 0;
+            var sourceHeight = 0;
+            if (tagName === 'IMG') {
+              sourceWidth = mediaNode.naturalWidth || 0;
+              sourceHeight = mediaNode.naturalHeight || 0;
+              if ((sourceWidth <= 0 || sourceHeight <= 0) && mediaNode.getAttribute('data-mnx-cover-fit-listener') !== 'true') {
+                mediaNode.setAttribute('data-mnx-cover-fit-listener', 'true');
+                mediaNode.addEventListener('load', function() {
+                  if (window.__mnxPrepareCoverPage) {
+                    window.__mnxPrepareCoverPage();
+                  }
+                });
+              }
+            } else if (tagName === 'VIDEO') {
+              sourceWidth = mediaNode.videoWidth || 0;
+              sourceHeight = mediaNode.videoHeight || 0;
+            } else if (tagName === 'CANVAS') {
+              sourceWidth = mediaNode.width || 0;
+              sourceHeight = mediaNode.height || 0;
+            } else if (tagName === 'SVG') {
+              var viewBox = mediaNode.viewBox && mediaNode.viewBox.baseVal ? mediaNode.viewBox.baseVal : null;
+              sourceWidth = viewBox && viewBox.width ? viewBox.width : (mediaNode.width && mediaNode.width.baseVal ? mediaNode.width.baseVal.value : 0);
+              sourceHeight = viewBox && viewBox.height ? viewBox.height : (mediaNode.height && mediaNode.height.baseVal ? mediaNode.height.baseVal.value : 0);
+            }
+            mediaNode.setAttribute('data-mnx-cover-source-width', String(Math.round(sourceWidth)));
+            mediaNode.setAttribute('data-mnx-cover-source-height', String(Math.round(sourceHeight)));
+            mediaNode.style.setProperty('width', viewportWidth + 'px', 'important');
+            mediaNode.style.setProperty('height', viewportHeight + 'px', 'important');
+            mediaNode.style.setProperty('max-width', viewportWidth + 'px', 'important');
+            mediaNode.style.setProperty('max-height', viewportHeight + 'px', 'important');
+            mediaNode.style.setProperty('object-fit', 'contain', 'important');
+            mediaNode.style.setProperty('object-position', 'center center', 'important');
+            mediaNode.style.setProperty('margin', 'auto', 'important');
+          };
+          var applyCoverProxy = function(mediaNode) {
+            if (!mediaNode || !mediaNode.getAttribute || !document.body) {
+              return null;
+            }
+            var proxyTagName = mediaNode.tagName ? mediaNode.tagName.toUpperCase() : '';
+            if (proxyTagName !== 'IMG') {
+              return null;
+            }
+            var sourceUrl = mediaNode.currentSrc || mediaNode.src || mediaNode.getAttribute('src') || '';
+            if (!sourceUrl) {
+              return null;
+            }
+            var proxyNode = document.getElementById('__mnx_cover_proxy');
+            if (!proxyNode) {
+              proxyNode = document.createElementNS
+                ? document.createElementNS('http://www.w3.org/1999/xhtml', 'img')
+                : document.createElement('img');
+              proxyNode.setAttribute('id', '__mnx_cover_proxy');
+              proxyNode.setAttribute('data-mnx-cover-proxy', 'true');
+              proxyNode.setAttribute('alt', mediaNode.getAttribute('alt') || 'cover');
+              document.body.appendChild(proxyNode);
+            }
+            if (proxyNode.getAttribute('src') !== sourceUrl) {
+              proxyNode.setAttribute('src', sourceUrl);
+            }
+            var proxySourceWidth = mediaNode.naturalWidth || parseFloat(mediaNode.getAttribute('data-mnx-cover-source-width') || '0') || 0;
+            var proxySourceHeight = mediaNode.naturalHeight || parseFloat(mediaNode.getAttribute('data-mnx-cover-source-height') || '0') || 0;
+            proxyNode.setAttribute('data-mnx-cover-source-width', String(Math.round(proxySourceWidth)));
+            proxyNode.setAttribute('data-mnx-cover-source-height', String(Math.round(proxySourceHeight)));
+            proxyNode.setAttribute('data-mnx-cover-proxy', 'true');
+            proxyNode.style.setProperty('position', 'fixed', 'important');
+            proxyNode.style.setProperty('left', '0', 'important');
+            proxyNode.style.setProperty('top', '0', 'important');
+            proxyNode.style.setProperty('right', 'auto', 'important');
+            proxyNode.style.setProperty('bottom', 'auto', 'important');
+            proxyNode.style.setProperty('width', viewportWidth + 'px', 'important');
+            proxyNode.style.setProperty('height', viewportHeight + 'px', 'important');
+            proxyNode.style.setProperty('min-width', viewportWidth + 'px', 'important');
+            proxyNode.style.setProperty('min-height', viewportHeight + 'px', 'important');
+            proxyNode.style.setProperty('max-width', viewportWidth + 'px', 'important');
+            proxyNode.style.setProperty('max-height', viewportHeight + 'px', 'important');
+            proxyNode.style.setProperty('display', 'block', 'important');
+            proxyNode.style.setProperty('object-fit', 'contain', 'important');
+            proxyNode.style.setProperty('object-position', 'center center', 'important');
+            proxyNode.style.setProperty('margin', '0', 'important');
+            proxyNode.style.setProperty('padding', '0', 'important');
+            proxyNode.style.setProperty('border', '0', 'important');
+            proxyNode.style.setProperty('transform', 'none', 'important');
+            proxyNode.style.setProperty('-webkit-transform', 'none', 'important');
+            proxyNode.style.setProperty('scale', '1', 'important');
+            proxyNode.style.setProperty('zoom', '1', 'important');
+            proxyNode.style.setProperty('z-index', '2147483647', 'important');
+            proxyNode.style.setProperty('pointer-events', 'none', 'important');
+            proxyNode.style.setProperty('visibility', 'visible', 'important');
+            proxyNode.style.setProperty('background', 'transparent', 'important');
+            proxyNode.style.setProperty('box-sizing', 'border-box', 'important');
+            var bodyChildren = document.body.children || [];
+            for (var bc = 0; bc < bodyChildren.length; bc++) {
+              var bodyChild = bodyChildren[bc];
+              if (bodyChild === proxyNode) {
+                bodyChild.style.setProperty('visibility', 'visible', 'important');
+              } else if (bodyChild && bodyChild.style) {
+                bodyChild.style.setProperty('visibility', 'hidden', 'important');
+                bodyChild.style.setProperty('pointer-events', 'none', 'important');
+              }
+            }
+            return proxyNode;
+          };
+          var sourceCoverMedia = null;
+          var coverNodes = document.querySelectorAll(
+            'body, body > *, body div, body figure, body picture, body section, body article, body main, body p, body img, body svg, body image, body video, body canvas'
+          );
+          for (var cn = 0; cn < coverNodes.length; cn++) {
+            var coverNode = coverNodes[cn];
+            if (coverNode && coverNode.style) {
+              for (var cp = 0; cp < cropProps.length; cp++) {
+                coverNode.style.removeProperty(cropProps[cp]);
+              }
+            }
+            var coverTag = coverNode && coverNode.tagName ? coverNode.tagName.toUpperCase() : '';
+            if (coverTag === 'SVG' || coverTag === 'IMAGE') {
+              coverNode.setAttribute('preserveAspectRatio', 'xMidYMid meet');
+            }
+            if (coverTag === 'IMG' || coverTag === 'SVG' || coverTag === 'VIDEO' || coverTag === 'CANVAS') {
+              if (sourceCoverMedia === null && coverNode.getAttribute && coverNode.getAttribute('data-mnx-cover-proxy') !== 'true') {
+                sourceCoverMedia = coverNode;
+              }
+              fitCoverMedia(coverNode);
+            }
+          }
+          applyCoverProxy(sourceCoverMedia);
+          var retryCount = Number(window.__mnxCoverFitRetryCount || 0);
+          if (retryCount < 3 && window.__mnxCoverFitRescheduled !== true) {
+            window.__mnxCoverFitRetryCount = retryCount + 1;
+            window.__mnxCoverFitRescheduled = true;
+            setTimeout(function() {
+              window.__mnxCoverFitRescheduled = false;
+              if (window.__mnxPrepareCoverPage) {
+                window.__mnxPrepareCoverPage();
+              }
+            }, retryCount === 0 ? 0 : 80);
+          }
+        };
         window.__mnxResolveContentKind = function() {
           var preferImageLike = ${preferImageLike ? 'true' : 'false'};
           var body = document.body;
           if (!body) {
-            return preferImageLike ? 'image_like' : 'text_like';
+            return mnxPreferCoverPage ? 'cover_page' : (mnxPreferPublisherLayout ? 'publisher_layout' : (preferImageLike ? 'image_like' : 'text_like'));
+          }
+          if (mnxPreferCoverPage) {
+            window.__mnxPrepareCoverPage();
+            window.__mnxPrepareMediaRoles();
+            return 'cover_page';
+          }
+          if (mnxPreferPublisherLayout) {
+            window.__mnxPrepareMediaRoles();
+            return 'publisher_layout';
           }
           var mediaStats = window.__mnxPrepareMediaRoles();
           var mediaCount = mediaStats.mediaCount || 0;
@@ -2218,37 +2467,44 @@ export struct EpubWebViewReaderComponent {
         }
         // Remove body inline styles that would override !important CSS rules for column layout
         if (document.body) {
-          var blockProps = ['height','max-height','min-height','overflow','overflow-x','overflow-y',
-                           'width','max-width','column-width','column-gap','column-fill','column-count',
-                           'transform','transform-origin'];
-          for (var pi = 0; pi < blockProps.length; pi++) {
-            document.body.style.removeProperty(blockProps[pi]);
-          }
-          document.body.style.removeProperty('font-size');
-          document.body.style.removeProperty('-webkit-text-size-adjust');
-          document.body.style.removeProperty('text-size-adjust');
-          if (resolvedContentKind === 'image_like' && document.body.children) {
-            for (var bi = 0; bi < document.body.children.length; bi++) {
-              var bodyChild = document.body.children[bi];
-              bodyChild.style.removeProperty('width');
-              bodyChild.style.removeProperty('height');
-              bodyChild.style.removeProperty('max-width');
-              bodyChild.style.removeProperty('max-height');
+          if (!mnxPreferCoverPage && !mnxPreferPublisherLayout) {
+            var blockProps = ['height','max-height','min-height','overflow','overflow-x','overflow-y',
+                             'width','max-width','column-width','column-gap','column-fill','column-count',
+                             'transform','transform-origin'];
+            for (var pi = 0; pi < blockProps.length; pi++) {
+              document.body.style.removeProperty(blockProps[pi]);
             }
+            document.body.style.removeProperty('font-size');
+            document.body.style.removeProperty('-webkit-text-size-adjust');
+            document.body.style.removeProperty('text-size-adjust');
+            if (resolvedContentKind === 'image_like' && document.body.children) {
+              for (var bi = 0; bi < document.body.children.length; bi++) {
+                var bodyChild = document.body.children[bi];
+                bodyChild.style.removeProperty('width');
+                bodyChild.style.removeProperty('height');
+                bodyChild.style.removeProperty('max-width');
+                bodyChild.style.removeProperty('max-height');
+              }
+            }
+          } else {
+            document.body.removeAttribute('data-mnx-virtual-offset');
+            document.body.removeAttribute('data-mnx-base-transform');
           }
           // Force synchronous reflow so column layout is computed before we measure
           void document.body.offsetWidth;
         }
-        var mediaElements = document.querySelectorAll('img, svg, video, canvas');
-        for (var mi = 0; mi < mediaElements.length; mi++) {
-          var mediaElement = mediaElements[mi];
-          mediaElement.style.removeProperty('width');
-          mediaElement.style.removeProperty('height');
-          mediaElement.style.removeProperty('max-width');
-          mediaElement.style.removeProperty('max-height');
+        if (!mnxPreferCoverPage && !mnxPreferPublisherLayout) {
+          var mediaElements = document.querySelectorAll('img, svg, video, canvas');
+          for (var mi = 0; mi < mediaElements.length; mi++) {
+            var mediaElement = mediaElements[mi];
+            mediaElement.style.removeProperty('width');
+            mediaElement.style.removeProperty('height');
+            mediaElement.style.removeProperty('max-width');
+            mediaElement.style.removeProperty('max-height');
+          }
         }
         resolvedContentKind = window.__mnxApplyContentKind();
-        if (document.documentElement) {
+        if (!mnxPreferCoverPage && !mnxPreferPublisherLayout && document.documentElement) {
           document.documentElement.style.removeProperty('font-size');
           document.documentElement.style.removeProperty('-webkit-text-size-adjust');
           document.documentElement.style.removeProperty('text-size-adjust');
@@ -2266,6 +2522,26 @@ export struct EpubWebViewReaderComponent {
         if (this.params.isFixedLayout) {
           this.applyFixedLayoutScale(vpW, vpH);
           this.completeReaderReady('horizontal_paged', 0, 1, notifyReady);
+          return;
+        }
+        if (preferCoverPage) {
+          this.applyCoverPageFit(vpW, vpH);
+          this.currentPageCount = 1;
+          this.currentPage = 0;
+          this.lastPaginationOffset = 0;
+          this.lastPaginationPageExtent = vpW;
+          this.lastPaginationMaxOffset = 0;
+          this.completeReaderReady(layoutKind, 0, 1, notifyReady);
+          return;
+        }
+        if (preferPublisherLayout) {
+          this.applyPublisherLayoutScale(vpW, vpH);
+          this.currentPageCount = 1;
+          this.currentPage = 0;
+          this.lastPaginationOffset = 0;
+          this.lastPaginationPageExtent = vpW;
+          this.lastPaginationMaxOffset = 0;
+          this.completeReaderReady(layoutKind, 0, 1, notifyReady);
           return;
         }
 
@@ -2455,6 +2731,111 @@ export struct EpubWebViewReaderComponent {
     });
   }
 
+  private applyCoverPageFit(vpW: number, vpH: number): void {
+    const fitScript = `
+      (function() {
+        if (window.__mnxPrepareCoverPage) {
+          window.__mnxPrepareCoverPage();
+        }
+        var root = document.documentElement;
+        var visual = window.visualViewport;
+        var media = document.querySelector('#__mnx_cover_proxy, body img, body svg, body video, body canvas');
+        var rect = media && media.getBoundingClientRect
+          ? media.getBoundingClientRect()
+          : { width: 0, height: 0, left: 0, top: 0 };
+        var mediaStyle = media ? window.getComputedStyle(media) : null;
+        return JSON.stringify({
+          viewportW: root ? parseFloat(root.style.getPropertyValue('--mnx-cover-vw') || '0') : 0,
+          viewportH: root ? parseFloat(root.style.getPropertyValue('--mnx-cover-vh') || '0') : 0,
+          innerW: window.innerWidth || 0,
+          innerH: window.innerHeight || 0,
+          clientW: root ? (root.clientWidth || 0) : 0,
+          clientH: root ? (root.clientHeight || 0) : 0,
+          visualW: visual ? (visual.width || 0) : 0,
+          visualH: visual ? (visual.height || 0) : 0,
+          visualScale: visual ? (visual.scale || 0) : 0,
+          mediaW: Math.round(rect.width || 0),
+          mediaH: Math.round(rect.height || 0),
+          mediaLeft: Math.round(rect.left || 0),
+          mediaTop: Math.round(rect.top || 0),
+          sourceW: media ? parseFloat(media.getAttribute('data-mnx-cover-source-width') || '0') : 0,
+          sourceH: media ? parseFloat(media.getAttribute('data-mnx-cover-source-height') || '0') : 0,
+          cssW: mediaStyle ? (mediaStyle.width || '') : '',
+          cssH: mediaStyle ? (mediaStyle.height || '') : '',
+          objectFit: mediaStyle ? (mediaStyle.objectFit || '') : '',
+          proxy: media ? (media.getAttribute('data-mnx-cover-proxy') || 'false') : 'false'
+        });
+      })();
+    `;
+    this.runJs(fitScript, (result: string) => {
+      try {
+        const clean = this.parseWebViewJson(result);
+        const dimension = SafeUtils.parseObj(clean) as CoverPageFitDimension;
+        logger.debug(
+          TAG,
+          `Cover-page fit applied: viewport=${dimension.viewportW}x${dimension.viewportH}, inner=${dimension.innerW}x${dimension.innerH}, client=${dimension.clientW}x${dimension.clientH}, visual=${dimension.visualW}x${dimension.visualH}@${dimension.visualScale}, source=${dimension.sourceW}x${dimension.sourceH}, media=${dimension.mediaW}x${dimension.mediaH}@${dimension.mediaLeft},${dimension.mediaTop}, css=${dimension.cssW}x${dimension.cssH}/${dimension.objectFit}, proxy=${dimension.proxy}, host=${vpW}x${vpH}`
+        );
+      } catch (error) {
+        logger.warn(TAG, `Cover-page fit dimension parse failed: ${String(error)}`);
+      }
+    });
+  }
+
+  private applyPublisherLayoutScale(vpW: number, vpH: number): void {
+    const scaleScript = `
+      (function() {
+        var body = document.body;
+        var root = document.documentElement;
+        if (!body || !root) {
+          return JSON.stringify({ w: ${vpW}, h: ${vpH} });
+        }
+        body.style.removeProperty('transform');
+        body.style.removeProperty('transform-origin');
+        body.removeAttribute('data-mnx-virtual-offset');
+        body.removeAttribute('data-mnx-base-transform');
+        void body.offsetWidth;
+        var bodyRect = body.getBoundingClientRect ? body.getBoundingClientRect() : { width: 0, height: 0 };
+        var width = Math.max(
+          root.scrollWidth || 0,
+          root.offsetWidth || 0,
+          root.clientWidth || 0,
+          body.scrollWidth || 0,
+          body.offsetWidth || 0,
+          body.clientWidth || 0,
+          bodyRect.width || 0,
+          ${vpW}
+        );
+        var height = Math.max(
+          root.scrollHeight || 0,
+          root.offsetHeight || 0,
+          root.clientHeight || 0,
+          body.scrollHeight || 0,
+          body.offsetHeight || 0,
+          body.clientHeight || 0,
+          bodyRect.height || 0,
+          ${vpH}
+        );
+        var scaleX = ${vpW} / Math.max(1, width);
+        var scaleY = ${vpH} / Math.max(1, height);
+        var scale = Math.min(1, scaleX, scaleY);
+        if (scale > 0 && scale < 0.995) {
+          body.style.transformOrigin = 'top center';
+          body.style.transform = 'scale(' + scale + ')';
+        }
+        return JSON.stringify({ w: Math.round(width), h: Math.round(height) });
+      })();
+    `;
+    this.runJs(scaleScript, (result: string) => {
+      try {
+        const clean = this.parseWebViewJson(result);
+        const dimension = SafeUtils.parseObj(clean) as FixedLayoutDimension;
+        logger.debug(TAG, `Publisher-layout fit applied: content=${dimension.w}x${dimension.h}, viewport=${vpW}x${vpH}`);
+      } catch (error) {
+        logger.warn(TAG, `Publisher-layout dimension parse failed: ${String(error)}`);
+      }
+    });
+  }
+
   private commitPageChange(targetPage: number, afterCommit?: () => void): void {
     let finished = false;
     let resolvedPage = targetPage;
@@ -2591,12 +2972,6 @@ export struct EpubWebViewReaderComponent {
         })();`,
         (_result: string) => {
           this.applyHighlightRangesToWeb('paint_stabilized');
-          this.viewportOpacity = 0.995;
-          setTimeout(() => {
-            if (this.uiContext && this.ready && !this.isPageTurnAnimating) {
-              this.viewportOpacity = 1;
-            }
-          }, 48);
           logger.debug(TAG, `WebView 首屏稳帧完成: reason=${reason}, page=${targetPage}`);
         }
       );
@@ -2921,6 +3296,51 @@ export struct EpubWebViewReaderComponent {
     } catch (error) {
       logger.warn(TAG, `[EPUB卷页] 释放 ${label} 快照失败: ${String(error)}`);
     }
+  }
+
+  private clearSpineTransitionSnapshotReleaseTimer(): void {
+    if (this.spineTransitionSnapshotReleaseTimer !== -1) {
+      clearTimeout(this.spineTransitionSnapshotReleaseTimer);
+      this.spineTransitionSnapshotReleaseTimer = -1;
+    }
+  }
+
+  private scheduleSpineTransitionSnapshotRelease(reason: string): void {
+    this.clearSpineTransitionSnapshotReleaseTimer();
+    this.spineTransitionSnapshotReleaseTimer = setTimeout(() => {
+      this.spineTransitionSnapshotReleaseTimer = -1;
+      this.releaseEpubCurlPixelMap(this.spineTransitionSnapshotPixelMap, `spine_transition:${reason}`);
+      this.spineTransitionSnapshotPixelMap = null;
+    }, 96);
+  }
+
+  private hideSpineTransitionSnapshotCover(reason: string): void {
+    if (!this.showSpineTransitionSnapshotCover && this.spineTransitionSnapshotPixelMap === null) {
+      return;
+    }
+    this.showSpineTransitionSnapshotCover = false;
+    this.scheduleSpineTransitionSnapshotRelease(reason);
+  }
+
+  private showSpineTransitionSnapshotCoverIfAvailable(reason: string): void {
+    if (this.spineTransitionSnapshotPixelMap === null) {
+      return;
+    }
+    this.clearSpineTransitionSnapshotReleaseTimer();
+    this.showSpineTransitionSnapshotCover = true;
+    logger.debug(TAG, `显示 EPUB 跨章节上一帧遮罩: reason=${reason}`);
+  }
+
+  private async prepareSpineTransitionSnapshot(reason: string): Promise<void> {
+    this.clearSpineTransitionSnapshotReleaseTimer();
+    this.releaseEpubCurlPixelMap(this.spineTransitionSnapshotPixelMap, `spine_transition_replace:${reason}`);
+    this.spineTransitionSnapshotPixelMap = null;
+    this.showSpineTransitionSnapshotCover = false;
+    const pixelMap = await this.captureEpubCurlSnapshot(`spine_transition:${reason}`);
+    if (pixelMap === null) {
+      return;
+    }
+    this.spineTransitionSnapshotPixelMap = pixelMap;
   }
 
   private clearEpubCurlAnimationTimer(): void {
@@ -3423,8 +3843,14 @@ export struct EpubWebViewReaderComponent {
     const ctx = this.resolveUiContext();
     if (requestedAnimationType === PageTurnAnimationType.NONE || !ctx) {
       this.pendingSpineTransition = null;
-      this.finishPageTurnAnimation();
-      this.loadSpineItemImmediate(spineFilePath, pageOffset, anchorFragment, spineLayoutType, spineMediaType);
+      void this.loadSpineItemWithSnapshotCover(
+        spineFilePath,
+        pageOffset,
+        anchorFragment,
+        spineLayoutType,
+        spineMediaType,
+        requestedAnimationType === PageTurnAnimationType.NONE ? 'none' : 'no_context'
+      );
       return;
     }
 
@@ -3468,18 +3894,30 @@ export struct EpubWebViewReaderComponent {
     this.isPageTurnAnimating = true;
     logger.info(
       TAG,
-      `执行跨 spine viewport 动画: type=${animationType}, direction=${forward ? 'next' : 'prev'}, out=${profile.outDuration}ms, in=${profile.inDuration}ms`
+      `执行跨 spine viewport 动画: type=${animationType}, direction=${forward ? 'next' : 'prev'}, snapshotCover=true, in=${profile.inDuration}ms`
     );
+    void this.loadSpineItemWithSnapshotCover(
+      spineFilePath,
+      pageOffset,
+      anchorFragment,
+      spineLayoutType,
+      spineMediaType,
+      `animated:${animationType}`
+    );
+  }
 
-    ctx.animateTo({
-      duration: profile.outDuration,
-      curve: curves.initCurve(profile.outCurve),
-      onFinish: () => {
-        this.loadSpineItemImmediate(spineFilePath, pageOffset, anchorFragment, spineLayoutType, spineMediaType);
-      }
-    }, () => {
-      this.applyViewportState(profile.outgoing);
-    });
+  private async loadSpineItemWithSnapshotCover(
+    spineFilePath: string,
+    pageOffset: number,
+    anchorFragment: string,
+    spineLayoutType: string,
+    spineMediaType: string,
+    reason: string
+  ): Promise<void> {
+    this.isPageTurnAnimating = true;
+    await this.prepareSpineTransitionSnapshot(reason);
+    this.showSpineTransitionSnapshotCoverIfAvailable(`before_load:${reason}`);
+    this.loadSpineItemImmediate(spineFilePath, pageOffset, anchorFragment, spineLayoutType, spineMediaType);
   }
 
   private completeReaderReady(
@@ -3506,7 +3944,8 @@ export struct EpubWebViewReaderComponent {
         this.pendingSettingsReapplyReason = '';
         this.scheduleSettingsReapply(`pending_after_ready:${pendingReason}`, SETTINGS_APPLY_DELAY_MS);
       }
-      if (notifyReady && !this.params.isFixedLayout) {
+      if (notifyReady && !this.params.isFixedLayout &&
+        !this.isCurrentSpineCoverPage() && !this.isCurrentSpinePublisherLayout()) {
         this.scheduleSettingsReapply('post_ready_reconcile', INITIAL_LAYOUT_RECONCILE_DELAY_MS);
       }
     };
@@ -3524,6 +3963,7 @@ export struct EpubWebViewReaderComponent {
 
     const pendingTransition = this.pendingSpineTransition;
     if (!pendingTransition) {
+      this.hideSpineTransitionSnapshotCover('ready_without_transition');
       finalizeReady();
       return;
     }
@@ -3533,6 +3973,7 @@ export struct EpubWebViewReaderComponent {
     }
 
     this.applyViewportState(pendingTransition.incoming);
+    this.hideSpineTransitionSnapshotCover('ready_before_incoming_animation');
     const ctx = this.resolveUiContext();
     if (!ctx) {
       this.pendingSpineTransition = null;
@@ -5000,6 +5441,22 @@ export struct EpubWebViewReaderComponent {
     return this.showEpubCurlSnapshotCover || this.showEpubCurlEffect;
   }
 
+  private shouldRenderSpineTransitionSnapshotLayer(): boolean {
+    return this.showSpineTransitionSnapshotCover && this.spineTransitionSnapshotPixelMap !== null;
+  }
+
+  @Builder
+  private buildSpineTransitionSnapshotLayer() {
+    if (this.showSpineTransitionSnapshotCover && this.spineTransitionSnapshotPixelMap !== null) {
+      Image(this.spineTransitionSnapshotPixelMap as image.PixelMap)
+        .width('100%')
+        .height('100%')
+        .objectFit(ImageFit.Fill)
+        .hitTestBehavior(HitTestMode.None)
+        .zIndex(12)
+    }
+  }
+
   @Builder
   private buildEpubCurlLayer() {
     Stack() {
@@ -5104,6 +5561,7 @@ export struct EpubWebViewReaderComponent {
             this.loadSpineItemImmediate(this.pendingSpinePath, this.pendingPageOffset, this.pendingAnchorFragment);
           }
         })
+        .backgroundColor(this.viewportBackgroundColor)
         .transform(this.viewportMatrix)
         .opacity(this.hideWebViewForEpubCurlCapture ? 0 : this.viewportOpacity)
         .onPageBegin((event) => {
@@ -5211,6 +5669,10 @@ export struct EpubWebViewReaderComponent {
             );
           }
         })
+
+      if (this.shouldRenderSpineTransitionSnapshotLayer()) {
+        this.buildSpineTransitionSnapshotLayer()
+      }
 
       if (this.shouldRenderEpubCurlLayer()) {
         this.buildEpubCurlLayer()

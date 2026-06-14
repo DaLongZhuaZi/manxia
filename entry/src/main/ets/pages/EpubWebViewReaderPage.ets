@@ -14,7 +14,7 @@ import { ReaderSafeAreaUtils } from '../Utils/ReaderSafeAreaUtils';
 import { ThemeManager } from '../Framework/Managers/ThemeManager';
 import { getFontManager, FontScene } from '../Framework/Managers/FontManager';
 import { EBookDataManager } from '../Framework/Data/EBookDataManager';
-import { EBookParserFactory } from '../Framework/Parsers/EBookParser';
+import { EBookParserFactory, resolveEpubPackageDocumentPathFromRoot } from '../Framework/Parsers/EBookParser';
 import { convertMobiToExtractedDir } from '../Framework/Parsers/MobiParser';
 import { KeyCode, inputConsumer } from '@kit.InputKit';
 import {
@@ -115,7 +115,6 @@ const NOVEL_SETTINGS_STORE: string = 'novel_settings';
 const NOVEL_BOOK_RULE_SETTINGS_STORE: string = 'novel_book_rule_settings';
 const NOVEL_BOOK_REPLACE_RULE_IDS_PREFIX: string = 'book_replace_rule_ids_';
 const NOVEL_SETTING_ENABLE_REPLACE_RULES: string = 'enableNovelReplaceRules';
-const EPUB_CONTAINER_FULL_PATH_PATTERN: RegExp = /full-path\s*=\s*["']([^"']+)["']/i;
 const EPUB_OPF_META_COVER_PATTERN: RegExp = /<meta\b[^>]*name\s*=\s*["']cover["'][^>]*content\s*=\s*["']([^"']+)["'][^>]*\/?>/i;
 
 interface EpubSettingsPanelCallbacks {
@@ -483,6 +482,19 @@ export struct EpubWebViewReaderPage {
         const rh = (ch.resourceHref ?? '').trim();
         return rf.length > 0 || rh.length > 0;
       });
+
+      if (ebook.format === EBookFormat.EPUB && extractedRoot.length > 0) {
+        const opfSpineItems = EBookParserFactory.parseEpubSpineItems(extractedRoot);
+        if (opfSpineItems.length > 0 && this.shouldRefreshEpubSpineItems(spineItems, opfSpineItems)) {
+          for (const ch of opfSpineItems) {
+            ch.bookId = ebook.id;
+          }
+          ebook.chapters = opfSpineItems;
+          void this.ebookDataManager.saveEBook(ebook, { skipReadingSettings: true });
+          spineItems = opfSpineItems;
+          logger.info(TAG, `已根据 OPF 刷新 WebView spine 元数据: count=${spineItems.length}`);
+        }
+      }
 
       if (spineItems.length === 0) {
         logger.info(TAG, `章节缺少资源路径，尝试直接解析 OPF: extractedRoot=${extractedRoot}`);
@@ -882,6 +894,35 @@ export struct EpubWebViewReaderPage {
     return this.normalizePathSegments(`${normalizedBase}/${normalizedRef}`);
   }
 
+  private shouldRefreshEpubSpineItems(currentItems: EBookChapter[], opfItems: EBookChapter[]): boolean {
+    if (opfItems.length <= 0) {
+      return false;
+    }
+    if (currentItems.length !== opfItems.length) {
+      return true;
+    }
+    for (let index = 0; index < opfItems.length; index++) {
+      const current = currentItems[index];
+      const opf = opfItems[index];
+      const currentResourcePath = this.normalizeEpubResourceRef(current.resourceFile ?? current.resourceHref ?? '');
+      const opfResourcePath = this.normalizeEpubResourceRef(opf.resourceFile ?? opf.resourceHref ?? '');
+      const currentLayoutType = (current.resourceLayoutType ?? '').trim().toUpperCase();
+      const opfLayoutType = (opf.resourceLayoutType ?? '').trim().toUpperCase();
+      const currentMediaType = (current.resourceMediaType ?? '').trim().toLowerCase();
+      const opfMediaType = (opf.resourceMediaType ?? '').trim().toLowerCase();
+      if (currentResourcePath !== opfResourcePath) {
+        return true;
+      }
+      if (opfLayoutType.length > 0 && currentLayoutType !== opfLayoutType) {
+        return true;
+      }
+      if (opfMediaType.length > 0 && currentMediaType !== opfMediaType) {
+        return true;
+      }
+    }
+    return false;
+  }
+
   private appendUniqueCoverCandidate(candidates: string[], candidate: string): void {
     const normalized = candidate.trim();
     if (normalized.length <= 0) {
@@ -911,17 +952,8 @@ export struct EpubWebViewReaderPage {
     if (root.length <= 0) {
       return '';
     }
-    const containerPath = `${root}/META-INF/container.xml`;
-    if (!this.localPathExists(containerPath)) {
-      return '';
-    }
     try {
-      const containerText = this.readUtf8TextFileSync(containerPath);
-      const match = containerText.match(EPUB_CONTAINER_FULL_PATH_PATTERN);
-      if (!match || !match[1]) {
-        return '';
-      }
-      return this.joinLocalResourcePath(root, match[1]);
+      return resolveEpubPackageDocumentPathFromRoot(root);
     } catch (error) {
       logger.warn(TAG, `解析 EPUB package document 失败: ${String(error)}`);
       return '';

@@ -93,7 +93,7 @@ export class EpubAnimationEngine {
       case PageTurnAnimationType.SLIDE:
         return {
           outgoing: {
-            opacity: 0.82,
+            opacity: 1,
             matrix: EpubAnimationEngine.buildMatrix(axisX * 0.08, axisY * 0.08, 0, 1, 1, 0, 0)
           },
           incoming: {
@@ -123,7 +123,7 @@ export class EpubAnimationEngine {
       case PageTurnAnimationType.COVER:
         return {
           outgoing: {
-            opacity: 0.92,
+            opacity: 1,
             matrix: EpubAnimationEngine.buildMatrix(axisX * 0.03, axisY * 0.03, 0, 1, 1, 0, 0)
           },
           incoming: {
@@ -138,11 +138,11 @@ export class EpubAnimationEngine {
       case PageTurnAnimationType.CUBE:
         return {
           outgoing: {
-            opacity: 0.54,
+            opacity: 1,
             matrix: EpubAnimationEngine.buildMatrix(axisX * 0.05, axisY * 0.05, 0, 0.995, 0.995, 0, 0)
           },
           incoming: {
-            opacity: 0.74,
+            opacity: 1,
             matrix: EpubAnimationEngine.buildMatrix(incomingX * 0.12, incomingY * 0.12, 0, 1, 1, 0, 0)
           },
           outDuration: 95,
@@ -153,11 +153,11 @@ export class EpubAnimationEngine {
       case PageTurnAnimationType.DEPTH:
         return {
           outgoing: {
-            opacity: 0.38,
+            opacity: 1,
             matrix: EpubAnimationEngine.buildMatrix(axisX * 0.02, axisY * 0.02, 0, 0.985, 0.985, 0, 0)
           },
           incoming: {
-            opacity: 0.68,
+            opacity: 1,
             matrix: EpubAnimationEngine.buildMatrix(-axisX * 0.03, -axisY * 0.03, 0, 1.015, 1.015, 0, 0)
           },
           outDuration: 90,
@@ -168,11 +168,11 @@ export class EpubAnimationEngine {
       default:
         return {
           outgoing: {
-            opacity: 0.12,
+            opacity: 1,
             matrix: EpubAnimationEngine.buildMatrix(0, 0, 0, 1, 1, 0, 0)
           },
           incoming: {
-            opacity: 0.22,
+            opacity: 1,
             matrix: EpubAnimationEngine.buildMatrix(0, 0, 0, 1, 1, 0, 0)
           },
           outDuration: 90,
@@ -208,11 +208,11 @@ export class EpubAnimationEngine {
       case PageTurnAnimationType.SLIDE:
         return {
           outgoing: {
-            opacity: 0.18,
+            opacity: 1,
             matrix: EpubAnimationEngine.buildMatrix(axisX * 0.28, axisY * 0.28, 0, 0.96, 0.96, 0, 0)
           },
           incoming: {
-            opacity: 0.32,
+            opacity: 1,
             matrix: EpubAnimationEngine.buildMatrix(incomingX * 0.72, incomingY * 0.72, -40, 0.96, 0.96, 0, 0)
           },
           outDuration: 120,
@@ -238,7 +238,7 @@ export class EpubAnimationEngine {
       case PageTurnAnimationType.CUBE:
         return {
           outgoing: {
-            opacity: 0.28,
+            opacity: 1,
             matrix: EpubAnimationEngine.buildMatrix(
               axisX * 0.22,
               axisY * 0.22,
@@ -250,7 +250,7 @@ export class EpubAnimationEngine {
             )
           },
           incoming: {
-            opacity: 0.44,
+            opacity: 1,
             matrix: EpubAnimationEngine.buildMatrix(
               incomingX * 0.18,
               incomingY * 0.18,
@@ -269,7 +269,7 @@ export class EpubAnimationEngine {
       case PageTurnAnimationType.COVER:
         return {
           outgoing: {
-            opacity: 0.9,
+            opacity: 1,
             matrix: EpubAnimationEngine.buildMatrix(axisX * 0.04, axisY * 0.04, 0, 0.985, 0.985, 0, 0)
           },
           incoming: {
@@ -292,11 +292,11 @@ export class EpubAnimationEngine {
       case PageTurnAnimationType.DEPTH:
         return {
           outgoing: {
-            opacity: 0.16,
+            opacity: 1,
             matrix: EpubAnimationEngine.buildMatrix(axisX * 0.08, axisY * 0.08, -180, 0.84, 0.84, 0, 0)
           },
           incoming: {
-            opacity: 0.38,
+            opacity: 1,
             matrix: EpubAnimationEngine.buildMatrix(
               -axisX * 0.06,
               -axisY * 0.06,
@@ -315,11 +315,11 @@ export class EpubAnimationEngine {
       default:
         return {
           outgoing: {
-            opacity: 0.14,
+            opacity: 1,
             matrix: EpubAnimationEngine.buildMatrix(axisX * 0.24, axisY * 0.24, 0, 0.96, 0.96, 0, 0)
           },
           incoming: {
-            opacity: 0.24,
+            opacity: 1,
             matrix: EpubAnimationEngine.buildMatrix(incomingX * 0.58, incomingY * 0.58, 0, 0.96, 0.96, 0, 0)
           },
           outDuration: 110,

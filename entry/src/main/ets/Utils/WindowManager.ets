@@ -53,6 +53,14 @@ interface ThemeSystemBarStyle {
   backgroundColor: string;
 }
 
+interface MainWindowLayoutSnapshot {
+  width: number;
+  height: number;
+  status: window.WindowStatusType;
+  statusName: string;
+  isFreeWindowMode: boolean;
+}
+
 enum DisplayModeTransitionStrategy {
   IMMEDIATE = 'immediate',
   SWITCH_BEFORE_NAVIGATION = 'switch_before_navigation',
@@ -102,9 +110,27 @@ export class WindowManager {
   private static readonly LAST_VISIBLE_NAVIGATION_BAR_HEIGHT_KEY = 'window_manager_last_visible_navigation_bar_height';
   private static windowStageRef: window.WindowStage | null = null;
   private static windowStageEventCallback: ((event: window.WindowStageEventType) => void) | null = null;
+  private static mainWindowLayoutMonitoredWindow: window.Window | null = null;
+  private static mainWindowSizeChangeCallback: ((size: window.Size) => void) | null = null;
+  private static mainWindowStatusChangeCallback: ((status: window.WindowStatusType) => void) | null = null;
+  private static mainWindowStatusDidChangeCallback: ((status: window.WindowStatusType) => void) | null = null;
+  private static mainWindowFreeWindowModeChangeCallback: ((isFreeWindowMode: boolean) => void) | null = null;
   private static themeChangeCallback: ((theme: ThemeType) => void) | null = null;
   private static isMainWindowBackgroundPrivacyModeEnabled: boolean = false;
   private static isFloatingWindowBackgroundPrivacyModeEnabled: boolean = false;
+  private static readonly WINDOW_LAYOUT_CHANGE_SIGNAL_KEY = 'app_window_layout_change_signal';
+  private static readonly WINDOW_LAYOUT_WIDTH_PX_KEY = 'app_window_layout_width_px';
+  private static readonly WINDOW_LAYOUT_HEIGHT_PX_KEY = 'app_window_layout_height_px';
+  private static readonly WINDOW_LAYOUT_STATUS_KEY = 'app_window_layout_status';
+  private static readonly WINDOW_LAYOUT_STATUS_NAME_KEY = 'app_window_layout_status_name';
+  private static readonly WINDOW_LAYOUT_IS_FREE_WINDOW_MODE_KEY = 'app_window_layout_is_free_window_mode';
+  private static readonly WINDOW_LAYOUT_EVENT_SOURCE_KEY = 'app_window_layout_event_source';
+  private static readonly WINDOW_LAYOUT_SETTLE_DELAY_MS = 80;
+  private static lastMainWindowLayoutWidth: number = -1;
+  private static lastMainWindowLayoutHeight: number = -1;
+  private static lastMainWindowStatus: window.WindowStatusType = window.WindowStatusType.UNDEFINED;
+  private static lastMainWindowIsFreeWindowMode: boolean = false;
+  private static mainWindowLayoutSettleTimer: number = -1;
   private static readonly TRANSITION_OVERLAY_VISIBLE_KEY = 'window_mode_transition_overlay_visible';
   private static readonly TRANSITION_OVERLAY_OPACITY_KEY = 'window_mode_transition_overlay_opacity';
   private static readonly TRANSITION_OVERLAY_USE_BLUR_KEY = 'window_mode_transition_overlay_use_blur';
@@ -214,6 +240,8 @@ export class WindowManager {
    * 解除窗口状态变化监听
    */
   static unregisterWindowStageStateMonitor(): void {
+    WindowManager.unregisterMainWindowLayoutMonitor();
+
     if (!WindowManager.windowStageRef || !WindowManager.windowStageEventCallback) {
       return;
     }
@@ -227,6 +255,287 @@ export class WindowManager {
     } finally {
       WindowManager.windowStageRef = null;
       WindowManager.windowStageEventCallback = null;
+    }
+  }
+
+  private static registerMainWindowLayoutMonitor(mainWindow: window.Window): void {
+    WindowManager.unregisterMainWindowLayoutMonitor();
+
+    WindowManager.mainWindowLayoutMonitoredWindow = mainWindow;
+    const sizeChangeCallback = (size: window.Size): void => {
+      WindowManager.handleMainWindowSizeChange(size);
+    };
+    const statusChangeCallback = (status: window.WindowStatusType): void => {
+      WindowManager.handleMainWindowStatusChange(status, false);
+    };
+    const statusDidChangeCallback = (status: window.WindowStatusType): void => {
+      WindowManager.handleMainWindowStatusChange(status, true);
+    };
+    const freeWindowModeChangeCallback = (isFreeWindowMode: boolean): void => {
+      WindowManager.handleMainWindowFreeWindowModeChange(isFreeWindowMode);
+    };
+
+    try {
+      mainWindow.on('windowSizeChange', sizeChangeCallback);
+      WindowManager.mainWindowSizeChangeCallback = sizeChangeCallback;
+      logger.info(WindowManager.TAG, '主窗口尺寸变化监听注册成功');
+    } catch (error) {
+      logger.warn(WindowManager.TAG, `注册主窗口尺寸变化监听失败: ${(error as Error).message}`);
+    }
+
+    try {
+      mainWindow.on('windowStatusChange', statusChangeCallback);
+      WindowManager.mainWindowStatusChangeCallback = statusChangeCallback;
+      logger.info(WindowManager.TAG, '主窗口状态变化监听注册成功');
+    } catch (error) {
+      logger.warn(WindowManager.TAG, `注册主窗口状态变化监听失败: ${(error as Error).message}`);
+    }
+
+    try {
+      mainWindow.on('windowStatusDidChange', statusDidChangeCallback);
+      WindowManager.mainWindowStatusDidChangeCallback = statusDidChangeCallback;
+      logger.info(WindowManager.TAG, '主窗口状态完成变化监听注册成功');
+    } catch (error) {
+      logger.warn(WindowManager.TAG, `注册主窗口状态完成变化监听失败: ${(error as Error).message}`);
+    }
+
+    try {
+      mainWindow.on('freeWindowModeChange', freeWindowModeChangeCallback);
+      WindowManager.mainWindowFreeWindowModeChangeCallback = freeWindowModeChangeCallback;
+      logger.info(WindowManager.TAG, '自由窗口模式变化监听注册成功');
+    } catch (error) {
+      logger.warn(WindowManager.TAG, `注册自由窗口模式变化监听失败: ${(error as Error).message}`);
+    }
+
+    WindowManager.publishMainWindowLayoutSnapshot('主窗口布局监听初始化', undefined, undefined, undefined, true);
+  }
+
+  private static unregisterMainWindowLayoutMonitor(): void {
+    if (WindowManager.mainWindowLayoutSettleTimer >= 0) {
+      clearTimeout(WindowManager.mainWindowLayoutSettleTimer);
+      WindowManager.mainWindowLayoutSettleTimer = -1;
+    }
+
+    const monitoredWindow = WindowManager.mainWindowLayoutMonitoredWindow;
+    if (monitoredWindow) {
+      if (WindowManager.mainWindowSizeChangeCallback) {
+        try {
+          monitoredWindow.off('windowSizeChange', WindowManager.mainWindowSizeChangeCallback);
+        } catch (error) {
+          logger.warn(WindowManager.TAG, `解除主窗口尺寸变化监听失败: ${(error as Error).message}`);
+        }
+      }
+
+      if (WindowManager.mainWindowStatusChangeCallback) {
+        try {
+          monitoredWindow.off('windowStatusChange', WindowManager.mainWindowStatusChangeCallback);
+        } catch (error) {
+          logger.warn(WindowManager.TAG, `解除主窗口状态变化监听失败: ${(error as Error).message}`);
+        }
+      }
+
+      if (WindowManager.mainWindowStatusDidChangeCallback) {
+        try {
+          monitoredWindow.off('windowStatusDidChange', WindowManager.mainWindowStatusDidChangeCallback);
+        } catch (error) {
+          logger.warn(WindowManager.TAG, `解除主窗口状态完成变化监听失败: ${(error as Error).message}`);
+        }
+      }
+
+      if (WindowManager.mainWindowFreeWindowModeChangeCallback) {
+        try {
+          monitoredWindow.off('freeWindowModeChange', WindowManager.mainWindowFreeWindowModeChangeCallback);
+        } catch (error) {
+          logger.warn(WindowManager.TAG, `解除自由窗口模式变化监听失败: ${(error as Error).message}`);
+        }
+      }
+    }
+
+    WindowManager.mainWindowLayoutMonitoredWindow = null;
+    WindowManager.mainWindowSizeChangeCallback = null;
+    WindowManager.mainWindowStatusChangeCallback = null;
+    WindowManager.mainWindowStatusDidChangeCallback = null;
+    WindowManager.mainWindowFreeWindowModeChangeCallback = null;
+  }
+
+  private static handleMainWindowSizeChange(size: window.Size): void {
+    logger.debug(
+      WindowManager.TAG,
+      `主窗口尺寸变化事件: width=${size.width}, height=${size.height}`
+    );
+    WindowManager.scheduleMainWindowLayoutSnapshot('windowSizeChange', size);
+  }
+
+  private static handleMainWindowStatusChange(status: window.WindowStatusType, rectSettled: boolean): void {
+    const statusName = WindowManager.getWindowStatusName(status);
+    logger.info(WindowManager.TAG, `主窗口状态变化事件: status=${statusName}(${status}), rectSettled=${rectSettled}`);
+    if (rectSettled) {
+      WindowManager.publishMainWindowLayoutSnapshot('windowStatusDidChange', undefined, status, undefined, false);
+      return;
+    }
+    WindowManager.scheduleMainWindowLayoutSnapshot('windowStatusChange', undefined, status);
+  }
+
+  private static handleMainWindowFreeWindowModeChange(isFreeWindowMode: boolean): void {
+    logger.info(WindowManager.TAG, `自由窗口模式变化事件: isFreeWindowMode=${isFreeWindowMode}`);
+    WindowManager.scheduleMainWindowLayoutSnapshot(
+      'freeWindowModeChange',
+      undefined,
+      undefined,
+      isFreeWindowMode
+    );
+  }
+
+  private static scheduleMainWindowLayoutSnapshot(
+    source: string,
+    fallbackSize?: window.Size,
+    fallbackStatus?: window.WindowStatusType,
+    fallbackFreeWindowMode?: boolean
+  ): void {
+    if (WindowManager.mainWindowLayoutSettleTimer >= 0) {
+      clearTimeout(WindowManager.mainWindowLayoutSettleTimer);
+      WindowManager.mainWindowLayoutSettleTimer = -1;
+    }
+
+    WindowManager.mainWindowLayoutSettleTimer = setTimeout(() => {
+      WindowManager.mainWindowLayoutSettleTimer = -1;
+      WindowManager.publishMainWindowLayoutSnapshot(
+        source,
+        fallbackSize,
+        fallbackStatus,
+        fallbackFreeWindowMode,
+        false
+      );
+    }, WindowManager.WINDOW_LAYOUT_SETTLE_DELAY_MS);
+  }
+
+  private static publishMainWindowLayoutSnapshot(
+    source: string,
+    fallbackSize?: window.Size,
+    fallbackStatus?: window.WindowStatusType,
+    fallbackFreeWindowMode?: boolean,
+    forceSignal: boolean = false
+  ): void {
+    const targetWindow = WindowManager.getMainWindowFromWindowStageRef(
+      `window layout snapshot: ${source}`,
+      true
+    ) ?? WindowManager.mainWindowLayoutMonitoredWindow;
+    if (!targetWindow) {
+      logger.debug(WindowManager.TAG, `主窗口布局快照跳过: source=${source}, reason=no_active_window`);
+      return;
+    }
+
+    const snapshot = WindowManager.resolveMainWindowLayoutSnapshot(
+      targetWindow,
+      fallbackSize,
+      fallbackStatus,
+      fallbackFreeWindowMode
+    );
+    const changed = snapshot.width !== WindowManager.lastMainWindowLayoutWidth ||
+      snapshot.height !== WindowManager.lastMainWindowLayoutHeight ||
+      snapshot.status !== WindowManager.lastMainWindowStatus ||
+      snapshot.isFreeWindowMode !== WindowManager.lastMainWindowIsFreeWindowMode;
+
+    AppStorage.setOrCreate<number>(WindowManager.WINDOW_LAYOUT_WIDTH_PX_KEY, snapshot.width);
+    AppStorage.setOrCreate<number>(WindowManager.WINDOW_LAYOUT_HEIGHT_PX_KEY, snapshot.height);
+    AppStorage.setOrCreate<number>(WindowManager.WINDOW_LAYOUT_STATUS_KEY, Number(snapshot.status));
+    AppStorage.setOrCreate<string>(WindowManager.WINDOW_LAYOUT_STATUS_NAME_KEY, snapshot.statusName);
+    AppStorage.setOrCreate<boolean>(WindowManager.WINDOW_LAYOUT_IS_FREE_WINDOW_MODE_KEY, snapshot.isFreeWindowMode);
+    AppStorage.setOrCreate<string>(WindowManager.WINDOW_LAYOUT_EVENT_SOURCE_KEY, source);
+
+    if (!changed && !forceSignal) {
+      return;
+    }
+
+    WindowManager.lastMainWindowLayoutWidth = snapshot.width;
+    WindowManager.lastMainWindowLayoutHeight = snapshot.height;
+    WindowManager.lastMainWindowStatus = snapshot.status;
+    WindowManager.lastMainWindowIsFreeWindowMode = snapshot.isFreeWindowMode;
+
+    WindowManager.storeSystemBarHeights(targetWindow);
+
+    const currentSignal = AppStorage.get<number>(WindowManager.WINDOW_LAYOUT_CHANGE_SIGNAL_KEY) ?? 0;
+    const nextSignal = currentSignal + 1;
+    AppStorage.setOrCreate<number>(WindowManager.WINDOW_LAYOUT_CHANGE_SIGNAL_KEY, nextSignal);
+    logger.info(
+      WindowManager.TAG,
+      `主窗口布局状态已发布: ${snapshot.width}x${snapshot.height}px, status=${snapshot.statusName}, ` +
+        `freeWindow=${snapshot.isFreeWindowMode}, signal=${nextSignal}, source=${source}`
+    );
+  }
+
+  private static resolveMainWindowLayoutSnapshot(
+    targetWindow: window.Window,
+    fallbackSize?: window.Size,
+    fallbackStatus?: window.WindowStatusType,
+    fallbackFreeWindowMode?: boolean
+  ): MainWindowLayoutSnapshot {
+    let width = fallbackSize ? Math.max(0, Math.round(fallbackSize.width)) : 0;
+    let height = fallbackSize ? Math.max(0, Math.round(fallbackSize.height)) : 0;
+    let status = fallbackStatus ?? window.WindowStatusType.UNDEFINED;
+    let isFreeWindowMode = fallbackFreeWindowMode ?? false;
+
+    try {
+      const properties = targetWindow.getWindowProperties();
+      const rect = properties.windowRect;
+      if (rect.width > 0) {
+        width = Math.round(rect.width);
+      }
+      if (rect.height > 0) {
+        height = Math.round(rect.height);
+      }
+    } catch (error) {
+      const lifecycleError = error as BusinessError;
+      if (WindowManager.isWindowLifecycleAbnormalError(lifecycleError)) {
+        logger.debug(
+          WindowManager.TAG,
+          `读取主窗口尺寸快照跳过: code=${WindowManager.getWindowLifecycleErrorCode(lifecycleError)}, ` +
+            `reason=${WindowManager.getWindowLifecycleErrorMessage(lifecycleError)}`
+        );
+      } else {
+        logger.warn(WindowManager.TAG, `读取主窗口尺寸快照失败: ${(error as Error).message}`);
+      }
+    }
+
+    try {
+      status = targetWindow.getWindowStatus();
+    } catch (error) {
+      logger.debug(WindowManager.TAG, `读取主窗口状态失败，使用回调状态: ${(error as Error).message}`);
+    }
+
+    try {
+      isFreeWindowMode = targetWindow.isInFreeWindowMode();
+    } catch (error) {
+      if (fallbackFreeWindowMode === undefined) {
+        logger.debug(WindowManager.TAG, `读取自由窗口模式失败，使用默认值: ${(error as Error).message}`);
+      }
+    }
+
+    const snapshot: MainWindowLayoutSnapshot = {
+      width: width,
+      height: height,
+      status: status,
+      statusName: WindowManager.getWindowStatusName(status),
+      isFreeWindowMode: isFreeWindowMode
+    };
+    return snapshot;
+  }
+
+  private static getWindowStatusName(status: window.WindowStatusType): string {
+    switch (status) {
+      case window.WindowStatusType.FULL_SCREEN:
+        return 'full_screen';
+      case window.WindowStatusType.MAXIMIZE:
+        return 'maximize';
+      case window.WindowStatusType.MINIMIZE:
+        return 'minimize';
+      case window.WindowStatusType.FLOATING:
+        return 'floating';
+      case window.WindowStatusType.SPLIT_SCREEN:
+        return 'split_screen';
+      case window.WindowStatusType.UNDEFINED:
+      default:
+        return 'undefined';
     }
   }
 
@@ -1341,6 +1650,7 @@ export class WindowManager {
       // 设置默认的非沉浸系统栏样式
       WindowManager.setDefaultSystemBar(mainWindow);
       WindowManager.registerThemeChangeMonitor(mainWindow);
+      WindowManager.registerMainWindowLayoutMonitor(mainWindow);
       WindowManager.syncBackgroundState(false, '窗口管理器初始化');
       
       logger.info(WindowManager.TAG, '✅ WindowManager初始化完成');
