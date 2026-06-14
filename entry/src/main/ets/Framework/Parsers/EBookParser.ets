@@ -31,6 +31,14 @@ const TAG = 'EBookParser';
 const EPUB_IMAGE_RESOURCE_PATTERN = /<(?:img|image)\b[^>]+(?:src|href|xlink:href)\s*=\s*["']([^"']+)["']/ig;
 const EPUB_CONTAINER_FULL_PATH_PATTERN = /full-path\s*=\s*["']([^"']+)["']/i;
 const EPUB_FIXED_LAYOUT_PATTERN = /(pre-paginated|rendition:layout[^"'<>]*["'>\s:=]+pre-paginated)/i;
+const EPUB_EXTRACTION_REPAIR_MARKER = '.mnx_epub_repair_checked';
+const EPUB_KNOWN_PACKAGE_DOCUMENT_PATHS: string[] = [
+  'content.opf',
+  'package.opf',
+  'OEBPS/content.opf',
+  'OPS/content.opf',
+  'EPUB/content.opf'
+];
 
 interface EpubManifestItem {
   href: string;
@@ -43,10 +51,186 @@ interface EpubHrefLocation {
   fragment: string;
 }
 
+interface EpubSpineItemRef {
+  idref: string;
+  properties: string;
+}
+
 interface GeneratedNavigationScanResult {
   items: EpubNavigationItem[];
   htmlText: string;
   changed: boolean;
+}
+
+function normalizeEpubLocalPath(path: string): string {
+  return path.trim().replace(/\\/g, '/').replace(/\/+$/g, '');
+}
+
+function normalizeEpubRelativePath(path: string): string {
+  return path
+    .trim()
+    .replace(/\\/g, '/')
+    .replace(/#.*/, '')
+    .replace(/\?.*/, '')
+    .replace(/\/+/g, '/')
+    .replace(/^\.\//, '')
+    .replace(/^\/+/, '');
+}
+
+function joinEpubLocalPath(baseDir: string, relativePath: string): string {
+  const normalizedRelativePath = normalizeEpubRelativePath(relativePath);
+  if (normalizedRelativePath.length <= 0) {
+    return normalizeEpubLocalPath(baseDir);
+  }
+  const baseParts = normalizeEpubLocalPath(baseDir).split('/').filter((part: string) => part.length > 0);
+  const relativeParts = normalizedRelativePath.split('/');
+  const resolved = [...baseParts];
+  for (const part of relativeParts) {
+    if (part.length <= 0 || part === '.') {
+      continue;
+    }
+    if (part === '..') {
+      if (resolved.length > 0) {
+        resolved.pop();
+      }
+      continue;
+    }
+    resolved.push(part);
+  }
+  return `${normalizeEpubLocalPath(baseDir).startsWith('/') ? '/' : ''}${resolved.join('/')}`;
+}
+
+function epubLocalPathExists(path: string): boolean {
+  const normalizedPath = normalizeEpubLocalPath(path);
+  if (normalizedPath.length <= 0) {
+    return false;
+  }
+  return SafeFileUtils.accessSync(normalizedPath);
+}
+
+function isEpubLocalDirectory(path: string): boolean {
+  const normalizedPath = normalizeEpubLocalPath(path);
+  if (!epubLocalPathExists(normalizedPath)) {
+    return false;
+  }
+  try {
+    const stat = SafeFileUtils.statSync(normalizedPath);
+    return stat.isDirectory();
+  } catch (_error) {
+    return false;
+  }
+}
+
+function readEpubUtf8TextFileSync(path: string): string {
+  const file = SafeFileUtils.openSync(path, fileIo.OpenMode.READ_ONLY);
+  try {
+    const stat = SafeFileUtils.statSync(file.fd);
+    if (stat.size <= 0) {
+      return '';
+    }
+    const buffer = new ArrayBuffer(stat.size);
+    const readLength = SafeFileUtils.readSync(file.fd, buffer);
+    const bytes = readLength > 0 ? new Uint8Array(buffer, 0, readLength) : new Uint8Array(buffer);
+    return new util.TextDecoder('utf-8', { ignoreBOM: true }).decodeToString(bytes);
+  } finally {
+    SafeFileUtils.closeSync(file);
+  }
+}
+
+function appendUniqueEpubPath(paths: string[], path: string): void {
+  const normalizedPath = normalizeEpubLocalPath(path);
+  if (normalizedPath.length <= 0 || paths.includes(normalizedPath)) {
+    return;
+  }
+  paths.push(normalizedPath);
+}
+
+function resolveEpubPackageDocumentFromContainer(packageRoot: string): string {
+  const normalizedPackageRoot = normalizeEpubLocalPath(packageRoot);
+  const containerPath = joinEpubLocalPath(normalizedPackageRoot, 'META-INF/container.xml');
+  if (!epubLocalPathExists(containerPath)) {
+    return '';
+  }
+  try {
+    const containerText = readEpubUtf8TextFileSync(containerPath);
+    const match = containerText.match(EPUB_CONTAINER_FULL_PATH_PATTERN);
+    if (!match || !match[1]) {
+      return '';
+    }
+    const opfPath = joinEpubLocalPath(normalizedPackageRoot, String(match[1]));
+    return epubLocalPathExists(opfPath) ? opfPath : '';
+  } catch (error) {
+    logger.warn(TAG, `[EpubPackage] 解析 container.xml 失败: root=${normalizedPackageRoot}, error=${String(error)}`);
+    return '';
+  }
+}
+
+function resolveKnownEpubPackageDocument(packageRoot: string): string {
+  const normalizedPackageRoot = normalizeEpubLocalPath(packageRoot);
+  for (let index = 0; index < EPUB_KNOWN_PACKAGE_DOCUMENT_PATHS.length; index++) {
+    const opfPath = joinEpubLocalPath(normalizedPackageRoot, EPUB_KNOWN_PACKAGE_DOCUMENT_PATHS[index]);
+    if (epubLocalPathExists(opfPath)) {
+      return opfPath;
+    }
+  }
+  const entries = SafeFileUtils.listFileSync(normalizedPackageRoot);
+  for (let index = 0; index < entries.length; index++) {
+    const entryName = normalizeEpubRelativePath(entries[index]);
+    if (entryName.toLowerCase().endsWith('.opf')) {
+      const opfPath = joinEpubLocalPath(normalizedPackageRoot, entryName);
+      if (epubLocalPathExists(opfPath)) {
+        return opfPath;
+      }
+    }
+  }
+  return '';
+}
+
+function collectNestedEpubPackageRoots(extractionRoot: string): string[] {
+  const roots: string[] = [];
+  const normalizedRoot = normalizeEpubLocalPath(extractionRoot);
+  const entries = SafeFileUtils.listFileSync(normalizedRoot);
+  for (let index = 0; index < entries.length; index++) {
+    const entryName = normalizeEpubRelativePath(entries[index]);
+    if (entryName.length <= 0 || entryName === 'META-INF') {
+      continue;
+    }
+    const childPath = joinEpubLocalPath(normalizedRoot, entryName);
+    if (isEpubLocalDirectory(childPath)) {
+      appendUniqueEpubPath(roots, childPath);
+    }
+  }
+  return roots;
+}
+
+export function resolveEpubPackageDocumentPathFromRoot(extractionRoot: string): string {
+  const normalizedRoot = normalizeEpubLocalPath(extractionRoot);
+  if (normalizedRoot.length <= 0 || !epubLocalPathExists(normalizedRoot)) {
+    return '';
+  }
+
+  const rootContainerOpfPath = resolveEpubPackageDocumentFromContainer(normalizedRoot);
+  if (rootContainerOpfPath.length > 0) {
+    return rootContainerOpfPath;
+  }
+
+  const rootKnownOpfPath = resolveKnownEpubPackageDocument(normalizedRoot);
+  if (rootKnownOpfPath.length > 0) {
+    return rootKnownOpfPath;
+  }
+
+  const nestedRoots = collectNestedEpubPackageRoots(normalizedRoot);
+  for (let index = 0; index < nestedRoots.length; index++) {
+    const nestedContainerOpfPath = resolveEpubPackageDocumentFromContainer(nestedRoots[index]);
+    if (nestedContainerOpfPath.length > 0) {
+      return nestedContainerOpfPath;
+    }
+    const nestedKnownOpfPath = resolveKnownEpubPackageDocument(nestedRoots[index]);
+    if (nestedKnownOpfPath.length > 0) {
+      return nestedKnownOpfPath;
+    }
+  }
+  return '';
 }
 
 function isReaderKitUnavailableError(message: string): boolean {
@@ -720,17 +904,84 @@ class ReaderKitEBookParser extends EBookParser {
     return manifestItems;
   }
 
-  private parseOpfSpineIds(opfText: string): string[] {
-    const spineIds: string[] = [];
+  private parseOpfSpineItemRefs(opfText: string): EpubSpineItemRef[] {
+    const spineItems: EpubSpineItemRef[] = [];
     const spineSectionMatch = opfText.match(/<spine\b[\s\S]*?<\/spine>/i);
     const spineText = spineSectionMatch ? spineSectionMatch[0] : opfText;
-    const spinePattern = /<itemref\b[^>]+idref\s*=\s*["']([^"']+)["'][^>]*\/?>/gi;
+    const spinePattern = /<itemref\b([^>]*?)\/?>/gi;
     let spineMatch = spinePattern.exec(spineText);
     while (spineMatch !== null) {
-      spineIds.push(String(spineMatch[1] ?? '').trim());
+      const attrs = String(spineMatch[1] ?? '');
+      const idref = this.extractXmlAttribute(attrs, 'idref');
+      if (idref.length > 0) {
+        const spineItem: EpubSpineItemRef = {
+          idref: idref,
+          properties: this.extractXmlAttribute(attrs, 'properties')
+        };
+        spineItems.push(spineItem);
+      }
       spineMatch = spinePattern.exec(spineText);
     }
-    return spineIds;
+    return spineItems;
+  }
+
+  private parseOpfCoverResourcePaths(opfText: string, manifestItems: Map<string, EpubManifestItem>): Set<string> {
+    const coverPaths: Set<string> = new Set();
+    const guideSectionMatch = opfText.match(/<guide\b[\s\S]*?<\/guide>/i);
+    const guideText = guideSectionMatch ? guideSectionMatch[0] : '';
+    const referencePattern = /<reference\b([^>]*?)\/?>/gi;
+    let referenceMatch = referencePattern.exec(guideText);
+    while (referenceMatch !== null) {
+      const attrs = String(referenceMatch[1] ?? '');
+      const typeValue = this.extractXmlAttribute(attrs, 'type').toLowerCase();
+      const href = this.extractXmlAttribute(attrs, 'href');
+      if (typeValue === 'cover' && href.length > 0) {
+        coverPaths.add(this.normalizeOpfCoverResourcePath(href));
+      }
+      referenceMatch = referencePattern.exec(guideText);
+    }
+
+    const metaPattern = /<meta\b([^>]*?)\/?>/gi;
+    let metaMatch = metaPattern.exec(opfText);
+    while (metaMatch !== null) {
+      const attrs = String(metaMatch[1] ?? '');
+      const nameValue = this.extractXmlAttribute(attrs, 'name').toLowerCase();
+      const contentValue = this.extractXmlAttribute(attrs, 'content').trim();
+      if (nameValue === 'cover' && contentValue.length > 0) {
+        const manifestItem = manifestItems.get(contentValue);
+        if (manifestItem) {
+          coverPaths.add(this.normalizeOpfCoverResourcePath(manifestItem.href));
+        }
+      }
+      metaMatch = metaPattern.exec(opfText);
+    }
+
+    manifestItems.forEach((manifestItem: EpubManifestItem) => {
+      const properties = (manifestItem.properties ?? '').toLowerCase();
+      if (properties.includes('cover-image')) {
+        coverPaths.add(this.normalizeOpfCoverResourcePath(manifestItem.href));
+      }
+    });
+
+    return coverPaths;
+  }
+
+  private normalizeOpfCoverResourcePath(path: string): string {
+    return this.normalizeRelativeResourcePath(path).replace(/^\/+/, '');
+  }
+
+  private resolveResourceReferenceFromManifestHref(manifestHref: string, resourceRef: string): string {
+    const trimmedRef = resourceRef.trim().replace(/\\/g, '/');
+    const normalizedRef = this.normalizeOpfCoverResourcePath(resourceRef);
+    if (normalizedRef.length <= 0 || trimmedRef.startsWith('/')) {
+      return normalizedRef;
+    }
+    const normalizedManifestHref = this.normalizeOpfCoverResourcePath(manifestHref);
+    const parentDir = this.getParentDir(normalizedManifestHref);
+    if (parentDir.length <= 0 || parentDir === '.') {
+      return normalizedRef;
+    }
+    return this.normalizeOpfCoverResourcePath(this.joinNormalizedPath(parentDir, normalizedRef));
   }
 
   private decodeXmlText(text: string): string {
@@ -984,16 +1235,20 @@ class ReaderKitEBookParser extends EBookParser {
       const opfText = this.readTextFileSync(opfPath);
       const packageRoot = this.getParentDir(opfPath);
       const manifestItems = this.parseOpfManifestItems(opfText);
-      const spineIds = this.parseOpfSpineIds(opfText);
+      const spineItemRefs = this.parseOpfSpineItemRefs(opfText);
+      const coverResourcePaths = this.parseOpfCoverResourcePaths(opfText, manifestItems);
 
-      if (spineIds.length === 0) {
+      if (spineItemRefs.length === 0) {
         logger.warn(TAG, '[SpineParse] OPF spine 中无 itemref');
         return [];
       }
 
       const result: EBookChapter[] = [];
-      for (let i = 0; i < spineIds.length; i++) {
-        const idref = spineIds[i];
+      let missingSpineResourceCount = 0;
+      const missingSpineResourceSamples: string[] = [];
+      for (let i = 0; i < spineItemRefs.length; i++) {
+        const spineItem = spineItemRefs[i];
+        const idref = spineItem.idref;
         const item = manifestItems.get(idref);
         if (!item) {
           continue;
@@ -1004,6 +1259,13 @@ class ReaderKitEBookParser extends EBookParser {
         const isHtmlLike = lowerHref.endsWith('.html') || lowerHref.endsWith('.xhtml') ||
           lowerHref.endsWith('.htm') || lowerHref.endsWith('.svg');
         if (!isHtmlLike && !item.mediaType.includes('html') && !item.mediaType.includes('xml')) {
+          continue;
+        }
+        if (!this.pathExists(absolutePath)) {
+          missingSpineResourceCount++;
+          if (missingSpineResourceSamples.length < 5) {
+            missingSpineResourceSamples.push(`${i}:${normalizedHref}`);
+          }
           continue;
         }
         const chapter: EBookChapter = {
@@ -1018,7 +1280,7 @@ class ReaderKitEBookParser extends EBookParser {
           resourceHref: normalizedHref,
           resourceFile: this.buildRelativePath(extractedRoot, absolutePath) || normalizedHref,
           resourceMediaType: item.mediaType,
-          resourceLayoutType: 'TEXT_HTML',
+          resourceLayoutType: this.resolveOpfSpineLayoutType(spineItem, item, absolutePath, coverResourcePaths),
           createTime: Date.now()
         };
         result.push(chapter);
@@ -1041,6 +1303,12 @@ class ReaderKitEBookParser extends EBookParser {
         }
       }
 
+      if (missingSpineResourceCount > 0) {
+        logger.warn(
+          TAG,
+          `[SpineParse] 已跳过 ${missingSpineResourceCount} 个缺失的 OPF spine 资源: ${missingSpineResourceSamples.join(', ')}`
+        );
+      }
       logger.info(TAG, `[SpineParse] 直接解析 OPF 得到 ${result.length} 个 spine 项`);
       return result;
     } catch (e) {
@@ -1215,8 +1483,14 @@ class ReaderKitEBookParser extends EBookParser {
 
   private async ensureEpubExtractionRoot(): Promise<string> {
     const extractionRoot = this.buildEpubExtractionPath();
-    const containerPath = `${extractionRoot}/META-INF/container.xml`;
-    if (this.pathExists(containerPath)) {
+    const cachedOpfPath = this.resolveEpubPackageDocumentPath(extractionRoot);
+    if (cachedOpfPath.length > 0) {
+      const repairMarkerPath = this.joinNormalizedPath(extractionRoot, EPUB_EXTRACTION_REPAIR_MARKER);
+      if (!this.pathExists(repairMarkerPath) && this.hasMissingEpubSpineResources(extractionRoot, cachedOpfPath)) {
+        logger.warn(TAG, `[EPUBExtract] 检测到解压缓存缺少 spine 资源，尝试重新解压补齐: root=${extractionRoot}`);
+        await zlib.decompressFile(this.normalizeFsPath(this.filePath), extractionRoot);
+        this.writeTextFileSync(repairMarkerPath, String(Date.now()));
+      }
       return extractionRoot;
     }
 
@@ -1224,10 +1498,51 @@ class ReaderKitEBookParser extends EBookParser {
       SafeFileUtils.mkdirSync(extractionRoot, true);
     }
     await zlib.decompressFile(this.normalizeFsPath(this.filePath), extractionRoot);
-    if (!this.pathExists(containerPath)) {
-      throw new Error('EPUB 解压完成但缺少 META-INF/container.xml，文件可能已损坏');
+    const opfPath = this.resolveEpubPackageDocumentPath(extractionRoot);
+    if (opfPath.length <= 0) {
+      throw new Error('EPUB 解压完成但缺少可用的 OPF package document，文件可能已损坏');
     }
+    const repairMarkerPath = this.joinNormalizedPath(extractionRoot, EPUB_EXTRACTION_REPAIR_MARKER);
+    this.writeTextFileSync(repairMarkerPath, String(Date.now()));
     return extractionRoot;
+  }
+
+  private hasMissingEpubSpineResources(extractionRoot: string, opfPath: string): boolean {
+    if (opfPath.length <= 0 || !this.pathExists(opfPath)) {
+      return true;
+    }
+    try {
+      const opfText = this.readTextFileSync(opfPath);
+      const packageRoot = this.getParentDir(opfPath);
+      const manifestItems = this.parseOpfManifestItems(opfText);
+      const spineItemRefs = this.parseOpfSpineItemRefs(opfText);
+      for (let index = 0; index < spineItemRefs.length; index++) {
+        const spineItem = spineItemRefs[index];
+        const manifestItem = manifestItems.get(spineItem.idref);
+        if (!manifestItem) {
+          continue;
+        }
+        const normalizedHref = this.normalizeRelativeResourcePath(manifestItem.href);
+        const lowerHref = normalizedHref.toLowerCase();
+        const isHtmlLike = lowerHref.endsWith('.html') || lowerHref.endsWith('.xhtml') ||
+          lowerHref.endsWith('.htm') || lowerHref.endsWith('.svg');
+        if (!isHtmlLike && !manifestItem.mediaType.includes('html') && !manifestItem.mediaType.includes('xml')) {
+          continue;
+        }
+        const absolutePath = this.joinNormalizedPath(packageRoot, normalizedHref);
+        if (!this.pathExists(absolutePath)) {
+          logger.warn(
+            TAG,
+            `[EPUBExtract] spine 资源缺失: index=${index}, idref=${spineItem.idref}, href=${normalizedHref}, root=${extractionRoot}`
+          );
+          return true;
+        }
+      }
+    } catch (error) {
+      logger.warn(TAG, `[EPUBExtract] 校验解压缓存失败: ${String(error)}`);
+      return true;
+    }
+    return false;
   }
 
   private buildEpubExtractionPath(): string {
@@ -1240,16 +1555,7 @@ class ReaderKitEBookParser extends EBookParser {
   }
 
   private resolveEpubPackageDocumentPath(extractionRoot: string): string {
-    const containerPath = `${extractionRoot}/META-INF/container.xml`;
-    if (!this.pathExists(containerPath)) {
-      return '';
-    }
-    const containerText = this.readTextFileSync(containerPath);
-    const match = containerText.match(EPUB_CONTAINER_FULL_PATH_PATTERN);
-    if (!match || !match[1]) {
-      return '';
-    }
-    return this.joinNormalizedPath(extractionRoot, this.normalizeRelativeResourcePath(match[1]));
+    return resolveEpubPackageDocumentPathFromRoot(extractionRoot);
   }
 
   private enrichEpubChapterResource(
@@ -1276,7 +1582,7 @@ class ReaderKitEBookParser extends EBookParser {
 
     const normalizedResourcePath = this.normalizeRelativeResourcePath(rawResourcePath);
     const chapterResourcePath = this.resolveResourcePathWithFallback(packageRoot, extractionRoot, normalizedResourcePath);
-    result.resourceFile = normalizedResourcePath;
+    result.resourceFile = this.buildRelativePath(extractionRoot, chapterResourcePath) || normalizedResourcePath;
     if ((result.resourceHref || '').length <= 0) {
       result.resourceHref = normalizedResourcePath;
     }
@@ -1379,12 +1685,11 @@ class ReaderKitEBookParser extends EBookParser {
   }
 
   private pathExists(path: string): boolean {
-    try {
-      SafeFileUtils.statSync(path);
-      return true;
-    } catch (_error) {
+    const normalizedPath = path.trim();
+    if (normalizedPath.length <= 0) {
       return false;
     }
+    return SafeFileUtils.accessSync(normalizedPath);
   }
 
   private readTextFileSync(path: string): string {
@@ -1433,6 +1738,104 @@ class ReaderKitEBookParser extends EBookParser {
       .replace(/\s+/g, ' ')
       .trim();
     return stripped.length;
+  }
+
+  private hasPublisherLayoutProperty(properties: string): boolean {
+    const normalized = properties.toLowerCase();
+    return normalized.includes('duokan-page-fitwindow') ||
+      normalized.includes('duokan-page-fullscreen') ||
+      normalized.includes('duokan-bleed') ||
+      normalized.includes('rendition:layout-pre-paginated') ||
+      (normalized.includes('rendition:layout') && normalized.includes('pre-paginated')) ||
+      normalized.includes('fixed-layout') ||
+      normalized.includes('page-spread-left') ||
+      normalized.includes('page-spread-right') ||
+      normalized.includes('page-spread-center');
+  }
+
+  private hasPublisherLayoutHtmlSignal(htmlText: string): boolean {
+    return /duokan-(image-single|page-fitwindow|bleed|layout)/i.test(htmlText) ||
+      /normal-center-single[0-9]?/i.test(htmlText) ||
+      /class\s*=\s*["'][^"']*(?:fitwindow|fullpage|full-page|single-page|page-fit)[^"']*["']/i.test(htmlText) ||
+      /height\s*:\s*(?:[7-9][0-9]|100)\s*vh\s*!?/i.test(htmlText) ||
+      /background-size\s*:\s*(?:cover|contain)\b/i.test(htmlText);
+  }
+
+  private hasCoverPageResourceNameSignal(spineItem: EpubSpineItemRef, manifestItem: EpubManifestItem): boolean {
+    const hrefName = this.getFileNameFromPath(manifestItem.href).toLowerCase().replace(/\.[^.]+$/i, '');
+    const idName = spineItem.idref.toLowerCase().replace(/\.[^.]+$/i, '');
+    const name = hrefName.length > 0 ? hrefName : idName;
+    return name === 'cover' ||
+      name.startsWith('cover') ||
+      name === 'frontcover' ||
+      name === 'front-cover' ||
+      name === 'folder' ||
+      name === 'foldercover' ||
+      name === 'folder-cover';
+  }
+
+  private hasPublisherLayoutResourceNameSignal(spineItem: EpubSpineItemRef, manifestItem: EpubManifestItem): boolean {
+    const hrefName = this.getFileNameFromPath(manifestItem.href).toLowerCase().replace(/\.[^.]+$/i, '');
+    const idName = spineItem.idref.toLowerCase().replace(/\.[^.]+$/i, '');
+    const name = hrefName.length > 0 ? hrefName : idName;
+    return this.hasCoverPageResourceNameSignal(spineItem, manifestItem) ||
+      name === 'end' ||
+      name.startsWith('title') ||
+      name.startsWith('message') ||
+      name.startsWith('summary') ||
+      name.startsWith('picture');
+  }
+
+  private resolveOpfSpineLayoutType(
+    spineItem: EpubSpineItemRef,
+    manifestItem: EpubManifestItem,
+    absolutePath: string,
+    coverResourcePaths: Set<string>
+  ): string {
+    const mergedProperties = `${spineItem.properties} ${manifestItem.properties ?? ''}`;
+    const mediaType = manifestItem.mediaType.toLowerCase();
+    const normalizedHref = this.normalizeOpfCoverResourcePath(manifestItem.href);
+    if (coverResourcePaths.has(normalizedHref) || this.hasCoverPageResourceNameSignal(spineItem, manifestItem)) {
+      return 'COVER_PAGE';
+    }
+    if (mediaType.startsWith('image/')) {
+      return 'IMAGE_PAGE';
+    }
+    if (this.hasPublisherLayoutProperty(mergedProperties)) {
+      return 'PUBLISHER_LAYOUT';
+    }
+    if (this.hasPublisherLayoutResourceNameSignal(spineItem, manifestItem)) {
+      return 'PUBLISHER_LAYOUT';
+    }
+    if (!this.pathExists(absolutePath)) {
+      return 'TEXT_HTML';
+    }
+    const lowerPath = absolutePath.toLowerCase();
+    const isHtmlLike = lowerPath.endsWith('.html') || lowerPath.endsWith('.xhtml') || lowerPath.endsWith('.htm') ||
+      lowerPath.endsWith('.svg');
+    if (!isHtmlLike) {
+      return 'TEXT_HTML';
+    }
+    try {
+      const htmlText = this.readTextFileSync(absolutePath);
+      const firstImageRef = this.extractFirstLocalImageRef(htmlText);
+      if (firstImageRef.length > 0) {
+        const resolvedImageRef = this.resolveResourceReferenceFromManifestHref(manifestItem.href, firstImageRef);
+        if (coverResourcePaths.has(resolvedImageRef)) {
+          return 'COVER_PAGE';
+        }
+      }
+      if (this.hasPublisherLayoutHtmlSignal(htmlText)) {
+        return 'PUBLISHER_LAYOUT';
+      }
+      const textLength = this.measureHtmlTextLength(htmlText);
+      if (firstImageRef.length > 0 && textLength <= 80) {
+        return 'IMAGE_PAGE';
+      }
+    } catch (error) {
+      logger.debug(TAG, `[SpineParse] 版式信号检测失败: path=${absolutePath}, error=${String(error)}`);
+    }
+    return 'TEXT_HTML';
   }
 
   private buildRelativePath(rootDir: string, fullPath: string): string {

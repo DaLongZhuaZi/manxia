@@ -58,28 +58,6 @@ interface FixedLayoutDimension {
   h: number;
 }
 
-interface CoverPageFitDimension {
-  viewportW: number;
-  viewportH: number;
-  innerW: number;
-  innerH: number;
-  clientW: number;
-  clientH: number;
-  visualW: number;
-  visualH: number;
-  visualScale: number;
-  mediaW: number;
-  mediaH: number;
-  mediaLeft: number;
-  mediaTop: number;
-  sourceW: number;
-  sourceH: number;
-  cssW: string;
-  cssH: string;
-  objectFit: string;
-  proxy: string;
-}
-
 interface ViewportDims {
   w: number;
   h: number;
@@ -2217,38 +2195,22 @@ export struct EpubWebViewReaderComponent {
             return;
           }
           var cropProps = ['width','height','max-width','max-height','min-width','min-height',
-                           'object-fit','object-position','transform','transform-origin',
-                           '-webkit-transform','-webkit-transform-origin','scale','zoom','position'];
-          var root = document.documentElement;
-          var visualViewportWidth = window.visualViewport ? (window.visualViewport.width || 0) : 0;
-          var visualViewportHeight = window.visualViewport ? (window.visualViewport.height || 0) : 0;
-          var layoutWidth = Math.max(
-            window.innerWidth || 0,
-            root ? (root.clientWidth || 0) : 0,
-            document.body ? (document.body.clientWidth || 0) : 0
-          );
-          var layoutHeight = Math.max(
-            window.innerHeight || 0,
-            root ? (root.clientHeight || 0) : 0,
-            document.body ? (document.body.clientHeight || 0) : 0
-          );
-          if (layoutWidth <= 0) {
-            layoutWidth = Math.max(visualViewportWidth, mnxHostViewportWidth || 0);
+                           'object-fit','object-position','transform','transform-origin','position'];
+          var viewportWidth = 0;
+          var viewportHeight = 0;
+          if (window.visualViewport) {
+            viewportWidth = window.visualViewport.width || 0;
+            viewportHeight = window.visualViewport.height || 0;
           }
-          if (layoutHeight <= 0) {
-            layoutHeight = Math.max(visualViewportHeight, mnxHostViewportHeight || 0);
-          }
-          var viewportWidth = Math.round(layoutWidth);
-          var viewportHeight = Math.round(layoutHeight);
+          viewportWidth = Math.round(viewportWidth || window.innerWidth ||
+            (document.documentElement ? document.documentElement.clientWidth : 0) || mnxHostViewportWidth || 0);
+          viewportHeight = Math.round(viewportHeight || window.innerHeight ||
+            (document.documentElement ? document.documentElement.clientHeight : 0) || mnxHostViewportHeight || 0);
           viewportWidth = Math.max(1, viewportWidth);
           viewportHeight = Math.max(1, viewportHeight);
-          if (root) {
-            root.style.setProperty('--mnx-cover-vw', viewportWidth + 'px');
-            root.style.setProperty('--mnx-cover-vh', viewportHeight + 'px');
-            root.setAttribute('data-mnx-cover-vw', String(viewportWidth));
-            root.setAttribute('data-mnx-cover-vh', String(viewportHeight));
-            root.setAttribute('data-mnx-cover-visual-vw', String(Math.round(visualViewportWidth)));
-            root.setAttribute('data-mnx-cover-visual-vh', String(Math.round(visualViewportHeight)));
+          if (document.documentElement) {
+            document.documentElement.style.setProperty('--mnx-cover-vw', viewportWidth + 'px');
+            document.documentElement.style.setProperty('--mnx-cover-vh', viewportHeight + 'px');
           }
           var fitCoverMedia = function(mediaNode) {
             if (!mediaNode || !mediaNode.style) {
@@ -2279,85 +2241,26 @@ export struct EpubWebViewReaderComponent {
               sourceWidth = viewBox && viewBox.width ? viewBox.width : (mediaNode.width && mediaNode.width.baseVal ? mediaNode.width.baseVal.value : 0);
               sourceHeight = viewBox && viewBox.height ? viewBox.height : (mediaNode.height && mediaNode.height.baseVal ? mediaNode.height.baseVal.value : 0);
             }
-            mediaNode.setAttribute('data-mnx-cover-source-width', String(Math.round(sourceWidth)));
-            mediaNode.setAttribute('data-mnx-cover-source-height', String(Math.round(sourceHeight)));
-            mediaNode.style.setProperty('width', viewportWidth + 'px', 'important');
-            mediaNode.style.setProperty('height', viewportHeight + 'px', 'important');
+            if (sourceWidth <= 0 || sourceHeight <= 0) {
+              mediaNode.style.setProperty('width', 'auto', 'important');
+              mediaNode.style.setProperty('height', 'auto', 'important');
+              mediaNode.style.setProperty('max-width', viewportWidth + 'px', 'important');
+              mediaNode.style.setProperty('max-height', viewportHeight + 'px', 'important');
+              mediaNode.style.setProperty('object-fit', 'contain', 'important');
+              mediaNode.style.setProperty('object-position', 'center center', 'important');
+              return;
+            }
+            var scale = Math.min(viewportWidth / Math.max(1, sourceWidth), viewportHeight / Math.max(1, sourceHeight));
+            var targetWidth = Math.max(1, Math.floor(sourceWidth * scale));
+            var targetHeight = Math.max(1, Math.floor(sourceHeight * scale));
+            mediaNode.style.setProperty('width', targetWidth + 'px', 'important');
+            mediaNode.style.setProperty('height', targetHeight + 'px', 'important');
             mediaNode.style.setProperty('max-width', viewportWidth + 'px', 'important');
             mediaNode.style.setProperty('max-height', viewportHeight + 'px', 'important');
             mediaNode.style.setProperty('object-fit', 'contain', 'important');
             mediaNode.style.setProperty('object-position', 'center center', 'important');
             mediaNode.style.setProperty('margin', 'auto', 'important');
           };
-          var applyCoverProxy = function(mediaNode) {
-            if (!mediaNode || !mediaNode.getAttribute || !document.body) {
-              return null;
-            }
-            var proxyTagName = mediaNode.tagName ? mediaNode.tagName.toUpperCase() : '';
-            if (proxyTagName !== 'IMG') {
-              return null;
-            }
-            var sourceUrl = mediaNode.currentSrc || mediaNode.src || mediaNode.getAttribute('src') || '';
-            if (!sourceUrl) {
-              return null;
-            }
-            var proxyNode = document.getElementById('__mnx_cover_proxy');
-            if (!proxyNode) {
-              proxyNode = document.createElementNS
-                ? document.createElementNS('http://www.w3.org/1999/xhtml', 'img')
-                : document.createElement('img');
-              proxyNode.setAttribute('id', '__mnx_cover_proxy');
-              proxyNode.setAttribute('data-mnx-cover-proxy', 'true');
-              proxyNode.setAttribute('alt', mediaNode.getAttribute('alt') || 'cover');
-              document.body.appendChild(proxyNode);
-            }
-            if (proxyNode.getAttribute('src') !== sourceUrl) {
-              proxyNode.setAttribute('src', sourceUrl);
-            }
-            var proxySourceWidth = mediaNode.naturalWidth || parseFloat(mediaNode.getAttribute('data-mnx-cover-source-width') || '0') || 0;
-            var proxySourceHeight = mediaNode.naturalHeight || parseFloat(mediaNode.getAttribute('data-mnx-cover-source-height') || '0') || 0;
-            proxyNode.setAttribute('data-mnx-cover-source-width', String(Math.round(proxySourceWidth)));
-            proxyNode.setAttribute('data-mnx-cover-source-height', String(Math.round(proxySourceHeight)));
-            proxyNode.setAttribute('data-mnx-cover-proxy', 'true');
-            proxyNode.style.setProperty('position', 'fixed', 'important');
-            proxyNode.style.setProperty('left', '0', 'important');
-            proxyNode.style.setProperty('top', '0', 'important');
-            proxyNode.style.setProperty('right', 'auto', 'important');
-            proxyNode.style.setProperty('bottom', 'auto', 'important');
-            proxyNode.style.setProperty('width', viewportWidth + 'px', 'important');
-            proxyNode.style.setProperty('height', viewportHeight + 'px', 'important');
-            proxyNode.style.setProperty('min-width', viewportWidth + 'px', 'important');
-            proxyNode.style.setProperty('min-height', viewportHeight + 'px', 'important');
-            proxyNode.style.setProperty('max-width', viewportWidth + 'px', 'important');
-            proxyNode.style.setProperty('max-height', viewportHeight + 'px', 'important');
-            proxyNode.style.setProperty('display', 'block', 'important');
-            proxyNode.style.setProperty('object-fit', 'contain', 'important');
-            proxyNode.style.setProperty('object-position', 'center center', 'important');
-            proxyNode.style.setProperty('margin', '0', 'important');
-            proxyNode.style.setProperty('padding', '0', 'important');
-            proxyNode.style.setProperty('border', '0', 'important');
-            proxyNode.style.setProperty('transform', 'none', 'important');
-            proxyNode.style.setProperty('-webkit-transform', 'none', 'important');
-            proxyNode.style.setProperty('scale', '1', 'important');
-            proxyNode.style.setProperty('zoom', '1', 'important');
-            proxyNode.style.setProperty('z-index', '2147483647', 'important');
-            proxyNode.style.setProperty('pointer-events', 'none', 'important');
-            proxyNode.style.setProperty('visibility', 'visible', 'important');
-            proxyNode.style.setProperty('background', 'transparent', 'important');
-            proxyNode.style.setProperty('box-sizing', 'border-box', 'important');
-            var bodyChildren = document.body.children || [];
-            for (var bc = 0; bc < bodyChildren.length; bc++) {
-              var bodyChild = bodyChildren[bc];
-              if (bodyChild === proxyNode) {
-                bodyChild.style.setProperty('visibility', 'visible', 'important');
-              } else if (bodyChild && bodyChild.style) {
-                bodyChild.style.setProperty('visibility', 'hidden', 'important');
-                bodyChild.style.setProperty('pointer-events', 'none', 'important');
-              }
-            }
-            return proxyNode;
-          };
-          var sourceCoverMedia = null;
           var coverNodes = document.querySelectorAll(
             'body, body > *, body div, body figure, body picture, body section, body article, body main, body p, body img, body svg, body image, body video, body canvas'
           );
@@ -2373,13 +2276,9 @@ export struct EpubWebViewReaderComponent {
               coverNode.setAttribute('preserveAspectRatio', 'xMidYMid meet');
             }
             if (coverTag === 'IMG' || coverTag === 'SVG' || coverTag === 'VIDEO' || coverTag === 'CANVAS') {
-              if (sourceCoverMedia === null && coverNode.getAttribute && coverNode.getAttribute('data-mnx-cover-proxy') !== 'true') {
-                sourceCoverMedia = coverNode;
-              }
               fitCoverMedia(coverNode);
             }
           }
-          applyCoverProxy(sourceCoverMedia);
           var retryCount = Number(window.__mnxCoverFitRetryCount || 0);
           if (retryCount < 3 && window.__mnxCoverFitRescheduled !== true) {
             window.__mnxCoverFitRetryCount = retryCount + 1;
@@ -2524,17 +2423,7 @@ export struct EpubWebViewReaderComponent {
           this.completeReaderReady('horizontal_paged', 0, 1, notifyReady);
           return;
         }
-        if (preferCoverPage) {
-          this.applyCoverPageFit(vpW, vpH);
-          this.currentPageCount = 1;
-          this.currentPage = 0;
-          this.lastPaginationOffset = 0;
-          this.lastPaginationPageExtent = vpW;
-          this.lastPaginationMaxOffset = 0;
-          this.completeReaderReady(layoutKind, 0, 1, notifyReady);
-          return;
-        }
-        if (preferPublisherLayout) {
+        if (preferCoverPage || preferPublisherLayout) {
           this.applyPublisherLayoutScale(vpW, vpH);
           this.currentPageCount = 1;
           this.currentPage = 0;
@@ -2727,56 +2616,6 @@ export struct EpubWebViewReaderComponent {
         this.runJs(`document.body.style.transform = 'scale(${scale})';`);
       } catch (error) {
         logger.warn(TAG, `Fixed-layout dimension parse failed: ${String(error)}`);
-      }
-    });
-  }
-
-  private applyCoverPageFit(vpW: number, vpH: number): void {
-    const fitScript = `
-      (function() {
-        if (window.__mnxPrepareCoverPage) {
-          window.__mnxPrepareCoverPage();
-        }
-        var root = document.documentElement;
-        var visual = window.visualViewport;
-        var media = document.querySelector('#__mnx_cover_proxy, body img, body svg, body video, body canvas');
-        var rect = media && media.getBoundingClientRect
-          ? media.getBoundingClientRect()
-          : { width: 0, height: 0, left: 0, top: 0 };
-        var mediaStyle = media ? window.getComputedStyle(media) : null;
-        return JSON.stringify({
-          viewportW: root ? parseFloat(root.style.getPropertyValue('--mnx-cover-vw') || '0') : 0,
-          viewportH: root ? parseFloat(root.style.getPropertyValue('--mnx-cover-vh') || '0') : 0,
-          innerW: window.innerWidth || 0,
-          innerH: window.innerHeight || 0,
-          clientW: root ? (root.clientWidth || 0) : 0,
-          clientH: root ? (root.clientHeight || 0) : 0,
-          visualW: visual ? (visual.width || 0) : 0,
-          visualH: visual ? (visual.height || 0) : 0,
-          visualScale: visual ? (visual.scale || 0) : 0,
-          mediaW: Math.round(rect.width || 0),
-          mediaH: Math.round(rect.height || 0),
-          mediaLeft: Math.round(rect.left || 0),
-          mediaTop: Math.round(rect.top || 0),
-          sourceW: media ? parseFloat(media.getAttribute('data-mnx-cover-source-width') || '0') : 0,
-          sourceH: media ? parseFloat(media.getAttribute('data-mnx-cover-source-height') || '0') : 0,
-          cssW: mediaStyle ? (mediaStyle.width || '') : '',
-          cssH: mediaStyle ? (mediaStyle.height || '') : '',
-          objectFit: mediaStyle ? (mediaStyle.objectFit || '') : '',
-          proxy: media ? (media.getAttribute('data-mnx-cover-proxy') || 'false') : 'false'
-        });
-      })();
-    `;
-    this.runJs(fitScript, (result: string) => {
-      try {
-        const clean = this.parseWebViewJson(result);
-        const dimension = SafeUtils.parseObj(clean) as CoverPageFitDimension;
-        logger.debug(
-          TAG,
-          `Cover-page fit applied: viewport=${dimension.viewportW}x${dimension.viewportH}, inner=${dimension.innerW}x${dimension.innerH}, client=${dimension.clientW}x${dimension.clientH}, visual=${dimension.visualW}x${dimension.visualH}@${dimension.visualScale}, source=${dimension.sourceW}x${dimension.sourceH}, media=${dimension.mediaW}x${dimension.mediaH}@${dimension.mediaLeft},${dimension.mediaTop}, css=${dimension.cssW}x${dimension.cssH}/${dimension.objectFit}, proxy=${dimension.proxy}, host=${vpW}x${vpH}`
-        );
-      } catch (error) {
-        logger.warn(TAG, `Cover-page fit dimension parse failed: ${String(error)}`);
       }
     });
   }

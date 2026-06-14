@@ -15,6 +15,10 @@ import { DataManager } from '../Framework/Data/DataManager';
 import { AppNotificationManager } from '../Framework/Managers/NotificationManager';
 import { InteractionManager } from '../Framework/Managers/InteractionManager';
 import { ContentFilterManager } from '../Framework/Managers/ContentFilterManager';
+import {
+  initializeReaderKitRuntimeGate,
+  isReaderKitRuntimeForceDisabled
+} from '../Framework/Initialization/ReaderKitFeatureGate';
 import { SettingsPanelSurfaceHelper } from './settings/SettingsPanelSurfaceHelper';
 import { BuiltInThemeResources } from '../Framework/Theme/BuiltInThemeResources';
 import { common } from '@kit.AbilityKit';
@@ -96,6 +100,7 @@ struct WelcomeGuidePage {
   private uiContext: UIContext | undefined = undefined;
   private notificationPermissionAutoRequested: boolean = false;
   private customExperienceSettingsInitialized: boolean = false;
+  private readerKitEmulatorGuardChecked: boolean = false;
 
   /**
    * 初始化引导步骤内容
@@ -317,6 +322,42 @@ struct WelcomeGuidePage {
     await this.ensureNotificationPermissionState(true);
   }
 
+  private async disableReaderKitOnEmulatorIfNeeded(trigger: string): Promise<void> {
+    if (this.readerKitEmulatorGuardChecked) {
+      return;
+    }
+    this.readerKitEmulatorGuardChecked = true;
+
+    initializeReaderKitRuntimeGate(`WelcomeGuidePage.${trigger}`);
+    if (!isReaderKitRuntimeForceDisabled()) {
+      return;
+    }
+
+    try {
+      if (!this.settingsManager.isInitialized()) {
+        await this.settingsManager.initialize();
+      }
+
+      const wasReaderKitEnabled = this.settingsManager.getBoolean(SettingKeys.READER_KIT_ENABLED, true);
+      if (wasReaderKitEnabled) {
+        await this.settingsManager.setBoolean(SettingKeys.READER_KIT_ENABLED, false);
+      }
+      this.settingsManager.syncToAppStorage();
+      AppStorage.setOrCreate<boolean>(SettingKeys.READER_KIT_ENABLED, false);
+
+      const message = wasReaderKitEnabled
+        ? '检测到模拟器，已自动关闭系统 ReaderKit 能力'
+        : '检测到模拟器，系统 ReaderKit 能力保持关闭';
+      this.uiContext?.getPromptAction().showToast({
+        message: message,
+        duration: 2000
+      });
+      logger.warn(TAG, `模拟器环境已关闭 ReaderKit 能力: trigger=${trigger}, previous=${wasReaderKitEnabled}`);
+    } catch (error) {
+      logger.error(TAG, `模拟器环境关闭 ReaderKit 能力失败: trigger=${trigger}, error=${String(error)}`);
+    }
+  }
+
   private async initializeCustomExperienceSettingsIfNeeded(): Promise<void> {
     if (this.customExperienceSettingsInitialized) {
       return;
@@ -496,6 +537,8 @@ struct WelcomeGuidePage {
       logger.error(TAG, '获取UIContext失败');
       return;
     }
+
+    void this.disableReaderKitOnEmulatorIfNeeded('aboutToAppear');
 
     // 初始化主题
     this.initializeTheme();

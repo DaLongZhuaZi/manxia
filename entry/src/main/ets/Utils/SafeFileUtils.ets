@@ -177,6 +177,15 @@ export class SafeFileUtils {
 
   static listFileSync(path: string, options?: ListFileOptions): string[] {
     try {
+      const stat = fileIo.statSync(path);
+      if (!stat.isDirectory()) {
+        return [];
+      }
+    } catch (e) {
+      logger.debug(TAG, `listFileSync stat skipped for ${path}`);
+      return [];
+    }
+    try {
       if (options !== undefined) {
         return fileIo.listFileSync(path, options);
       } else {

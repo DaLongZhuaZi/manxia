@@ -835,26 +835,18 @@ export class EpubCssBuilder {
   static buildCoverPageCss(vpW: number, vpH: number, textSettings: EBookReadingSettings): string {
     const backgroundColor = textSettings.backgroundColor ?? '#FFFFFF';
     const backgroundCss = EpubCssBuilder.buildBackgroundCss(textSettings);
-    const fallbackWidth = Math.max(1, Math.round(vpW));
-    const fallbackHeight = Math.max(1, Math.round(vpH));
-    const coverWidthCss = 'var(--mnx-cover-vw, var(--mnx-cover-fallback-vw, 100vw))';
-    const coverHeightCss = 'var(--mnx-cover-vh, var(--mnx-cover-fallback-vh, 100vh))';
     return `
       ${backgroundCss}
-      html {
-        --mnx-cover-fallback-vw: ${fallbackWidth}px;
-        --mnx-cover-fallback-vh: ${fallbackHeight}px;
-      }
       html,
       body {
         margin: 0 !important;
         padding: 0 !important;
-        width: ${coverWidthCss} !important;
-        min-width: ${coverWidthCss} !important;
-        max-width: ${coverWidthCss} !important;
-        height: ${coverHeightCss} !important;
-        min-height: ${coverHeightCss} !important;
-        max-height: ${coverHeightCss} !important;
+        width: var(--mnx-cover-vw, 100vw) !important;
+        min-width: var(--mnx-cover-vw, 100vw) !important;
+        max-width: var(--mnx-cover-vw, 100vw) !important;
+        height: var(--mnx-cover-vh, 100vh) !important;
+        min-height: var(--mnx-cover-vh, 100vh) !important;
+        max-height: var(--mnx-cover-vh, 100vh) !important;
         overflow: hidden !important;
         background-color: ${backgroundColor} !important;
         box-sizing: border-box !important;
@@ -869,11 +861,7 @@ export class EpubCssBuilder {
         justify-content: center !important;
         transform: none !important;
         transform-origin: center center !important;
-        -webkit-transform: none !important;
-        -webkit-transform-origin: center center !important;
-        scale: 1 !important;
-        zoom: 1 !important;
-        contain: none !important;
+        contain: layout paint size !important;
       }
       body > *,
       body .center,
@@ -894,10 +882,10 @@ export class EpubCssBuilder {
         display: flex !important;
         align-items: center !important;
         justify-content: center !important;
-        width: ${coverWidthCss} !important;
-        max-width: ${coverWidthCss} !important;
-        height: ${coverHeightCss} !important;
-        max-height: ${coverHeightCss} !important;
+        width: var(--mnx-cover-vw, 100vw) !important;
+        max-width: var(--mnx-cover-vw, 100vw) !important;
+        height: var(--mnx-cover-vh, 100vh) !important;
+        max-height: var(--mnx-cover-vh, 100vh) !important;
         min-height: 0 !important;
         margin: 0 auto !important;
         padding: 0 !important;
@@ -912,49 +900,19 @@ export class EpubCssBuilder {
         display: block !important;
         position: static !important;
         flex: 0 1 auto !important;
-        width: ${coverWidthCss} !important;
-        height: ${coverHeightCss} !important;
+        width: auto !important;
+        height: auto !important;
         min-width: 0 !important;
         min-height: 0 !important;
-        max-width: ${coverWidthCss} !important;
-        max-height: ${coverHeightCss} !important;
-        max-inline-size: ${coverWidthCss} !important;
-        max-block-size: ${coverHeightCss} !important;
+        max-width: var(--mnx-cover-vw, 100vw) !important;
+        max-height: var(--mnx-cover-vh, 100vh) !important;
+        max-inline-size: var(--mnx-cover-vw, 100vw) !important;
+        max-block-size: var(--mnx-cover-vh, 100vh) !important;
         object-fit: contain !important;
         object-position: center center !important;
         margin: auto !important;
         padding: 0 !important;
         transform: none !important;
-        -webkit-transform: none !important;
-        scale: 1 !important;
-        zoom: 1 !important;
-        box-sizing: border-box !important;
-      }
-      #__mnx_cover_proxy {
-        position: fixed !important;
-        left: 0 !important;
-        top: 0 !important;
-        right: auto !important;
-        bottom: auto !important;
-        width: ${coverWidthCss} !important;
-        height: ${coverHeightCss} !important;
-        min-width: ${coverWidthCss} !important;
-        min-height: ${coverHeightCss} !important;
-        max-width: ${coverWidthCss} !important;
-        max-height: ${coverHeightCss} !important;
-        display: block !important;
-        object-fit: contain !important;
-        object-position: center center !important;
-        margin: 0 !important;
-        padding: 0 !important;
-        border: 0 !important;
-        transform: none !important;
-        -webkit-transform: none !important;
-        scale: 1 !important;
-        zoom: 1 !important;
-        z-index: 2147483647 !important;
-        pointer-events: none !important;
-        background: transparent !important;
         box-sizing: border-box !important;
       }
       * {

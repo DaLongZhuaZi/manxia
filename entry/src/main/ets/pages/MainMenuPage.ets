@@ -1086,7 +1086,9 @@ struct MainMenuPage {
   private navStackReturnWatchTimer: number = -1;
   private lastObservedNavStackSize: number = 0;
   private mainMenuWindowInsetsResyncTimer: number = -1;
+  private bottomBarWindowLayoutRefreshTimer: number = -1;
   private readonly MAIN_MENU_WINDOW_INSETS_RESYNC_DELAY: number = 72;
+  private readonly BOTTOM_BAR_WINDOW_LAYOUT_REFRESH_DELAY: number = 32;
   @State private showMainMenuGlobalBackground: boolean = true;
 
 
@@ -1418,6 +1420,64 @@ struct MainMenuPage {
     logger.info(TAG, `MainMenu窗口尺寸变化: ${width.toFixed(0)}x${height.toFixed(0)}vp, barRenderKey=${this.barRenderKey}`);
   }
 
+  private clearBottomBarWindowLayoutRefreshTimer(): void {
+    if (this.bottomBarWindowLayoutRefreshTimer >= 0) {
+      clearTimeout(this.bottomBarWindowLayoutRefreshTimer);
+      this.bottomBarWindowLayoutRefreshTimer = -1;
+    }
+  }
+
+  private scheduleBottomBarWindowLayoutRefresh(source: string): void {
+    this.clearBottomBarWindowLayoutRefreshTimer();
+    this.bottomBarWindowLayoutRefreshTimer = setTimeout(() => {
+      this.bottomBarWindowLayoutRefreshTimer = -1;
+      this.refreshBottomBarForWindowLayoutChange(source);
+    }, this.BOTTOM_BAR_WINDOW_LAYOUT_REFRESH_DELAY);
+  }
+
+  private syncMainMenuViewportFromWindowLayoutSnapshot(): void {
+    if (this.appWindowLayoutWidthPx <= 0 || this.appWindowLayoutHeightPx <= 0) {
+      return;
+    }
+
+    const uiContext = this.getUIContext();
+    const width: number = uiContext.px2vp(this.appWindowLayoutWidthPx);
+    const height: number = uiContext.px2vp(this.appWindowLayoutHeightPx);
+    if (width <= 0 || height <= 0) {
+      return;
+    }
+
+    const widthChanged: boolean = Math.abs(width - this.mainMenuViewportWidth) > 1;
+    const heightChanged: boolean = Math.abs(height - this.mainMenuViewportHeight) > 1;
+    if (!widthChanged && !heightChanged) {
+      return;
+    }
+
+    this.mainMenuViewportWidth = width;
+    this.mainMenuViewportHeight = height;
+    logger.debug(TAG, `MainMenu窗口快照同步: ${width.toFixed(0)}x${height.toFixed(0)}vp`);
+  }
+
+  private refreshBottomBarForWindowLayoutChange(source: string): void {
+    this.syncMainMenuViewportFromWindowLayoutSnapshot();
+    this.updateResponsiveParams();
+    this.resetBottomBarScrollState();
+    this.bottomBarOffsetY = this.isOverlayBottomNavTab(this.currentTabIndex) ? this.getBottomBarTravelDistance() : 0;
+    this.hdsTabsController = null;
+    this.hdsSetSyncing = null;
+    this.barRenderKey++;
+    logger.info(
+      TAG,
+      `窗口布局变化触发底栏重渲染: source=${source}, status=${this.appWindowLayoutStatusName}, ` +
+        `freeWindow=${this.appWindowLayoutIsFreeWindowMode}, signal=${this.appWindowLayoutChangeSignal}, ` +
+        `barRenderKey=${this.barRenderKey}`
+    );
+  }
+
+  onAppWindowLayoutChanged(_changedPropertyName?: string): void {
+    this.scheduleBottomBarWindowLayoutRefresh('app_window_layout_change_signal');
+  }
+
   // 轮播内容数据 - 使用深色渐变背景，避免与主题蓝色融合
   private isFoldableCollapsed(deviceInfo: DeviceInfo): boolean {
     return deviceInfo.isFoldable && deviceInfo.foldStatus === FoldStatus.FOLDED;
@@ -1479,6 +1539,12 @@ struct MainMenuPage {
   @State public systemVersion: string = '';
 
   @StorageProp('enable_log_floating_window') private enableLogFloatingWindow: boolean = false;
+  @StorageProp('app_window_layout_change_signal') @Watch('onAppWindowLayoutChanged')
+  private appWindowLayoutChangeSignal: number = 0;
+  @StorageProp('app_window_layout_width_px') private appWindowLayoutWidthPx: number = 0;
+  @StorageProp('app_window_layout_height_px') private appWindowLayoutHeightPx: number = 0;
+  @StorageProp('app_window_layout_status_name') private appWindowLayoutStatusName: string = 'undefined';
+  @StorageProp('app_window_layout_is_free_window_mode') private appWindowLayoutIsFreeWindowMode: boolean = false;
   @StorageLink('advanced_mode_enabled') @Watch('onAdvancedModeChanged') private advancedModeEnabled: boolean = true;
   @StorageProp('force_tablet_mode') private forceTabletMode: boolean = false;
   @StorageProp('force_landscape_mode') private forceLandscapeMode: boolean = false;
@@ -9451,6 +9517,7 @@ struct MainMenuPage {
     this.hideLibraryRefreshFloatingBarImmediately();
     this.clearWindowModeTransitionTimers();
     this.clearMainMenuWindowInsetsResyncTimer();
+    this.clearBottomBarWindowLayoutRefreshTimer();
     this.windowModeTransitionOverlayVisible = false;
     this.windowModeTransitionOverlayOpacity = 0;
 
