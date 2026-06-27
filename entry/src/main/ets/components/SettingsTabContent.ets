@@ -427,7 +427,7 @@ export struct SettingsTabContent {
           }, 'guide_main_setting_backup')
 
           if (this.advancedModeEnabled) {
-            this.buildSettingItem('存储管理', '清理缓存、管理存储空间', $r('sys.symbol.externaldrive_fill'), () => {
+            this.buildSettingItem('数据与缓存管理', '统一查看、监控和清理缓存数据', $r('sys.symbol.externaldrive_fill'), () => {
               try {
                 const navigationPath: NavigationPath = {
                   name: 'StorageManagementPage',
@@ -437,10 +437,10 @@ export struct SettingsTabContent {
                   }
                 };
                 this.pathStack.pushPath(navigationPath);
-                logger.info(TAG, '导航到存储管理页面');
+                logger.info(TAG, '导航到数据与缓存管理页面');
               } catch (error) {
-                logger.error(TAG, '导航到存储管理页面失败', String(error));
-                this.showToast('打开存储管理页面失败');
+                logger.error(TAG, '导航到数据与缓存管理页面失败', String(error));
+                this.showToast('打开数据与缓存管理页面失败');
               }
             }, 'guide_main_setting_storage')
           }

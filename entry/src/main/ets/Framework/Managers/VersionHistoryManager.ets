@@ -555,7 +555,7 @@ export class VersionHistoryManager {
 
       const proxyManager = ProxyManager.getInstance();
       if (proxyManager.isEnabled()) {
-        options.usingProxy = true;
+        await proxyManager.applyToHttpOptions(options, url);
       }
 
       const response = await request.request(url, options);
@@ -632,7 +632,7 @@ export class VersionHistoryManager {
 
       const proxyManager = ProxyManager.getInstance();
       if (proxyManager.isEnabled()) {
-        options.usingProxy = true;
+        await proxyManager.applyToHttpOptions(options, url);
       }
 
       const response = await request.request(url, options);
@@ -983,7 +983,7 @@ export class VersionHistoryManager {
 
       const proxyManager = ProxyManager.getInstance();
       if (proxyManager.isEnabled()) {
-        options.usingProxy = true;
+        await proxyManager.applyToHttpOptions(options, url);
       }
 
       const response = await request.request(url, options);

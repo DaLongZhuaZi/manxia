@@ -109,6 +109,7 @@ export class SettingsSearchSupport {
 
     // 交互设置
     { id: 'interaction_switch', title: '启用震动反馈', description: '全局震动反馈开关', targetPage: 'InteractionSettingsSubPage', anchorId: 'interaction_basic', scrollOffset: 0, keywords: ['启用震动反馈', '震动反馈', '触觉反馈'] },
+    { id: 'interaction_holding_awareness', title: '智感握姿', description: '全局握姿感知与主界面、阅读器、悬浮球适配开关', targetPage: 'InteractionSettingsSubPage', anchorId: 'interaction_holding_awareness', scrollOffset: 260, keywords: ['智感握姿', '握姿', '握持', '操作手', '主界面搜索按钮', '隐私退出按钮', '书架预览控件', '详情页横屏阅读按钮', '听书悬浮球', '后台任务悬浮球', '漫画条漫快速导航', '文本划线想法悬浮窗', '悬浮搜索按钮'] },
     { id: 'interaction_intensity', title: '震动强度', description: '设置震动强度等级', targetPage: 'InteractionSettingsSubPage', anchorId: 'interaction_intensity', scrollOffset: 380, keywords: ['震动强度', '强度等级'] },
     { id: 'interaction_scene', title: '场景震动设置', description: '按阅读/操作场景配置震动行为', targetPage: 'InteractionSettingsSubPage', anchorId: 'interaction_scene', scrollOffset: 760, keywords: ['场景设置', '阅读器', '翻页', '手势', '震动场景'] },
     { id: 'interaction_reset', title: '交互设置恢复默认', description: '恢复震动与触觉默认配置', targetPage: 'InteractionSettingsSubPage', anchorId: 'interaction_reset', scrollOffset: 1480, keywords: ['恢复默认设置', '交互设置重置'] },

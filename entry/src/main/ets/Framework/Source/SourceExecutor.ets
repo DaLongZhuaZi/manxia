@@ -148,9 +148,9 @@ export class SourceExecutor {
 
       // 应用代理配置
       const proxyManager = ProxyManager.getInstance();
-      const proxyUrl = proxyManager.getHttpRequestProxy();
-      if (proxyUrl) {
-        requestOptions.usingProxy = true;
+      if (proxyManager.isEnabled()) {
+        await proxyManager.applyToHttpOptions(requestOptions, url);
+        const proxyUrl = proxyManager.getHttpRequestProxy() || 'custom';
         logger.debug(TAG, `使用代理: ${proxyUrl}`);
       }
 

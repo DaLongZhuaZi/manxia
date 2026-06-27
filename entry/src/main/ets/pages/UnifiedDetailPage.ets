@@ -28,6 +28,12 @@ import { DeviceAdaptationManager, DeviceInfo, DeviceChangeListener, Breakpoint }
 import { ResponsiveLayoutHelper } from '../Framework/Utils/ResponsiveLayout';
 import { ContentFilterManager } from '../Framework/Managers/ContentFilterManager';
 import { SettingsManager, SettingKeys } from '../Framework/Managers/SettingsManager';
+import {
+  getHoldingAwarenessManager,
+  HoldingAwarenessFeature,
+  HoldingAwarenessManager,
+  HoldingUiAnchor
+} from '../Framework/Managers/HoldingAwarenessManager';
 import CookieManager from '../Framework/Managers/CookieManager';
 import {
   ContentTrackingCardCallbacks,
@@ -366,9 +372,13 @@ export struct UnifiedDetailPage {
   // 沉浸式显示状态
   @StorageProp('statusBarHeight') statusBarHeight: number = 0;
   @StorageProp('navigationBarHeight') navigationBarHeight: number = 0;
+  @StorageProp('holding_awareness_preferred_anchor') holdingAwarenessPreferredAnchor: HoldingUiAnchor = HoldingUiAnchor.RIGHT;
+  @StorageProp('holding_awareness_enabled') holdingAwarenessEnabled: boolean = true;
+  @StorageProp('holding_awareness_detail_landscape_read_actions_enabled') holdingAwarenessDetailLandscapeReadActionsEnabled: boolean = true;
 
   // 响应式布局
   private deviceManager: DeviceAdaptationManager = DeviceAdaptationManager.getInstance();
+  private holdingAwarenessManager: HoldingAwarenessManager = getHoldingAwarenessManager();
   private deviceChangeListener: DeviceChangeListener | null = null;
   @State responsive_contentPadding: number = 16;
   @State responsive_maxContentWidth: number = 1200;
@@ -10927,9 +10937,19 @@ export struct UnifiedDetailPage {
     }
   }
 
+  private shouldAnchorLandscapeReadActionsToLeft(): boolean {
+    if (!this.holdingAwarenessEnabled || !this.holdingAwarenessDetailLandscapeReadActionsEnabled) {
+      return false;
+    }
+    if (!this.holdingAwarenessManager.isFeatureEnabled(HoldingAwarenessFeature.DETAIL_LANDSCAPE_READ_ACTIONS)) {
+      return false;
+    }
+    return this.holdingAwarenessPreferredAnchor === HoldingUiAnchor.LEFT;
+  }
+
   /**
    * 横屏布局 - 右侧面板
-   * 包含：工具栏、缓存状态卡片、章节列表，右下角浮动阅读按钮
+   * 包含：工具栏、缓存状态卡片、章节列表，底部浮动阅读按钮
    */
   @Builder
   buildLandscapeRightPanel() {
@@ -10971,7 +10991,7 @@ export struct UnifiedDetailPage {
       .height('100%')
       .padding({ left: 8, right: 16, top: 16, bottom: 16 })
 
-      // 右下角浮动阅读按钮组
+      // 底部浮动阅读按钮组
       Column({ space: 10 }) {
         Button() {
           Row({ space: 6 }) {
@@ -11030,7 +11050,8 @@ export struct UnifiedDetailPage {
             .onClick(() => this.continueReadAloud())
         }
       }
-      .position({ right: 24, bottom: 24 })
+      .align(this.shouldAnchorLandscapeReadActionsToLeft() ? Alignment.BottomStart : Alignment.BottomEnd)
+      .margin({ left: 24, right: 24, bottom: 24 })
     }
     .width('100%')
     .height('100%')

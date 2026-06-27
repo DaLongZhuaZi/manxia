@@ -33,6 +33,8 @@ import { ensureGuideAnchorVisibleInScroller, resolveGuideHighlightRectInRoot } f
 import {
   getHoldingAwarenessManager,
   HoldingAwarenessConfidence,
+  HoldingAwarenessFeature,
+  HoldingAwarenessManager,
   HoldingAwarenessSide,
   HoldingAwarenessSource,
   HoldingUiAnchor
@@ -280,7 +282,7 @@ import { ContentFilterManager } from '../Framework/Managers/ContentFilterManager
 import { PrivacyModeManager } from '../Framework/Managers/PrivacyModeManager';
 import { PrivacyAuthDialogComponent, PrivacyAuthDialogMode } from '../Framework/Components/PrivacyAuthDialogComponent';
 import { SourceDialogScaffold } from '../Framework/Components/SourceDialogScaffold';
-import { ProxyManager, ProxyConfig, DEFAULT_PROXY_CONFIG } from '../Framework/Network/ProxyManager';
+import { ProxyManager, ProxyConfig, DEFAULT_PROXY_CONFIG, ProxyProtocol } from '../Framework/Network/ProxyManager';
 import { ProxyConfigDialog } from '../components/source/ProxyConfigDialog';
 import { BookshelfCategoryManager, BookshelfCategory, ContentType, CategoryItem } from '../Framework/Data/BookshelfCategoryManager';
 import { SettingsManager, SettingKeys } from '../Framework/Managers/SettingsManager';
@@ -998,7 +1000,7 @@ struct MainMenuPage {
 
   // Tab内容缓存管理器
   private tabContentCacheManager: TabContentCacheManager = TabContentCacheManager.getInstance();
-  private holdingAwarenessManager = getHoldingAwarenessManager();
+  private holdingAwarenessManager: HoldingAwarenessManager = getHoldingAwarenessManager();
 
   // 响应式布局相关状态
   private deviceManager: DeviceAdaptationManager = DeviceAdaptationManager.getInstance();
@@ -1096,6 +1098,14 @@ struct MainMenuPage {
   @StorageProp('navigationBarHeight') navigationBarHeight: number = 0;
   @StorageProp('holding_awareness_preferred_anchor') @Watch('onHoldingAwarenessAnchorChanged')
   holdingAwarenessPreferredAnchor: HoldingUiAnchor = HoldingUiAnchor.RIGHT;
+  @StorageProp('holding_awareness_enabled') @Watch('onHoldingAwarenessAnchorChanged')
+  private holdingAwarenessEnabled: boolean = true;
+  @StorageProp('holding_awareness_main_menu_search_button_enabled') @Watch('onHoldingAwarenessAnchorChanged')
+  private holdingAwarenessMainMenuSearchButtonEnabled: boolean = true;
+  @StorageProp('holding_awareness_main_menu_privacy_exit_button_enabled') @Watch('onHoldingAwarenessAnchorChanged')
+  private holdingAwarenessMainMenuPrivacyExitButtonEnabled: boolean = true;
+  @StorageProp('holding_awareness_main_menu_shelf_preview_enabled') @Watch('onHoldingAwarenessAnchorChanged')
+  private holdingAwarenessMainMenuShelfPreviewEnabled: boolean = true;
 
   private applyWindowModeForDestination(name: string): void {
     if (!name) {
@@ -1157,27 +1167,38 @@ struct MainMenuPage {
   }
 
   private async handleTabButtonLongPress(tabIndex: number): Promise<void> {
-    if (tabIndex !== TabIndex.LIBRARY && tabIndex !== TabIndex.SETTINGS) {
-      return;
-    }
-    this.markTabLongPressHandled();
-
-    if (tabIndex === TabIndex.LIBRARY) {
-      if (this.currentTabIndex !== TabIndex.LIBRARY) {
-        this.handleTabButtonClick(TabIndex.LIBRARY, true);
-      }
-      if (this.isPrivacyMode) {
-        this.showToast('已在隐私书库');
+    switch (tabIndex) {
+      case TabIndex.LIBRARY:
+        this.markTabLongPressHandled();
+        if (this.currentTabIndex !== TabIndex.LIBRARY) {
+          this.handleTabButtonClick(TabIndex.LIBRARY, true);
+        }
+        if (this.isPrivacyMode) {
+          this.showToast('已在隐私书库');
+          return;
+        }
+        await this.handlePrivacyModeAuth();
         return;
-      }
-      await this.handlePrivacyModeAuth();
-      return;
+      case TabIndex.SOURCE:
+        this.markTabLongPressHandled();
+        this.pathStack.pushPathByName('SourceManagementPage', null);
+        logger.info(TAG, '长按图源标签进入图源管理页面');
+        return;
+      case TabIndex.BOOK_SOURCE:
+        this.markTabLongPressHandled();
+        this.pathStack.pushPathByName('NovelSourceManagementPage', null);
+        logger.info(TAG, '长按书源标签进入小说书源管理页面');
+        return;
+      case TabIndex.SETTINGS:
+        this.markTabLongPressHandled();
+        if (this.currentTabIndex !== TabIndex.SETTINGS) {
+          this.handleTabButtonClick(TabIndex.SETTINGS, true);
+        }
+        await this.enableSfwModeAndRefreshFromLongPress();
+        return;
+      default:
+        return;
     }
-
-    if (this.currentTabIndex !== TabIndex.SETTINGS) {
-      this.handleTabButtonClick(TabIndex.SETTINGS, true);
-    }
-    await this.enableSfwModeAndRefreshFromLongPress();
   }
 
   private async enableSfwModeAndRefreshFromLongPress(): Promise<void> {
@@ -3772,8 +3793,11 @@ struct MainMenuPage {
     return h > 0 ? h : viewportHeight;
   }
 
-  private onHoldingAwarenessAnchorChanged(): void {
-    this.logHoldingAwareFloatingSearchDecision('握持推荐侧发生变化');
+  onHoldingAwarenessAnchorChanged(changedPropertyName?: string): void {
+    const reason: string = changedPropertyName
+      ? `握持设置发生变化：${changedPropertyName}`
+      : '握持推荐侧发生变化';
+    this.logHoldingAwareFloatingSearchDecision(reason);
   }
 
   private describeHoldingUiAnchorForLog(anchor: HoldingUiAnchor): string {
@@ -3844,12 +3868,44 @@ struct MainMenuPage {
         `握持侧=${this.describeHoldingAwarenessSideForLog(snapshot.side)}，来源=${this.describeHoldingAwarenessSourceForLog(snapshot.source)}，` +
         `置信度=${this.describeHoldingAwarenessConfidenceForLog(snapshot.confidence)}，感知可用=${snapshot.available ? '是' : '否'}，` +
         `精确支持=${snapshot.preciseSupported ? '是' : '否'}，搜索按钮=(${this.formatHoldingAwareLayoutValue(searchX)}, ${this.formatHoldingAwareLayoutValue(searchY)})，` +
-        `隐私按钮=${privacyDesc}，书架滑条=${shelfDesc}，导航布局=${navLayoutDesc}`
+        `搜索适配=${this.holdingAwarenessMainMenuSearchButtonEnabled ? '开' : '关'}，隐私适配=${this.holdingAwarenessMainMenuPrivacyExitButtonEnabled ? '开' : '关'}，` +
+        `书架适配=${this.holdingAwarenessMainMenuShelfPreviewEnabled ? '开' : '关'}，隐私按钮=${privacyDesc}，书架滑条=${shelfDesc}，导航布局=${navLayoutDesc}`
     );
   }
 
-  private shouldAnchorFloatingSearchButtonToLeft(): boolean {
+  private shouldUseHoldingAwarenessFeature(feature: HoldingAwarenessFeature, localEnabled: boolean): boolean {
+    if (!this.holdingAwarenessEnabled || !localEnabled) {
+      return false;
+    }
+    return this.holdingAwarenessManager.isFeatureEnabled(feature);
+  }
+
+  private shouldUseHoldingAwarenessLeftAnchor(feature: HoldingAwarenessFeature, localEnabled: boolean): boolean {
+    if (!this.shouldUseHoldingAwarenessFeature(feature, localEnabled)) {
+      return false;
+    }
     return this.holdingAwarenessPreferredAnchor === HoldingUiAnchor.LEFT;
+  }
+
+  private shouldAnchorFloatingSearchButtonToLeft(): boolean {
+    return this.shouldUseHoldingAwarenessLeftAnchor(
+      HoldingAwarenessFeature.MAIN_MENU_FLOATING_SEARCH_BUTTON,
+      this.holdingAwarenessMainMenuSearchButtonEnabled
+    );
+  }
+
+  private shouldAnchorFloatingPrivacyExitButtonToLeft(): boolean {
+    return this.shouldUseHoldingAwarenessLeftAnchor(
+      HoldingAwarenessFeature.MAIN_MENU_PRIVACY_EXIT_BUTTON,
+      this.holdingAwarenessMainMenuPrivacyExitButtonEnabled
+    );
+  }
+
+  private shouldAnchorShelfPreviewControlsToLeft(): boolean {
+    return this.shouldUseHoldingAwarenessLeftAnchor(
+      HoldingAwarenessFeature.MAIN_MENU_SHELF_PREVIEW_CONTROLS,
+      this.holdingAwarenessMainMenuShelfPreviewEnabled
+    );
   }
 
   private getFloatingSearchButtonLeftX(): number {
@@ -3963,7 +4019,12 @@ struct MainMenuPage {
   }
 
   private getFloatingPrivacyExitButtonX(): number {
-    if (this.shouldAnchorFloatingSearchButtonToLeft()) {
+    const privacyAnchorLeft: boolean = this.shouldAnchorFloatingPrivacyExitButtonToLeft();
+    const searchAnchorLeft: boolean = this.shouldAnchorFloatingSearchButtonToLeft();
+    if (privacyAnchorLeft !== searchAnchorLeft) {
+      return privacyAnchorLeft ? this.getFloatingSearchButtonLeftX() : this.getFloatingSearchButtonRightX();
+    }
+    if (privacyAnchorLeft) {
       const x = this.getFloatingSearchButtonX() + this.FLOAT_SEARCH_BUTTON_SIZE + this.FLOAT_SEARCH_BUTTON_MARGIN;
       const maxX = this.getMainMenuViewportWidth() - this.FLOAT_SEARCH_BUTTON_SIZE - this.FLOAT_SEARCH_BUTTON_MARGIN;
       return x < maxX ? x : maxX;
@@ -9160,9 +9221,9 @@ struct MainMenuPage {
     if (this.advancedModeEnabled) {
       items.push({
         anchorId: 'guide_main_setting_storage',
-        title: '存储管理',
-        guideTitle: '存储管理负责查看空间占用和清理缓存',
-        guideMessage: '这里适合检查图片缓存、章节缓存和其它本地占用，帮助你在空间紧张时快速清理。'
+        title: '数据与缓存管理',
+        guideTitle: '数据与缓存管理负责统筹空间占用和清理策略',
+        guideMessage: '这里会统一展示缓存、离线、备份、扩展仓库、日志和外部目录，适合在空间紧张时集中检查和清理。'
       });
     }
 
@@ -17233,28 +17294,36 @@ struct MainMenuPage {
     return 12;
   }
 
+  private getShelfPreviewAnchorX(): number {
+    return this.shouldAnchorShelfPreviewControlsToLeft()
+      ? this.getFloatingSearchButtonLeftX()
+      : this.getFloatingSearchButtonRightX();
+  }
+
   private getShelfPreviewSliderWidth(): number {
     const minWidth = 170;
     const maxWidth = 320;
     const viewportWidth: number = this.getMainMenuViewportWidth();
-    const available = this.shouldAnchorFloatingSearchButtonToLeft()
+    const anchorX: number = this.getShelfPreviewAnchorX();
+    const available = this.shouldAnchorShelfPreviewControlsToLeft()
       ? viewportWidth
         - this.responsive_contentPadding
-        - this.getFloatingSearchButtonX()
+        - anchorX
         - this.FLOAT_SEARCH_BUTTON_SIZE
         - 12
-      : this.getFloatingSearchButtonX() - this.responsive_contentPadding - 12;
+      : anchorX - this.responsive_contentPadding - 12;
     if (available < minWidth) return minWidth;
     return available > maxWidth ? maxWidth : available;
   }
 
   private getShelfPreviewSliderX(): number {
-    if (this.shouldAnchorFloatingSearchButtonToLeft()) {
-      const x = this.getFloatingSearchButtonX() + this.FLOAT_SEARCH_BUTTON_SIZE + 12;
+    const anchorX: number = this.getShelfPreviewAnchorX();
+    if (this.shouldAnchorShelfPreviewControlsToLeft()) {
+      const x = anchorX + this.FLOAT_SEARCH_BUTTON_SIZE + 12;
       const maxX = this.getMainMenuViewportWidth() - this.responsive_contentPadding - this.getShelfPreviewSliderWidth();
       return x < maxX ? x : maxX;
     }
-    const x = this.getFloatingSearchButtonX() - this.getShelfPreviewSliderWidth() - 12;
+    const x = anchorX - this.getShelfPreviewSliderWidth() - 12;
     return x > this.responsive_contentPadding ? x : this.responsive_contentPadding;
   }
 
@@ -29852,107 +29921,373 @@ struct MainMenuPage {
       this.proxyDialogTab = tab;
     })
   }
-  
+
+  private copyMenuProxyConfig(source: ProxyConfig): ProxyConfig {
+    const protocol = source.protocol === ProxyProtocol.SOCKS5 ? ProxyProtocol.SOCKS5 : ProxyProtocol.HTTP;
+    const sharedAuthEnabled = source.sharedAuthEnabled === true ||
+      (source.sharedAuthEnabled !== false &&
+        (source.httpAuthEnabled === true || source.httpsAuthEnabled === true || source.socks5AuthEnabled === true));
+    let sharedUsername = source.sharedUsername || '';
+    if (sharedUsername.length <= 0) {
+      sharedUsername = source.httpUsername || '';
+    }
+    if (sharedUsername.length <= 0) {
+      sharedUsername = source.httpsUsername || '';
+    }
+    if (sharedUsername.length <= 0) {
+      sharedUsername = source.socks5Username || '';
+    }
+    let sharedPassword = source.sharedPassword || '';
+    if (sharedPassword.length <= 0) {
+      sharedPassword = source.httpPassword || '';
+    }
+    if (sharedPassword.length <= 0) {
+      sharedPassword = source.httpsPassword || '';
+    }
+    if (sharedPassword.length <= 0) {
+      sharedPassword = source.socks5Password || '';
+    }
+    const copied: ProxyConfig = {
+      enabled: source.enabled === true,
+      protocol: protocol,
+      sharedAuthEnabled: sharedAuthEnabled,
+      sharedUsername: sharedUsername,
+      sharedPassword: sharedPassword,
+      httpEnabled: source.httpEnabled !== undefined ? source.httpEnabled : true,
+      httpHost: source.httpHost || '',
+      httpPort: source.httpPort || 7890,
+      httpAuthEnabled: sharedAuthEnabled,
+      httpUsername: sharedUsername,
+      httpPassword: sharedPassword,
+      httpsEnabled: source.httpsEnabled === true,
+      httpsHost: source.httpsHost || '',
+      httpsPort: source.httpsPort || 7890,
+      httpsAuthEnabled: sharedAuthEnabled,
+      httpsUsername: sharedUsername,
+      httpsPassword: sharedPassword,
+      socks5Host: source.socks5Host || '',
+      socks5Port: source.socks5Port || 1080,
+      socks5AuthEnabled: sharedAuthEnabled,
+      socks5Username: sharedUsername,
+      socks5Password: sharedPassword
+    };
+    return copied;
+  }
+
+  private updateMenuProxyConfig(next: ProxyConfig): void {
+    this.proxyConfig = this.copyMenuProxyConfig(next);
+  }
+
+  private updateMenuProxyProtocol(protocol: ProxyProtocol): void {
+    const next = this.copyMenuProxyConfig(this.proxyConfig);
+    next.protocol = protocol;
+    this.updateMenuProxyConfig(next);
+  }
+
+  private updateMenuHttpEnabled(enabled: boolean): void {
+    const next = this.copyMenuProxyConfig(this.proxyConfig);
+    next.httpEnabled = enabled;
+    this.updateMenuProxyConfig(next);
+  }
+
+  private updateMenuHttpHost(host: string): void {
+    const next = this.copyMenuProxyConfig(this.proxyConfig);
+    next.httpHost = host;
+    this.updateMenuProxyConfig(next);
+  }
+
+  private updateMenuHttpPort(value: string): void {
+    const port = parseInt(value);
+    if (!isNaN(port) && port > 0 && port <= 65535) {
+      const next = this.copyMenuProxyConfig(this.proxyConfig);
+      next.httpPort = port;
+      this.updateMenuProxyConfig(next);
+    }
+  }
+
+  private updateMenuHttpsEnabled(enabled: boolean): void {
+    const next = this.copyMenuProxyConfig(this.proxyConfig);
+    next.httpsEnabled = enabled;
+    this.updateMenuProxyConfig(next);
+  }
+
+  private updateMenuHttpsHost(host: string): void {
+    const next = this.copyMenuProxyConfig(this.proxyConfig);
+    next.httpsHost = host;
+    this.updateMenuProxyConfig(next);
+  }
+
+  private updateMenuHttpsPort(value: string): void {
+    const port = parseInt(value);
+    if (!isNaN(port) && port > 0 && port <= 65535) {
+      const next = this.copyMenuProxyConfig(this.proxyConfig);
+      next.httpsPort = port;
+      this.updateMenuProxyConfig(next);
+    }
+  }
+
+  private updateMenuSocks5Host(host: string): void {
+    const next = this.copyMenuProxyConfig(this.proxyConfig);
+    next.socks5Host = host;
+    this.updateMenuProxyConfig(next);
+  }
+
+  private updateMenuSocks5Port(value: string): void {
+    const port = parseInt(value);
+    if (!isNaN(port) && port > 0 && port <= 65535) {
+      const next = this.copyMenuProxyConfig(this.proxyConfig);
+      next.socks5Port = port;
+      this.updateMenuProxyConfig(next);
+    }
+  }
+
+  private updateMenuSharedAuthEnabled(enabled: boolean): void {
+    const next = this.copyMenuProxyConfig(this.proxyConfig);
+    next.sharedAuthEnabled = enabled;
+    next.httpAuthEnabled = enabled;
+    next.httpsAuthEnabled = enabled;
+    next.socks5AuthEnabled = enabled;
+    this.updateMenuProxyConfig(next);
+  }
+
+  private updateMenuSharedUsername(username: string): void {
+    const next = this.copyMenuProxyConfig(this.proxyConfig);
+    next.sharedUsername = username;
+    next.httpUsername = username;
+    next.httpsUsername = username;
+    next.socks5Username = username;
+    this.updateMenuProxyConfig(next);
+  }
+
+  private updateMenuSharedPassword(password: string): void {
+    const next = this.copyMenuProxyConfig(this.proxyConfig);
+    next.sharedPassword = password;
+    next.httpPassword = password;
+    next.httpsPassword = password;
+    next.socks5Password = password;
+    this.updateMenuProxyConfig(next);
+  }
+
+  @Builder
+  buildMenuSharedProxyAuthSection() {
+    Column({ space: 8 }) {
+      Row() {
+        Toggle({ type: ToggleType.Checkbox, isOn: this.proxyConfig.sharedAuthEnabled })
+          .onChange((isOn: boolean) => {
+            this.updateMenuSharedAuthEnabled(isOn);
+          })
+
+        Text('需要账号密码')
+          .fontSize(13)
+          .fontFamily(this.appFontFamily)
+          .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
+          .margin({ left: 8 })
+      }
+      .width('100%')
+
+      if (this.proxyConfig.sharedAuthEnabled) {
+        Row({ space: 8 }) {
+          TextInput({ placeholder: '用户名', text: this.proxyConfig.sharedUsername })
+            .layoutWeight(1)
+            .height(40)
+            .borderRadius(8)
+            .fontFamily(this.appFontFamily)
+            .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('background_secondary', this.themeState.currentTheme))
+            .onChange((value: string) => {
+              this.updateMenuSharedUsername(value);
+            })
+
+          TextInput({ placeholder: '密码', text: this.proxyConfig.sharedPassword })
+            .layoutWeight(1)
+            .height(40)
+            .borderRadius(8)
+            .fontFamily(this.appFontFamily)
+            .type(InputType.Password)
+            .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('background_secondary', this.themeState.currentTheme))
+            .onChange((value: string) => {
+              this.updateMenuSharedPassword(value);
+            })
+        }
+        .width('100%')
+      }
+    }
+    .width('100%')
+  }
+
   @Builder
   buildProxySettingsTab() {
     Column({ space: 16 }) {
-      // HTTP代理配置
       Column({ space: 8 }) {
-        Row() {
-          Toggle({ type: ToggleType.Checkbox, isOn: this.proxyConfig.httpEnabled })
-            .onChange((isOn: boolean) => {
-              this.proxyConfig.httpEnabled = isOn;
-            })
-          
-          Text('HTTP代理')
-            .fontSize(15)
-            .fontWeight(FontWeight.Medium)
-            .fontFamily(this.appFontFamily)
-            .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
-            .margin({ left: 8 })
-        }
-        .width('100%')
+        Text('代理类型')
+          .fontSize(14)
+          .fontWeight(FontWeight.Medium)
+          .fontFamily(this.appFontFamily)
+          .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
+          .width('100%')
 
         Row({ space: 8 }) {
-          TextInput({ placeholder: '代理地址', text: this.proxyConfig.httpHost })
-            .layoutWeight(2)
-            .height(40)
-            .borderRadius(8)
+          Button('HTTP/HTTPS')
+            .fontSize(13)
             .fontFamily(this.appFontFamily)
-            .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('background_secondary', this.themeState.currentTheme))
-            .onChange((value: string) => {
-              this.proxyConfig.httpHost = value;
-            })
-            .enabled(this.proxyConfig.httpEnabled)
-
-          TextInput({ placeholder: '端口', text: this.proxyConfig.httpPort.toString() })
+            .fontColor(this.proxyConfig.protocol === ProxyProtocol.HTTP ?
+              AppColors.onSuccess :
+              ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
+            .backgroundColor(this.proxyConfig.protocol === ProxyProtocol.HTTP ?
+              ThemeAwareHelper.getTestManagementThemedColor('accent_blue', this.themeState.currentTheme) :
+              ThemeAwareHelper.getTestManagementThemedColor('background_secondary', this.themeState.currentTheme))
+            .borderRadius(8)
+            .height(36)
             .layoutWeight(1)
-            .height(40)
-            .borderRadius(8)
-            .fontFamily(this.appFontFamily)
-            .type(InputType.Number)
-            .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('background_secondary', this.themeState.currentTheme))
-            .onChange((value: string) => {
-              const port = parseInt(value);
-              if (!isNaN(port) && port > 0 && port <= 65535) {
-                this.proxyConfig.httpPort = port;
-              }
+            .onClick(() => {
+              this.updateMenuProxyProtocol(ProxyProtocol.HTTP);
             })
-            .enabled(this.proxyConfig.httpEnabled)
-        }
-        .width('100%')
-      }
-      .width('100%')
-      
-      // HTTPS代理配置
-      Column({ space: 8 }) {
-        Row() {
-          Toggle({ type: ToggleType.Checkbox, isOn: this.proxyConfig.httpsEnabled })
-            .onChange((isOn: boolean) => {
-              this.proxyConfig.httpsEnabled = isOn;
-            })
-          
-          Text('HTTPS代理')
-            .fontSize(15)
-            .fontWeight(FontWeight.Medium)
-            .fontFamily(this.appFontFamily)
-            .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
-            .margin({ left: 8 })
-        }
-        .width('100%')
 
-        Row({ space: 8 }) {
-          TextInput({ placeholder: '代理地址', text: this.proxyConfig.httpsHost })
-            .layoutWeight(2)
-            .height(40)
-            .borderRadius(8)
+          Button('SOCKS5')
+            .fontSize(13)
             .fontFamily(this.appFontFamily)
-            .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('background_secondary', this.themeState.currentTheme))
-            .onChange((value: string) => {
-              this.proxyConfig.httpsHost = value;
-            })
-            .enabled(this.proxyConfig.httpsEnabled)
-
-          TextInput({ placeholder: '端口', text: this.proxyConfig.httpsPort.toString() })
+            .fontColor(this.proxyConfig.protocol === ProxyProtocol.SOCKS5 ?
+              AppColors.onSuccess :
+              ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
+            .backgroundColor(this.proxyConfig.protocol === ProxyProtocol.SOCKS5 ?
+              ThemeAwareHelper.getTestManagementThemedColor('accent_blue', this.themeState.currentTheme) :
+              ThemeAwareHelper.getTestManagementThemedColor('background_secondary', this.themeState.currentTheme))
+            .borderRadius(8)
+            .height(36)
             .layoutWeight(1)
-            .height(40)
-            .borderRadius(8)
-            .fontFamily(this.appFontFamily)
-            .type(InputType.Number)
-            .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('background_secondary', this.themeState.currentTheme))
-            .onChange((value: string) => {
-              const port = parseInt(value);
-              if (!isNaN(port) && port > 0 && port <= 65535) {
-                this.proxyConfig.httpsPort = port;
-              }
+            .onClick(() => {
+              this.updateMenuProxyProtocol(ProxyProtocol.SOCKS5);
             })
-            .enabled(this.proxyConfig.httpsEnabled)
         }
         .width('100%')
       }
       .width('100%')
 
-      // 提示信息
+      if (this.proxyConfig.protocol === ProxyProtocol.HTTP) {
+        Column({ space: 8 }) {
+          Row() {
+            Toggle({ type: ToggleType.Checkbox, isOn: this.proxyConfig.httpEnabled })
+              .onChange((isOn: boolean) => {
+                this.updateMenuHttpEnabled(isOn);
+              })
+
+            Text('HTTP代理')
+              .fontSize(15)
+              .fontWeight(FontWeight.Medium)
+              .fontFamily(this.appFontFamily)
+              .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
+              .margin({ left: 8 })
+          }
+          .width('100%')
+
+          Row({ space: 8 }) {
+            TextInput({ placeholder: '代理地址', text: this.proxyConfig.httpHost })
+              .layoutWeight(2)
+              .height(40)
+              .borderRadius(8)
+              .fontFamily(this.appFontFamily)
+              .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('background_secondary', this.themeState.currentTheme))
+              .onChange((value: string) => {
+                this.updateMenuHttpHost(value);
+              })
+              .enabled(this.proxyConfig.httpEnabled)
+
+            TextInput({ placeholder: '端口', text: this.proxyConfig.httpPort.toString() })
+              .layoutWeight(1)
+              .height(40)
+              .borderRadius(8)
+              .fontFamily(this.appFontFamily)
+              .type(InputType.Number)
+              .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('background_secondary', this.themeState.currentTheme))
+              .onChange((value: string) => {
+                this.updateMenuHttpPort(value);
+              })
+              .enabled(this.proxyConfig.httpEnabled)
+          }
+          .width('100%')
+        }
+        .width('100%')
+
+        Column({ space: 8 }) {
+          Row() {
+            Toggle({ type: ToggleType.Checkbox, isOn: this.proxyConfig.httpsEnabled })
+              .onChange((isOn: boolean) => {
+                this.updateMenuHttpsEnabled(isOn);
+              })
+
+            Text('HTTPS代理')
+              .fontSize(15)
+              .fontWeight(FontWeight.Medium)
+              .fontFamily(this.appFontFamily)
+              .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
+              .margin({ left: 8 })
+          }
+          .width('100%')
+
+          Row({ space: 8 }) {
+            TextInput({ placeholder: '代理地址', text: this.proxyConfig.httpsHost })
+              .layoutWeight(2)
+              .height(40)
+              .borderRadius(8)
+              .fontFamily(this.appFontFamily)
+              .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('background_secondary', this.themeState.currentTheme))
+              .onChange((value: string) => {
+                this.updateMenuHttpsHost(value);
+              })
+              .enabled(this.proxyConfig.httpsEnabled)
+
+            TextInput({ placeholder: '端口', text: this.proxyConfig.httpsPort.toString() })
+              .layoutWeight(1)
+              .height(40)
+              .borderRadius(8)
+              .fontFamily(this.appFontFamily)
+              .type(InputType.Number)
+              .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('background_secondary', this.themeState.currentTheme))
+              .onChange((value: string) => {
+                this.updateMenuHttpsPort(value);
+              })
+              .enabled(this.proxyConfig.httpsEnabled)
+          }
+          .width('100%')
+        }
+        .width('100%')
+      } else {
+        Column({ space: 8 }) {
+          Text('SOCKS5代理')
+            .fontSize(15)
+            .fontWeight(FontWeight.Medium)
+            .fontFamily(this.appFontFamily)
+            .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
+            .width('100%')
+
+          Row({ space: 8 }) {
+            TextInput({ placeholder: '代理地址', text: this.proxyConfig.socks5Host })
+              .layoutWeight(2)
+              .height(40)
+              .borderRadius(8)
+              .fontFamily(this.appFontFamily)
+              .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('background_secondary', this.themeState.currentTheme))
+              .onChange((value: string) => {
+                this.updateMenuSocks5Host(value);
+              })
+
+            TextInput({ placeholder: '端口', text: this.proxyConfig.socks5Port.toString() })
+              .layoutWeight(1)
+              .height(40)
+              .borderRadius(8)
+              .fontFamily(this.appFontFamily)
+              .type(InputType.Number)
+              .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('background_secondary', this.themeState.currentTheme))
+              .onChange((value: string) => {
+                this.updateMenuSocks5Port(value);
+              })
+          }
+          .width('100%')
+        }
+        .width('100%')
+      }
+
+      this.buildMenuSharedProxyAuthSection()
+
       Text('提示：代理将应用于图源和图源仓库的网络请求')
         .fontSize(12)
         .fontFamily(this.appFontFamily)

@@ -7,6 +7,7 @@ import { SafeUtils } from '../../Utils/SafeUtils';
 import { http } from '@kit.NetworkKit';
 import { logger } from '../../Utils/Logger';
 import { lang } from '@kit.ArkTS';
+import { ProxyManager } from '../Network/ProxyManager';
 
 const TAG = 'MangaSourceAPIEngine';
 
@@ -147,9 +148,12 @@ export class MangaSourceAPIEngine {
         method: this.convertMethod(config.method),
         header: headers as Object,
         readTimeout: config.timeout || this.timeout,
-        connectTimeout: config.timeout || this.timeout,
-        usingProxy: true
+        connectTimeout: config.timeout || this.timeout
       };
+      const proxyManager = ProxyManager.getInstance();
+      if (proxyManager.isEnabled()) {
+        await proxyManager.applyToHttpOptions(options, config.url);
+      }
 
       // 添加请求体
       if (config.body) {

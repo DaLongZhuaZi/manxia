@@ -1166,7 +1166,7 @@ export class NovelSourceExecutor {
 
       const proxyManager = ProxyManager.getInstance();
       if (proxyManager.isEnabled()) {
-        options.usingProxy = true;
+        await proxyManager.applyToHttpOptions(options, httpUrl);
         logger.debug(TAG, `使用代理请求: ${request.url}`);
       }
 
@@ -1553,7 +1553,7 @@ export class NovelSourceExecutor {
 
       const proxyMgr = ProxyManager.getInstance();
       if (proxyMgr.isEnabled()) {
-        options.usingProxy = true;
+        await proxyMgr.applyToHttpOptions(options, httpUrl);
       }
 
       if (request.method === RequestMethod.POST) {

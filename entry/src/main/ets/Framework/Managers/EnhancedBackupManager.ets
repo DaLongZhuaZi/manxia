@@ -511,14 +511,54 @@ export class EnhancedBackupManager {
       const proxySettingsStr = this.settingsManager.getString('network_proxy_settings', '');
       if (proxySettingsStr) {
         const proxySettings = SafeUtils.parseObj(proxySettingsStr) as ProxyConfigBackup;
+        const sharedAuthEnabled = proxySettings.sharedAuthEnabled !== undefined
+          ? proxySettings.sharedAuthEnabled
+          : (proxySettings.httpAuthEnabled === true ||
+            proxySettings.httpsAuthEnabled === true ||
+            proxySettings.socks5AuthEnabled === true);
+        let sharedUsername = proxySettings.sharedUsername || '';
+        if (sharedUsername.length <= 0) {
+          sharedUsername = proxySettings.httpUsername || '';
+        }
+        if (sharedUsername.length <= 0) {
+          sharedUsername = proxySettings.httpsUsername || '';
+        }
+        if (sharedUsername.length <= 0) {
+          sharedUsername = proxySettings.socks5Username || '';
+        }
+        let sharedPassword = proxySettings.sharedPassword || '';
+        if (sharedPassword.length <= 0) {
+          sharedPassword = proxySettings.httpPassword || '';
+        }
+        if (sharedPassword.length <= 0) {
+          sharedPassword = proxySettings.httpsPassword || '';
+        }
+        if (sharedPassword.length <= 0) {
+          sharedPassword = proxySettings.socks5Password || '';
+        }
         proxyConfig = {
           enabled: proxySettings.enabled || false,
+          protocol: proxySettings.protocol || 'HTTP',
+          sharedAuthEnabled: sharedAuthEnabled,
+          sharedUsername: sharedUsername,
+          sharedPassword: sharedPassword,
           httpEnabled: proxySettings.httpEnabled !== undefined ? proxySettings.httpEnabled : true,
           httpHost: proxySettings.httpHost || '',
           httpPort: proxySettings.httpPort || 7890,
+          httpAuthEnabled: sharedAuthEnabled,
+          httpUsername: sharedUsername,
+          httpPassword: sharedPassword,
           httpsEnabled: proxySettings.httpsEnabled || false,
           httpsHost: proxySettings.httpsHost || '',
-          httpsPort: proxySettings.httpsPort || 7890
+          httpsPort: proxySettings.httpsPort || 7890,
+          httpsAuthEnabled: sharedAuthEnabled,
+          httpsUsername: sharedUsername,
+          httpsPassword: sharedPassword,
+          socks5Host: proxySettings.socks5Host || '',
+          socks5Port: proxySettings.socks5Port || 1080,
+          socks5AuthEnabled: sharedAuthEnabled,
+          socks5Username: sharedUsername,
+          socks5Password: sharedPassword
         };
         logger.info(TAG, `导出代理配置: enabled=${proxyConfig.enabled}`);
       }
@@ -5157,14 +5197,54 @@ export class EnhancedBackupManager {
         // 恢复代理配置
         if (settings.general.proxyConfig) {
           const proxyConfig = settings.general.proxyConfig;
+          const sharedAuthEnabled = proxyConfig.sharedAuthEnabled !== undefined
+            ? proxyConfig.sharedAuthEnabled
+            : (proxyConfig.httpAuthEnabled === true ||
+              proxyConfig.httpsAuthEnabled === true ||
+              proxyConfig.socks5AuthEnabled === true);
+          let sharedUsername = proxyConfig.sharedUsername || '';
+          if (sharedUsername.length <= 0) {
+            sharedUsername = proxyConfig.httpUsername || '';
+          }
+          if (sharedUsername.length <= 0) {
+            sharedUsername = proxyConfig.httpsUsername || '';
+          }
+          if (sharedUsername.length <= 0) {
+            sharedUsername = proxyConfig.socks5Username || '';
+          }
+          let sharedPassword = proxyConfig.sharedPassword || '';
+          if (sharedPassword.length <= 0) {
+            sharedPassword = proxyConfig.httpPassword || '';
+          }
+          if (sharedPassword.length <= 0) {
+            sharedPassword = proxyConfig.httpsPassword || '';
+          }
+          if (sharedPassword.length <= 0) {
+            sharedPassword = proxyConfig.socks5Password || '';
+          }
           const proxySettingsStr = JSON.stringify({
             enabled: proxyConfig.enabled,
+            protocol: proxyConfig.protocol || 'HTTP',
+            sharedAuthEnabled: sharedAuthEnabled,
+            sharedUsername: sharedUsername,
+            sharedPassword: sharedPassword,
             httpEnabled: proxyConfig.httpEnabled,
             httpHost: proxyConfig.httpHost,
             httpPort: proxyConfig.httpPort,
+            httpAuthEnabled: sharedAuthEnabled,
+            httpUsername: sharedUsername,
+            httpPassword: sharedPassword,
             httpsEnabled: proxyConfig.httpsEnabled,
             httpsHost: proxyConfig.httpsHost,
-            httpsPort: proxyConfig.httpsPort
+            httpsPort: proxyConfig.httpsPort,
+            httpsAuthEnabled: sharedAuthEnabled,
+            httpsUsername: sharedUsername,
+            httpsPassword: sharedPassword,
+            socks5Host: proxyConfig.socks5Host || '',
+            socks5Port: proxyConfig.socks5Port || 1080,
+            socks5AuthEnabled: sharedAuthEnabled,
+            socks5Username: sharedUsername,
+            socks5Password: sharedPassword
           });
           await this.settingsManager.setString('network_proxy_settings', proxySettingsStr);
           logger.info(TAG, `代理配置已恢复: enabled=${proxyConfig.enabled}`);

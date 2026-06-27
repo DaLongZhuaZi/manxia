@@ -2,6 +2,7 @@ import { abilityAccessCtrl, bundleManager, common, Permissions } from '@kit.Abil
 import motion from '@ohos.multimodalAwareness.motion';
 import { logger } from '../../Utils/Logger';
 import { getContext, isInitialized as isGlobalContextInitialized } from '../../GlobalContext';
+import { SettingsManager, SettingKeys } from './SettingsManager';
 
 const TAG = 'HoldingAwarenessManager';
 
@@ -45,6 +46,18 @@ export enum HoldingAwarenessConfidence {
   FALLBACK = 'fallback',
   INFERRED = 'inferred',
   EXACT = 'exact'
+}
+
+export enum HoldingAwarenessFeature {
+  MAIN_MENU_FLOATING_CONTROLS = 'main_menu_floating_controls',
+  MAIN_MENU_FLOATING_SEARCH_BUTTON = 'main_menu_floating_search_button',
+  MAIN_MENU_PRIVACY_EXIT_BUTTON = 'main_menu_privacy_exit_button',
+  MAIN_MENU_SHELF_PREVIEW_CONTROLS = 'main_menu_shelf_preview_controls',
+  DETAIL_LANDSCAPE_READ_ACTIONS = 'detail_landscape_read_actions',
+  READ_ALOUD_FLOATING_BALL = 'read_aloud_floating_ball',
+  TASK_FLOATING_BALL = 'task_floating_ball',
+  MANGA_WEBTOON_QUICK_NAVIGATION = 'manga_webtoon_quick_navigation',
+  TEXT_HIGHLIGHT_THOUGHT_POPUP = 'text_highlight_thought_popup'
 }
 
 export interface HoldingAwarenessSnapshot {
@@ -107,6 +120,7 @@ export class HoldingAwarenessManager {
   private selfTokenId: number = -1;
   private holdingSubscribed: boolean = false;
   private operatingSubscribed: boolean = false;
+  private settingsManager: SettingsManager = SettingsManager.getInstance();
   private detectGestureGranted: boolean = false;
   private activityMotionGranted: boolean = false;
   private latestHoldingStatus: motion.HoldingHandStatus = motion.HoldingHandStatus.UNKNOWN_STATUS;
@@ -138,6 +152,13 @@ export class HoldingAwarenessManager {
 
   public async initialize(): Promise<void> {
     this.ensureStorageDefaults();
+    this.ensureSettingsStorageDefaults();
+    if (!this.isGlobalEnabled()) {
+      logger.info(TAG, '智感握持全局设置已关闭，跳过初始化订阅');
+      this.teardownSubscriptions();
+      this.publishDisabledSnapshot('initialize_disabled');
+      return;
+    }
     if (this.isInitialized || this.isInitializing) {
       logger.debug(TAG, `跳过初始化：isInitialized=${this.isInitialized}, isInitializing=${this.isInitializing}`);
       return;
@@ -160,6 +181,14 @@ export class HoldingAwarenessManager {
 
   public async resume(): Promise<void> {
     logger.debug(TAG, '收到恢复请求，准备刷新握持感知状态');
+    this.ensureStorageDefaults();
+    this.ensureSettingsStorageDefaults();
+    if (!this.isGlobalEnabled()) {
+      logger.info(TAG, '智感握持全局设置已关闭，跳过恢复订阅');
+      this.teardownSubscriptions();
+      this.publishDisabledSnapshot('resume_disabled');
+      return;
+    }
     if (!this.isInitialized) {
       await this.initialize();
       return;
@@ -211,6 +240,162 @@ export class HoldingAwarenessManager {
     return this.currentSnapshot.preferredAnchor;
   }
 
+  public isGlobalEnabled(): boolean {
+    return this.settingsManager.getBoolean(SettingKeys.HOLDING_AWARENESS_ENABLED, true);
+  }
+
+  public isFeatureEnabled(feature: HoldingAwarenessFeature): boolean {
+    if (!this.isGlobalEnabled()) {
+      return false;
+    }
+    const mainMenuDefault: boolean = this.getMainMenuFloatingControlsDefault();
+    switch (feature) {
+      case HoldingAwarenessFeature.MAIN_MENU_FLOATING_CONTROLS:
+        return this.settingsManager.getBoolean(
+          SettingKeys.HOLDING_AWARENESS_MAIN_MENU_FLOATING_CONTROLS_ENABLED,
+          true
+        );
+      case HoldingAwarenessFeature.MAIN_MENU_FLOATING_SEARCH_BUTTON:
+        return this.settingsManager.getBoolean(
+          SettingKeys.HOLDING_AWARENESS_MAIN_MENU_SEARCH_BUTTON_ENABLED,
+          mainMenuDefault
+        );
+      case HoldingAwarenessFeature.MAIN_MENU_PRIVACY_EXIT_BUTTON:
+        return this.settingsManager.getBoolean(
+          SettingKeys.HOLDING_AWARENESS_MAIN_MENU_PRIVACY_EXIT_BUTTON_ENABLED,
+          mainMenuDefault
+        );
+      case HoldingAwarenessFeature.MAIN_MENU_SHELF_PREVIEW_CONTROLS:
+        return this.settingsManager.getBoolean(
+          SettingKeys.HOLDING_AWARENESS_MAIN_MENU_SHELF_PREVIEW_ENABLED,
+          mainMenuDefault
+        );
+      case HoldingAwarenessFeature.DETAIL_LANDSCAPE_READ_ACTIONS:
+        return this.settingsManager.getBoolean(
+          SettingKeys.HOLDING_AWARENESS_DETAIL_LANDSCAPE_READ_ACTIONS_ENABLED,
+          true
+        );
+      case HoldingAwarenessFeature.READ_ALOUD_FLOATING_BALL:
+        return this.settingsManager.getBoolean(
+          SettingKeys.HOLDING_AWARENESS_READ_ALOUD_FLOATING_BALL_ENABLED,
+          true
+        );
+      case HoldingAwarenessFeature.TASK_FLOATING_BALL:
+        return this.settingsManager.getBoolean(
+          SettingKeys.HOLDING_AWARENESS_TASK_FLOATING_BALL_ENABLED,
+          true
+        );
+      case HoldingAwarenessFeature.MANGA_WEBTOON_QUICK_NAVIGATION:
+        return this.settingsManager.getBoolean(
+          SettingKeys.HOLDING_AWARENESS_MANGA_WEBTOON_QUICK_NAVIGATION_ENABLED,
+          true
+        );
+      case HoldingAwarenessFeature.TEXT_HIGHLIGHT_THOUGHT_POPUP:
+        return this.settingsManager.getBoolean(
+          SettingKeys.HOLDING_AWARENESS_TEXT_HIGHLIGHT_THOUGHT_POPUP_ENABLED,
+          true
+        );
+      default:
+        return false;
+    }
+  }
+
+  public async setGlobalEnabled(enabled: boolean): Promise<void> {
+    await this.settingsManager.setBoolean(SettingKeys.HOLDING_AWARENESS_ENABLED, enabled);
+    AppStorage.setOrCreate(SettingKeys.HOLDING_AWARENESS_ENABLED, enabled);
+    if (enabled) {
+      logger.info(TAG, '用户已启用智感握持全局设置，准备恢复订阅');
+      await this.resume();
+      return;
+    }
+
+    logger.info(TAG, '用户已关闭智感握持全局设置，准备取消订阅');
+    this.teardownSubscriptions();
+    this.publishDisabledSnapshot('set_global_disabled');
+  }
+
+  public async setFeatureEnabled(feature: HoldingAwarenessFeature, enabled: boolean): Promise<void> {
+    switch (feature) {
+      case HoldingAwarenessFeature.MAIN_MENU_FLOATING_CONTROLS:
+        await this.settingsManager.setBoolean(
+          SettingKeys.HOLDING_AWARENESS_MAIN_MENU_FLOATING_CONTROLS_ENABLED,
+          enabled
+        );
+        AppStorage.setOrCreate(SettingKeys.HOLDING_AWARENESS_MAIN_MENU_FLOATING_CONTROLS_ENABLED, enabled);
+        await this.setFeatureEnabled(HoldingAwarenessFeature.MAIN_MENU_FLOATING_SEARCH_BUTTON, enabled);
+        await this.setFeatureEnabled(HoldingAwarenessFeature.MAIN_MENU_PRIVACY_EXIT_BUTTON, enabled);
+        await this.setFeatureEnabled(HoldingAwarenessFeature.MAIN_MENU_SHELF_PREVIEW_CONTROLS, enabled);
+        logger.info(TAG, `主界面悬浮操作区智感握姿适配已统一${enabled ? '启用' : '关闭'}`);
+        break;
+      case HoldingAwarenessFeature.MAIN_MENU_FLOATING_SEARCH_BUTTON:
+        await this.settingsManager.setBoolean(
+          SettingKeys.HOLDING_AWARENESS_MAIN_MENU_SEARCH_BUTTON_ENABLED,
+          enabled
+        );
+        AppStorage.setOrCreate(SettingKeys.HOLDING_AWARENESS_MAIN_MENU_SEARCH_BUTTON_ENABLED, enabled);
+        logger.info(TAG, `主界面搜索按钮智感握姿适配已${enabled ? '启用' : '关闭'}`);
+        break;
+      case HoldingAwarenessFeature.MAIN_MENU_PRIVACY_EXIT_BUTTON:
+        await this.settingsManager.setBoolean(
+          SettingKeys.HOLDING_AWARENESS_MAIN_MENU_PRIVACY_EXIT_BUTTON_ENABLED,
+          enabled
+        );
+        AppStorage.setOrCreate(SettingKeys.HOLDING_AWARENESS_MAIN_MENU_PRIVACY_EXIT_BUTTON_ENABLED, enabled);
+        logger.info(TAG, `主界面隐私退出按钮智感握姿适配已${enabled ? '启用' : '关闭'}`);
+        break;
+      case HoldingAwarenessFeature.MAIN_MENU_SHELF_PREVIEW_CONTROLS:
+        await this.settingsManager.setBoolean(
+          SettingKeys.HOLDING_AWARENESS_MAIN_MENU_SHELF_PREVIEW_ENABLED,
+          enabled
+        );
+        AppStorage.setOrCreate(SettingKeys.HOLDING_AWARENESS_MAIN_MENU_SHELF_PREVIEW_ENABLED, enabled);
+        logger.info(TAG, `主界面书架预览控件智感握姿适配已${enabled ? '启用' : '关闭'}`);
+        break;
+      case HoldingAwarenessFeature.DETAIL_LANDSCAPE_READ_ACTIONS:
+        await this.settingsManager.setBoolean(
+          SettingKeys.HOLDING_AWARENESS_DETAIL_LANDSCAPE_READ_ACTIONS_ENABLED,
+          enabled
+        );
+        AppStorage.setOrCreate(SettingKeys.HOLDING_AWARENESS_DETAIL_LANDSCAPE_READ_ACTIONS_ENABLED, enabled);
+        logger.info(TAG, `详情页横屏阅读操作组智感握姿适配已${enabled ? '启用' : '关闭'}`);
+        break;
+      case HoldingAwarenessFeature.READ_ALOUD_FLOATING_BALL:
+        await this.settingsManager.setBoolean(
+          SettingKeys.HOLDING_AWARENESS_READ_ALOUD_FLOATING_BALL_ENABLED,
+          enabled
+        );
+        AppStorage.setOrCreate(SettingKeys.HOLDING_AWARENESS_READ_ALOUD_FLOATING_BALL_ENABLED, enabled);
+        logger.info(TAG, `听书悬浮球智感握姿适配已${enabled ? '启用' : '关闭'}`);
+        break;
+      case HoldingAwarenessFeature.TASK_FLOATING_BALL:
+        await this.settingsManager.setBoolean(
+          SettingKeys.HOLDING_AWARENESS_TASK_FLOATING_BALL_ENABLED,
+          enabled
+        );
+        AppStorage.setOrCreate(SettingKeys.HOLDING_AWARENESS_TASK_FLOATING_BALL_ENABLED, enabled);
+        logger.info(TAG, `后台任务悬浮球智感握姿适配已${enabled ? '启用' : '关闭'}`);
+        break;
+      case HoldingAwarenessFeature.MANGA_WEBTOON_QUICK_NAVIGATION:
+        await this.settingsManager.setBoolean(
+          SettingKeys.HOLDING_AWARENESS_MANGA_WEBTOON_QUICK_NAVIGATION_ENABLED,
+          enabled
+        );
+        AppStorage.setOrCreate(SettingKeys.HOLDING_AWARENESS_MANGA_WEBTOON_QUICK_NAVIGATION_ENABLED, enabled);
+        logger.info(TAG, `漫画条漫快速导航智感握姿适配已${enabled ? '启用' : '关闭'}`);
+        break;
+      case HoldingAwarenessFeature.TEXT_HIGHLIGHT_THOUGHT_POPUP:
+        await this.settingsManager.setBoolean(
+          SettingKeys.HOLDING_AWARENESS_TEXT_HIGHLIGHT_THOUGHT_POPUP_ENABLED,
+          enabled
+        );
+        AppStorage.setOrCreate(SettingKeys.HOLDING_AWARENESS_TEXT_HIGHLIGHT_THOUGHT_POPUP_ENABLED, enabled);
+        logger.info(TAG, `文本划线想法悬浮窗智感握姿适配已${enabled ? '启用' : '关闭'}`);
+        break;
+      default:
+        break;
+    }
+  }
+
   public addListener(listener: HoldingAwarenessListener): void {
     this.listeners.add(listener);
   }
@@ -239,6 +424,71 @@ export class HoldingAwarenessManager {
     AppStorage.setOrCreate(HOLDING_AWARENESS_DETECT_GESTURE_GRANTED_KEY, DEFAULT_SNAPSHOT.detectGestureGranted);
     AppStorage.setOrCreate(HOLDING_AWARENESS_ACTIVITY_MOTION_GRANTED_KEY, DEFAULT_SNAPSHOT.activityMotionGranted);
     AppStorage.setOrCreate(HOLDING_AWARENESS_LAST_UPDATED_KEY, DEFAULT_SNAPSHOT.lastUpdatedAt);
+  }
+
+  private ensureSettingsStorageDefaults(): void {
+    const mainMenuDefault: boolean = this.getMainMenuFloatingControlsDefault();
+    AppStorage.setOrCreate(
+      SettingKeys.HOLDING_AWARENESS_ENABLED,
+      this.settingsManager.getBoolean(SettingKeys.HOLDING_AWARENESS_ENABLED, true)
+    );
+    AppStorage.setOrCreate(
+      SettingKeys.HOLDING_AWARENESS_MAIN_MENU_FLOATING_CONTROLS_ENABLED,
+      mainMenuDefault
+    );
+    AppStorage.setOrCreate(
+      SettingKeys.HOLDING_AWARENESS_MAIN_MENU_SEARCH_BUTTON_ENABLED,
+      this.settingsManager.getBoolean(SettingKeys.HOLDING_AWARENESS_MAIN_MENU_SEARCH_BUTTON_ENABLED, mainMenuDefault)
+    );
+    AppStorage.setOrCreate(
+      SettingKeys.HOLDING_AWARENESS_MAIN_MENU_PRIVACY_EXIT_BUTTON_ENABLED,
+      this.settingsManager.getBoolean(SettingKeys.HOLDING_AWARENESS_MAIN_MENU_PRIVACY_EXIT_BUTTON_ENABLED, mainMenuDefault)
+    );
+    AppStorage.setOrCreate(
+      SettingKeys.HOLDING_AWARENESS_MAIN_MENU_SHELF_PREVIEW_ENABLED,
+      this.settingsManager.getBoolean(SettingKeys.HOLDING_AWARENESS_MAIN_MENU_SHELF_PREVIEW_ENABLED, mainMenuDefault)
+    );
+    AppStorage.setOrCreate(
+      SettingKeys.HOLDING_AWARENESS_DETAIL_LANDSCAPE_READ_ACTIONS_ENABLED,
+      this.settingsManager.getBoolean(SettingKeys.HOLDING_AWARENESS_DETAIL_LANDSCAPE_READ_ACTIONS_ENABLED, true)
+    );
+    AppStorage.setOrCreate(
+      SettingKeys.HOLDING_AWARENESS_READ_ALOUD_FLOATING_BALL_ENABLED,
+      this.settingsManager.getBoolean(SettingKeys.HOLDING_AWARENESS_READ_ALOUD_FLOATING_BALL_ENABLED, true)
+    );
+    AppStorage.setOrCreate(
+      SettingKeys.HOLDING_AWARENESS_TASK_FLOATING_BALL_ENABLED,
+      this.settingsManager.getBoolean(SettingKeys.HOLDING_AWARENESS_TASK_FLOATING_BALL_ENABLED, true)
+    );
+    AppStorage.setOrCreate(
+      SettingKeys.HOLDING_AWARENESS_MANGA_WEBTOON_QUICK_NAVIGATION_ENABLED,
+      this.settingsManager.getBoolean(SettingKeys.HOLDING_AWARENESS_MANGA_WEBTOON_QUICK_NAVIGATION_ENABLED, true)
+    );
+    AppStorage.setOrCreate(
+      SettingKeys.HOLDING_AWARENESS_TEXT_HIGHLIGHT_THOUGHT_POPUP_ENABLED,
+      this.settingsManager.getBoolean(SettingKeys.HOLDING_AWARENESS_TEXT_HIGHLIGHT_THOUGHT_POPUP_ENABLED, true)
+    );
+  }
+
+  private getMainMenuFloatingControlsDefault(): boolean {
+    return this.settingsManager.getBoolean(SettingKeys.HOLDING_AWARENESS_MAIN_MENU_FLOATING_CONTROLS_ENABLED, true);
+  }
+
+  private publishDisabledSnapshot(reason: string): void {
+    this.latestHoldingStatus = motion.HoldingHandStatus.UNKNOWN_STATUS;
+    this.latestOperatingStatus = motion.OperatingHandStatus.UNKNOWN_STATUS;
+    const disabledSnapshot: HoldingAwarenessSnapshot = {
+      preferredAnchor: HoldingUiAnchor.RIGHT,
+      side: HoldingAwarenessSide.UNKNOWN,
+      source: HoldingAwarenessSource.DEFAULT,
+      confidence: HoldingAwarenessConfidence.FALLBACK,
+      available: false,
+      preciseSupported: false,
+      detectGestureGranted: this.detectGestureGranted,
+      activityMotionGranted: this.activityMotionGranted,
+      lastUpdatedAt: Date.now()
+    };
+    this.publishSnapshot(disabledSnapshot, reason);
   }
 
   private getAbilityContext(): common.UIAbilityContext | undefined {
@@ -290,6 +540,10 @@ export class HoldingAwarenessManager {
   }
 
   private async tryEnableSubscriptions(reason: string): Promise<void> {
+    if (!this.isGlobalEnabled()) {
+      logger.debug(TAG, `智感握持全局设置关闭，跳过订阅：原因=${reason}`);
+      return;
+    }
     await this.trySubscribeHolding(reason);
     await this.trySubscribeOperating(reason);
     this.refreshRecentOperatingStatus(reason);

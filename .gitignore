@@ -109,3 +109,7 @@ response.json
 
 # AVIF build directory
 /entry/src/main/cpp/avif/build_windows/
+/entry/src/main/cpp/avif/build_windows
+/entry/src/main/cpp/avif/build_windows
+/copymanga-copy20
+extensions-source

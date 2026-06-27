@@ -192,7 +192,7 @@ export class LegadoCloudUpdateUtils {
       };
       const proxyManager = ProxyManager.getInstance();
       if (proxyManager.isEnabled()) {
-        options.usingProxy = true;
+        await proxyManager.applyToHttpOptions(options, url);
       }
       const response = await request.request(url, options);
       if (response.responseCode < 200 || response.responseCode >= 300) {
@@ -225,7 +225,7 @@ export class LegadoCloudUpdateUtils {
       };
       const proxyManager = ProxyManager.getInstance();
       if (proxyManager.isEnabled()) {
-        options.usingProxy = true;
+        await proxyManager.applyToHttpOptions(options, url);
       }
       const response = await request.request(url, options);
       if (response.responseCode < 200 || response.responseCode >= 300) {
@@ -530,7 +530,7 @@ export class LegadoCloudUpdateUtils {
       };
       const proxyManager = ProxyManager.getInstance();
       if (proxyManager.isEnabled()) {
-        options.usingProxy = true;
+        await proxyManager.applyToHttpOptions(options, url);
       }
       const response = await request.request(url, options);
       return {
