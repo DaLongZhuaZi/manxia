@@ -6,6 +6,12 @@
 
 import { logger } from '../Utils/Logger';
 import {
+  getHoldingAwarenessManager,
+  HoldingAwarenessFeature,
+  HoldingAwarenessManager,
+  HoldingUiAnchor
+} from '../Framework/Managers/HoldingAwarenessManager';
+import {
   GlobalAnimationManager,
   AnimationType,
   AnimationUtils,
@@ -351,6 +357,10 @@ export struct MangaViewer {
   @Prop onlineDownloadedReusedExtract: boolean = false;
   @Prop onlineDownloadedArchivePageCount: number = 0;
   @Prop onlineDownloadedNetworkPageCount: number = 0;
+  @StorageProp('holding_awareness_preferred_anchor') private holdingAwarenessPreferredAnchor: HoldingUiAnchor = HoldingUiAnchor.RIGHT;
+  @StorageProp('holding_awareness_enabled') private holdingAwarenessEnabled: boolean = true;
+  @StorageProp('holding_awareness_manga_webtoon_quick_navigation_enabled') private holdingAwarenessMangaWebtoonQuickNavigationEnabled: boolean = true;
+  private holdingAwarenessManager: HoldingAwarenessManager = getHoldingAwarenessManager();
 
   // [新增] 条漫模式多章节支持
   @Prop @Watch('onAdjacentChapterChange') prevChapter?: MangaChapter; // 前一章节
@@ -12866,6 +12876,20 @@ export struct MangaViewer {
     }
   }
 
+  private shouldAnchorWebtoonQuickNavigationToLeft(): boolean {
+    if (!this.holdingAwarenessEnabled || !this.holdingAwarenessMangaWebtoonQuickNavigationEnabled) {
+      return false;
+    }
+    if (!this.holdingAwarenessManager.isFeatureEnabled(HoldingAwarenessFeature.MANGA_WEBTOON_QUICK_NAVIGATION)) {
+      return false;
+    }
+    return this.holdingAwarenessPreferredAnchor === HoldingUiAnchor.LEFT;
+  }
+
+  private getWebtoonQuickNavigationX(): string {
+    return this.shouldAnchorWebtoonQuickNavigationToLeft() ? '10%' : '90%';
+  }
+
   /**
    * 构建条漫快速导航
    */
@@ -12923,7 +12947,7 @@ export struct MangaViewer {
         }
         .margin({ top: 8 })
       }
-      .position({ x: '95%', y: '50%' })
+      .position({ x: this.getWebtoonQuickNavigationX(), y: '50%' })
       .translate({ x: '-50%', y: '-50%' })
       .opacity(this.isScrolling ? 1.0 : 0.3)
       .animation({

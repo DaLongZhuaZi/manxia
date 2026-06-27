@@ -7,7 +7,7 @@ import { promptAction } from '@kit.ArkUI';
 import { logger } from '../../Utils/Logger';
 import { ThemeAwareHelper } from '../../Framework/Components/ThemeAware';
 import { ThemeType } from '../../Framework/Managers/ThemeManager';
-import { ProxyConfig, DEFAULT_PROXY_CONFIG, ProxyManager } from '../../Framework/Network/ProxyManager';
+import { ProxyConfig, DEFAULT_PROXY_CONFIG, ProxyManager, ProxyProtocol } from '../../Framework/Network/ProxyManager';
 import { SettingsPageSurfaceManager } from '../../pages/settings/SettingsPageSurfaceManager';
 
 const TAG = 'ProxyConfigDialog';
@@ -77,14 +77,129 @@ export struct ProxyConfigDialog {
   private copyProxyConfig(source: ProxyConfig): ProxyConfig {
     const copied: ProxyConfig = {
       enabled: source.enabled,
+      protocol: source.protocol,
+      sharedAuthEnabled: source.sharedAuthEnabled,
+      sharedUsername: source.sharedUsername,
+      sharedPassword: source.sharedPassword,
       httpEnabled: source.httpEnabled,
       httpHost: source.httpHost,
       httpPort: source.httpPort,
+      httpAuthEnabled: source.httpAuthEnabled,
+      httpUsername: source.httpUsername,
+      httpPassword: source.httpPassword,
       httpsEnabled: source.httpsEnabled,
       httpsHost: source.httpsHost,
-      httpsPort: source.httpsPort
+      httpsPort: source.httpsPort,
+      httpsAuthEnabled: source.httpsAuthEnabled,
+      httpsUsername: source.httpsUsername,
+      httpsPassword: source.httpsPassword,
+      socks5Host: source.socks5Host,
+      socks5Port: source.socks5Port,
+      socks5AuthEnabled: source.socks5AuthEnabled,
+      socks5Username: source.socks5Username,
+      socks5Password: source.socks5Password
     };
     return copied;
+  }
+
+  private updateConfig(next: ProxyConfig): void {
+    this.config = this.copyProxyConfig(next);
+  }
+
+  private updateEnabled(enabled: boolean): void {
+    const next = this.copyProxyConfig(this.config);
+    next.enabled = enabled;
+    this.updateConfig(next);
+  }
+
+  private updateProtocol(protocol: ProxyProtocol): void {
+    const next = this.copyProxyConfig(this.config);
+    next.protocol = protocol;
+    this.updateConfig(next);
+  }
+
+  private updateHttpEnabled(enabled: boolean): void {
+    const next = this.copyProxyConfig(this.config);
+    next.httpEnabled = enabled;
+    this.updateConfig(next);
+  }
+
+  private updateHttpHost(host: string): void {
+    const next = this.copyProxyConfig(this.config);
+    next.httpHost = host;
+    this.updateConfig(next);
+  }
+
+  private updateHttpPort(value: string): void {
+    const port = parseInt(value);
+    if (!isNaN(port) && port > 0 && port <= 65535) {
+      const next = this.copyProxyConfig(this.config);
+      next.httpPort = port;
+      this.updateConfig(next);
+    }
+  }
+
+  private updateHttpsEnabled(enabled: boolean): void {
+    const next = this.copyProxyConfig(this.config);
+    next.httpsEnabled = enabled;
+    this.updateConfig(next);
+  }
+
+  private updateHttpsHost(host: string): void {
+    const next = this.copyProxyConfig(this.config);
+    next.httpsHost = host;
+    this.updateConfig(next);
+  }
+
+  private updateHttpsPort(value: string): void {
+    const port = parseInt(value);
+    if (!isNaN(port) && port > 0 && port <= 65535) {
+      const next = this.copyProxyConfig(this.config);
+      next.httpsPort = port;
+      this.updateConfig(next);
+    }
+  }
+
+  private updateSocks5Host(host: string): void {
+    const next = this.copyProxyConfig(this.config);
+    next.socks5Host = host;
+    this.updateConfig(next);
+  }
+
+  private updateSocks5Port(value: string): void {
+    const port = parseInt(value);
+    if (!isNaN(port) && port > 0 && port <= 65535) {
+      const next = this.copyProxyConfig(this.config);
+      next.socks5Port = port;
+      this.updateConfig(next);
+    }
+  }
+
+  private updateSharedAuthEnabled(enabled: boolean): void {
+    const next = this.copyProxyConfig(this.config);
+    next.sharedAuthEnabled = enabled;
+    next.httpAuthEnabled = enabled;
+    next.httpsAuthEnabled = enabled;
+    next.socks5AuthEnabled = enabled;
+    this.updateConfig(next);
+  }
+
+  private updateSharedUsername(username: string): void {
+    const next = this.copyProxyConfig(this.config);
+    next.sharedUsername = username;
+    next.httpUsername = username;
+    next.httpsUsername = username;
+    next.socks5Username = username;
+    this.updateConfig(next);
+  }
+
+  private updateSharedPassword(password: string): void {
+    const next = this.copyProxyConfig(this.config);
+    next.sharedPassword = password;
+    next.httpPassword = password;
+    next.httpsPassword = password;
+    next.socks5Password = password;
+    this.updateConfig(next);
   }
 
   private copySourceItems(): void {
@@ -364,101 +479,224 @@ export struct ProxyConfigDialog {
   }
 
   @Builder
+  private buildSharedAuthSection() {
+    Column({ space: 8 }) {
+      Row() {
+        Toggle({ type: ToggleType.Checkbox, isOn: this.config.sharedAuthEnabled })
+          .onChange((isOn: boolean) => {
+            this.updateSharedAuthEnabled(isOn);
+          })
+
+        Text('需要账号密码')
+          .fontSize(13)
+          .fontFamily(this.appFontFamily)
+          .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.currentTheme))
+          .margin({ left: 8 })
+      }
+      .width('100%')
+
+      if (this.config.sharedAuthEnabled) {
+        Row({ space: 8 }) {
+          TextInput({ placeholder: '用户名', text: this.config.sharedUsername })
+            .layoutWeight(1)
+            .height(40)
+            .borderRadius(8)
+            .fontFamily(this.appFontFamily)
+            .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('background_secondary', this.currentTheme))
+            .onChange((value: string) => {
+              this.updateSharedUsername(value);
+            })
+
+          TextInput({ placeholder: '密码', text: this.config.sharedPassword })
+            .layoutWeight(1)
+            .height(40)
+            .borderRadius(8)
+            .fontFamily(this.appFontFamily)
+            .type(InputType.Password)
+            .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('background_secondary', this.currentTheme))
+            .onChange((value: string) => {
+              this.updateSharedPassword(value);
+            })
+        }
+        .width('100%')
+      }
+    }
+    .width('100%')
+  }
+
+  @Builder
   private buildSettingsTab() {
     Column({ space: 16 }) {
       Column({ space: 8 }) {
-        Row() {
-          Toggle({ type: ToggleType.Checkbox, isOn: this.config.httpEnabled })
-            .onChange((isOn: boolean) => {
-              this.config.httpEnabled = isOn;
-            })
-
-          Text('HTTP代理')
-            .fontSize(15)
-            .fontWeight(FontWeight.Medium)
-            .fontFamily(this.appFontFamily)
-            .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.currentTheme))
-            .margin({ left: 8 })
-        }
-        .width('100%')
+        Text('代理类型')
+          .fontSize(14)
+          .fontWeight(FontWeight.Medium)
+          .fontFamily(this.appFontFamily)
+          .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.currentTheme))
+          .width('100%')
 
         Row({ space: 8 }) {
-          TextInput({ placeholder: '代理地址', text: this.config.httpHost })
-            .layoutWeight(2)
-            .height(40)
-            .borderRadius(8)
+          Button('HTTP/HTTPS')
+            .fontSize(13)
             .fontFamily(this.appFontFamily)
-            .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('background_secondary', this.currentTheme))
-            .onChange((value: string) => {
-              this.config.httpHost = value;
-            })
-            .enabled(this.config.httpEnabled)
-
-          TextInput({ placeholder: '端口', text: this.config.httpPort.toString() })
+            .fontColor(this.config.protocol === ProxyProtocol.HTTP
+              ? ThemeAwareHelper.getTestManagementThemedColor('text_white', this.currentTheme)
+              : ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.currentTheme))
+            .backgroundColor(this.config.protocol === ProxyProtocol.HTTP
+              ? ThemeAwareHelper.getTestManagementThemedColor('accent_blue', this.currentTheme)
+              : ThemeAwareHelper.getTestManagementThemedColor('background_secondary', this.currentTheme))
+            .borderRadius(8)
+            .height(36)
             .layoutWeight(1)
-            .height(40)
-            .borderRadius(8)
-            .fontFamily(this.appFontFamily)
-            .type(InputType.Number)
-            .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('background_secondary', this.currentTheme))
-            .onChange((value: string) => {
-              const port = parseInt(value);
-              if (!isNaN(port) && port > 0 && port <= 65535) {
-                this.config.httpPort = port;
-              }
+            .onClick(() => {
+              this.updateProtocol(ProxyProtocol.HTTP);
             })
-            .enabled(this.config.httpEnabled)
+
+          Button('SOCKS5')
+            .fontSize(13)
+            .fontFamily(this.appFontFamily)
+            .fontColor(this.config.protocol === ProxyProtocol.SOCKS5
+              ? ThemeAwareHelper.getTestManagementThemedColor('text_white', this.currentTheme)
+              : ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.currentTheme))
+            .backgroundColor(this.config.protocol === ProxyProtocol.SOCKS5
+              ? ThemeAwareHelper.getTestManagementThemedColor('accent_blue', this.currentTheme)
+              : ThemeAwareHelper.getTestManagementThemedColor('background_secondary', this.currentTheme))
+            .borderRadius(8)
+            .height(36)
+            .layoutWeight(1)
+            .onClick(() => {
+              this.updateProtocol(ProxyProtocol.SOCKS5);
+            })
         }
         .width('100%')
       }
       .width('100%')
 
-      Column({ space: 8 }) {
-        Row() {
-          Toggle({ type: ToggleType.Checkbox, isOn: this.config.httpsEnabled })
-            .onChange((isOn: boolean) => {
-              this.config.httpsEnabled = isOn;
-            })
+      if (this.config.protocol === ProxyProtocol.HTTP) {
+        Column({ space: 8 }) {
+          Row() {
+            Toggle({ type: ToggleType.Checkbox, isOn: this.config.httpEnabled })
+              .onChange((isOn: boolean) => {
+                this.updateHttpEnabled(isOn);
+              })
 
-          Text('HTTPS代理')
+            Text('HTTP代理')
+              .fontSize(15)
+              .fontWeight(FontWeight.Medium)
+              .fontFamily(this.appFontFamily)
+              .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.currentTheme))
+              .margin({ left: 8 })
+          }
+          .width('100%')
+
+          Row({ space: 8 }) {
+            TextInput({ placeholder: '代理地址', text: this.config.httpHost })
+              .layoutWeight(2)
+              .height(40)
+              .borderRadius(8)
+              .fontFamily(this.appFontFamily)
+              .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('background_secondary', this.currentTheme))
+              .onChange((value: string) => {
+                this.updateHttpHost(value);
+              })
+              .enabled(this.config.httpEnabled)
+
+            TextInput({ placeholder: '端口', text: this.config.httpPort.toString() })
+              .layoutWeight(1)
+              .height(40)
+              .borderRadius(8)
+              .fontFamily(this.appFontFamily)
+              .type(InputType.Number)
+              .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('background_secondary', this.currentTheme))
+              .onChange((value: string) => {
+                this.updateHttpPort(value);
+              })
+              .enabled(this.config.httpEnabled)
+          }
+          .width('100%')
+        }
+        .width('100%')
+
+        Column({ space: 8 }) {
+          Row() {
+            Toggle({ type: ToggleType.Checkbox, isOn: this.config.httpsEnabled })
+              .onChange((isOn: boolean) => {
+                this.updateHttpsEnabled(isOn);
+              })
+
+            Text('HTTPS代理')
+              .fontSize(15)
+              .fontWeight(FontWeight.Medium)
+              .fontFamily(this.appFontFamily)
+              .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.currentTheme))
+              .margin({ left: 8 })
+          }
+          .width('100%')
+
+          Row({ space: 8 }) {
+            TextInput({ placeholder: '代理地址', text: this.config.httpsHost })
+              .layoutWeight(2)
+              .height(40)
+              .borderRadius(8)
+              .fontFamily(this.appFontFamily)
+              .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('background_secondary', this.currentTheme))
+              .onChange((value: string) => {
+                this.updateHttpsHost(value);
+              })
+              .enabled(this.config.httpsEnabled)
+
+            TextInput({ placeholder: '端口', text: this.config.httpsPort.toString() })
+              .layoutWeight(1)
+              .height(40)
+              .borderRadius(8)
+              .fontFamily(this.appFontFamily)
+              .type(InputType.Number)
+              .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('background_secondary', this.currentTheme))
+              .onChange((value: string) => {
+                this.updateHttpsPort(value);
+              })
+              .enabled(this.config.httpsEnabled)
+          }
+          .width('100%')
+        }
+        .width('100%')
+      } else {
+        Column({ space: 8 }) {
+          Text('SOCKS5代理')
             .fontSize(15)
             .fontWeight(FontWeight.Medium)
             .fontFamily(this.appFontFamily)
             .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.currentTheme))
-            .margin({ left: 8 })
-        }
-        .width('100%')
+            .width('100%')
 
-        Row({ space: 8 }) {
-          TextInput({ placeholder: '代理地址', text: this.config.httpsHost })
-            .layoutWeight(2)
-            .height(40)
-            .borderRadius(8)
-            .fontFamily(this.appFontFamily)
-            .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('background_secondary', this.currentTheme))
-            .onChange((value: string) => {
-              this.config.httpsHost = value;
-            })
-            .enabled(this.config.httpsEnabled)
+          Row({ space: 8 }) {
+            TextInput({ placeholder: '代理地址', text: this.config.socks5Host })
+              .layoutWeight(2)
+              .height(40)
+              .borderRadius(8)
+              .fontFamily(this.appFontFamily)
+              .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('background_secondary', this.currentTheme))
+              .onChange((value: string) => {
+                this.updateSocks5Host(value);
+              })
 
-          TextInput({ placeholder: '端口', text: this.config.httpsPort.toString() })
-            .layoutWeight(1)
-            .height(40)
-            .borderRadius(8)
-            .fontFamily(this.appFontFamily)
-            .type(InputType.Number)
-            .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('background_secondary', this.currentTheme))
-            .onChange((value: string) => {
-              const port = parseInt(value);
-              if (!isNaN(port) && port > 0 && port <= 65535) {
-                this.config.httpsPort = port;
-              }
-            })
-            .enabled(this.config.httpsEnabled)
+            TextInput({ placeholder: '端口', text: this.config.socks5Port.toString() })
+              .layoutWeight(1)
+              .height(40)
+              .borderRadius(8)
+              .fontFamily(this.appFontFamily)
+              .type(InputType.Number)
+              .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('background_secondary', this.currentTheme))
+              .onChange((value: string) => {
+                this.updateSocks5Port(value);
+              })
+          }
+          .width('100%')
         }
         .width('100%')
       }
-      .width('100%')
+
+      this.buildSharedAuthSection()
 
       Text('提示：代理将应用于图源和图源仓库的网络请求')
         .fontSize(12)
@@ -589,7 +827,7 @@ export struct ProxyConfigDialog {
 
           Button('测试')
             .fontSize(14)
-            .fontColor('#FFFFFF')
+            .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_white', this.currentTheme))
             .fontFamily(this.appFontFamily)
             .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('accent_blue', this.currentTheme))
             .borderRadius(8)
@@ -696,7 +934,7 @@ export struct ProxyConfigDialog {
 
         Toggle({ type: ToggleType.Switch, isOn: this.config.enabled })
           .onChange((isOn: boolean) => {
-            this.config.enabled = isOn;
+            this.updateEnabled(isOn);
           })
       }
       .width('100%')
@@ -746,7 +984,7 @@ export struct ProxyConfigDialog {
 
         Button('保存')
           .fontSize(16)
-          .fontColor('#FFFFFF')
+          .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_white', this.currentTheme))
           .fontFamily(this.appFontFamily)
           .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('accent_blue', this.currentTheme))
           .borderRadius(8)

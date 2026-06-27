@@ -27,6 +27,7 @@ import { GlobalBackgroundLayerMode } from '../Framework/Components/GlobalBackgro
 import { SharedPageBackgroundLayer } from '../Framework/Components/SharedPageBackgroundLayer';
 import { SettingsPanelSurfaceHelper } from './settings/SettingsPanelSurfaceHelper';
 import { DownloadDirManager } from '../Framework/Storage/DownloadDirManager';
+import { ManagedContentCacheClearRequest, UnifiedStorageCoordinator } from '../Framework/Storage/UnifiedStorageCoordinator';
 import fs from '@ohos.file.fs';
 
 const TAG = 'DownloadManagerPage';
@@ -122,6 +123,7 @@ struct DownloadManagerPage {
   private cacheStatusService: CacheStatusService = getCacheStatusService();
   private permanentCacheManager: PermanentImageCacheManager = PermanentImageCacheManager.getInstance();
   private onlineArchiveService: OnlineMangaArchiveService = OnlineMangaArchiveService.getInstance();
+  private storageCoordinator: UnifiedStorageCoordinator = UnifiedStorageCoordinator.getInstance();
   private dataManager: DataManager = DataManager.getInstance();
   private hostContext: common.UIAbilityContext | null = null;
   private updateTimer: number = -1;
@@ -391,14 +393,24 @@ struct DownloadManagerPage {
    */
   private async clearCacheItem(stats: ContentCacheStats): Promise<void> {
     try {
-      await this.cacheStatusService.clearContentCache(
-        stats.contentType,
-        stats.contentId,
-        stats.sourceId
-      );
+      if (!this.hostContext) {
+        logger.error(TAG, '清理缓存失败: 缺少 Ability 上下文');
+        return;
+      }
+      const request = new ManagedContentCacheClearRequest();
+      request.contentType = stats.contentType;
+      request.contentId = stats.contentId;
+      request.sourceId = stats.sourceId;
+      request.title = stats.title;
+      request.estimatedSizeBytes = stats.cacheSize;
+      const result = await this.storageCoordinator.clearContentCache(this.hostContext, request);
+      if (!result.success) {
+        const message = result.errors.length > 0 ? result.errors.join('; ') : '统一缓存清理失败';
+        throw new Error(message);
+      }
       // 重新加载缓存列表
       await this.loadCacheLists();
-      logger.info(TAG, `已清理缓存: ${stats.title}`);
+      logger.info(TAG, `已通过统一协调器清理缓存: ${stats.title}`);
     } catch (error) {
       logger.error(TAG, `清理缓存失败: ${String(error)}`);
     }

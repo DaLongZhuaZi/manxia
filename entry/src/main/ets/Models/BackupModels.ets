@@ -621,12 +621,27 @@ export interface CustomFontBackup {
  */
 export interface ProxyConfigBackup {
   enabled: boolean;
+  protocol: string;
+  sharedAuthEnabled: boolean;
+  sharedUsername: string;
+  sharedPassword: string;
   httpEnabled: boolean;
   httpHost: string;
   httpPort: number;
+  httpAuthEnabled: boolean;
+  httpUsername: string;
+  httpPassword: string;
   httpsEnabled: boolean;
   httpsHost: string;
   httpsPort: number;
+  httpsAuthEnabled: boolean;
+  httpsUsername: string;
+  httpsPassword: string;
+  socks5Host: string;
+  socks5Port: number;
+  socks5AuthEnabled: boolean;
+  socks5Username: string;
+  socks5Password: string;
 }
 
 /**

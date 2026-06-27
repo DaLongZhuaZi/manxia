@@ -20,6 +20,16 @@ import { GlobalBackgroundLayerMode } from '../../Framework/Components/GlobalBack
 import { SharedPageBackgroundLayer } from '../../Framework/Components/SharedPageBackgroundLayer';
 import { SettingsImmersiveTitleBar } from './SettingsImmersiveTitleBar';
 import { SettingsPageTitleBarManager } from './SettingsPageTitleBarManager';
+import {
+  getHoldingAwarenessManager,
+  HoldingAwarenessConfidence,
+  HoldingAwarenessFeature,
+  HoldingAwarenessListener,
+  HoldingAwarenessManager,
+  HoldingAwarenessSide,
+  HoldingAwarenessSnapshot,
+  HoldingAwarenessSource
+} from '../../Framework/Managers/HoldingAwarenessManager';
 
 const TAG = 'InteractionSettingsSubPage';
 const TITLE_BAR_HEIGHT_MINI: number = 56;
@@ -52,6 +62,10 @@ export struct InteractionSettingsSubPage {
   private themeManager: ThemeManager = ThemeManager.getInstance();
   private componentId: string = 'InteractionSettingsSubPage';
   private interactionManager: InteractionManager = InteractionManager.getInstance();
+  private holdingAwarenessManager: HoldingAwarenessManager = getHoldingAwarenessManager();
+  private readonly holdingAwarenessListener: HoldingAwarenessListener = (snapshot: HoldingAwarenessSnapshot): void => {
+    this.refreshHoldingAwarenessSettings(snapshot);
+  };
 
   private deviceManager: DeviceAdaptationManager = DeviceAdaptationManager.getInstance();
   private deviceChangeListener: DeviceChangeListener | null = null;
@@ -75,6 +89,17 @@ export struct InteractionSettingsSubPage {
   @State sceneError: boolean = true;
   @State sceneWarning: boolean = true;
   @State sceneNotification: boolean = true;
+  @State holdingAwarenessEnabled: boolean = true;
+  @State holdingAwarenessMainMenuSearchButtonEnabled: boolean = true;
+  @State holdingAwarenessMainMenuPrivacyExitButtonEnabled: boolean = true;
+  @State holdingAwarenessMainMenuShelfPreviewEnabled: boolean = true;
+  @State holdingAwarenessDetailLandscapeReadActionsEnabled: boolean = true;
+  @State holdingAwarenessReadAloudFloatingBallEnabled: boolean = true;
+  @State holdingAwarenessTaskFloatingBallEnabled: boolean = true;
+  @State holdingAwarenessMangaWebtoonQuickNavigationEnabled: boolean = true;
+  @State holdingAwarenessTextHighlightThoughtPopupEnabled: boolean = true;
+  @State holdingAwarenessStatusText: string = '未检测';
+  @State holdingAwarenessPermissionText: string = '未检测';
 
   private markSettingsScrolling(): void {
     if (this.settingsTapEnabled) {
@@ -120,7 +145,9 @@ export struct InteractionSettingsSubPage {
       }
     );
     this.initializeResponsiveLayout();
+    this.holdingAwarenessManager.addListener(this.holdingAwarenessListener);
     this.loadSettings();
+    void this.refreshHoldingAwarenessRuntimeState();
     this.applyPendingSearchTarget();
   }
 
@@ -149,6 +176,7 @@ export struct InteractionSettingsSubPage {
     this.lifecycle.destroy();
     ThemeAwareHelper.cleanupThemeAware(this.componentId);
     FontAwareHelper.cleanupFontAware(this.componentId);
+    this.holdingAwarenessManager.removeListener(this.holdingAwarenessListener);
     if (this.deviceChangeListener) {
       this.deviceManager.removeListener(this.deviceChangeListener);
       this.deviceChangeListener = null;
@@ -208,7 +236,87 @@ export struct InteractionSettingsSubPage {
     this.sceneError = settings.sceneSettings[VibrationScene.ERROR] !== false;
     this.sceneWarning = settings.sceneSettings[VibrationScene.WARNING] !== false;
     this.sceneNotification = settings.sceneSettings[VibrationScene.NOTIFICATION] !== false;
+    this.refreshHoldingAwarenessSettings();
     logger.info(TAG, '交互设置加载完成');
+  }
+
+  private async refreshHoldingAwarenessRuntimeState(): Promise<void> {
+    try {
+      await this.holdingAwarenessManager.resume();
+      this.refreshHoldingAwarenessSettings();
+    } catch (error) {
+      logger.warn(TAG, `刷新智感握姿状态失败：${String(error)}`);
+    }
+  }
+
+  private refreshHoldingAwarenessSettings(snapshot?: HoldingAwarenessSnapshot): void {
+    this.holdingAwarenessEnabled = this.holdingAwarenessManager.isGlobalEnabled();
+    this.holdingAwarenessMainMenuSearchButtonEnabled =
+      this.holdingAwarenessManager.isFeatureEnabled(HoldingAwarenessFeature.MAIN_MENU_FLOATING_SEARCH_BUTTON);
+    this.holdingAwarenessMainMenuPrivacyExitButtonEnabled =
+      this.holdingAwarenessManager.isFeatureEnabled(HoldingAwarenessFeature.MAIN_MENU_PRIVACY_EXIT_BUTTON);
+    this.holdingAwarenessMainMenuShelfPreviewEnabled =
+      this.holdingAwarenessManager.isFeatureEnabled(HoldingAwarenessFeature.MAIN_MENU_SHELF_PREVIEW_CONTROLS);
+    this.holdingAwarenessDetailLandscapeReadActionsEnabled =
+      this.holdingAwarenessManager.isFeatureEnabled(HoldingAwarenessFeature.DETAIL_LANDSCAPE_READ_ACTIONS);
+    this.holdingAwarenessReadAloudFloatingBallEnabled =
+      this.holdingAwarenessManager.isFeatureEnabled(HoldingAwarenessFeature.READ_ALOUD_FLOATING_BALL);
+    this.holdingAwarenessTaskFloatingBallEnabled =
+      this.holdingAwarenessManager.isFeatureEnabled(HoldingAwarenessFeature.TASK_FLOATING_BALL);
+    this.holdingAwarenessMangaWebtoonQuickNavigationEnabled =
+      this.holdingAwarenessManager.isFeatureEnabled(HoldingAwarenessFeature.MANGA_WEBTOON_QUICK_NAVIGATION);
+    this.holdingAwarenessTextHighlightThoughtPopupEnabled =
+      this.holdingAwarenessManager.isFeatureEnabled(HoldingAwarenessFeature.TEXT_HIGHLIGHT_THOUGHT_POPUP);
+    const currentSnapshot: HoldingAwarenessSnapshot = snapshot ? snapshot : this.holdingAwarenessManager.getSnapshot();
+    this.holdingAwarenessStatusText =
+      `${this.describeHoldingAwarenessSide(currentSnapshot.side)} / ${this.describeHoldingAwarenessSource(currentSnapshot.source)} / ${this.describeHoldingAwarenessConfidence(currentSnapshot.confidence)}`;
+    this.holdingAwarenessPermissionText =
+      `握姿权限${currentSnapshot.detectGestureGranted ? '已授权' : '未授权'}，动作权限${currentSnapshot.activityMotionGranted ? '已授权' : '未授权'}，${currentSnapshot.available ? '当前可用' : '当前不可用'}`;
+  }
+
+  private describeHoldingAwarenessSide(side: HoldingAwarenessSide): string {
+    switch (side) {
+      case HoldingAwarenessSide.NONE:
+        return '未握持';
+      case HoldingAwarenessSide.LEFT:
+        return '左手握持';
+      case HoldingAwarenessSide.RIGHT:
+        return '右手握持';
+      case HoldingAwarenessSide.BOTH:
+        return '双手握持';
+      default:
+        return '未知握姿';
+    }
+  }
+
+  private describeHoldingAwarenessSource(source: HoldingAwarenessSource): string {
+    switch (source) {
+      case HoldingAwarenessSource.HOLDING_HAND:
+        return '智感握姿';
+      case HoldingAwarenessSource.OPERATING_HAND:
+        return '操作手';
+      case HoldingAwarenessSource.COMBINED:
+        return '联合判断';
+      default:
+        return '默认回退';
+    }
+  }
+
+  private describeHoldingAwarenessConfidence(confidence: HoldingAwarenessConfidence): string {
+    switch (confidence) {
+      case HoldingAwarenessConfidence.EXACT:
+        return '精确';
+      case HoldingAwarenessConfidence.INFERRED:
+        return '推断';
+      default:
+        return '回退';
+    }
+  }
+
+  private async setHoldingAwarenessFeatureEnabled(feature: HoldingAwarenessFeature, enabled: boolean): Promise<void> {
+    await this.holdingAwarenessManager.setFeatureEnabled(feature, enabled);
+    this.refreshHoldingAwarenessSettings();
+    this.interactionManager.vibrate(VibrationScene.TOGGLE_SWITCH);
   }
 
   private getSceneValue(scene: VibrationScene): boolean {
@@ -351,6 +459,206 @@ export struct InteractionSettingsSubPage {
   }
 
   @Builder
+  buildHoldingAwarenessStatus() {
+    Column({ space: 8 }) {
+      Text('当前状态')
+        .fontSize(13)
+        .fontFamily(this.appFontFamily)
+        .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_muted', this.themeState.currentTheme))
+        .width('100%')
+
+      Text(this.holdingAwarenessStatusText)
+        .fontSize(14)
+        .fontFamily(this.appFontFamily)
+        .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
+        .width('100%')
+
+      Text(this.holdingAwarenessPermissionText)
+        .fontSize(12)
+        .fontFamily(this.appFontFamily)
+        .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_muted', this.themeState.currentTheme))
+        .width('100%')
+    }
+    .width('100%')
+    .padding({ left: 16, right: 16, top: 12, bottom: 12 })
+  }
+
+  @Builder
+  buildHoldingAwarenessSettings() {
+    Column() {
+      this.buildSettingItem(
+        '启用智感握姿',
+        '根据握持手与操作手自动调整支持的交互位置',
+        this.holdingAwarenessEnabled,
+        async (value: boolean) => {
+          this.holdingAwarenessEnabled = value;
+          await this.holdingAwarenessManager.setGlobalEnabled(value);
+          this.refreshHoldingAwarenessSettings();
+          this.interactionManager.vibrate(VibrationScene.TOGGLE_SWITCH);
+        }
+      )
+
+      if (this.holdingAwarenessEnabled) {
+        Divider()
+          .color(ThemeAwareHelper.getTestManagementThemedColor('divider', this.themeState.currentTheme))
+          .margin({ left: 16 })
+
+        this.buildSettingItem(
+          '主界面搜索按钮',
+          '全局搜索悬浮按钮按握姿自动停靠到易触达侧',
+          this.holdingAwarenessMainMenuSearchButtonEnabled,
+          async (value: boolean) => {
+            this.holdingAwarenessMainMenuSearchButtonEnabled = value;
+            await this.setHoldingAwarenessFeatureEnabled(
+              HoldingAwarenessFeature.MAIN_MENU_FLOATING_SEARCH_BUTTON,
+              value
+            );
+          }
+        )
+
+        Divider()
+          .color(ThemeAwareHelper.getTestManagementThemedColor('divider', this.themeState.currentTheme))
+          .margin({ left: 16 })
+
+        this.buildSettingItem(
+          '隐私书库退出按钮',
+          '隐私模式下的退出悬浮按钮按握姿选择停靠侧',
+          this.holdingAwarenessMainMenuPrivacyExitButtonEnabled,
+          async (value: boolean) => {
+            this.holdingAwarenessMainMenuPrivacyExitButtonEnabled = value;
+            await this.setHoldingAwarenessFeatureEnabled(
+              HoldingAwarenessFeature.MAIN_MENU_PRIVACY_EXIT_BUTTON,
+              value
+            );
+          }
+        )
+
+        Divider()
+          .color(ThemeAwareHelper.getTestManagementThemedColor('divider', this.themeState.currentTheme))
+          .margin({ left: 16 })
+
+        this.buildSettingItem(
+          '书架预览控件',
+          '编辑书架时的列数滑条与详情浮层按握姿靠近拇指侧',
+          this.holdingAwarenessMainMenuShelfPreviewEnabled,
+          async (value: boolean) => {
+            this.holdingAwarenessMainMenuShelfPreviewEnabled = value;
+            await this.setHoldingAwarenessFeatureEnabled(
+              HoldingAwarenessFeature.MAIN_MENU_SHELF_PREVIEW_CONTROLS,
+              value
+            );
+          }
+        )
+
+        Divider()
+          .color(ThemeAwareHelper.getTestManagementThemedColor('divider', this.themeState.currentTheme))
+          .margin({ left: 16 })
+
+        this.buildSettingItem(
+          '详情页横屏阅读按钮',
+          '横屏详情页的阅读与听书浮动按钮组按握姿停靠',
+          this.holdingAwarenessDetailLandscapeReadActionsEnabled,
+          async (value: boolean) => {
+            this.holdingAwarenessDetailLandscapeReadActionsEnabled = value;
+            await this.setHoldingAwarenessFeatureEnabled(
+              HoldingAwarenessFeature.DETAIL_LANDSCAPE_READ_ACTIONS,
+              value
+            );
+          }
+        )
+
+        Divider()
+          .color(ThemeAwareHelper.getTestManagementThemedColor('divider', this.themeState.currentTheme))
+          .margin({ left: 16 })
+
+        this.buildSettingItem(
+          '听书悬浮球',
+          '听书悬浮球未被手动拖动时按握姿选择默认停靠侧',
+          this.holdingAwarenessReadAloudFloatingBallEnabled,
+          async (value: boolean) => {
+            this.holdingAwarenessReadAloudFloatingBallEnabled = value;
+            await this.setHoldingAwarenessFeatureEnabled(
+              HoldingAwarenessFeature.READ_ALOUD_FLOATING_BALL,
+              value
+            );
+          }
+        )
+
+        Divider()
+          .color(ThemeAwareHelper.getTestManagementThemedColor('divider', this.themeState.currentTheme))
+          .margin({ left: 16 })
+
+        this.buildSettingItem(
+          '后台任务悬浮球',
+          '后台任务进度悬浮球未被手动拖动时按握姿选择默认停靠侧',
+          this.holdingAwarenessTaskFloatingBallEnabled,
+          async (value: boolean) => {
+            this.holdingAwarenessTaskFloatingBallEnabled = value;
+            await this.setHoldingAwarenessFeatureEnabled(
+              HoldingAwarenessFeature.TASK_FLOATING_BALL,
+              value
+            );
+          }
+        )
+
+        Divider()
+          .color(ThemeAwareHelper.getTestManagementThemedColor('divider', this.themeState.currentTheme))
+          .margin({ left: 16 })
+
+        this.buildSettingItem(
+          '漫画条漫快速导航',
+          '条漫与连续滚动模式的快速导航滑条按握姿切换左右侧',
+          this.holdingAwarenessMangaWebtoonQuickNavigationEnabled,
+          async (value: boolean) => {
+            this.holdingAwarenessMangaWebtoonQuickNavigationEnabled = value;
+            await this.setHoldingAwarenessFeatureEnabled(
+              HoldingAwarenessFeature.MANGA_WEBTOON_QUICK_NAVIGATION,
+              value
+            );
+          }
+        )
+
+        Divider()
+          .color(ThemeAwareHelper.getTestManagementThemedColor('divider', this.themeState.currentTheme))
+          .margin({ left: 16 })
+
+        this.buildSettingItem(
+          '文本划线想法悬浮窗',
+          '小说划线想法浮窗按握姿靠近易操作侧显示',
+          this.holdingAwarenessTextHighlightThoughtPopupEnabled,
+          async (value: boolean) => {
+            this.holdingAwarenessTextHighlightThoughtPopupEnabled = value;
+            await this.setHoldingAwarenessFeatureEnabled(
+              HoldingAwarenessFeature.TEXT_HIGHLIGHT_THOUGHT_POPUP,
+              value
+            );
+          }
+        )
+
+        Divider()
+          .color(ThemeAwareHelper.getTestManagementThemedColor('divider', this.themeState.currentTheme))
+          .margin({ left: 16 })
+
+        this.buildHoldingAwarenessStatus()
+      }
+    }
+    .width('100%')
+    .backgroundColor(SettingsPanelSurfaceHelper.getBackground(this.themeState.currentTheme))
+    .linearGradient(SettingsPanelSurfaceHelper.getSurfaceGradient(this.themeState.currentTheme))
+    .backgroundBlurStyle(SettingsPanelSurfaceHelper.getBlurStyle(this.themeState.currentTheme), SettingsPanelSurfaceHelper.getBlurOptions(this.themeState.currentTheme))
+    .backgroundEffect(SettingsPanelSurfaceHelper.getBackgroundEffect(this.themeState.currentTheme))
+    .borderRadius(SettingsPanelSurfaceHelper.getRadius(this.themeState.currentTheme))
+    .clip(true)
+    .border({ width: SettingsPanelSurfaceHelper.getBorderWidth(this.themeState.currentTheme), color: SettingsPanelSurfaceHelper.getBorderColor(this.themeState.currentTheme) })
+    .shadow({
+      radius: SettingsPanelSurfaceHelper.getRadius(this.themeState.currentTheme) + 4,
+      color: SettingsPanelSurfaceHelper.getShadowColor(this.themeState.currentTheme),
+      offsetX: 0,
+      offsetY: 8
+    })
+  }
+
+  @Builder
   buildSceneGroup(group: SceneGroup) {
     Column({ space: 0 }) {
       Text(group.title)
@@ -477,6 +785,38 @@ export struct InteractionSettingsSubPage {
               .animation({ duration: 260, curve: Curve.EaseOut })
               .margin({ bottom: 16 })
 
+              Column() {
+                this.buildHoldingAwarenessSettings()
+              }
+              .width(this.responsive_isLandscape ? '48%' : '100%')
+              .padding(4)
+              .backgroundColor(SettingsSearchSupport.getHighlightOverlayBackground(
+                this.themeState.currentTheme,
+                this.activeSearchAnchorId,
+                'interaction_holding_awareness'
+              ))
+              .borderRadius(16)
+              .border({
+                width: SettingsSearchSupport.isHighlightActive(this.activeSearchAnchorId, 'interaction_holding_awareness') ? 1 : 0,
+                color: SettingsSearchSupport.getHighlightOverlayBorder(
+                  this.themeState.currentTheme,
+                  this.activeSearchAnchorId,
+                  'interaction_holding_awareness'
+                )
+              })
+              .scale({
+                x: SettingsSearchSupport.getHighlightScale(this.activeSearchAnchorId, 'interaction_holding_awareness', this.searchHighlightPulse),
+                y: SettingsSearchSupport.getHighlightScale(this.activeSearchAnchorId, 'interaction_holding_awareness', this.searchHighlightPulse)
+              })
+              .shadow(SettingsSearchSupport.getHighlightOverlayShadow(
+                this.themeState.currentTheme,
+                this.activeSearchAnchorId,
+                'interaction_holding_awareness',
+                this.searchHighlightPulse
+              ))
+              .animation({ duration: 260, curve: Curve.EaseOut })
+              .margin({ bottom: 16 })
+
               if (this.vibrationEnabled) {
                 // 震动强度
                 Column() {
@@ -565,6 +905,39 @@ export struct InteractionSettingsSubPage {
                     .border({ width: 1, color: ThemeAwareHelper.getTestManagementThemedColor('panel_border', this.themeState.currentTheme) })
                     .onClick(async () => {
                       await this.interactionManager.resetToDefault();
+                      await this.holdingAwarenessManager.setGlobalEnabled(true);
+                      await this.holdingAwarenessManager.setFeatureEnabled(
+                        HoldingAwarenessFeature.MAIN_MENU_FLOATING_SEARCH_BUTTON,
+                        true
+                      );
+                      await this.holdingAwarenessManager.setFeatureEnabled(
+                        HoldingAwarenessFeature.MAIN_MENU_PRIVACY_EXIT_BUTTON,
+                        true
+                      );
+                      await this.holdingAwarenessManager.setFeatureEnabled(
+                        HoldingAwarenessFeature.MAIN_MENU_SHELF_PREVIEW_CONTROLS,
+                        true
+                      );
+                      await this.holdingAwarenessManager.setFeatureEnabled(
+                        HoldingAwarenessFeature.DETAIL_LANDSCAPE_READ_ACTIONS,
+                        true
+                      );
+                      await this.holdingAwarenessManager.setFeatureEnabled(
+                        HoldingAwarenessFeature.READ_ALOUD_FLOATING_BALL,
+                        true
+                      );
+                      await this.holdingAwarenessManager.setFeatureEnabled(
+                        HoldingAwarenessFeature.TASK_FLOATING_BALL,
+                        true
+                      );
+                      await this.holdingAwarenessManager.setFeatureEnabled(
+                        HoldingAwarenessFeature.MANGA_WEBTOON_QUICK_NAVIGATION,
+                        true
+                      );
+                      await this.holdingAwarenessManager.setFeatureEnabled(
+                        HoldingAwarenessFeature.TEXT_HIGHLIGHT_THOUGHT_POPUP,
+                        true
+                      );
                       this.loadSettings();
                       this.interactionManager.vibrate(VibrationScene.SUCCESS);
                     })

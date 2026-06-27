@@ -398,7 +398,7 @@ export class SourceRepositoryManager {
       // 应用代理配置
       const proxyManager = ProxyManager.getInstance();
       if (proxyManager.isEnabled()) {
-        requestOptions.usingProxy = true;
+        await proxyManager.applyToHttpOptions(requestOptions, syncUrl);
         log('info', '使用代理连接图源仓库');
       }
       
@@ -439,7 +439,7 @@ export class SourceRepositoryManager {
             }
           };
           if (proxyManager.isEnabled()) {
-            configOptions.usingProxy = true;
+            await proxyManager.applyToHttpOptions(configOptions, sourceConfigUrl);
           }
           const configResponse = await httpRequest.request(sourceConfigUrl, configOptions);
 
@@ -471,7 +471,7 @@ export class SourceRepositoryManager {
                 expectDataType: http.HttpDataType.ARRAY_BUFFER
               };
               if (proxyManager.isEnabled()) {
-                iconOptions.usingProxy = true;
+                await proxyManager.applyToHttpOptions(iconOptions, iconUrl);
               }
               const iconResponse = await httpRequest.request(iconUrl, iconOptions);
               
@@ -1070,7 +1070,7 @@ export class SourceRepositoryManager {
 
       const proxyManager = ProxyManager.getInstance();
       if (proxyManager.isEnabled()) {
-        options.usingProxy = true;
+        await proxyManager.applyToHttpOptions(options, url);
       }
 
       const response = await request.request(url, options);

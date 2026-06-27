@@ -4,10 +4,19 @@
  */
 import { BackgroundTaskManager, BackgroundTask, TaskStatus, TaskProgress, TaskStatusListener } from '../Task/BackgroundTaskManager';
 import { logger } from '../../Utils/Logger';
-import { promptAction } from '@kit.ArkUI';
+import { display } from '@kit.ArkUI';
 import { AppColors, ColorRole } from '../Theme/AppColors';
+import {
+  getHoldingAwarenessManager,
+  HoldingAwarenessFeature,
+  HoldingAwarenessManager,
+  HoldingUiAnchor
+} from '../Managers/HoldingAwarenessManager';
 
 const TAG = 'TaskFloatingBall';
+const TASK_FLOATING_BALL_DEFAULT_LEFT_X: number = 20;
+const TASK_FLOATING_BALL_DEFAULT_TOP_Y: number = 200;
+const TASK_FLOATING_BALL_EXPANDED_WIDTH: number = 200;
 
 /**
  * 悬浮球位置
@@ -25,15 +34,23 @@ export struct TaskFloatingBall {
   @State private isVisible: boolean = false;
   @State private tasks: BackgroundTask[] = [];
   @State private mainProgress: TaskProgress | null = null;
-  @State private ballPosition: FloatingBallPosition = { x: 20, y: 200 };
+  @State private ballPosition: FloatingBallPosition = { x: TASK_FLOATING_BALL_DEFAULT_LEFT_X, y: TASK_FLOATING_BALL_DEFAULT_TOP_Y };
   @State private isDragging: boolean = false;
   @State private isExpanded: boolean = false;
+  @StorageProp('holding_awareness_preferred_anchor') @Watch('onHoldingAwareTaskBallSettingChanged')
+  private holdingAwarenessPreferredAnchor: HoldingUiAnchor = HoldingUiAnchor.RIGHT;
+  @StorageProp('holding_awareness_enabled') @Watch('onHoldingAwareTaskBallSettingChanged')
+  private holdingAwarenessEnabled: boolean = true;
+  @StorageProp('holding_awareness_task_floating_ball_enabled') @Watch('onHoldingAwareTaskBallSettingChanged')
+  private holdingAwarenessTaskFloatingBallEnabled: boolean = true;
   
   private taskManager: BackgroundTaskManager = BackgroundTaskManager.getInstance();
+  private holdingAwarenessManager: HoldingAwarenessManager = getHoldingAwarenessManager();
   private dragStartX: number = 0;
   private dragStartY: number = 0;
   private ballStartX: number = 0;
   private ballStartY: number = 0;
+  private hasUserDraggedBall: boolean = false;
   private taskStatusListener: TaskStatusListener = (_task: BackgroundTask): void => {
     const wasVisible = this.isVisible;
     this.refreshTaskState(wasVisible);
@@ -59,6 +76,59 @@ export struct TaskFloatingBall {
     }
   }
 
+  private getDisplayWidthVp(): number {
+    try {
+      const info = display.getDefaultDisplaySync();
+      const density = info.densityDPI / 160;
+      if (density > 0) {
+        return info.width / density;
+      }
+    } catch (_error) {
+      logger.debug(TAG, '读取屏幕宽度失败，后台任务悬浮球使用默认宽度');
+    }
+    return 360;
+  }
+
+  private shouldUseHoldingAwareTaskBall(): boolean {
+    if (!this.holdingAwarenessEnabled || !this.holdingAwarenessTaskFloatingBallEnabled) {
+      return false;
+    }
+    return this.holdingAwarenessManager.isFeatureEnabled(HoldingAwarenessFeature.TASK_FLOATING_BALL);
+  }
+
+  private getHoldingAwareTaskBallX(): number {
+    if (!this.shouldUseHoldingAwareTaskBall()) {
+      return TASK_FLOATING_BALL_DEFAULT_LEFT_X;
+    }
+    if (this.holdingAwarenessPreferredAnchor === HoldingUiAnchor.LEFT) {
+      return TASK_FLOATING_BALL_DEFAULT_LEFT_X;
+    }
+    const displayWidth = this.getDisplayWidthVp();
+    const rightX = displayWidth - TASK_FLOATING_BALL_EXPANDED_WIDTH - TASK_FLOATING_BALL_DEFAULT_LEFT_X;
+    return rightX > TASK_FLOATING_BALL_DEFAULT_LEFT_X ? rightX : TASK_FLOATING_BALL_DEFAULT_LEFT_X;
+  }
+
+  private syncHoldingAwareBallPosition(canShow: boolean): void {
+    if (!canShow) {
+      this.hasUserDraggedBall = false;
+      return;
+    }
+    if (this.hasUserDraggedBall) {
+      return;
+    }
+    this.ballPosition = {
+      x: this.getHoldingAwareTaskBallX(),
+      y: this.ballPosition.y
+    };
+  }
+
+  onHoldingAwareTaskBallSettingChanged(changedPropertyName?: string): void {
+    if (changedPropertyName) {
+      logger.debug(TAG, `后台任务悬浮球握姿设置变化：${changedPropertyName}`);
+    }
+    this.syncHoldingAwareBallPosition(this.isVisible);
+  }
+
   /**
    * 从任务管理器重新同步悬浮球状态
    */
@@ -67,6 +137,7 @@ export struct TaskFloatingBall {
     this.tasks = activeTasks;
     this.mainProgress = this.taskManager.getMainTaskProgress();
     this.isVisible = activeTasks.length > 0;
+    this.syncHoldingAwareBallPosition(this.isVisible);
 
     if (wasVisible && activeTasks.length === 0) {
       this.showCompletionToast();
@@ -138,6 +209,7 @@ export struct TaskFloatingBall {
           })
           .onActionUpdate((event: GestureEvent) => {
             if (this.isDragging) {
+              this.hasUserDraggedBall = true;
               this.ballPosition = {
                 x: this.ballStartX + event.offsetX - this.dragStartX,
                 y: this.ballStartY + event.offsetY - this.dragStartY

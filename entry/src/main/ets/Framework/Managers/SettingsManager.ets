@@ -179,6 +179,16 @@ export class SettingKeys {
   static readonly BOTTOM_BAR_STYLE = 'bottom_bar_style'; // 底栏样式: 'custom' | 'hds'
   static readonly MAIN_MENU_TABLET_TOP_BAR_POSITION = 'main_menu_tablet_top_bar_position';
   static readonly MAIN_MENU_BOOK_SOURCE_PICKER_AUTO_SCROLL_ENABLED = 'main_menu_book_source_picker_auto_scroll_enabled';
+  static readonly HOLDING_AWARENESS_ENABLED = 'holding_awareness_enabled';
+  static readonly HOLDING_AWARENESS_MAIN_MENU_FLOATING_CONTROLS_ENABLED = 'holding_awareness_main_menu_floating_controls_enabled';
+  static readonly HOLDING_AWARENESS_MAIN_MENU_SEARCH_BUTTON_ENABLED = 'holding_awareness_main_menu_search_button_enabled';
+  static readonly HOLDING_AWARENESS_MAIN_MENU_PRIVACY_EXIT_BUTTON_ENABLED = 'holding_awareness_main_menu_privacy_exit_button_enabled';
+  static readonly HOLDING_AWARENESS_MAIN_MENU_SHELF_PREVIEW_ENABLED = 'holding_awareness_main_menu_shelf_preview_enabled';
+  static readonly HOLDING_AWARENESS_DETAIL_LANDSCAPE_READ_ACTIONS_ENABLED = 'holding_awareness_detail_landscape_read_actions_enabled';
+  static readonly HOLDING_AWARENESS_READ_ALOUD_FLOATING_BALL_ENABLED = 'holding_awareness_read_aloud_floating_ball_enabled';
+  static readonly HOLDING_AWARENESS_TASK_FLOATING_BALL_ENABLED = 'holding_awareness_task_floating_ball_enabled';
+  static readonly HOLDING_AWARENESS_MANGA_WEBTOON_QUICK_NAVIGATION_ENABLED = 'holding_awareness_manga_webtoon_quick_navigation_enabled';
+  static readonly HOLDING_AWARENESS_TEXT_HIGHLIGHT_THOUGHT_POPUP_ENABLED = 'holding_awareness_text_highlight_thought_popup_enabled';
   static readonly LIBRARY_DEFAULT_GRID_COLUMNS = 'library_default_grid_columns';
   static readonly LIBRARY_SHELF_GRID_COLUMNS = 'library_shelf_grid_columns';
   static readonly LIBRARY_HIDE_WOOD_SHELF_TEXTURE = 'library_hide_wood_shelf_texture';

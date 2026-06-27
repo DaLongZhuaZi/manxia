@@ -1,69 +1,87 @@
-﻿import { SafeFileUtils } from '../../Utils/SafeFileUtils';
-import { SafeUtils } from '../../Utils/SafeUtils';
-import { storageStatistics } from '@kit.CoreFileKit';
-import { preferences } from '@kit.ArkData';
-import { util } from '@kit.ArkTS';
 import { common } from '@kit.AbilityKit';
-import fs from '@ohos.file.fs';
 import { logger } from '../../Utils/Logger';
-import { ImageCacheManager } from '../Cache/ImageCacheManager';
-import { DiskCacheManager } from '../Cache/DiskCacheManager';
-import { OnlineImageLoader } from '../Cache/OnlineImageLoader';
-import { CachedContent, SourceContentCache } from '../Cache/SourceContentCache';
-import { BookSourceCacheData, KomgaCacheData, SuwayomiCacheData, TabContentCacheManager } from '../Cache/TabContentCacheManager';
-import { WebViewDataCacheManager } from '../Cache/WebViewDataCacheManager';
-import { DatabaseManager } from '../Database/DatabaseManager';
-import DownloadDirManager from './DownloadDirManager';
+import {
+  ManagedStorageClearItemResult,
+  ManagedStorageClearResult,
+  ManagedStorageEntry,
+  ManagedStorageGroup,
+  ManagedStorageKind,
+  ManagedStorageProviderStatus,
+  ManagedStorageRisk,
+  ManagedStorageSnapshot,
+  UnifiedStorageCoordinator
+} from './UnifiedStorageCoordinator';
+import { StorageOperationRecord, StorageUsageMonitor, StorageUsageTrendPoint } from './StorageUsageMonitor';
 
 const TAG = 'StorageDashboardService';
-const SOURCE_CONTENT_PREF_NAME = 'source_content_cache';
-const SOURCE_CONTENT_PREF_KEY = 'cache_data';
-const TAB_CONTENT_PREF_NAME = 'tab_content_cache';
-const TAB_CONTENT_BOOK_SOURCE_KEY = 'book_source_cache';
-const TAB_CONTENT_SUWAYOMI_KEY = 'suwayomi_cache';
-const TAB_CONTENT_KOMGA_KEY = 'komga_cache';
 
 export enum StorageSectionId {
-  CLEANABLE = 'CLEANABLE',
-  REMOTE_CACHE = 'REMOTE_CACHE',
-  MEMORY = 'MEMORY',
+  SAFE_CACHE = 'SAFE_CACHE',
+  TEMP_WORKSPACE = 'TEMP_WORKSPACE',
+  OFFLINE_CACHE = 'OFFLINE_CACHE',
+  RUNTIME_MEMORY = 'RUNTIME_MEMORY',
+  USER_DATA = 'USER_DATA',
+  BACKUP = 'BACKUP',
+  EXTENSION = 'EXTENSION',
+  LOGS = 'LOGS',
+  DOWNLOAD_EXTERNAL = 'DOWNLOAD_EXTERNAL',
   PROTECTED = 'PROTECTED'
 }
 
 export enum StorageBucketId {
-  COVER_DISK_CACHE = 'COVER_DISK_CACHE',
-  ONLINE_IMAGE_DISK_CACHE = 'ONLINE_IMAGE_DISK_CACHE',
-  SANDBOX_CACHE_MISC = 'SANDBOX_CACHE_MISC',
-  TEMP_IMAGE_CACHE = 'TEMP_IMAGE_CACHE',
-  SYSTEM_RUNTIME_CACHE = 'SYSTEM_RUNTIME_CACHE',
-  TEMP_FILES = 'TEMP_FILES',
-  SOURCE_CONTENT_CACHE = 'SOURCE_CONTENT_CACHE',
-  TAB_CONTENT_CACHE = 'TAB_CONTENT_CACHE',
-  PERMANENT_MANGA_CACHE = 'PERMANENT_MANGA_CACHE',
-  NOVEL_CHAPTER_CACHE = 'NOVEL_CHAPTER_CACHE',
-  REMOTE_READ_ALOUD_CACHE = 'REMOTE_READ_ALOUD_CACHE',
-  SUWAYOMI_COVERS = 'SUWAYOMI_COVERS',
-  SUWAYOMI_SOURCE_ICONS = 'SUWAYOMI_SOURCE_ICONS',
-  SUWAYOMI_CHAPTERS = 'SUWAYOMI_CHAPTERS',
-  KOMGA_COVERS = 'KOMGA_COVERS',
-  KOMGA_CHAPTERS = 'KOMGA_CHAPTERS',
-  IMAGE_MEMORY_CACHE = 'IMAGE_MEMORY_CACHE',
-  ONLINE_IMAGE_MEMORY_CACHE = 'ONLINE_IMAGE_MEMORY_CACHE',
-  WEBVIEW_DATA_CACHE = 'WEBVIEW_DATA_CACHE',
-  DATABASE = 'DATABASE',
-  COMIC_FILES = 'COMIC_FILES',
-  EBOOK_FILES = 'EBOOK_FILES',
-  CHAPTER_FILES = 'CHAPTER_FILES',
-  PLUGIN_FILES = 'PLUGIN_FILES',
-  LIBRARY_COVERS = 'LIBRARY_COVERS',
-  DOWNLOAD_MANGA = 'DOWNLOAD_MANGA'
+  COVER_DISK_CACHE = 'cover_disk_cache',
+  ONLINE_IMAGE_DISK_CACHE = 'online_image_disk_cache',
+  SANDBOX_CACHE_MISC = 'sandbox_cache_misc',
+  TEMP_IMAGE_CACHE = 'temp_image_cache',
+  SYSTEM_RUNTIME_CACHE = 'system_runtime_cache',
+  TEMP_FILES = 'temp_files',
+  SOURCE_CONTENT_CACHE = 'source_content_cache',
+  TAB_CONTENT_CACHE = 'tab_content_cache',
+  NETWORK_FOLDER_CACHE = 'network_folder_cache',
+  ONLINE_DOWNLOAD_WORK = 'online_download_work',
+  ONLINE_ARCHIVE_WORK = 'online_archive_work',
+  ONLINE_CBZ_READER = 'online_cbz_reader',
+  READER_IMAGE_ACTIONS = 'reader_image_actions',
+  TRANSITION_SCREENSHOTS = 'transition_screenshots',
+  PERMANENT_MANGA_CACHE = 'permanent_manga_cache',
+  PRIVATE_ONLINE_ARCHIVE = 'private_online_archive',
+  NOVEL_CHAPTER_CACHE = 'novel_chapter_cache',
+  REMOTE_READ_ALOUD_CACHE = 'remote_read_aloud_cache',
+  SUWAYOMI_COVERS = 'suwayomi_covers',
+  SUWAYOMI_SOURCE_ICONS = 'suwayomi_source_icons',
+  SUWAYOMI_CHAPTERS = 'suwayomi_chapters',
+  KOMGA_COVERS = 'komga_covers',
+  KOMGA_CHAPTERS = 'komga_chapters',
+  IMAGE_MEMORY_CACHE = 'image_memory_cache',
+  ONLINE_IMAGE_MEMORY_CACHE = 'online_image_memory_cache',
+  WEBVIEW_DATA_CACHE = 'webview_data_cache',
+  LOCAL_IMAGE_MEMORY_CACHE = 'local_image_memory_cache',
+  DATABASE = 'database',
+  COMIC_FILES = 'comic_files',
+  EBOOK_FILES = 'ebook_files',
+  CHAPTER_FILES = 'chapter_files',
+  PLUGIN_FILES = 'plugin_files',
+  LIBRARY_COVERS = 'library_covers',
+  EBOOK_COVERS = 'ebook_covers',
+  NOVEL_COVERS = 'novel_covers',
+  BACKUP_FILES = 'backup_files',
+  EXTENSION_REPOSITORY = 'extension_repository',
+  CUSTOM_FONTS = 'custom_fonts',
+  VERSION_HISTORY = 'version_history',
+  ERROR_LOGS = 'error_logs',
+  CRASH_LOGS = 'crash_logs',
+  FEEDBACK_FILES = 'feedback_files',
+  PRIVATE_DOWNLOADS = 'private_downloads',
+  DOWNLOAD_MANGA = 'download_manga',
+  UNMAPPED = 'unmapped'
 }
 
-export type StorageBucketPathKind = 'sandbox' | 'system' | 'download' | 'database' | 'preferences' | 'memory';
-export type StorageBucketRisk = 'safe' | 'caution' | 'protected';
+export type StorageBucketPathKind = 'sandbox' | 'system' | 'download' | 'database' | 'preferences' | 'memory' | 'external';
+export type StorageBucketRisk = 'safe' | 'caution' | 'danger' | 'protected';
 
 export interface StorageBucketSummary {
   id: StorageBucketId;
+  providerId: string;
   section: StorageSectionId;
   title: string;
   subtitle: string;
@@ -73,8 +91,11 @@ export interface StorageBucketSummary {
   path: string;
   pathKind: StorageBucketPathKind;
   isClearable: boolean;
+  canDelete: boolean;
+  autoClearEligible: boolean;
   risk: StorageBucketRisk;
   note: string;
+  targetPage: string;
   progressRatio: number;
   displayOrder: number;
 }
@@ -97,17 +118,30 @@ export interface StorageOverviewSummary {
   deviceFreeSizeBytes: number;
   scannedTotalSizeBytes: number;
   cleanableTotalSizeBytes: number;
+  dangerTotalSizeBytes: number;
   protectedTotalSizeBytes: number;
   memorySizeBytes: number;
   bucketCount: number;
   clearableBucketCount: number;
+  failedProviderCount: number;
   updatedAt: number;
+}
+
+export interface StorageProviderStatusSummary {
+  providerId: string;
+  title: string;
+  success: boolean;
+  message: string;
+  durationMs: number;
 }
 
 export interface StorageDashboardSnapshot {
   overview: StorageOverviewSummary;
   sections: StorageSectionSummary[];
   buckets: StorageBucketSummary[];
+  providerStatuses: StorageProviderStatusSummary[];
+  trend: StorageUsageTrendPoint[];
+  operationRecords: StorageOperationRecord[];
 }
 
 export interface StorageBucketClearResult {
@@ -125,63 +159,10 @@ export interface StorageClearResult {
   errors: string[];
 }
 
-interface DirectoryUsageStats {
-  path: string;
-  exists: boolean;
-  sizeBytes: number;
-  fileCount: number;
-  latestModifiedAt: number;
-}
-
-interface StoragePathSet {
-  filesDir: string;
-  cacheDir: string;
-  databaseDir: string;
-  sandboxCacheDir: string;
-  onlineImageDiskCacheDir: string;
-  coverCacheDir: string;
-  permanentCacheDir: string;
-  tempImageCacheDir: string;
-  tempFilesDir: string;
-  comicFilesDir: string;
-  ebookFilesDir: string;
-  chapterFilesDir: string;
-  pluginFilesDir: string;
-  libraryCoversDir: string;
-  novelCacheDir: string;
-  remoteReadAloudDir: string;
-  komgaRootDir: string;
-  komgaCoverDir: string;
-  komgaChapterDir: string;
-  downloadBaseDir: string;
-  downloadMangaDir: string;
-  suwayomiCoverDir: string;
-  suwayomiIconDir: string;
-  suwayomiChapterDir: string;
-}
-
-interface PreferenceUsageStats {
-  sizeBytes: number;
-  entryCount: number;
-  itemCount: number;
-}
-
-interface OptimisticOverviewDelta {
-  bundleCacheFreedBytes: number;
-  bundleDataFreedBytes: number;
-  deviceFreedBytes: number;
-}
-
-interface BucketMetadata {
-  section: StorageSectionId;
-  title: string;
-  subtitle: string;
-  itemLabel: string;
-  pathKind: StorageBucketPathKind;
-  clearable: boolean;
-  risk: StorageBucketRisk;
-  note: string;
-  displayOrder: number;
+class SectionMetadata {
+  public title: string = '';
+  public subtitle: string = '';
+  public order: number = 0;
 }
 
 export class StorageDashboardService {
@@ -189,7 +170,8 @@ export class StorageDashboardService {
   private cachedSnapshot: StorageDashboardSnapshot | null = null;
   private cachedAt: number = 0;
   private readonly cacheWindowMs: number = 15000;
-  private readonly databaseManager: DatabaseManager = DatabaseManager.getInstance();
+  private readonly coordinator: UnifiedStorageCoordinator = UnifiedStorageCoordinator.getInstance();
+  private readonly monitor: StorageUsageMonitor = StorageUsageMonitor.getInstance();
 
   static getInstance(): StorageDashboardService {
     if (!StorageDashboardService.instance) {
@@ -204,89 +186,15 @@ export class StorageDashboardService {
       return this.cachedSnapshot;
     }
 
-    const paths = this.buildPathSet(abilityContext);
-    const bundleStats = await this.loadBundleStats();
-    const deviceTotalSizeBytes = await this.loadDeviceTotalSize();
-    const deviceFreeSizeBytes = await this.loadDeviceFreeSize();
-
-    const imageMemoryStats = await this.loadImageMemoryStats();
-    const onlineMemoryStats = this.loadOnlineImageMemoryStats();
-    const webViewMemoryStats = this.loadWebViewDataStats();
-    const sourceContentStats = await this.loadSourceContentPreferenceStats(abilityContext);
-    const tabContentStats = await this.loadTabContentPreferenceStats(abilityContext);
-
-    const coverDiskUsage = this.scanDirectory(paths.coverCacheDir);
-    const sandboxCacheRootUsage = this.scanDirectory(paths.sandboxCacheDir);
-    const onlineImageDiskUsage = this.scanDirectory(paths.onlineImageDiskCacheDir);
-    const sandboxCacheMiscUsage = this.subtractUsage(sandboxCacheRootUsage, onlineImageDiskUsage);
-    const permanentCacheUsage = this.scanDirectory(paths.permanentCacheDir);
-    const cacheDirUsage = this.scanDirectory(paths.cacheDir);
-    const tempImageUsage = this.scanDirectory(paths.tempImageCacheDir);
-    const systemRuntimeUsage = this.subtractUsage(cacheDirUsage, tempImageUsage);
-    const tempFilesUsage = this.scanDirectory(paths.tempFilesDir);
-    const novelCacheUsage = this.scanDirectory(paths.novelCacheDir);
-    const remoteReadAloudUsage = this.scanDirectory(paths.remoteReadAloudDir);
-    const suwayomiCoverUsage = this.scanDirectory(paths.suwayomiCoverDir);
-    const suwayomiIconUsage = this.scanDirectory(paths.suwayomiIconDir);
-    const suwayomiChapterUsage = this.scanDirectory(paths.suwayomiChapterDir);
-    const komgaCoverUsage = this.scanDirectory(paths.komgaCoverDir);
-    const komgaChapterUsage = this.scanDirectory(paths.komgaChapterDir);
-    const databaseUsage = this.scanDirectory(paths.databaseDir);
-    const comicFilesUsage = this.scanDirectory(paths.comicFilesDir);
-    const ebookFilesUsage = this.scanDirectory(paths.ebookFilesDir);
-    const chapterFilesUsage = this.scanDirectory(paths.chapterFilesDir);
-    const pluginFilesUsage = this.scanDirectory(paths.pluginFilesDir);
-    const libraryCoverUsage = this.scanDirectory(paths.libraryCoversDir);
-    const downloadMangaUsage = this.scanDirectory(paths.downloadMangaDir);
-
-    const buckets: StorageBucketSummary[] = [];
-    buckets.push(this.buildDirectoryBucket(StorageBucketId.COVER_DISK_CACHE, coverDiskUsage));
-    buckets.push(this.buildDirectoryBucket(StorageBucketId.ONLINE_IMAGE_DISK_CACHE, onlineImageDiskUsage));
-    buckets.push(this.buildDirectoryBucket(StorageBucketId.SANDBOX_CACHE_MISC, sandboxCacheMiscUsage));
-    buckets.push(this.buildDirectoryBucket(StorageBucketId.TEMP_IMAGE_CACHE, tempImageUsage));
-    buckets.push(this.buildDirectoryBucket(StorageBucketId.SYSTEM_RUNTIME_CACHE, systemRuntimeUsage));
-    buckets.push(this.buildDirectoryBucket(StorageBucketId.TEMP_FILES, tempFilesUsage));
-    buckets.push(this.buildPreferenceBucket(StorageBucketId.SOURCE_CONTENT_CACHE, sourceContentStats));
-    buckets.push(this.buildPreferenceBucket(StorageBucketId.TAB_CONTENT_CACHE, tabContentStats));
-    buckets.push(this.buildDirectoryBucket(StorageBucketId.PERMANENT_MANGA_CACHE, permanentCacheUsage));
-    buckets.push(this.buildDirectoryBucket(StorageBucketId.NOVEL_CHAPTER_CACHE, novelCacheUsage));
-    buckets.push(this.buildDirectoryBucket(StorageBucketId.REMOTE_READ_ALOUD_CACHE, remoteReadAloudUsage));
-    buckets.push(this.buildDirectoryBucket(StorageBucketId.SUWAYOMI_COVERS, suwayomiCoverUsage));
-    buckets.push(this.buildDirectoryBucket(StorageBucketId.SUWAYOMI_SOURCE_ICONS, suwayomiIconUsage));
-    buckets.push(this.buildDirectoryBucket(StorageBucketId.SUWAYOMI_CHAPTERS, suwayomiChapterUsage));
-    buckets.push(this.buildDirectoryBucket(StorageBucketId.KOMGA_COVERS, komgaCoverUsage));
-    buckets.push(this.buildDirectoryBucket(StorageBucketId.KOMGA_CHAPTERS, komgaChapterUsage));
-    buckets.push(this.buildMemoryBucket(StorageBucketId.IMAGE_MEMORY_CACHE, imageMemoryStats.sizeBytes, imageMemoryStats.fileCount, '张图片'));
-    buckets.push(this.buildMemoryBucket(StorageBucketId.ONLINE_IMAGE_MEMORY_CACHE, onlineMemoryStats.sizeBytes, onlineMemoryStats.fileCount, '张图片'));
-    buckets.push(this.buildMemoryBucket(StorageBucketId.WEBVIEW_DATA_CACHE, webViewMemoryStats.sizeBytes, webViewMemoryStats.fileCount, '条数据'));
-    buckets.push(this.buildDirectoryBucket(StorageBucketId.DATABASE, databaseUsage));
-    buckets.push(this.buildDirectoryBucket(StorageBucketId.COMIC_FILES, comicFilesUsage));
-    buckets.push(this.buildDirectoryBucket(StorageBucketId.EBOOK_FILES, ebookFilesUsage));
-    buckets.push(this.buildDirectoryBucket(StorageBucketId.CHAPTER_FILES, chapterFilesUsage));
-    buckets.push(this.buildDirectoryBucket(StorageBucketId.PLUGIN_FILES, pluginFilesUsage));
-    buckets.push(this.buildDirectoryBucket(StorageBucketId.LIBRARY_COVERS, libraryCoverUsage));
-    buckets.push(this.buildDirectoryBucket(StorageBucketId.DOWNLOAD_MANGA, downloadMangaUsage));
-
-    buckets.sort((left: StorageBucketSummary, right: StorageBucketSummary) => {
-      if (left.section !== right.section) {
-        return this.getSectionOrder(left.section) - this.getSectionOrder(right.section);
-      }
-      if (left.displayOrder !== right.displayOrder) {
-        return left.displayOrder - right.displayOrder;
-      }
-      return right.sizeBytes - left.sizeBytes;
-    });
-
-    const overview = this.buildOverview(bundleStats, deviceTotalSizeBytes, deviceFreeSizeBytes, buckets, now);
-    const sections = this.buildSections(buckets);
-    const snapshot: StorageDashboardSnapshot = {
-      overview,
-      sections,
-      buckets
-    };
-
+    const managedSnapshot = await this.coordinator.inspect(abilityContext, forceRefresh);
+    this.monitor.recordSnapshot(managedSnapshot);
+    const snapshot = this.mapManagedSnapshot(managedSnapshot);
     this.cachedSnapshot = snapshot;
-    this.cachedAt = now;
+    this.cachedAt = managedSnapshot.overview.updatedAt;
+    logger.debug(
+      TAG,
+      `统一存储快照: entries=${snapshot.buckets.length}, reclaimable=${snapshot.overview.cleanableTotalSizeBytes}, failedProviders=${snapshot.overview.failedProviderCount}`
+    );
     return snapshot;
   }
 
@@ -294,67 +202,19 @@ export class StorageDashboardService {
     abilityContext: common.UIAbilityContext,
     bucketIds: StorageBucketId[]
   ): Promise<StorageClearResult> {
-    const snapshot = await this.inspect(abilityContext, true);
-    const results: StorageBucketClearResult[] = [];
-    const errors: string[] = [];
-    let clearedSizeBytes = 0;
+    const entryIds: string[] = [];
     const uniqueBucketIds = this.uniqueBucketIds(bucketIds);
-
     for (let index = 0; index < uniqueBucketIds.length; index++) {
-      const bucketId = uniqueBucketIds[index];
-      const bucket = this.findBucket(snapshot.buckets, bucketId);
-      if (!bucket) {
-        errors.push(`${bucketId}: 未找到存储项`);
-        continue;
-      }
-      if (!bucket.isClearable) {
-        const protectedResult: StorageBucketClearResult = {
-          id: bucket.id,
-          title: bucket.title,
-          success: false,
-          clearedSizeBytes: 0,
-          message: '该项已受保护，不能直接清理'
-        };
-        results.push(protectedResult);
-        errors.push(`${bucket.title}: 已受保护`);
-        continue;
-      }
-
-      try {
-        await this.clearSingleBucket(abilityContext, bucket.id);
-        const successResult: StorageBucketClearResult = {
-          id: bucket.id,
-          title: bucket.title,
-          success: true,
-          clearedSizeBytes: bucket.sizeBytes,
-          message: '清理完成'
-        };
-        results.push(successResult);
-        clearedSizeBytes += bucket.sizeBytes;
-      } catch (error) {
-        const message = `${bucket.title}: ${String(error)}`;
-        const failedResult: StorageBucketClearResult = {
-          id: bucket.id,
-          title: bucket.title,
-          success: false,
-          clearedSizeBytes: 0,
-          message
-        };
-        results.push(failedResult);
-        errors.push(message);
+      if (uniqueBucketIds[index] !== StorageBucketId.UNMAPPED) {
+        entryIds.push(uniqueBucketIds[index]);
       }
     }
 
+    const managedResult = await this.coordinator.clearEntries(abilityContext, entryIds, 'storage_dashboard');
+    this.monitor.recordClearResult(managedResult);
     this.cachedSnapshot = null;
     this.cachedAt = 0;
-
-    const result: StorageClearResult = {
-      success: errors.length <= 0,
-      clearedSizeBytes,
-      results,
-      errors
-    };
-    return result;
+    return this.mapClearResult(managedResult);
   }
 
   createOptimisticSnapshot(
@@ -374,30 +234,15 @@ export class StorageDashboardService {
       nextBuckets.push(nextBucket);
     }
 
-    const overviewDelta = this.buildOptimisticOverviewDelta(snapshot, clearedBucketIds);
-    const bundleStats: storageStatistics.BundleStats = {
-      appSize: snapshot.overview.bundleAppSizeBytes,
-      cacheSize: Math.max(0, snapshot.overview.bundleCacheSizeBytes - overviewDelta.bundleCacheFreedBytes),
-      dataSize: Math.max(0, snapshot.overview.bundleDataSizeBytes - overviewDelta.bundleDataFreedBytes)
-    };
-    const deviceFreeSizeBytes = Math.min(
-      snapshot.overview.deviceTotalSizeBytes,
-      snapshot.overview.deviceFreeSizeBytes + overviewDelta.deviceFreedBytes
-    );
-    const overview = this.buildOverview(
-      bundleStats,
-      snapshot.overview.deviceTotalSizeBytes,
-      deviceFreeSizeBytes,
-      nextBuckets,
-      Date.now()
-    );
-    const sections = this.buildSections(nextBuckets);
+    const overview = this.rebuildOverviewFromBuckets(snapshot.overview, nextBuckets);
     const optimisticSnapshot: StorageDashboardSnapshot = {
       overview,
-      sections,
-      buckets: nextBuckets
+      sections: this.buildSections(nextBuckets),
+      buckets: nextBuckets,
+      providerStatuses: this.cloneProviderStatuses(snapshot.providerStatuses),
+      trend: this.monitor.getHistory(),
+      operationRecords: this.monitor.getOperationRecords()
     };
-
     this.cachedSnapshot = optimisticSnapshot;
     this.cachedAt = optimisticSnapshot.overview.updatedAt;
     return optimisticSnapshot;
@@ -413,633 +258,196 @@ export class StorageDashboardService {
     return `${(bytes / Math.pow(base, index)).toFixed(index === 0 ? 0 : 2)} ${units[index]}`;
   }
 
-  private buildPathSet(abilityContext: common.UIAbilityContext): StoragePathSet {
-    const filesDir = abilityContext.filesDir;
-    const cacheDir = abilityContext.cacheDir;
-    const databaseDir = abilityContext.databaseDir;
-    const sandboxCacheDir = `${filesDir}/cache`;
-    const downloadBaseDir = DownloadDirManager.isReady() ? DownloadDirManager.getPath() : '';
-    const downloadMangaDir = downloadBaseDir.length > 0 ? `${downloadBaseDir}/manga` : '';
-    const suwayomiRootDir = downloadBaseDir.length > 0 ? `${downloadBaseDir}/suwayomi` : '';
-    const komgaRootDir = `${filesDir}/komga_cache`;
-    const novelCacheDir = this.resolveNovelCacheDir(filesDir);
-
-    return {
-      filesDir,
-      cacheDir,
-      databaseDir,
-      sandboxCacheDir,
-      onlineImageDiskCacheDir: `${sandboxCacheDir}/image_cache`,
-      coverCacheDir: `${filesDir}/covers`,
-      permanentCacheDir: `${filesDir}/permanent_cache`,
-      tempImageCacheDir: `${cacheDir}/temp_image_cache`,
-      tempFilesDir: `${filesDir}/temp`,
-      comicFilesDir: `${filesDir}/comics`,
-      ebookFilesDir: `${filesDir}/ebooks`,
-      chapterFilesDir: `${filesDir}/chapters`,
-      pluginFilesDir: `${filesDir}/plugins`,
-      libraryCoversDir: `${filesDir}/library_covers`,
-      novelCacheDir,
-      remoteReadAloudDir: `${filesDir}/read_aloud_remote`,
-      komgaRootDir,
-      komgaCoverDir: `${komgaRootDir}/covers`,
-      komgaChapterDir: `${komgaRootDir}/chapters`,
-      downloadBaseDir,
-      downloadMangaDir,
-      suwayomiCoverDir: suwayomiRootDir.length > 0 ? `${suwayomiRootDir}/covers` : '',
-      suwayomiIconDir: suwayomiRootDir.length > 0 ? `${suwayomiRootDir}/source_icons` : '',
-      suwayomiChapterDir: suwayomiRootDir.length > 0 ? `${suwayomiRootDir}/chapters` : ''
-    };
-  }
-
-  private resolveNovelCacheDir(filesDir: string): string {
-    try {
-      const downloadSyncDirPath = AppStorage.get<string>('downloadSyncDirPath');
-      if (downloadSyncDirPath && downloadSyncDirPath.length > 0) {
-        return `${downloadSyncDirPath}/novel`;
-      }
-    } catch (_error) {
+  private mapManagedSnapshot(managedSnapshot: ManagedStorageSnapshot): StorageDashboardSnapshot {
+    const buckets: StorageBucketSummary[] = [];
+    for (let index = 0; index < managedSnapshot.entries.length; index++) {
+      buckets.push(this.mapEntry(managedSnapshot.entries[index]));
     }
-    return `${filesDir}/novels`;
+    this.updateProgressRatio(buckets);
+    const snapshot: StorageDashboardSnapshot = {
+      overview: this.mapOverview(managedSnapshot),
+      sections: this.buildSections(buckets),
+      buckets,
+      providerStatuses: this.mapProviderStatuses(managedSnapshot.providerStatuses),
+      trend: this.monitor.getHistory(),
+      operationRecords: this.monitor.getOperationRecords()
+    };
+    return snapshot;
   }
 
-  private async loadBundleStats(): Promise<storageStatistics.BundleStats> {
-    try {
-      return await storageStatistics.getCurrentBundleStats();
-    } catch (error) {
-      logger.warn(TAG, `读取应用存储统计失败: ${String(error)}`);
-      const emptyStats: storageStatistics.BundleStats = {
-        appSize: 0,
-        cacheSize: 0,
-        dataSize: 0
+  private mapEntry(entry: ManagedStorageEntry): StorageBucketSummary {
+    const bucket: StorageBucketSummary = {
+      id: this.toBucketId(entry.id),
+      providerId: entry.providerId,
+      section: this.mapGroup(entry.group),
+      title: entry.title,
+      subtitle: entry.subtitle,
+      sizeBytes: entry.sizeBytes,
+      itemCount: entry.itemCount,
+      itemLabel: entry.itemLabel,
+      path: entry.pathLabel.length > 0 ? entry.pathLabel : entry.path,
+      pathKind: this.mapKind(entry.kind),
+      isClearable: entry.canClear || entry.canDelete,
+      canDelete: entry.canDelete,
+      autoClearEligible: entry.autoClearEligible,
+      risk: this.mapRisk(entry.risk),
+      note: entry.note,
+      targetPage: entry.targetPage,
+      progressRatio: 0,
+      displayOrder: entry.displayOrder
+    };
+    return bucket;
+  }
+
+  private mapOverview(managedSnapshot: ManagedStorageSnapshot): StorageOverviewSummary {
+    const overview: StorageOverviewSummary = {
+      bundleAppSizeBytes: managedSnapshot.overview.bundleAppSizeBytes,
+      bundleCacheSizeBytes: managedSnapshot.overview.bundleCacheSizeBytes,
+      bundleDataSizeBytes: managedSnapshot.overview.bundleDataSizeBytes,
+      bundleTotalSizeBytes: managedSnapshot.overview.bundleTotalSizeBytes,
+      deviceTotalSizeBytes: managedSnapshot.overview.deviceTotalSizeBytes,
+      deviceFreeSizeBytes: managedSnapshot.overview.deviceFreeSizeBytes,
+      scannedTotalSizeBytes: managedSnapshot.overview.scannedTotalSizeBytes,
+      cleanableTotalSizeBytes: managedSnapshot.overview.reclaimableSizeBytes,
+      dangerTotalSizeBytes: managedSnapshot.overview.dangerSizeBytes,
+      protectedTotalSizeBytes: managedSnapshot.overview.protectedSizeBytes,
+      memorySizeBytes: managedSnapshot.overview.memorySizeBytes,
+      bucketCount: managedSnapshot.overview.entryCount,
+      clearableBucketCount: managedSnapshot.overview.reclaimableEntryCount,
+      failedProviderCount: managedSnapshot.overview.failedProviderCount,
+      updatedAt: managedSnapshot.overview.updatedAt
+    };
+    return overview;
+  }
+
+  private mapProviderStatuses(statuses: ManagedStorageProviderStatus[]): StorageProviderStatusSummary[] {
+    const result: StorageProviderStatusSummary[] = [];
+    for (let index = 0; index < statuses.length; index++) {
+      const status = statuses[index];
+      const summary: StorageProviderStatusSummary = {
+        providerId: status.providerId,
+        title: status.title,
+        success: status.success,
+        message: status.message,
+        durationMs: status.durationMs
       };
-      return emptyStats;
+      result.push(summary);
     }
+    return result;
   }
 
-  private async loadDeviceTotalSize(): Promise<number> {
-    try {
-      return await storageStatistics.getTotalSize();
-    } catch (error) {
-      logger.debug(TAG, `读取设备总空间失败: ${String(error)}`);
-      return 0;
+  private mapClearResult(result: ManagedStorageClearResult): StorageClearResult {
+    const results: StorageBucketClearResult[] = [];
+    for (let index = 0; index < result.results.length; index++) {
+      results.push(this.mapClearItemResult(result.results[index]));
     }
-  }
-
-  private async loadDeviceFreeSize(): Promise<number> {
-    try {
-      return await storageStatistics.getFreeSize();
-    } catch (error) {
-      logger.debug(TAG, `读取设备剩余空间失败: ${String(error)}`);
-      return 0;
-    }
-  }
-
-  private async loadImageMemoryStats(): Promise<DirectoryUsageStats> {
-    try {
-      const stats = await ImageCacheManager.getInstance().getCacheStats();
-      return {
-        path: '',
-        exists: true,
-        sizeBytes: stats.memoryCache.size,
-        fileCount: stats.memoryCache.count,
-        latestModifiedAt: 0
-      };
-    } catch (error) {
-      logger.warn(TAG, `读取图片内存缓存统计失败: ${String(error)}`);
-      return this.createEmptyUsage('');
-    }
-  }
-
-  private loadOnlineImageMemoryStats(): DirectoryUsageStats {
-    try {
-      const stats = OnlineImageLoader.getInstance().getCacheStats();
-      return {
-        path: '',
-        exists: true,
-        sizeBytes: stats.size,
-        fileCount: stats.count,
-        latestModifiedAt: 0
-      };
-    } catch (error) {
-      logger.warn(TAG, `读取在线图片内存缓存统计失败: ${String(error)}`);
-      return this.createEmptyUsage('');
-    }
-  }
-
-  private loadWebViewDataStats(): DirectoryUsageStats {
-    try {
-      const stats = WebViewDataCacheManager.getInstance().getStats();
-      return {
-        path: '',
-        exists: true,
-        sizeBytes: 0,
-        fileCount: stats.totalCount,
-        latestModifiedAt: 0
-      };
-    } catch (error) {
-      logger.warn(TAG, `读取WebView缓存统计失败: ${String(error)}`);
-      return this.createEmptyUsage('');
-    }
-  }
-
-  private async loadSourceContentPreferenceStats(
-    abilityContext: common.UIAbilityContext
-  ): Promise<PreferenceUsageStats> {
-    const cacheString = await this.readPreferenceString(abilityContext, SOURCE_CONTENT_PREF_NAME, SOURCE_CONTENT_PREF_KEY);
-    if (cacheString.length <= 0) {
-      return {
-        sizeBytes: 0,
-        entryCount: 0,
-        itemCount: 0
-      };
-    }
-
-    let entryCount = 0;
-    let itemCount = 0;
-    try {
-      const parsed = SafeUtils.parseObj(cacheString) as Object;
-      const entries = Object.entries(parsed) as [string, CachedContent][];
-      entryCount = entries.length;
-      for (let index = 0; index < entries.length; index++) {
-        itemCount += entries[index][1].comics.length;
-      }
-    } catch (error) {
-      logger.warn(TAG, `解析图源内容缓存失败: ${String(error)}`);
-    }
-
-    return {
-      sizeBytes: this.measureStringBytes(cacheString),
-      entryCount,
-      itemCount
+    const mapped: StorageClearResult = {
+      success: result.success,
+      clearedSizeBytes: result.clearedSizeBytes,
+      results,
+      errors: this.cloneStrings(result.errors)
     };
+    return mapped;
   }
 
-  private async loadTabContentPreferenceStats(
-    abilityContext: common.UIAbilityContext
-  ): Promise<PreferenceUsageStats> {
-    const bookSourceCache = await this.readPreferenceString(abilityContext, TAB_CONTENT_PREF_NAME, TAB_CONTENT_BOOK_SOURCE_KEY);
-    const suwayomiCache = await this.readPreferenceString(abilityContext, TAB_CONTENT_PREF_NAME, TAB_CONTENT_SUWAYOMI_KEY);
-    const komgaCache = await this.readPreferenceString(abilityContext, TAB_CONTENT_PREF_NAME, TAB_CONTENT_KOMGA_KEY);
-
-    let entryCount = 0;
-    let itemCount = 0;
-
-    if (bookSourceCache.length > 0) {
-      entryCount += 1;
-      itemCount += this.countBookSourceItems(bookSourceCache);
-    }
-    if (suwayomiCache.length > 0) {
-      entryCount += 1;
-      itemCount += this.countSuwayomiItems(suwayomiCache);
-    }
-    if (komgaCache.length > 0) {
-      entryCount += 1;
-      itemCount += this.countKomgaItems(komgaCache);
-    }
-
-    return {
-      sizeBytes: this.measureStringBytes(bookSourceCache) + this.measureStringBytes(suwayomiCache) + this.measureStringBytes(komgaCache),
-      entryCount,
-      itemCount
+  private mapClearItemResult(result: ManagedStorageClearItemResult): StorageBucketClearResult {
+    const mapped: StorageBucketClearResult = {
+      id: this.toBucketId(result.id),
+      title: result.title,
+      success: result.success,
+      clearedSizeBytes: result.clearedSizeBytes,
+      message: result.message
     };
+    return mapped;
   }
 
-  private countBookSourceItems(rawCache: string): number {
-    try {
-      const parsed = SafeUtils.parseObj(rawCache) as BookSourceCacheData;
-      return parsed.bookSourceBooks.length;
-    } catch (_error) {
-      return 0;
-    }
-  }
-
-  private countSuwayomiItems(rawCache: string): number {
-    try {
-      const parsed = SafeUtils.parseObj(rawCache) as SuwayomiCacheData;
-      return parsed.mangas.length;
-    } catch (_error) {
-      return 0;
-    }
-  }
-
-  private countKomgaItems(rawCache: string): number {
-    try {
-      const parsed = SafeUtils.parseObj(rawCache) as KomgaCacheData;
-      return parsed.items.length;
-    } catch (_error) {
-      return 0;
-    }
-  }
-
-  private async readPreferenceString(
-    abilityContext: common.UIAbilityContext,
-    prefName: string,
-    key: string
-  ): Promise<string> {
-    try {
-      const store = await preferences.getPreferences(abilityContext, prefName);
-      const value = await store.get(key, '') as string;
-      return value ? value : '';
-    } catch (error) {
-      logger.debug(TAG, `读取偏好缓存失败: ${prefName}/${key}, ${String(error)}`);
-      return '';
-    }
-  }
-
-  private measureStringBytes(value: string): number {
-    if (!value || value.length <= 0) {
-      return 0;
-    }
-    const encoder = new util.TextEncoder();
-    return encoder.encodeInto(value).byteLength;
-  }
-
-  private scanDirectory(path: string): DirectoryUsageStats {
-    if (!path || path.length <= 0) {
-      return this.createEmptyUsage(path);
-    }
-    if (!this.pathExists(path)) {
-      return this.createEmptyUsage(path);
-    }
-
-    const stack: string[] = [path];
-    let sizeBytes = 0;
-    let fileCount = 0;
-    let latestModifiedAt = 0;
-
-    while (stack.length > 0) {
-      const currentPath = stack.pop() as string;
-      try {
-        const stat = SafeFileUtils.statSync(currentPath);
-        if (stat.isDirectory()) {
-          const children = SafeFileUtils.listFileSync(currentPath);
-          for (let index = 0; index < children.length; index++) {
-            stack.push(`${currentPath}/${children[index]}`);
-          }
-        } else {
-          sizeBytes += stat.size;
-          fileCount += 1;
-          if (stat.mtime > latestModifiedAt) {
-            latestModifiedAt = stat.mtime;
-          }
-        }
-      } catch (error) {
-        logger.debug(TAG, `扫描目录节点失败: ${currentPath}, ${String(error)}`);
-      }
-    }
-
-    return {
-      path,
-      exists: true,
-      sizeBytes,
-      fileCount,
-      latestModifiedAt
-    };
-  }
-
-  private subtractUsage(primary: DirectoryUsageStats, child: DirectoryUsageStats): DirectoryUsageStats {
-    if (!primary.exists) {
-      return this.createEmptyUsage(primary.path);
-    }
-    const usage: DirectoryUsageStats = {
-      path: primary.path,
-      exists: primary.exists,
-      sizeBytes: Math.max(0, primary.sizeBytes - child.sizeBytes),
-      fileCount: Math.max(0, primary.fileCount - child.fileCount),
-      latestModifiedAt: primary.latestModifiedAt
-    };
-    return usage;
-  }
-
-  private createEmptyUsage(path: string): DirectoryUsageStats {
-    return {
-      path,
-      exists: false,
-      sizeBytes: 0,
-      fileCount: 0,
-      latestModifiedAt: 0
-    };
-  }
-
-  private buildOverview(
-    bundleStats: storageStatistics.BundleStats,
-    deviceTotalSizeBytes: number,
-    deviceFreeSizeBytes: number,
-    buckets: StorageBucketSummary[],
-    updatedAt: number
-  ): StorageOverviewSummary {
+  private rebuildOverviewFromBuckets(baseOverview: StorageOverviewSummary, buckets: StorageBucketSummary[]): StorageOverviewSummary {
     let scannedTotalSizeBytes = 0;
     let cleanableTotalSizeBytes = 0;
+    let dangerTotalSizeBytes = 0;
     let protectedTotalSizeBytes = 0;
     let memorySizeBytes = 0;
     let clearableBucketCount = 0;
 
     for (let index = 0; index < buckets.length; index++) {
       const bucket = buckets[index];
-      if (bucket.section !== StorageSectionId.MEMORY) {
-        scannedTotalSizeBytes += bucket.sizeBytes;
-      } else {
+      if (bucket.section === StorageSectionId.RUNTIME_MEMORY) {
         memorySizeBytes += bucket.sizeBytes;
+      } else {
+        scannedTotalSizeBytes += bucket.sizeBytes;
       }
       if (bucket.isClearable) {
         cleanableTotalSizeBytes += bucket.sizeBytes;
         clearableBucketCount += 1;
-      } else {
+      }
+      if (bucket.risk === 'danger') {
+        dangerTotalSizeBytes += bucket.sizeBytes;
+      }
+      if (bucket.risk === 'protected') {
         protectedTotalSizeBytes += bucket.sizeBytes;
       }
     }
 
-    const progressBase = scannedTotalSizeBytes > 0 ? scannedTotalSizeBytes : 1;
-    for (let index = 0; index < buckets.length; index++) {
-      const bucket = buckets[index];
-      bucket.progressRatio = bucket.sizeBytes / progressBase;
-    }
-
-    return {
-      bundleAppSizeBytes: bundleStats.appSize,
-      bundleCacheSizeBytes: bundleStats.cacheSize,
-      bundleDataSizeBytes: bundleStats.dataSize,
-      bundleTotalSizeBytes: bundleStats.appSize + bundleStats.cacheSize + bundleStats.dataSize,
-      deviceTotalSizeBytes,
-      deviceFreeSizeBytes,
+    this.updateProgressRatio(buckets);
+    const overview: StorageOverviewSummary = {
+      bundleAppSizeBytes: baseOverview.bundleAppSizeBytes,
+      bundleCacheSizeBytes: baseOverview.bundleCacheSizeBytes,
+      bundleDataSizeBytes: baseOverview.bundleDataSizeBytes,
+      bundleTotalSizeBytes: baseOverview.bundleTotalSizeBytes,
+      deviceTotalSizeBytes: baseOverview.deviceTotalSizeBytes,
+      deviceFreeSizeBytes: baseOverview.deviceFreeSizeBytes,
       scannedTotalSizeBytes,
       cleanableTotalSizeBytes,
+      dangerTotalSizeBytes,
       protectedTotalSizeBytes,
       memorySizeBytes,
       bucketCount: buckets.length,
       clearableBucketCount,
-      updatedAt
+      failedProviderCount: baseOverview.failedProviderCount,
+      updatedAt: Date.now()
     };
+    return overview;
   }
 
-  private cloneBucket(bucket: StorageBucketSummary): StorageBucketSummary {
-    return {
-      id: bucket.id,
-      section: bucket.section,
-      title: bucket.title,
-      subtitle: bucket.subtitle,
-      sizeBytes: bucket.sizeBytes,
-      itemCount: bucket.itemCount,
-      itemLabel: bucket.itemLabel,
-      path: bucket.path,
-      pathKind: bucket.pathKind,
-      isClearable: bucket.isClearable,
-      risk: bucket.risk,
-      note: bucket.note,
-      progressRatio: bucket.progressRatio,
-      displayOrder: bucket.displayOrder
-    };
-  }
-
-  private buildOptimisticOverviewDelta(
-    snapshot: StorageDashboardSnapshot,
-    clearedBucketIds: StorageBucketId[]
-  ): OptimisticOverviewDelta {
-    let bundleCacheFreedBytes = 0;
-    let bundleDataFreedBytes = 0;
-    let deviceFreedBytes = 0;
-
-    const uniqueBucketIds = this.uniqueBucketIds(clearedBucketIds);
-    for (let index = 0; index < uniqueBucketIds.length; index++) {
-      const bucket = this.findBucket(snapshot.buckets, uniqueBucketIds[index]);
-      if (!bucket || bucket.sizeBytes <= 0) {
-        continue;
-      }
-      if (bucket.section !== StorageSectionId.MEMORY) {
-        deviceFreedBytes += bucket.sizeBytes;
-      }
-      if (!this.shouldAffectBundleStorageOptimistically(bucket.id)) {
-        continue;
-      }
-      if (this.isSystemCacheBucket(bucket.id)) {
-        bundleCacheFreedBytes += bucket.sizeBytes;
-      } else {
-        bundleDataFreedBytes += bucket.sizeBytes;
+  private updateProgressRatio(buckets: StorageBucketSummary[]): void {
+    let scannedTotalSizeBytes = 0;
+    for (let index = 0; index < buckets.length; index++) {
+      if (buckets[index].section !== StorageSectionId.RUNTIME_MEMORY) {
+        scannedTotalSizeBytes += buckets[index].sizeBytes;
       }
     }
-
-    return {
-      bundleCacheFreedBytes,
-      bundleDataFreedBytes,
-      deviceFreedBytes
-    };
-  }
-
-  private expandOptimisticBucketIds(bucketIds: StorageBucketId[]): StorageBucketId[] {
-    const affectedBucketIds = this.uniqueBucketIds(bucketIds);
-    for (let index = 0; index < bucketIds.length; index++) {
-      const bucketId = bucketIds[index];
-      if (bucketId === StorageBucketId.COVER_DISK_CACHE &&
-        !this.containsBucketId(affectedBucketIds, StorageBucketId.IMAGE_MEMORY_CACHE)) {
-        affectedBucketIds.push(StorageBucketId.IMAGE_MEMORY_CACHE);
-      }
+    const progressBase = scannedTotalSizeBytes > 0 ? scannedTotalSizeBytes : 1;
+    for (let index = 0; index < buckets.length; index++) {
+      buckets[index].progressRatio = buckets[index].section === StorageSectionId.RUNTIME_MEMORY ? 0 : buckets[index].sizeBytes / progressBase;
     }
-    return affectedBucketIds;
-  }
-
-  private shouldAffectBundleStorageOptimistically(bucketId: StorageBucketId): boolean {
-    if (this.isDownloadBucket(bucketId)) {
-      return false;
-    }
-    switch (bucketId) {
-      case StorageBucketId.IMAGE_MEMORY_CACHE:
-      case StorageBucketId.ONLINE_IMAGE_MEMORY_CACHE:
-      case StorageBucketId.WEBVIEW_DATA_CACHE:
-        return false;
-      default:
-        return true;
-    }
-  }
-
-  private isSystemCacheBucket(bucketId: StorageBucketId): boolean {
-    switch (bucketId) {
-      case StorageBucketId.TEMP_IMAGE_CACHE:
-      case StorageBucketId.SYSTEM_RUNTIME_CACHE:
-        return true;
-      default:
-        return false;
-    }
-  }
-
-  private isDownloadBucket(bucketId: StorageBucketId): boolean {
-    switch (bucketId) {
-      case StorageBucketId.NOVEL_CHAPTER_CACHE:
-      case StorageBucketId.SUWAYOMI_COVERS:
-      case StorageBucketId.SUWAYOMI_SOURCE_ICONS:
-      case StorageBucketId.SUWAYOMI_CHAPTERS:
-      case StorageBucketId.DOWNLOAD_MANGA:
-        return true;
-      default:
-        return false;
-    }
-  }
-
-  private buildDirectoryBucket(id: StorageBucketId, usage: DirectoryUsageStats): StorageBucketSummary {
-    const metadata = this.getBucketMetadata(id);
-    const bucket: StorageBucketSummary = {
-      id,
-      section: metadata.section,
-      title: metadata.title,
-      subtitle: metadata.subtitle,
-      sizeBytes: usage.sizeBytes,
-      itemCount: usage.fileCount,
-      itemLabel: metadata.itemLabel,
-      path: usage.path,
-      pathKind: metadata.pathKind,
-      isClearable: metadata.clearable,
-      risk: metadata.risk,
-      note: metadata.note,
-      progressRatio: 0,
-      displayOrder: metadata.displayOrder
-    };
-    if (usage.path.length <= 0 && id !== StorageBucketId.DOWNLOAD_MANGA) {
-      bucket.note = metadata.note.length > 0 ? metadata.note : '路径未初始化';
-    }
-    if (usage.path.length <= 0 && id === StorageBucketId.DOWNLOAD_MANGA) {
-      bucket.note = 'Download同步目录未连接';
-    }
-    return bucket;
-  }
-
-  private buildMemoryBucket(
-    id: StorageBucketId,
-    sizeBytes: number,
-    itemCount: number,
-    itemLabel: string
-  ): StorageBucketSummary {
-    const metadata = this.getBucketMetadata(id);
-    return {
-      id,
-      section: metadata.section,
-      title: metadata.title,
-      subtitle: metadata.subtitle,
-      sizeBytes,
-      itemCount,
-      itemLabel,
-      path: '',
-      pathKind: metadata.pathKind,
-      isClearable: metadata.clearable,
-      risk: metadata.risk,
-      note: metadata.note,
-      progressRatio: 0,
-      displayOrder: metadata.displayOrder
-    };
-  }
-
-  private buildPreferenceBucket(id: StorageBucketId, stats: PreferenceUsageStats): StorageBucketSummary {
-    const metadata = this.getBucketMetadata(id);
-    return {
-      id,
-      section: metadata.section,
-      title: metadata.title,
-      subtitle: metadata.subtitle,
-      sizeBytes: stats.sizeBytes,
-      itemCount: stats.itemCount > 0 ? stats.itemCount : stats.entryCount,
-      itemLabel: metadata.itemLabel,
-      path: metadata.pathKind === 'preferences' ? 'Preferences' : '',
-      pathKind: metadata.pathKind,
-      isClearable: metadata.clearable,
-      risk: metadata.risk,
-      note: metadata.note,
-      progressRatio: 0,
-      displayOrder: metadata.displayOrder
-    };
-  }
-
-  private getBucketMetadata(id: StorageBucketId): BucketMetadata {
-    switch (id) {
-      case StorageBucketId.COVER_DISK_CACHE:
-        return this.createBucketMetadata(StorageSectionId.CLEANABLE, '封面缓存', '书架、详情和图源封面缓存文件', '个文件', 'sandbox', true, 'safe', '会同步重置封面本地路径记录', 10);
-      case StorageBucketId.ONLINE_IMAGE_DISK_CACHE:
-        return this.createBucketMetadata(StorageSectionId.CLEANABLE, '在线图片磁盘缓存', 'filesDir/cache/image_cache 中的持久化页图缓存', '个文件', 'sandbox', true, 'safe', '', 20);
-      case StorageBucketId.SANDBOX_CACHE_MISC:
-        return this.createBucketMetadata(StorageSectionId.CLEANABLE, '沙箱其他缓存', 'filesDir/cache 下未单独归类的运行时缓存', '个文件', 'sandbox', true, 'safe', '', 30);
-      case StorageBucketId.TEMP_IMAGE_CACHE:
-        return this.createBucketMetadata(StorageSectionId.CLEANABLE, '临时章节图片缓存', 'downloadWhileReading 关闭时使用的临时图片缓存', '个文件', 'system', true, 'safe', '', 40);
-      case StorageBucketId.SYSTEM_RUNTIME_CACHE:
-        return this.createBucketMetadata(StorageSectionId.CLEANABLE, '系统运行缓存', 'cacheDir 下未单独归类的运行时缓存', '个文件', 'system', true, 'safe', '', 50);
-      case StorageBucketId.TEMP_FILES:
-        return this.createBucketMetadata(StorageSectionId.CLEANABLE, '临时文件', '处理中间产物与临时落地文件', '个文件', 'sandbox', true, 'safe', '', 60);
-      case StorageBucketId.SOURCE_CONTENT_CACHE:
-        return this.createBucketMetadata(StorageSectionId.CLEANABLE, '图源内容缓存', '热门、最新、搜索等结果页的持久化缓存', '项内容', 'preferences', true, 'safe', '按偏好存储估算大小', 70);
-      case StorageBucketId.TAB_CONTENT_CACHE:
-        return this.createBucketMetadata(StorageSectionId.CLEANABLE, '标签页持久缓存', '书源、Suwayomi、Komga Tab 的持久化快照', '项内容', 'preferences', true, 'safe', '按偏好存储估算大小', 80);
-      case StorageBucketId.PERMANENT_MANGA_CACHE:
-        return this.createBucketMetadata(StorageSectionId.REMOTE_CACHE, '永久章节图片缓存', '边看边下载与离线页图缓存', '个文件', 'sandbox', true, 'caution', '会清空在线漫画的本地图片缓存和下载状态', 10);
-      case StorageBucketId.NOVEL_CHAPTER_CACHE:
-        return this.createBucketMetadata(StorageSectionId.REMOTE_CACHE, '小说离线缓存', '章节正文、音频与章节列表缓存', '个文件', 'download', true, 'caution', '会影响小说离线阅读与听书', 20);
-      case StorageBucketId.REMOTE_READ_ALOUD_CACHE:
-        return this.createBucketMetadata(StorageSectionId.REMOTE_CACHE, '远程朗读音频缓存', '远程朗读分段音频与合并音频缓存', '个文件', 'sandbox', true, 'caution', '会清空远程听书缓存', 30);
-      case StorageBucketId.SUWAYOMI_COVERS:
-        return this.createBucketMetadata(StorageSectionId.REMOTE_CACHE, 'Suwayomi 封面缓存', 'Download 同步目录中的 Suwayomi 封面', '个文件', 'download', true, 'safe', '需要先连接 Download 同步目录', 40);
-      case StorageBucketId.SUWAYOMI_SOURCE_ICONS:
-        return this.createBucketMetadata(StorageSectionId.REMOTE_CACHE, 'Suwayomi 图标缓存', 'Download 同步目录中的 Suwayomi 图源图标', '个文件', 'download', true, 'safe', '需要先连接 Download 同步目录', 50);
-      case StorageBucketId.SUWAYOMI_CHAPTERS:
-        return this.createBucketMetadata(StorageSectionId.REMOTE_CACHE, 'Suwayomi 章节缓存', 'Download 同步目录中的 Suwayomi 章节图片', '个文件', 'download', true, 'caution', '会清空 Suwayomi 离线页图', 60);
-      case StorageBucketId.KOMGA_COVERS:
-        return this.createBucketMetadata(StorageSectionId.REMOTE_CACHE, 'Komga 封面缓存', 'Komga 浏览和详情页封面缓存', '个文件', 'sandbox', true, 'safe', '', 70);
-      case StorageBucketId.KOMGA_CHAPTERS:
-        return this.createBucketMetadata(StorageSectionId.REMOTE_CACHE, 'Komga 章节缓存', 'Komga 阅读页缓存的章节图片', '个文件', 'sandbox', true, 'caution', '会清空 Komga 离线页图', 80);
-      case StorageBucketId.IMAGE_MEMORY_CACHE:
-        return this.createBucketMetadata(StorageSectionId.MEMORY, '图片内存缓存', 'ImageCacheManager 当前持有的 PixelMap', '张图片', 'memory', true, 'safe', '仅在本次应用运行期间占用内存', 10);
-      case StorageBucketId.ONLINE_IMAGE_MEMORY_CACHE:
-        return this.createBucketMetadata(StorageSectionId.MEMORY, '在线图片内存缓存', 'OnlineImageLoader 的运行时缓存', '张图片', 'memory', true, 'safe', '仅在本次应用运行期间占用内存', 20);
-      case StorageBucketId.WEBVIEW_DATA_CACHE:
-        return this.createBucketMetadata(StorageSectionId.MEMORY, 'WebView 数据缓存', '漫画详情与章节列表的内存缓存', '条数据', 'memory', true, 'safe', '这是内存条目数，不单独落盘', 30);
-      case StorageBucketId.DATABASE:
-        return this.createBucketMetadata(StorageSectionId.PROTECTED, '应用数据库', '阅读记录、书架、图源与设置数据', '个文件', 'database', false, 'protected', '受保护数据，不在此页面直接清理', 10);
-      case StorageBucketId.COMIC_FILES:
-        return this.createBucketMetadata(StorageSectionId.PROTECTED, '本地漫画文件', '导入到沙箱中的本地漫画资源', '个文件', 'sandbox', false, 'protected', '受保护数据，不在此页面直接清理', 20);
-      case StorageBucketId.EBOOK_FILES:
-        return this.createBucketMetadata(StorageSectionId.PROTECTED, '电子书文件', '导入的电子书与离线资源', '个文件', 'sandbox', false, 'protected', '受保护数据，不在此页面直接清理', 30);
-      case StorageBucketId.CHAPTER_FILES:
-        return this.createBucketMetadata(StorageSectionId.PROTECTED, '章节文件', '已下载章节与离线正文文件', '个文件', 'sandbox', false, 'protected', '受保护数据，不在此页面直接清理', 40);
-      case StorageBucketId.PLUGIN_FILES:
-        return this.createBucketMetadata(StorageSectionId.PROTECTED, '插件与扩展文件', '图源插件、扩展与相关资源', '个文件', 'sandbox', false, 'protected', '受保护数据，不在此页面直接清理', 50);
-      case StorageBucketId.LIBRARY_COVERS:
-        return this.createBucketMetadata(StorageSectionId.PROTECTED, '书库持久封面', '书库条目的持久封面文件', '个文件', 'sandbox', false, 'protected', '受保护数据，不在此页面直接清理', 60);
-      case StorageBucketId.DOWNLOAD_MANGA:
-        return this.createBucketMetadata(StorageSectionId.PROTECTED, 'Download 同步漫画', 'Download 应用目录中的漫画输出与同步内容', '个文件', 'download', false, 'protected', '受保护数据，不在此页面直接清理', 70);
-      default:
-        return this.createBucketMetadata(StorageSectionId.PROTECTED, '未命名存储项', '未命名存储项', '个文件', 'sandbox', false, 'protected', '', 999);
-    }
-  }
-
-  private createBucketMetadata(
-    section: StorageSectionId,
-    title: string,
-    subtitle: string,
-    itemLabel: string,
-    pathKind: StorageBucketPathKind,
-    clearable: boolean,
-    risk: StorageBucketRisk,
-    note: string,
-    displayOrder: number
-  ): BucketMetadata {
-    return {
-      section,
-      title,
-      subtitle,
-      itemLabel,
-      pathKind,
-      clearable,
-      risk,
-      note,
-      displayOrder
-    };
   }
 
   private buildSections(buckets: StorageBucketSummary[]): StorageSectionSummary[] {
     const sections: StorageSectionSummary[] = [];
-    sections.push(this.buildSection(StorageSectionId.CLEANABLE, buckets));
-    sections.push(this.buildSection(StorageSectionId.REMOTE_CACHE, buckets));
-    sections.push(this.buildSection(StorageSectionId.MEMORY, buckets));
-    sections.push(this.buildSection(StorageSectionId.PROTECTED, buckets));
+    const orderedSections: StorageSectionId[] = [
+      StorageSectionId.SAFE_CACHE,
+      StorageSectionId.TEMP_WORKSPACE,
+      StorageSectionId.OFFLINE_CACHE,
+      StorageSectionId.RUNTIME_MEMORY,
+      StorageSectionId.USER_DATA,
+      StorageSectionId.BACKUP,
+      StorageSectionId.EXTENSION,
+      StorageSectionId.LOGS,
+      StorageSectionId.DOWNLOAD_EXTERNAL,
+      StorageSectionId.PROTECTED
+    ];
+
+    for (let index = 0; index < orderedSections.length; index++) {
+      const section = this.buildSection(orderedSections[index], buckets);
+      if (section.bucketCount > 0) {
+        sections.push(section);
+      }
+    }
     return sections;
   }
 
   private buildSection(id: StorageSectionId, buckets: StorageBucketSummary[]): StorageSectionSummary {
+    const metadata = this.getSectionMetadata(id);
     let totalSizeBytes = 0;
     let clearableSizeBytes = 0;
     let bucketCount = 0;
@@ -1055,222 +463,284 @@ export class StorageDashboardService {
       }
     }
 
-    let title = '';
-    let subtitle = '';
-    switch (id) {
-      case StorageSectionId.CLEANABLE:
-        title = '可直接清理';
-        subtitle = '应用可安全回收的临时缓存与持久化快照';
-        break;
-      case StorageSectionId.REMOTE_CACHE:
-        title = '离线与远端缓存';
-        subtitle = '会影响离线阅读、听书或远端浏览体验的缓存';
-        break;
-      case StorageSectionId.MEMORY:
-        title = '运行时内存缓存';
-        subtitle = '当前进程内的即时缓存，清理后不会删除本地文件';
-        break;
-      case StorageSectionId.PROTECTED:
-        title = '受保护数据';
-        subtitle = '本地资料与核心数据库，仅展示不在此页直接清理';
-        break;
-      default:
-        title = '未分组';
-        subtitle = '';
-        break;
-    }
-
-    return {
+    const section: StorageSectionSummary = {
       id,
-      title,
-      subtitle,
+      title: metadata.title,
+      subtitle: metadata.subtitle,
       totalSizeBytes,
       clearableSizeBytes,
       bucketCount
     };
+    return section;
   }
 
-  private getSectionOrder(section: StorageSectionId): number {
-    switch (section) {
-      case StorageSectionId.CLEANABLE:
-        return 0;
-      case StorageSectionId.REMOTE_CACHE:
-        return 1;
-      case StorageSectionId.MEMORY:
-        return 2;
+  private getSectionMetadata(sectionId: StorageSectionId): SectionMetadata {
+    const metadata = new SectionMetadata();
+    switch (sectionId) {
+      case StorageSectionId.SAFE_CACHE:
+        metadata.title = '缓存';
+        metadata.subtitle = '安全缓存、偏好缓存和网络文件夹缓存，可直接回收';
+        metadata.order = 0;
+        break;
+      case StorageSectionId.TEMP_WORKSPACE:
+        metadata.title = '临时工作区';
+        metadata.subtitle = '下载、归档、解压、截图等短期工作文件';
+        metadata.order = 1;
+        break;
+      case StorageSectionId.OFFLINE_CACHE:
+        metadata.title = '离线';
+        metadata.subtitle = '漫画、小说、远程库等离线缓存，清理后需要重新拉取';
+        metadata.order = 2;
+        break;
+      case StorageSectionId.RUNTIME_MEMORY:
+        metadata.title = '运行时内存';
+        metadata.subtitle = '当前进程持有的图片和 WebView 数据缓存';
+        metadata.order = 3;
+        break;
+      case StorageSectionId.USER_DATA:
+        metadata.title = '数据';
+        metadata.subtitle = '导入文件、封面、字体和私有下载内容';
+        metadata.order = 4;
+        break;
+      case StorageSectionId.BACKUP:
+        metadata.title = '备份';
+        metadata.subtitle = '备份与恢复页面生成或导入的备份文件';
+        metadata.order = 5;
+        break;
+      case StorageSectionId.EXTENSION:
+        metadata.title = '扩展';
+        metadata.subtitle = '图源扩展仓库、插件和扩展运行资源';
+        metadata.order = 6;
+        break;
+      case StorageSectionId.LOGS:
+        metadata.title = '日志与诊断';
+        metadata.subtitle = '错误、崩溃、反馈和版本历史缓存';
+        metadata.order = 7;
+        break;
+      case StorageSectionId.DOWNLOAD_EXTERNAL:
+        metadata.title = '外部 Download';
+        metadata.subtitle = 'Download 同步目录中的外部内容，仅在授权后扫描';
+        metadata.order = 8;
+        break;
       case StorageSectionId.PROTECTED:
-        return 3;
       default:
-        return 99;
+        metadata.title = '受保护数据';
+        metadata.subtitle = '核心数据库和缺少一致性删除服务的数据，只展示和跳转';
+        metadata.order = 9;
+        break;
+    }
+    return metadata;
+  }
+
+  private mapGroup(group: ManagedStorageGroup): StorageSectionId {
+    switch (group) {
+      case ManagedStorageGroup.SAFE_CACHE:
+        return StorageSectionId.SAFE_CACHE;
+      case ManagedStorageGroup.TEMP_WORKSPACE:
+        return StorageSectionId.TEMP_WORKSPACE;
+      case ManagedStorageGroup.OFFLINE_CACHE:
+        return StorageSectionId.OFFLINE_CACHE;
+      case ManagedStorageGroup.RUNTIME_MEMORY:
+        return StorageSectionId.RUNTIME_MEMORY;
+      case ManagedStorageGroup.USER_DATA:
+        return StorageSectionId.USER_DATA;
+      case ManagedStorageGroup.BACKUP:
+        return StorageSectionId.BACKUP;
+      case ManagedStorageGroup.EXTENSION:
+        return StorageSectionId.EXTENSION;
+      case ManagedStorageGroup.LOGS:
+        return StorageSectionId.LOGS;
+      case ManagedStorageGroup.DOWNLOAD_EXTERNAL:
+        return StorageSectionId.DOWNLOAD_EXTERNAL;
+      case ManagedStorageGroup.PROTECTED:
+      default:
+        return StorageSectionId.PROTECTED;
     }
   }
 
-  private findBucket(buckets: StorageBucketSummary[], bucketId: StorageBucketId): StorageBucketSummary | null {
-    for (let index = 0; index < buckets.length; index++) {
-      if (buckets[index].id === bucketId) {
-        return buckets[index];
-      }
+  private mapKind(kind: ManagedStorageKind): StorageBucketPathKind {
+    switch (kind) {
+      case ManagedStorageKind.SYSTEM_CACHE:
+        return 'system';
+      case ManagedStorageKind.DOWNLOAD:
+        return 'download';
+      case ManagedStorageKind.DATABASE:
+        return 'database';
+      case ManagedStorageKind.PREFERENCES:
+        return 'preferences';
+      case ManagedStorageKind.MEMORY:
+        return 'memory';
+      case ManagedStorageKind.EXTERNAL:
+        return 'external';
+      case ManagedStorageKind.SANDBOX:
+      default:
+        return 'sandbox';
     }
-    return null;
   }
 
-  private async clearSingleBucket(
-    abilityContext: common.UIAbilityContext,
-    bucketId: StorageBucketId
-  ): Promise<void> {
-    const paths = this.buildPathSet(abilityContext);
+  private mapRisk(risk: ManagedStorageRisk): StorageBucketRisk {
+    switch (risk) {
+      case ManagedStorageRisk.CAUTION:
+        return 'caution';
+      case ManagedStorageRisk.DANGER:
+        return 'danger';
+      case ManagedStorageRisk.PROTECTED:
+        return 'protected';
+      case ManagedStorageRisk.SAFE:
+      default:
+        return 'safe';
+    }
+  }
 
-    switch (bucketId) {
+  private toBucketId(id: string): StorageBucketId {
+    switch (id) {
       case StorageBucketId.COVER_DISK_CACHE:
-        await ImageCacheManager.getInstance().clearAllCache();
-        this.clearDirectoryContents(paths.coverCacheDir);
-        await this.resetCoverCacheDatabaseState();
-        break;
+        return StorageBucketId.COVER_DISK_CACHE;
       case StorageBucketId.ONLINE_IMAGE_DISK_CACHE:
-        await DiskCacheManager.getInstance().clear();
-        this.clearDirectoryContents(paths.onlineImageDiskCacheDir);
-        break;
+        return StorageBucketId.ONLINE_IMAGE_DISK_CACHE;
       case StorageBucketId.SANDBOX_CACHE_MISC:
-        this.clearDirectoryContents(paths.sandboxCacheDir, ['image_cache']);
-        break;
+        return StorageBucketId.SANDBOX_CACHE_MISC;
       case StorageBucketId.TEMP_IMAGE_CACHE:
-        this.clearDirectoryContents(paths.tempImageCacheDir);
-        await this.resetOnlineImageCacheDatabaseState();
-        break;
+        return StorageBucketId.TEMP_IMAGE_CACHE;
       case StorageBucketId.SYSTEM_RUNTIME_CACHE:
-        this.clearDirectoryContents(paths.cacheDir, ['temp_image_cache']);
-        break;
+        return StorageBucketId.SYSTEM_RUNTIME_CACHE;
       case StorageBucketId.TEMP_FILES:
-        this.clearDirectoryContents(paths.tempFilesDir);
-        break;
+        return StorageBucketId.TEMP_FILES;
       case StorageBucketId.SOURCE_CONTENT_CACHE:
-        await SourceContentCache.getInstance().clearAll();
-        break;
+        return StorageBucketId.SOURCE_CONTENT_CACHE;
       case StorageBucketId.TAB_CONTENT_CACHE:
-        await TabContentCacheManager.getInstance().clearAll();
-        break;
+        return StorageBucketId.TAB_CONTENT_CACHE;
+      case StorageBucketId.NETWORK_FOLDER_CACHE:
+        return StorageBucketId.NETWORK_FOLDER_CACHE;
+      case StorageBucketId.ONLINE_DOWNLOAD_WORK:
+        return StorageBucketId.ONLINE_DOWNLOAD_WORK;
+      case StorageBucketId.ONLINE_ARCHIVE_WORK:
+        return StorageBucketId.ONLINE_ARCHIVE_WORK;
+      case StorageBucketId.ONLINE_CBZ_READER:
+        return StorageBucketId.ONLINE_CBZ_READER;
+      case StorageBucketId.READER_IMAGE_ACTIONS:
+        return StorageBucketId.READER_IMAGE_ACTIONS;
+      case StorageBucketId.TRANSITION_SCREENSHOTS:
+        return StorageBucketId.TRANSITION_SCREENSHOTS;
       case StorageBucketId.PERMANENT_MANGA_CACHE:
-        this.clearDirectoryContents(paths.permanentCacheDir);
-        await this.resetOnlineImageCacheDatabaseState();
-        break;
+        return StorageBucketId.PERMANENT_MANGA_CACHE;
+      case StorageBucketId.PRIVATE_ONLINE_ARCHIVE:
+        return StorageBucketId.PRIVATE_ONLINE_ARCHIVE;
       case StorageBucketId.NOVEL_CHAPTER_CACHE:
-        this.clearDirectoryContents(paths.novelCacheDir);
-        break;
+        return StorageBucketId.NOVEL_CHAPTER_CACHE;
       case StorageBucketId.REMOTE_READ_ALOUD_CACHE:
-        this.clearDirectoryContents(paths.remoteReadAloudDir);
-        break;
+        return StorageBucketId.REMOTE_READ_ALOUD_CACHE;
       case StorageBucketId.SUWAYOMI_COVERS:
-        this.clearDirectoryContents(paths.suwayomiCoverDir);
-        break;
+        return StorageBucketId.SUWAYOMI_COVERS;
       case StorageBucketId.SUWAYOMI_SOURCE_ICONS:
-        this.clearDirectoryContents(paths.suwayomiIconDir);
-        break;
+        return StorageBucketId.SUWAYOMI_SOURCE_ICONS;
       case StorageBucketId.SUWAYOMI_CHAPTERS:
-        this.clearDirectoryContents(paths.suwayomiChapterDir);
-        break;
+        return StorageBucketId.SUWAYOMI_CHAPTERS;
       case StorageBucketId.KOMGA_COVERS:
-        this.clearDirectoryContents(paths.komgaCoverDir);
-        break;
+        return StorageBucketId.KOMGA_COVERS;
       case StorageBucketId.KOMGA_CHAPTERS:
-        this.clearDirectoryContents(paths.komgaChapterDir);
-        break;
+        return StorageBucketId.KOMGA_CHAPTERS;
       case StorageBucketId.IMAGE_MEMORY_CACHE:
-        ImageCacheManager.getInstance().clearMemoryCache();
-        break;
+        return StorageBucketId.IMAGE_MEMORY_CACHE;
       case StorageBucketId.ONLINE_IMAGE_MEMORY_CACHE:
-        OnlineImageLoader.getInstance().clearCache();
-        break;
+        return StorageBucketId.ONLINE_IMAGE_MEMORY_CACHE;
       case StorageBucketId.WEBVIEW_DATA_CACHE:
-        WebViewDataCacheManager.getInstance().clearAll();
-        break;
+        return StorageBucketId.WEBVIEW_DATA_CACHE;
+      case StorageBucketId.LOCAL_IMAGE_MEMORY_CACHE:
+        return StorageBucketId.LOCAL_IMAGE_MEMORY_CACHE;
+      case StorageBucketId.DATABASE:
+        return StorageBucketId.DATABASE;
+      case StorageBucketId.COMIC_FILES:
+        return StorageBucketId.COMIC_FILES;
+      case StorageBucketId.EBOOK_FILES:
+        return StorageBucketId.EBOOK_FILES;
+      case StorageBucketId.CHAPTER_FILES:
+        return StorageBucketId.CHAPTER_FILES;
+      case StorageBucketId.PLUGIN_FILES:
+        return StorageBucketId.PLUGIN_FILES;
+      case StorageBucketId.LIBRARY_COVERS:
+        return StorageBucketId.LIBRARY_COVERS;
+      case StorageBucketId.EBOOK_COVERS:
+        return StorageBucketId.EBOOK_COVERS;
+      case StorageBucketId.NOVEL_COVERS:
+        return StorageBucketId.NOVEL_COVERS;
+      case StorageBucketId.BACKUP_FILES:
+        return StorageBucketId.BACKUP_FILES;
+      case StorageBucketId.EXTENSION_REPOSITORY:
+        return StorageBucketId.EXTENSION_REPOSITORY;
+      case StorageBucketId.CUSTOM_FONTS:
+        return StorageBucketId.CUSTOM_FONTS;
+      case StorageBucketId.VERSION_HISTORY:
+        return StorageBucketId.VERSION_HISTORY;
+      case StorageBucketId.ERROR_LOGS:
+        return StorageBucketId.ERROR_LOGS;
+      case StorageBucketId.CRASH_LOGS:
+        return StorageBucketId.CRASH_LOGS;
+      case StorageBucketId.FEEDBACK_FILES:
+        return StorageBucketId.FEEDBACK_FILES;
+      case StorageBucketId.PRIVATE_DOWNLOADS:
+        return StorageBucketId.PRIVATE_DOWNLOADS;
+      case StorageBucketId.DOWNLOAD_MANGA:
+        return StorageBucketId.DOWNLOAD_MANGA;
       default:
-        throw new Error('UNSUPPORTED_CLEAR_OPERATION');
+        return StorageBucketId.UNMAPPED;
     }
   }
 
-  private async resetCoverCacheDatabaseState(): Promise<void> {
-    try {
-      await this.databaseManager.executeSql(
-        'UPDATE temp_manga_info SET localCoverPath = NULL WHERE localCoverPath IS NOT NULL',
-        []
-      );
-    } catch (error) {
-      logger.warn(TAG, `同步清理封面缓存记录失败: ${String(error)}`);
-    }
+  private cloneBucket(bucket: StorageBucketSummary): StorageBucketSummary {
+    const clone: StorageBucketSummary = {
+      id: bucket.id,
+      providerId: bucket.providerId,
+      section: bucket.section,
+      title: bucket.title,
+      subtitle: bucket.subtitle,
+      sizeBytes: bucket.sizeBytes,
+      itemCount: bucket.itemCount,
+      itemLabel: bucket.itemLabel,
+      path: bucket.path,
+      pathKind: bucket.pathKind,
+      isClearable: bucket.isClearable,
+      canDelete: bucket.canDelete,
+      autoClearEligible: bucket.autoClearEligible,
+      risk: bucket.risk,
+      note: bucket.note,
+      targetPage: bucket.targetPage,
+      progressRatio: bucket.progressRatio,
+      displayOrder: bucket.displayOrder
+    };
+    return clone;
   }
 
-  private async resetOnlineImageCacheDatabaseState(): Promise<void> {
-    try {
-      await this.databaseManager.executeSql(
-        'UPDATE online_page SET localPath = NULL, fileSize = 0, isDownloaded = 0 WHERE localPath IS NOT NULL OR isDownloaded = 1',
-        []
-      );
-      await this.databaseManager.executeSql(
-        'UPDATE online_chapter SET isDownloaded = 0, downloadPath = NULL WHERE isDownloaded = 1 OR downloadPath IS NOT NULL',
-        []
-      );
-      await this.databaseManager.executeSql(
-        'DELETE FROM online_chapter_cache_state',
-        []
-      );
-    } catch (error) {
-      logger.warn(TAG, `同步清理在线图片缓存记录失败: ${String(error)}`);
+  private cloneProviderStatuses(statuses: StorageProviderStatusSummary[]): StorageProviderStatusSummary[] {
+    const result: StorageProviderStatusSummary[] = [];
+    for (let index = 0; index < statuses.length; index++) {
+      const status = statuses[index];
+      const clone: StorageProviderStatusSummary = {
+        providerId: status.providerId,
+        title: status.title,
+        success: status.success,
+        message: status.message,
+        durationMs: status.durationMs
+      };
+      result.push(clone);
     }
+    return result;
   }
 
-  private clearDirectoryContents(path: string, excludedChildNames: string[] = []): void {
-    if (!path || path.length <= 0 || !this.pathExists(path)) {
-      return;
-    }
-
-    try {
-      const children = SafeFileUtils.listFileSync(path);
-      for (let index = 0; index < children.length; index++) {
-        const childName = children[index];
-        if (this.containsString(excludedChildNames, childName)) {
-          continue;
-        }
-        const childPath = `${path}/${childName}`;
-        this.deletePathRecursive(childPath);
+  private expandOptimisticBucketIds(bucketIds: StorageBucketId[]): StorageBucketId[] {
+    const affectedBucketIds = this.uniqueBucketIds(bucketIds);
+    for (let index = 0; index < bucketIds.length; index++) {
+      const bucketId = bucketIds[index];
+      if (bucketId === StorageBucketId.COVER_DISK_CACHE &&
+        !this.containsBucketId(affectedBucketIds, StorageBucketId.IMAGE_MEMORY_CACHE)) {
+        affectedBucketIds.push(StorageBucketId.IMAGE_MEMORY_CACHE);
       }
-    } catch (error) {
-      throw new Error(`清理目录失败: ${path}, ${String(error)}`);
-    }
-  }
-
-  private deletePathRecursive(path: string): void {
-    if (!path || path.length <= 0 || !this.pathExists(path)) {
-      return;
-    }
-
-    const stat = SafeFileUtils.statSync(path);
-    if (stat.isDirectory()) {
-      const children = SafeFileUtils.listFileSync(path);
-      for (let index = 0; index < children.length; index++) {
-        this.deletePathRecursive(`${path}/${children[index]}`);
-      }
-      SafeFileUtils.rmdirSync(path);
-      return;
-    }
-
-    SafeFileUtils.unlinkSync(path);
-  }
-
-  private pathExists(path: string): boolean {
-    try {
-      return SafeFileUtils.accessSync(path);
-    } catch (_error) {
-      return false;
-    }
-  }
-
-  private containsString(values: string[], target: string): boolean {
-    for (let index = 0; index < values.length; index++) {
-      if (values[index] === target) {
-        return true;
+      if ((bucketId === StorageBucketId.TEMP_IMAGE_CACHE || bucketId === StorageBucketId.PERMANENT_MANGA_CACHE) &&
+        !this.containsBucketId(affectedBucketIds, StorageBucketId.ONLINE_IMAGE_MEMORY_CACHE)) {
+        affectedBucketIds.push(StorageBucketId.ONLINE_IMAGE_MEMORY_CACHE);
       }
     }
-    return false;
+    return affectedBucketIds;
   }
 
   private uniqueBucketIds(bucketIds: StorageBucketId[]): StorageBucketId[] {
@@ -1291,5 +761,13 @@ export class StorageDashboardService {
       }
     }
     return false;
+  }
+
+  private cloneStrings(values: string[]): string[] {
+    const result: string[] = [];
+    for (let index = 0; index < values.length; index++) {
+      result.push(values[index]);
+    }
+    return result;
   }
 }

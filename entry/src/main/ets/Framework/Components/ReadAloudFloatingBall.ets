@@ -1,5 +1,5 @@
-﻿import { promptAction } from '@kit.ArkUI';
 import { logger } from '../../Utils/Logger';
+import { display } from '@kit.ArkUI';
 import { ReadAloudController } from '../ReadAloud/ReadAloudController';
 import { eventBus, GameEvent, IEventPayload } from '../EventBus';
 import { ReadAloudPlaybackState, ReadAloudSessionContext, ReadAloudStateSnapshot } from '../ReadAloud/ReadAloudTypes';
@@ -10,6 +10,12 @@ import {
 } from '../ReadAloud/NovelAudioReadAloudSessionManager';
 import { WindowManager, DisplayMode } from '../../Utils/WindowManager';
 import { openReadAloudPlayerInIsolatedAbility } from '../ReadAloud/ReadAloudPlayerAbilityLauncher';
+import {
+  getHoldingAwarenessManager,
+  HoldingAwarenessFeature,
+  HoldingAwarenessManager,
+  HoldingUiAnchor
+} from '../Managers/HoldingAwarenessManager';
 
 const TAG = 'ReadAloudFloatingBall';
 const FLOATING_BALL_REFRESH_INTERVAL_MS: number = 400;
@@ -18,6 +24,9 @@ const FLOATING_BALL_MARQUEE_WINDOW_SIZE: number = 18;
 const FLOATING_BALL_LONG_PRESS_EXIT_HOLD_MS: number = 3000;
 const FLOATING_BALL_LONG_PRESS_EXIT_AUTO_MS: number = 900;
 const FLOATING_BALL_DRAG_START_THRESHOLD_PX: number = 10;
+const FLOATING_BALL_DEFAULT_LEFT_X: number = 20;
+const FLOATING_BALL_DEFAULT_TOP_Y: number = 280;
+const FLOATING_BALL_ESTIMATED_WIDTH: number = 276;
 const FLOATING_BALL_EXIT_HINT_TEXT: string = '听书悬浮球即将退出';
 const READ_ALOUD_UI_STATUS_TEXT_KEY = 'ReadAloudUiStatusText';
 const READ_ALOUD_UI_STATUS_DETAIL_KEY = 'ReadAloudUiStatusDetail';
@@ -29,16 +38,23 @@ export struct ReadAloudFloatingBall {
   @State private isVisible: boolean = false;
   @State private isPlaying: boolean = false;
   @State private showBackRouteIcon: boolean = false;
-  @State private ballX: number = 20;
-  @State private ballY: number = 280;
+  @State private ballX: number = FLOATING_BALL_DEFAULT_LEFT_X;
+  @State private ballY: number = FLOATING_BALL_DEFAULT_TOP_Y;
   @State private isDragging: boolean = false;
   @State private marqueeText: string = '';
   @State private progressSummaryText: string = '';
   @State private currentPhase: string = '';
   @State private isExitingByLongPress: boolean = false;
+  @StorageProp('holding_awareness_preferred_anchor') @Watch('onHoldingAwareFloatingBallSettingChanged')
+  private holdingAwarenessPreferredAnchor: HoldingUiAnchor = HoldingUiAnchor.RIGHT;
+  @StorageProp('holding_awareness_enabled') @Watch('onHoldingAwareFloatingBallSettingChanged')
+  private holdingAwarenessEnabled: boolean = true;
+  @StorageProp('holding_awareness_read_aloud_floating_ball_enabled') @Watch('onHoldingAwareFloatingBallSettingChanged')
+  private holdingAwarenessReadAloudFloatingBallEnabled: boolean = true;
 
   private readAloudController: ReadAloudController = ReadAloudController.getInstance();
   private novelAudioSessionManager = getNovelAudioReadAloudSessionManager();
+  private holdingAwarenessManager: HoldingAwarenessManager = getHoldingAwarenessManager();
   private dragStartX: number = 0;
   private dragStartY: number = 0;
   private ballStartX: number = 0;
@@ -51,6 +67,7 @@ export struct ReadAloudFloatingBall {
   private longPressExitAutoTimer: number = -1;
   private activeSessionKey: string = '';
   private dismissedSessionKey: string = '';
+  private hasUserDraggedBall: boolean = false;
 
   private onReadAloudStateChanged: (_payload: IEventPayload) => void = (): void => {
     this.refreshBallState();
@@ -130,9 +147,60 @@ export struct ReadAloudFloatingBall {
     return sessionKey.length > 0 && this.dismissedSessionKey === sessionKey;
   }
 
+  private getDisplayWidthVp(): number {
+    try {
+      const info = display.getDefaultDisplaySync();
+      const density = info.densityDPI / 160;
+      if (density > 0) {
+        return info.width / density;
+      }
+    } catch (_error) {
+      logger.debug(TAG, '读取屏幕宽度失败，听书悬浮球使用默认宽度');
+    }
+    return 360;
+  }
+
+  private shouldUseHoldingAwareReadAloudBall(): boolean {
+    if (!this.holdingAwarenessEnabled || !this.holdingAwarenessReadAloudFloatingBallEnabled) {
+      return false;
+    }
+    return this.holdingAwarenessManager.isFeatureEnabled(HoldingAwarenessFeature.READ_ALOUD_FLOATING_BALL);
+  }
+
+  private getHoldingAwareReadAloudBallX(): number {
+    if (!this.shouldUseHoldingAwareReadAloudBall()) {
+      return FLOATING_BALL_DEFAULT_LEFT_X;
+    }
+    if (this.holdingAwarenessPreferredAnchor === HoldingUiAnchor.LEFT) {
+      return FLOATING_BALL_DEFAULT_LEFT_X;
+    }
+    const displayWidth = this.getDisplayWidthVp();
+    const rightX = displayWidth - FLOATING_BALL_ESTIMATED_WIDTH - FLOATING_BALL_DEFAULT_LEFT_X;
+    return rightX > FLOATING_BALL_DEFAULT_LEFT_X ? rightX : FLOATING_BALL_DEFAULT_LEFT_X;
+  }
+
+  private syncHoldingAwareBallPosition(canShow: boolean): void {
+    if (!canShow) {
+      this.hasUserDraggedBall = false;
+      return;
+    }
+    if (this.hasUserDraggedBall) {
+      return;
+    }
+    this.ballX = this.getHoldingAwareReadAloudBallX();
+  }
+
+  onHoldingAwareFloatingBallSettingChanged(changedPropertyName?: string): void {
+    if (changedPropertyName) {
+      logger.debug(TAG, `听书悬浮球握姿设置变化：${changedPropertyName}`);
+    }
+    this.syncHoldingAwareBallPosition(this.isVisible);
+  }
+
   private applyLongPressExitPresentation(canShow: boolean): void {
     this.isVisible = canShow;
     if (!canShow) {
+      this.syncHoldingAwareBallPosition(false);
       return;
     }
     this.currentPhase = 'exit_pending';
@@ -162,6 +230,7 @@ export struct ReadAloudFloatingBall {
     if (!hasValidContext || !hasActivePlayback) {
       this.isVisible = false;
       this.isDragging = false;
+      this.syncHoldingAwareBallPosition(false);
       this.clearLongPressExitHoldTimer();
       return;
     }
@@ -173,8 +242,10 @@ export struct ReadAloudFloatingBall {
     }
     this.isVisible = canShow;
     if (!canShow) {
+      this.syncHoldingAwareBallPosition(false);
       return;
     }
+    this.syncHoldingAwareBallPosition(true);
     this.isPlaying = snapshot.playbackState === ReadAloudPlaybackState.PLAYING;
     this.showBackRouteIcon = this.isPlayerHostPage();
     this.currentPhase = (AppStorage.get<string>(READ_ALOUD_UI_STATUS_PHASE_KEY) ?? '').trim();
@@ -198,8 +269,10 @@ export struct ReadAloudFloatingBall {
     }
     this.isVisible = canShow;
     if (!canShow) {
+      this.syncHoldingAwareBallPosition(false);
       return;
     }
+    this.syncHoldingAwareBallPosition(true);
     this.isPlaying = snapshot.isPlaying;
     this.showBackRouteIcon = this.isPlayerHostPage();
     this.currentPhase = this.resolveNovelAudioPhase(snapshot);
@@ -264,6 +337,7 @@ export struct ReadAloudFloatingBall {
     this.isExitingByLongPress = false;
     this.isVisible = false;
     this.isDragging = false;
+    this.syncHoldingAwareBallPosition(false);
     this.clearLongPressExitHoldTimer();
     this.clearLongPressExitAutoTimer();
     logger.info(TAG, `听书悬浮球已自动退出: 会话=${this.dismissedSessionKey}`);
@@ -641,6 +715,7 @@ export struct ReadAloudFloatingBall {
                 return;
               }
               this.isDragging = true;
+              this.hasUserDraggedBall = true;
               this.clearLongPressExitHoldTimer();
             }
             if (!this.isDragging) {

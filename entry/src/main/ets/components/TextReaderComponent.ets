@@ -17,6 +17,12 @@ import { uniformTypeDescriptor as utd } from '@kit.ArkData';
 import { DialogSurfaceStyleHelper } from '../Framework/Components/DialogSurfaceStyleHelper';
 import { SettingsGlassStyleHelper } from '../pages/settings/SettingsGlassStyleHelper';
 import {
+  getHoldingAwarenessManager,
+  HoldingAwarenessFeature,
+  HoldingAwarenessManager,
+  HoldingUiAnchor
+} from '../Framework/Managers/HoldingAwarenessManager';
+import {
   TextReaderSettings,
   TextReaderParams,
   TextReaderCallbacks,
@@ -163,6 +169,9 @@ export struct TextReaderComponent {
   @Prop pendingSeekChapterFraction: number = -1;
   @Prop enableNovelAnnotations: boolean = false;
   @Prop @Watch('onNovelHighlightRangesChange') novelHighlightRanges: TextReaderHighlightRange[] = [];
+  @StorageProp('holding_awareness_preferred_anchor') private holdingAwarenessPreferredAnchor: HoldingUiAnchor = HoldingUiAnchor.RIGHT;
+  @StorageProp('holding_awareness_enabled') private holdingAwarenessEnabled: boolean = true;
+  @StorageProp('holding_awareness_text_highlight_thought_popup_enabled') private holdingAwarenessTextHighlightThoughtPopupEnabled: boolean = true;
   
   // ========== 内容变化追踪 ==========
   /** 上一次的内容（用于检测变化） */
@@ -233,6 +242,7 @@ export struct TextReaderComponent {
   private static readonly PENDING_THOUGHT_POPUP_MAX_RETRIES: number = 24;
   private suppressNextTapEvent: boolean = false;
   private suppressNextTapResetTimer: number = -1;
+  private holdingAwarenessManager: HoldingAwarenessManager = getHoldingAwarenessManager();
   
   // ========== 内部状态 ==========
   /** 当前显示的文本内容 */
@@ -3536,6 +3546,23 @@ export struct TextReaderComponent {
     }
   }
 
+  private shouldAnchorHighlightThoughtPopupToLeft(): boolean {
+    if (!this.holdingAwarenessEnabled || !this.holdingAwarenessTextHighlightThoughtPopupEnabled) {
+      return false;
+    }
+    if (!this.holdingAwarenessManager.isFeatureEnabled(HoldingAwarenessFeature.TEXT_HIGHLIGHT_THOUGHT_POPUP)) {
+      return false;
+    }
+    return this.holdingAwarenessPreferredAnchor === HoldingUiAnchor.LEFT;
+  }
+
+  private shouldUseHoldingAwareHighlightThoughtPopup(): boolean {
+    if (!this.holdingAwarenessEnabled || !this.holdingAwarenessTextHighlightThoughtPopupEnabled) {
+      return false;
+    }
+    return this.holdingAwarenessManager.isFeatureEnabled(HoldingAwarenessFeature.TEXT_HIGHLIGHT_THOUGHT_POPUP);
+  }
+
   private updateHighlightThoughtPopupPosition(anchorXVp: number, anchorYVp: number): void {
     const popupWidth = this.getHighlightThoughtPopupWidthVp();
     const estimatedHeight = 196;
@@ -3551,6 +3578,9 @@ export struct TextReaderComponent {
     }
     if (left > maxLeft) {
       left = maxLeft;
+    }
+    if (this.shouldUseHoldingAwareHighlightThoughtPopup()) {
+      left = this.shouldAnchorHighlightThoughtPopupToLeft() ? horizontalMargin : maxLeft;
     }
 
     let top = anchorYVp - estimatedHeight - verticalGap;
