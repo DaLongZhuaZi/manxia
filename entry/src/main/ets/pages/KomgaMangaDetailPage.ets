@@ -21,6 +21,8 @@ import { openMangaReaderInIsolatedAbility } from '../Framework/Reader/MangaReade
 
 const TAG = 'KomgaMangaDetailPage';
 const HERO_HEIGHT: number = 360;
+const CHAPTER_RENDER_INITIAL_COUNT: number = 40;
+const CHAPTER_RENDER_BATCH_COUNT: number = 40;
 
 
 type KomgaDetailColorKey =
@@ -65,12 +67,15 @@ export struct KomgaMangaDetailPage {
   @State pageTitle: string = '';
   @State detail: KomgaDetailInfo | null = null;
   @State isLoading: boolean = false;
+  @State isDetailRefreshing: boolean = false;
   @State errorMessage: string = '';
   @State sortDescending: boolean = true;
+  @State renderedChapterCount: number = CHAPTER_RENDER_INITIAL_COUNT;
+  @State isAppendingChapters: boolean = false;
   @State lastReadBookId: string = '';
   @State lastReadChapterIndex: number = -1;
   @State lastReadPageIndex: number = 0;
-  @State descriptionExpanded: boolean = false;
+  @State detailCardExpanded: boolean = false;
   @State isInLocalLibrary: boolean = false;
   @State isLibraryActionPending: boolean = false;
   @State originalCoverUrl: string = '';
@@ -173,7 +178,7 @@ export struct KomgaMangaDetailPage {
     if (this.isChapterLibraryActionPending(chapter)) {
       return '处理中';
     }
-    return this.isChapterInLocalLibrary(chapter) ? '移出书架' : '加入书架';
+    return this.isChapterInLocalLibrary(chapter) ? '已添加书库' : '添加书库';
   }
 
   private getSyntheticMangaId(): string {
@@ -232,7 +237,7 @@ export struct KomgaMangaDetailPage {
         id: 'refresh',
         symbol: $r('sys.symbol.arrow_clockwise'),
         label: '刷新',
-        enabled: !this.isLoading,
+        enabled: !this.isLoading && !this.isDetailRefreshing,
         onClick: () => {
           void this.loadDetail(true);
         }
@@ -508,23 +513,29 @@ export struct KomgaMangaDetailPage {
       return;
     }
 
-    this.isLoading = true;
     this.errorMessage = '';
     logger.info(TAG, `开始加载 Komga 详情: itemId=${this.itemId}, contentType=${this.contentType}, instanceId=${this.instanceId || this.getEffectiveInstanceId()}, forceRefresh=${forceRefresh}`);
     try {
       await this.executor.initialize(forceRefresh);
-      this.detail = await this.executor.getDetail(this.itemId, this.contentType, this.instanceId, forceRefresh) as KomgaDetailInfo | null;
-      if (this.detail !== null) {
-        if (this.detail.instanceId !== undefined && this.detail.instanceId.length > 0) {
-          this.instanceId = this.detail.instanceId;
+
+      if (!forceRefresh) {
+        const cachedDetail = await this.executor.getCachedDetail(this.itemId, this.contentType, this.instanceId);
+        if (cachedDetail !== null) {
+          await this.applyLoadedDetail(cachedDetail);
+          await this.loadReadingProgress();
+          this.isLoading = false;
+          logger.info(TAG, `Komga 详情使用持久缓存: itemId=${this.itemId}, chapters=${this.detail?.chapters ? this.detail.chapters.length : 0}`);
+          return;
         }
-        this.pageTitle = this.detail.title;
-        this.originalCoverUrl = String(this.detail.coverUrl || '').trim();
-        this.displayCoverUrl = this.originalCoverUrl;
-        this.ensureDetailCoverCached();
-        await this.loadLocalLibraryState();
-        await this.loadChapterLibraryState();
-        logger.info(TAG, `Komga 详情加载完成: itemId=${this.itemId}, chapters=${this.detail.chapters ? this.detail.chapters.length : 0}, inLibrary=${this.isInLocalLibrary}`);
+      }
+
+      const hasCurrentDetail = this.detail !== null && this.detail.id === this.itemId;
+      this.isLoading = !hasCurrentDetail;
+      this.isDetailRefreshing = hasCurrentDetail && forceRefresh;
+      const loadedDetail = await this.executor.getDetail(this.itemId, this.contentType, this.instanceId, forceRefresh);
+      if (loadedDetail !== null) {
+        await this.applyLoadedDetail(loadedDetail);
+        logger.info(TAG, `Komga 详情加载完成: itemId=${this.itemId}, chapters=${this.detail?.chapters ? this.detail.chapters.length : 0}, inLibrary=${this.isInLocalLibrary}`);
       } else {
         this.errorMessage = '未能获取详情数据';
         this.chapterLibraryIds = [];
@@ -536,7 +547,23 @@ export struct KomgaMangaDetailPage {
       this.errorMessage = `加载失败：${String(error)}`;
     } finally {
       this.isLoading = false;
+      this.isDetailRefreshing = false;
     }
+  }
+
+  private async applyLoadedDetail(detail: ComicDetailInfo): Promise<void> {
+    const komgaDetail = detail as KomgaDetailInfo;
+    this.detail = komgaDetail;
+    if (komgaDetail.instanceId !== undefined && komgaDetail.instanceId.length > 0) {
+      this.instanceId = komgaDetail.instanceId;
+    }
+    this.pageTitle = komgaDetail.title;
+    this.originalCoverUrl = String(komgaDetail.coverUrl || '').trim();
+    this.displayCoverUrl = this.originalCoverUrl;
+    this.resetChapterRenderWindow();
+    this.ensureDetailCoverCached();
+    await this.loadLocalLibraryState();
+    await this.loadChapterLibraryState();
   }
 
 
@@ -555,6 +582,41 @@ export struct KomgaMangaDetailPage {
       return this.sortDescending ? rightNumber - leftNumber : leftNumber - rightNumber;
     });
     return chapters;
+  }
+
+  private resetChapterRenderWindow(): void {
+    this.renderedChapterCount = CHAPTER_RENDER_INITIAL_COUNT;
+    this.isAppendingChapters = false;
+  }
+
+  private getRenderedChapters(): ChapterInfo[] {
+    const chapters: ChapterInfo[] = this.getSortedChapters();
+    const count: number = this.renderedChapterCount > chapters.length ? chapters.length : this.renderedChapterCount;
+    return chapters.slice(0, count);
+  }
+
+  private canRenderMoreChapters(): boolean {
+    const chapters: ChapterInfo[] = this.copyChapters(this.detail?.chapters);
+    return this.renderedChapterCount < chapters.length;
+  }
+
+  private loadMoreChapters(): void {
+    if (!this.canRenderMoreChapters() || this.isAppendingChapters) {
+      return;
+    }
+
+    this.isAppendingChapters = true;
+    setTimeout(() => {
+      const chapters: ChapterInfo[] = this.copyChapters(this.detail?.chapters);
+      const nextCount: number = this.renderedChapterCount + CHAPTER_RENDER_BATCH_COUNT;
+      this.renderedChapterCount = nextCount > chapters.length ? chapters.length : nextCount;
+      this.isAppendingChapters = false;
+    }, 16);
+  }
+
+  private toggleChapterSort(): void {
+    this.sortDescending = !this.sortDescending;
+    this.resetChapterRenderWindow();
   }
 
   private getChapterNumber(chapter: ChapterInfo): number {
@@ -600,9 +662,8 @@ export struct KomgaMangaDetailPage {
   }
 
   private getChapterCount(): number {
-    const chapters: ChapterInfo[] = this.getSortedChapters();
-    if (chapters.length > 0) {
-      return chapters.length;
+    if (this.detail !== null && this.detail.chapters !== undefined && this.detail.chapters.length > 0) {
+      return this.detail.chapters.length;
     }
     const bookCount: number = this.detail?.bookCount !== undefined ? this.detail.bookCount : 0;
     return bookCount > 0 ? bookCount : 0;
@@ -712,6 +773,7 @@ export struct KomgaMangaDetailPage {
     const instanceId = chapter.instanceId !== undefined && chapter.instanceId.length > 0
       ? chapter.instanceId
       : this.getEffectiveInstanceId();
+    this.executor.warmPages(chapter.id, instanceId);
     const readerParams: MangaReaderPageParams = {
       manga: this.detail !== null
         ? this.remoteLibraryBridge.buildKomgaMangaFromDetail(this.detail, instanceId, this.contentType)
@@ -744,24 +806,35 @@ export struct KomgaMangaDetailPage {
     this.openChapter(chapters[0]);
   }
 
-  private toggleDescriptionExpanded(): void {
-    this.descriptionExpanded = !this.descriptionExpanded;
+  private toggleDetailCardExpanded(): void {
+    const uiContext = this.getUIContext();
+    if (uiContext === undefined || uiContext === null) {
+      this.detailCardExpanded = !this.detailCardExpanded;
+      return;
+    }
+
+    uiContext.animateTo({
+      duration: 260,
+      curve: Curve.EaseInOut
+    }, () => {
+      this.detailCardExpanded = !this.detailCardExpanded;
+    });
+  }
+
+  private getDetailCardToggleSymbol(): Resource {
+    return this.detailCardExpanded ? $r('sys.symbol.chevron_up') : $r('sys.symbol.chevron_down');
   }
 
   private getSortSymbol(): Resource {
     return this.sortDescending ? $r('sys.symbol.chevron_down') : $r('sys.symbol.chevron_up');
   }
 
-  private getDescriptionToggleSymbol(): Resource {
-    return this.descriptionExpanded ? $r('sys.symbol.chevron_up') : $r('sys.symbol.chevron_down');
-  }
-
   private getLibraryActionSymbol(): Resource {
-    return this.isInLocalLibrary ? $r('sys.symbol.minus_circle_fill') : $r('sys.symbol.plus_square');
+    return this.isInLocalLibrary ? $r('sys.symbol.checkmark_circle_fill') : $r('sys.symbol.plus_square');
   }
 
   private getChapterLibraryActionSymbol(chapter: ChapterInfo): Resource {
-    return this.isChapterInLocalLibrary(chapter) ? $r('sys.symbol.minus_circle_fill') : $r('sys.symbol.plus_square');
+    return this.isChapterInLocalLibrary(chapter) ? $r('sys.symbol.checkmark_circle_fill') : $r('sys.symbol.plus_square');
   }
 
   private getContinueActionTitle(): string {
@@ -769,14 +842,17 @@ export struct KomgaMangaDetailPage {
   }
 
   private getLibraryActionTitle(): string {
-    return this.isInLocalLibrary ? '移出书架' : '加入书架';
+    if (this.isLibraryActionPending) {
+      return '处理中';
+    }
+    return this.isInLocalLibrary ? '已添加书库' : '添加书库';
   }
 
   private getLibraryActionDescription(): string {
     if (this.isInLocalLibrary) {
-      return '保留远程条目，仅从本地书架移除';
+      return '已保存到本地书库，可再次点击移除';
     }
-    return '保存到本地书架，便于后续继续阅读';
+    return '保存到本地书库，便于后续继续阅读';
   }
 
   private getDisplayTags(): string[] {
@@ -812,18 +888,6 @@ export struct KomgaMangaDetailPage {
       .backgroundColor(highlighted ? this.color('accent_blue') : this.color('comp_background_tertiary'))
       .borderRadius(999)
       .margin({ right: 8, bottom: 8 })
-  }
-
-  @Builder
-  private buildStatusChip(text: string, highlighted: boolean = false) {
-    Text(text)
-      .fontSize(10)
-      .fontWeight(FontWeight.Medium)
-      .fontColor(highlighted ? Color.White : this.color('text_primary'))
-      .fontFamily(this.appFontFamily)
-      .padding({ left: 8, right: 8, top: 4, bottom: 4 })
-      .backgroundColor(highlighted ? this.color('accent_blue') : this.color('comp_background_tertiary'))
-      .borderRadius(999)
   }
 
   @Builder
@@ -896,314 +960,307 @@ export struct KomgaMangaDetailPage {
   }
 
   @Builder
-  private buildMetaChip(symbol: Resource, label: string) {
-    Row({ space: 6 }) {
+  private buildChapterLibraryButton(chapter: ChapterInfo) {
+    Button({ type: ButtonType.Normal, stateEffect: true }) {
+      Row({ space: 6 }) {
+        SymbolGlyph(this.getChapterLibraryActionSymbol(chapter))
+          .fontSize(16)
+          .fontColor([this.isChapterInLocalLibrary(chapter) ? Color.White : this.color('icon_primary')])
+
+        Text(this.getChapterLibraryButtonLabel(chapter))
+          .fontSize(12)
+          .fontWeight(FontWeight.Medium)
+          .fontColor(this.isChapterInLocalLibrary(chapter) ? Color.White : this.color('text_primary'))
+          .fontFamily(this.appFontFamily)
+          .maxLines(1)
+          .textOverflow({ overflow: TextOverflow.Ellipsis })
+      }
+      .height(36)
+      .padding({ left: 10, right: 10 })
+      .backgroundColor(this.isChapterInLocalLibrary(chapter) ? this.color('accent_blue') : this.color('comp_background_tertiary'))
+      .borderRadius(18)
+      .border({
+        width: 1,
+        color: this.isChapterInLocalLibrary(chapter) ? 'rgba(255,255,255,0.12)' : this.color('panel_border')
+      })
+      .justifyContent(FlexAlign.Center)
+    }
+    .width(112)
+    .height(36)
+    .enabled(!this.isChapterLibraryActionPending(chapter))
+    .opacity(this.isChapterLibraryActionPending(chapter) ? 0.5 : 1)
+    .padding(0)
+    .backgroundColor(Color.Transparent)
+    .borderRadius(18)
+    .onClick(() => {
+      void this.toggleChapterLocalLibrary(chapter);
+    })
+  }
+
+  @Builder
+  private buildHeroSection() {
+    Column({ space: 12 }) {
+      Row({ space: 12 }) {
+        Stack({ alignContent: Alignment.TopEnd }) {
+          KomgaImage({
+            src: this.getDisplayCoverUrl(),
+            imageWidth: 92,
+            imageHeight: 132,
+            objectFit: ImageFit.Cover,
+            imgBorderRadius: 14,
+            requestHeaders: this.getImageHeaders(),
+            cacheKey: this.getDetailCoverCacheKey()
+          })
+
+          Text(this.getContentTypeLabel())
+            .fontSize(10)
+            .fontColor(Color.White)
+            .fontFamily(this.appFontFamily)
+            .padding({ left: 7, right: 7, top: 3, bottom: 3 })
+            .backgroundColor('rgba(0, 0, 0, 0.56)')
+            .borderRadius(999)
+            .margin({ top: 8, right: 8 })
+        }
+
+        Column({ space: 7 }) {
+          Text(this.detail !== null ? this.detail.title : this.pageTitle)
+            .fontSize(18)
+            .fontWeight(FontWeight.Bold)
+            .fontColor(this.color('text_primary'))
+            .fontFamily(this.appFontFamily)
+            .maxLines(2)
+            .textOverflow({ overflow: TextOverflow.Ellipsis })
+
+          Text(this.getHeaderMetaLine())
+            .fontSize(12)
+            .fontColor(this.color('text_muted'))
+            .fontFamily(this.appFontFamily)
+            .maxLines(1)
+            .textOverflow({ overflow: TextOverflow.Ellipsis })
+
+          Row({ space: 10 }) {
+            this.buildCompactMeta($r('sys.symbol.book_pages'), `${this.getChapterCount()} 条`)
+            this.buildCompactMeta($r('sys.symbol.book'), this.getPageCountLabel())
+          }
+          .width('100%')
+
+          Row({ space: 8 }) {
+            this.buildCompactHeroAction(
+              $r('sys.symbol.book'),
+              this.getContinueActionTitle(),
+              true,
+              this.getChapterCount() > 0,
+              () => this.continueReading()
+            )
+            this.buildCompactHeroAction(
+              this.getLibraryActionSymbol(),
+              this.isInLocalLibrary ? '已添加' : '添加书库',
+              false,
+              !this.isLibraryActionPending,
+              () => {
+                void this.toggleLocalLibrary();
+              }
+            )
+          }
+          .width('100%')
+        }
+        .layoutWeight(1)
+        .height(132)
+        .justifyContent(FlexAlign.SpaceBetween)
+        .alignItems(HorizontalAlign.Start)
+      }
+      .width('100%')
+
+      if (this.detailCardExpanded) {
+        Column({ space: 14 }) {
+          Column()
+            .width('100%')
+            .height(1)
+            .backgroundColor(this.color('panel_border'))
+
+          Flex({ wrap: FlexWrap.Wrap, justifyContent: FlexAlign.SpaceBetween }) {
+            this.buildInlineInfoItem($r('sys.symbol.picture'), '内容类型', this.getContentTypeLabel())
+            this.buildInlineInfoItem($r('sys.symbol.clock'), '发布时间', this.getReleaseDateLabel())
+            this.buildInlineInfoItem($r('sys.symbol.folder'), '出版社', this.getPublisherLabel())
+            this.buildInlineInfoItem($r('sys.symbol.book'), '语言', this.getLanguageLabel())
+          }
+          .width('100%')
+
+          Column({ space: 8 }) {
+            this.buildInlineTitle($r('sys.symbol.doc_text'), '简介')
+            Text(this.getDescriptionText())
+              .fontSize(13)
+              .lineHeight(21)
+              .fontColor(this.color('text_muted'))
+              .fontFamily(this.appFontFamily)
+              .maxLines(8)
+              .textOverflow({ overflow: TextOverflow.Ellipsis })
+          }
+          .width('100%')
+          .alignItems(HorizontalAlign.Start)
+
+          Column({ space: 8 }) {
+            this.buildInlineTitle($r('sys.symbol.bookmark'), '标签')
+            if (this.getDisplayTags().length > 0) {
+              Flex({ wrap: FlexWrap.Wrap }) {
+                ForEach(this.getDisplayTags(), (tag: string) => {
+                  this.buildBadge(tag)
+                }, (tag: string) => tag)
+              }
+            } else {
+              Text('当前内容暂未提供标签。')
+                .fontSize(12)
+                .fontColor(this.color('text_muted'))
+                .fontFamily(this.appFontFamily)
+            }
+          }
+          .width('100%')
+          .alignItems(HorizontalAlign.Start)
+        }
+        .width('100%')
+        .transition(TransitionEffect.OPACITY.animation({ duration: 180, curve: Curve.EaseOut }))
+      }
+
+      Button({ type: ButtonType.Normal, stateEffect: true }) {
+        Row({ space: 6 }) {
+          Text(this.detailCardExpanded ? '收起详情' : '展开详情')
+            .fontSize(12)
+            .fontWeight(FontWeight.Medium)
+            .fontColor(this.color('text_primary'))
+            .fontFamily(this.appFontFamily)
+          SymbolGlyph(this.getDetailCardToggleSymbol())
+            .fontSize(14)
+            .fontColor([this.color('icon_primary')])
+        }
+        .width('100%')
+        .height(34)
+        .justifyContent(FlexAlign.Center)
+        .backgroundColor(this.color('comp_background_tertiary'))
+        .borderRadius(17)
+      }
+      .width('100%')
+      .height(34)
+      .padding(0)
+      .backgroundColor(Color.Transparent)
+      .borderRadius(17)
+      .onClick(() => this.toggleDetailCardExpanded())
+    }
+    .width('100%')
+    .padding(14)
+    .backgroundColor(this.themeManager.getGlassBackgroundResource())
+    .backgroundBlurStyle(this.themeManager.getGlassBlurStyle())
+    .borderRadius(22)
+    .clip(true)
+    .border({ width: 1, color: this.color('panel_border') })
+    .shadow({
+      radius: this.themeManager.getGlassRadius(),
+      color: this.themeManager.getGlassShadowColor(),
+      offsetX: 0,
+      offsetY: 4
+    })
+  }
+
+  @Builder
+  private buildCompactMeta(symbol: Resource, label: string) {
+    Row({ space: 5 }) {
       SymbolGlyph(symbol)
-        .fontSize(14)
+        .fontSize(13)
         .fontColor([this.color('text_muted')])
       Text(label)
-        .fontSize(12)
+        .fontSize(11)
         .fontColor(this.color('text_muted'))
         .fontFamily(this.appFontFamily)
         .maxLines(1)
         .textOverflow({ overflow: TextOverflow.Ellipsis })
     }
-    .padding({ left: 10, right: 10, top: 6, bottom: 6 })
-    .backgroundColor(this.color('comp_background_tertiary'))
-    .borderRadius(999)
-    .margin({ right: 8, bottom: 8 })
+    .layoutWeight(1)
   }
 
   @Builder
-  private buildActionButton(
+  private buildCompactHeroAction(
     symbol: Resource,
     title: string,
-    description: string,
-    emphasized: boolean,
+    highlighted: boolean,
     enabled: boolean,
     action: () => void
   ) {
     Button({ type: ButtonType.Normal, stateEffect: true }) {
-      Row({ space: 12 }) {
-        Stack() {
-          SymbolGlyph(symbol)
-            .fontSize(20)
-            .fontColor([emphasized ? Color.White : this.color('icon_primary')])
-        }
-        .width(42)
-        .height(42)
-        .backgroundColor(emphasized ? 'rgba(255,255,255,0.16)' : this.color('panel_background'))
-        .borderRadius(16)
-
-        Column({ space: 3 }) {
-          Text(title)
-            .fontSize(14)
-            .fontWeight(FontWeight.Medium)
-            .fontColor(emphasized ? Color.White : this.color('text_primary'))
-            .fontFamily(this.appFontFamily)
-            .maxLines(1)
-            .textOverflow({ overflow: TextOverflow.Ellipsis })
-
-          Text(description)
-            .fontSize(11)
-            .fontColor(emphasized ? 'rgba(255,255,255,0.82)' : this.color('text_muted'))
-            .fontFamily(this.appFontFamily)
-            .maxLines(2)
-            .textOverflow({ overflow: TextOverflow.Ellipsis })
-        }
-        .layoutWeight(1)
-        .alignItems(HorizontalAlign.Start)
+      Row({ space: 6 }) {
+        SymbolGlyph(symbol)
+          .fontSize(15)
+          .fontColor([highlighted ? Color.White : this.color('icon_primary')])
+        Text(title)
+          .fontSize(12)
+          .fontWeight(FontWeight.Medium)
+          .fontColor(highlighted ? Color.White : this.color('text_primary'))
+          .fontFamily(this.appFontFamily)
+          .maxLines(1)
+          .textOverflow({ overflow: TextOverflow.Ellipsis })
       }
-      .width('100%')
-      .padding({ left: 14, right: 14, top: 12, bottom: 12 })
-      .backgroundColor(emphasized ? this.color('accent_blue') : this.color('comp_background_tertiary'))
-      .borderRadius(20)
-      .clip(true)
+      .height(36)
+      .padding({ left: 9, right: 9 })
+      .justifyContent(FlexAlign.Center)
+      .backgroundColor(highlighted ? this.color('accent_blue') : this.color('comp_background_tertiary'))
+      .borderRadius(18)
       .border({
         width: 1,
-        color: emphasized ? 'rgba(255,255,255,0.08)' : this.color('panel_border')
+        color: highlighted ? 'rgba(255,255,255,0.10)' : this.color('panel_border')
       })
-      .alignItems(VerticalAlign.Center)
     }
-    .width('100%')
+    .layoutWeight(1)
+    .height(36)
     .enabled(enabled)
-    .opacity(enabled ? 1 : 0.42)
+    .opacity(enabled ? 1 : 0.48)
     .padding(0)
     .backgroundColor(Color.Transparent)
-    .borderRadius(20)
-    .clip(true)
+    .borderRadius(18)
     .onClick(() => action())
   }
 
   @Builder
-  private buildInfoCard(symbol: Resource, title: string, value: string) {
-    Column({ space: 10 }) {
-      Row({ space: 8 }) {
+  private buildInlineTitle(symbol: Resource, title: string) {
+    Row({ space: 8 }) {
+      SymbolGlyph(symbol)
+        .fontSize(15)
+        .fontColor([this.color('icon_primary')])
+      Text(title)
+        .fontSize(14)
+        .fontWeight(FontWeight.Medium)
+        .fontColor(this.color('text_primary'))
+        .fontFamily(this.appFontFamily)
+    }
+    .width('100%')
+  }
+
+  @Builder
+  private buildInlineInfoItem(symbol: Resource, title: string, value: string) {
+    Column({ space: 6 }) {
+      Row({ space: 6 }) {
         SymbolGlyph(symbol)
-          .fontSize(15)
+          .fontSize(13)
           .fontColor([this.color('icon_primary')])
         Text(title)
-          .fontSize(11)
+          .fontSize(10)
           .fontColor(this.color('text_muted'))
           .fontFamily(this.appFontFamily)
           .maxLines(1)
           .textOverflow({ overflow: TextOverflow.Ellipsis })
       }
-      .width('100%')
 
       Text(value)
-        .fontSize(14)
+        .fontSize(12)
         .fontWeight(FontWeight.Medium)
         .fontColor(this.color('text_primary'))
         .fontFamily(this.appFontFamily)
-        .maxLines(2)
+        .maxLines(1)
         .textOverflow({ overflow: TextOverflow.Ellipsis })
     }
     .width('48%')
-    .padding(16)
-    .backgroundColor(this.themeManager.getGlassBackgroundResource())
-    .backgroundBlurStyle(this.themeManager.getGlassBlurStyle())
-    .borderRadius(18)
+    .padding(10)
+    .backgroundColor(this.color('comp_background_tertiary'))
+    .borderRadius(14)
     .border({ width: 1, color: this.color('panel_border') })
-    .shadow({
-      radius: this.themeManager.getGlassRadius(),
-      color: this.themeManager.getGlassShadowColor(),
-      offsetX: 0,
-      offsetY: 2
-    })
-    .alignItems(HorizontalAlign.Start)
-  }
-
-  @Builder
-  private buildHeroSection() {
-    Row({ space: 18 }) {
-      Stack({ alignContent: Alignment.TopEnd }) {
-        KomgaImage({
-          src: this.getDisplayCoverUrl(),
-          imageWidth: 136,
-          imageHeight: 196,
-          objectFit: ImageFit.Cover,
-          imgBorderRadius: 18,
-          requestHeaders: this.getImageHeaders(),
-          cacheKey: this.getDetailCoverCacheKey()
-        })
-
-        Text(this.getContentTypeLabel())
-          .fontSize(11)
-          .fontColor(Color.White)
-          .fontFamily(this.appFontFamily)
-          .padding({ left: 8, right: 8, top: 4, bottom: 4 })
-          .backgroundColor('rgba(0, 0, 0, 0.56)')
-          .borderRadius(999)
-          .margin({ top: 10, right: 10 })
-      }
-
-      Column({ space: 10 }) {
-        Text(this.detail !== null ? this.detail.title : this.pageTitle)
-          .fontSize(22)
-          .fontWeight(FontWeight.Bold)
-          .fontColor(this.color('text_primary'))
-          .fontFamily(this.appFontFamily)
-          .maxLines(3)
-          .textOverflow({ overflow: TextOverflow.Ellipsis })
-
-        Text(this.getHeaderMetaLine())
-          .fontSize(13)
-          .fontColor(this.color('text_muted'))
-          .fontFamily(this.appFontFamily)
-          .maxLines(2)
-          .textOverflow({ overflow: TextOverflow.Ellipsis })
-
-        Flex({ wrap: FlexWrap.Wrap }) {
-          this.buildMetaChip($r('sys.symbol.book_pages'), `${this.getChapterCount()} 条内容`)
-          this.buildMetaChip($r('sys.symbol.book'), this.getPageCountLabel())
-        }
-        .width('100%')
-
-        Column({ space: 10 }) {
-          this.buildActionButton(
-            $r('sys.symbol.book'),
-            this.getContinueActionTitle(),
-            this.getContinueDescription(),
-            true,
-            this.getChapterCount() > 0,
-            () => this.continueReading()
-          )
-
-          this.buildActionButton(
-            this.getLibraryActionSymbol(),
-            this.getLibraryActionTitle(),
-            this.getLibraryActionDescription(),
-            false,
-            !this.isLibraryActionPending,
-            () => {
-              void this.toggleLocalLibrary();
-            }
-          )
-        }
-        .width('100%')
-      }
-      .layoutWeight(1)
-      .alignItems(HorizontalAlign.Start)
-    }
-    .width('100%')
-    .padding(20)
-    .backgroundColor(this.themeManager.getGlassBackgroundResource())
-    .backgroundBlurStyle(this.themeManager.getGlassBlurStyle())
-    .borderRadius(28)
-    .clip(true)
-    .border({ width: 1, color: this.color('panel_border') })
-    .shadow({
-      radius: this.themeManager.getGlassRadius(),
-      color: this.themeManager.getGlassShadowColor(),
-      offsetX: 0,
-      offsetY: 4
-    })
-  }
-
-  @Builder
-  private buildContinueSection() {
-    Column({ space: 16 }) {
-      Row({ space: 12 }) {
-        this.buildSectionHeader($r('sys.symbol.book'), '概览', '快速查看当前条目的核心信息')
-        Blank().layoutWeight(1)
-        this.buildIconActionButton(
-          $r('sys.symbol.arrow_right'),
-          () => this.continueReading(),
-          true,
-          this.getChapterCount() > 0
-        )
-      }
-      .width('100%')
-
-      Flex({ wrap: FlexWrap.Wrap, justifyContent: FlexAlign.SpaceBetween }) {
-        this.buildInfoCard($r('sys.symbol.picture'), '内容类型', this.getContentTypeLabel())
-        this.buildInfoCard($r('sys.symbol.clock'), '发布时间', this.getReleaseDateLabel())
-        this.buildInfoCard($r('sys.symbol.folder'), '出版社', this.getPublisherLabel())
-        this.buildInfoCard($r('sys.symbol.book'), '语言', this.getLanguageLabel())
-      }
-      .width('100%')
-    }
-    .width('100%')
-    .padding(20)
-    .backgroundColor(this.themeManager.getGlassBackgroundResource())
-    .backgroundBlurStyle(this.themeManager.getGlassBlurStyle())
-    .borderRadius(24)
-    .border({ width: 1, color: this.color('panel_border') })
-    .shadow({
-      radius: this.themeManager.getGlassRadius(),
-      color: this.themeManager.getGlassShadowColor(),
-      offsetX: 0,
-      offsetY: 4
-    })
-  }
-
-  @Builder
-  private buildDescriptionSection() {
-    Column({ space: 14 }) {
-      Row({ space: 12 }) {
-        this.buildSectionHeader($r('sys.symbol.doc_text'), '简介')
-
-        if (this.getDescriptionText().length > 36) {
-          Blank().layoutWeight(1)
-          this.buildIconActionButton(this.getDescriptionToggleSymbol(), () => this.toggleDescriptionExpanded())
-        }
-      }
-      .width('100%')
-
-      Text(this.getDescriptionText())
-        .fontSize(13)
-        .lineHeight(22)
-        .fontColor(this.color('text_muted'))
-        .fontFamily(this.appFontFamily)
-        .maxLines(this.descriptionExpanded ? 99 : 6)
-        .textOverflow({ overflow: TextOverflow.Ellipsis })
-    }
-    .width('100%')
-    .padding(20)
-    .backgroundColor(this.themeManager.getGlassBackgroundResource())
-    .backgroundBlurStyle(this.themeManager.getGlassBlurStyle())
-    .borderRadius(24)
-    .border({ width: 1, color: this.color('panel_border') })
-    .shadow({
-      radius: this.themeManager.getGlassRadius(),
-      color: this.themeManager.getGlassShadowColor(),
-      offsetX: 0,
-      offsetY: 4
-    })
-    .alignItems(HorizontalAlign.Start)
-  }
-
-  @Builder
-  private buildTagsSection() {
-    Column({ space: 14 }) {
-      this.buildSectionHeader($r('sys.symbol.bookmark'), '标签', '用于快速理解内容主题')
-
-      if (this.getDisplayTags().length > 0) {
-        Flex({ wrap: FlexWrap.Wrap }) {
-          ForEach(this.getDisplayTags(), (tag: string) => {
-            this.buildBadge(tag)
-          }, (tag: string) => tag)
-        }
-      } else {
-        Text('当前内容暂未提供标签。')
-          .fontSize(12)
-          .fontColor(this.color('text_muted'))
-          .fontFamily(this.appFontFamily)
-      }
-    }
-    .width('100%')
-    .padding(20)
-    .backgroundColor(this.themeManager.getGlassBackgroundResource())
-    .backgroundBlurStyle(this.themeManager.getGlassBlurStyle())
-    .borderRadius(24)
-    .border({ width: 1, color: this.color('panel_border') })
-    .shadow({
-      radius: this.themeManager.getGlassRadius(),
-      color: this.themeManager.getGlassShadowColor(),
-      offsetX: 0,
-      offsetY: 4
-    })
+    .margin({ bottom: 8 })
     .alignItems(HorizontalAlign.Start)
   }
 
@@ -1263,52 +1320,39 @@ export struct KomgaMangaDetailPage {
       .layoutWeight(1)
       .onClick(() => this.openChapter(chapter))
 
-      Column({ space: 8 }) {
-        if (this.isLastReadChapter(chapter)) {
-          this.buildStatusChip('最近阅读', true)
-        } else if (this.isChapterInLocalLibrary(chapter)) {
-          this.buildStatusChip('已在书架', true)
-        } else {
-          this.buildStatusChip('阅读')
-        }
-
-        this.buildIconActionButton(
-          this.getChapterLibraryActionSymbol(chapter),
-          () => {
-            void this.toggleChapterLocalLibrary(chapter);
-          },
-          this.isChapterInLocalLibrary(chapter),
-          !this.isChapterLibraryActionPending(chapter)
-        )
-      }
-      .justifyContent(FlexAlign.Center)
-      .alignItems(HorizontalAlign.End)
+      this.buildChapterLibraryButton(chapter)
     }
     .width('100%')
-    .padding(16)
-    .backgroundColor(this.color('comp_background_tertiary'))
-    .borderRadius(20)
+    .padding(12)
+    .backgroundColor(this.color('panel_background'))
+    .borderRadius(18)
     .border({ width: 1, color: this.color('panel_border') })
   }
 
 
   @Builder
   private buildChapterSection() {
-    Column({ space: 14 }) {
+    Column({ space: 12 }) {
+      if (this.isDetailRefreshing) {
+        this.buildSectionRefreshingState()
+      }
+
       Row({ space: 12 }) {
-        this.buildSectionHeader($r('sys.symbol.list_bullet'), '章节列表', `共 ${this.getSortedChapters().length} 条内容`)
+        this.buildSectionHeader($r('sys.symbol.list_bullet'), '章节列表', `共 ${this.getChapterCount()} 条内容`)
         Blank().layoutWeight(1)
-        this.buildIconActionButton(this.getSortSymbol(), () => {
-          this.sortDescending = !this.sortDescending;
-        })
+        this.buildIconActionButton(this.getSortSymbol(), () => this.toggleChapterSort())
       }
       .width('100%')
 
-      if (this.getSortedChapters().length > 0) {
+      if (this.getChapterCount() > 0) {
         Column({ space: 12 }) {
-          ForEach(this.getSortedChapters(), (chapter: ChapterInfo) => {
+          ForEach(this.getRenderedChapters(), (chapter: ChapterInfo) => {
             this.buildChapterItem(chapter)
           }, (chapter: ChapterInfo) => chapter.id)
+
+          if (this.canRenderMoreChapters()) {
+            this.buildChapterAppendState()
+          }
         }
         .width('100%')
       } else {
@@ -1332,17 +1376,52 @@ export struct KomgaMangaDetailPage {
       }
     }
     .width('100%')
-    .padding(20)
-    .backgroundColor(this.themeManager.getGlassBackgroundResource())
-    .backgroundBlurStyle(this.themeManager.getGlassBlurStyle())
-    .borderRadius(24)
+  }
+
+  @Builder
+  private buildSectionRefreshingState() {
+    Row({ space: 10 }) {
+      LoadingProgress()
+        .width(18)
+        .height(18)
+      Text('正在刷新详情与章节状态')
+        .fontSize(12)
+        .fontColor(this.color('text_muted'))
+        .fontFamily(this.appFontFamily)
+      Blank().layoutWeight(1)
+    }
+    .width('100%')
+    .height(36)
+    .padding({ left: 12, right: 12 })
+    .backgroundColor(this.color('comp_background_tertiary'))
+    .borderRadius(18)
     .border({ width: 1, color: this.color('panel_border') })
-    .shadow({
-      radius: this.themeManager.getGlassRadius(),
-      color: this.themeManager.getGlassShadowColor(),
-      offsetX: 0,
-      offsetY: 4
-    })
+  }
+
+  @Builder
+  private buildChapterAppendState() {
+    Row({ space: 8 }) {
+      if (this.isAppendingChapters) {
+        LoadingProgress()
+          .width(18)
+          .height(18)
+      }
+      Text(this.isAppendingChapters ? '正在继续加载' : '继续向下滑动加载更多')
+        .fontSize(12)
+        .fontColor(this.color('text_muted'))
+        .fontFamily(this.appFontFamily)
+      Blank().layoutWeight(1)
+      Text(`${this.renderedChapterCount > this.getChapterCount() ? this.getChapterCount() : this.renderedChapterCount}/${this.getChapterCount()}`)
+        .fontSize(12)
+        .fontColor(this.color('text_muted'))
+        .fontFamily(this.appFontFamily)
+    }
+    .width('100%')
+    .height(42)
+    .padding({ left: 12, right: 12 })
+    .backgroundColor(this.color('comp_background_tertiary'))
+    .borderRadius(18)
+    .border({ width: 1, color: this.color('panel_border') })
   }
 
   private getChapterBadgeText(chapter: ChapterInfo): string {
@@ -1418,31 +1497,31 @@ export struct KomgaMangaDetailPage {
           KomgaImage({
             src: this.getDisplayCoverUrl(),
             imageWidth: '100%',
-            imageHeight: HERO_HEIGHT,
+            imageHeight: '100%',
             objectFit: ImageFit.Cover,
             imgBorderRadius: 0,
             requestHeaders: this.getImageHeaders(),
             cacheKey: this.getDetailCoverCacheKey()
           })
-
             .width('100%')
-            .height(HERO_HEIGHT)
-            .opacity(0.26)
-            .expandSafeArea([SafeAreaType.SYSTEM], [SafeAreaEdge.TOP])
+            .height('100%')
+            .blur(30)
+            .opacity(this.themeState.currentTheme === ThemeType.DARK ? 0.42 : 0.34)
+            .expandSafeArea([SafeAreaType.SYSTEM], [SafeAreaEdge.TOP, SafeAreaEdge.BOTTOM])
         }
 
         Column()
           .width('100%')
-          .height(HERO_HEIGHT + 120)
+          .height('100%')
           .linearGradient({
             direction: GradientDirection.Bottom,
             colors: [
-              ['rgba(0,0,0,0.08)', 0],
-              ['rgba(0,0,0,0.26)', 0.28],
-              [this.themeState.currentTheme === ThemeType.DARK ? '#1A1A1A' : '#F5F5F5', 0.78]
+              [this.themeState.currentTheme === ThemeType.DARK ? 'rgba(26,26,26,0.18)' : 'rgba(245,245,245,0.20)', 0],
+              [this.themeState.currentTheme === ThemeType.DARK ? 'rgba(26,26,26,0.74)' : 'rgba(245,245,245,0.76)', 0.36],
+              [this.themeState.currentTheme === ThemeType.DARK ? '#1A1A1A' : '#F5F5F5', 0.74]
             ]
           })
-          .expandSafeArea([SafeAreaType.SYSTEM], [SafeAreaEdge.TOP])
+          .expandSafeArea([SafeAreaType.SYSTEM], [SafeAreaEdge.TOP, SafeAreaEdge.BOTTOM])
 
         if (this.isLoading) {
           this.buildLoadingState()
@@ -1453,9 +1532,6 @@ export struct KomgaMangaDetailPage {
             Column({ space: 16 }) {
               Blank().height(SettingsPageTitleBarManager.getContentTopPadding(this.statusBarHeight))
               this.buildHeroSection()
-              this.buildContinueSection()
-              this.buildDescriptionSection()
-              this.buildTagsSection()
               this.buildChapterSection()
               Blank().height(28)
             }
@@ -1468,6 +1544,9 @@ export struct KomgaMangaDetailPage {
           .expandSafeArea([SafeAreaType.SYSTEM], [SafeAreaEdge.TOP, SafeAreaEdge.BOTTOM])
           .scrollBar(BarState.Off)
           .edgeEffect(EdgeEffect.Spring)
+          .onReachEnd(() => {
+            this.loadMoreChapters();
+          })
         }
 
         SettingsImmersiveTitleBar({
@@ -1497,6 +1576,7 @@ export struct KomgaMangaDetailPage {
         this.instanceId = params.instanceId || '';
         this.pageTitle = params.title || '';
       }
+      this.detailCardExpanded = false;
       void this.loadDetail();
     })
     .onShown(() => {

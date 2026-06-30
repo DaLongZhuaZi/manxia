@@ -9,7 +9,7 @@ import { SafeUtils } from '../Utils/SafeUtils';
 import { HdsNavDestination } from '@kit.UIDesignKit';
 import { webview } from '@kit.ArkWeb';
 import { picker } from '@kit.CoreFileKit';
-import { common } from '@kit.AbilityKit';
+import { common, Want } from '@kit.AbilityKit';
 import { fileIo as fs } from '@kit.CoreFileKit';
 import { logger } from '../Utils/Logger';
 import { PageLifecycleManager } from '../Framework/Lifecycle';
@@ -66,9 +66,12 @@ import {
   GlobalSearchCacheData,
   GlobalSearchCachedComicInfo
 } from '../Framework/Search/GlobalSearchCacheBridge';
+import { SOURCE_DETAIL_ABILITY_HOST_MULTITON } from '../Framework/Source/SourceDetailAbilityConstants';
 
 
 const TAG = 'SourceDetailPage';
+const APP_BUNDLE_NAME: string = 'com.dlzz.manxia';
+const ENTRY_ABILITY_NAME: string = 'EntryAbility';
 
 /**
  * 显示模式枚举
@@ -82,10 +85,20 @@ export enum DisplayMode {
 /**
  * 导航参数接口
  */
-interface SourceDetailParams {
+export interface SourceDetailParams {
   sourceId: number;
   initialTab?: string;  // 初始标签ID（如 'popular', 'latest', 'search'）
   searchKeyword?: string;  // 搜索关键词（当initialTab为'search'时使用）
+  searchType?: string;
+  fromGlobalSearch?: boolean;
+  globalSearchSessionId?: string;
+  sourceDetailAbilityInstanceId?: string;
+  sourceDetailWindowKey?: string;
+  sourceDetailHostMode?: string;
+  sourceName?: string;
+  sourcePkg?: string;
+  comicId?: string;
+  comicTitle?: string;
 }
 
 interface MangaDetailParams {
@@ -328,6 +341,7 @@ export struct SourceDetailPage {
   @State sourceDebugModeEnabled: boolean = false;
   @State isExportingDebugLog: boolean = false;
   @StorageLink('appFontFamily') appFontFamily: string = 'HarmonyOS Sans';
+  @StorageLink('source_detail_translation_tag_enabled') sourceDetailTranslationTagEnabled: boolean = true;
   @State sourceInfo: SourceInfo | null = null;
   @State currentTabId: string = ''; // 当前标签ID
   @State tabsConfig: TabConfig[] = []; // 标签配置列表
@@ -410,6 +424,10 @@ export struct SourceDetailPage {
 
   private sourceId: number = 0;
   private sourceDetailEnterTimestamp: number = 0;
+  private sourceDetailWindowKey: string = '';
+  private sourceDetailHostMode: string = '';
+  private sourceDetailAbilityInstanceId: string = '';
+  private sourceDetailRouteInitialized: boolean = false;
   private sourceName: string = '';
   private sourceManager: SourceManager = SourceManager.getInstance();
   private dataManager: DataManager = DataManager.getInstance();
@@ -476,27 +494,6 @@ export struct SourceDetailPage {
     // 初始化设备方向
     this.updateDeviceOrientation();
     
-    // 获取路由参数 - 从NavPathStack获取
-    const params: ESObject[] = this.pathStack.getParamByName('SourceDetailPage') as ESObject[];
-    if (params && params.length > 0) {
-      const param: ESObject = params[0] as ESObject;
-      if (param && param.sourceId) {
-        this.sourceId = param.sourceId as number;
-        this.sourceDetailEnterTimestamp = Date.now();
-        logger.info(TAG, `加载图源详情，ID: ${this.sourceId}`);
-        
-        // 保存初始标签和搜索关键词参数
-        const initialTab = param.initialTab as string | undefined;
-        const searchKeyword = param.searchKeyword as string | undefined;
-        const searchType = param.searchType as string | undefined;
-        const fromGlobalSearch = param.fromGlobalSearch as boolean | undefined;  // 是否来自全局搜索
-        const globalSearchSessionId = param.globalSearchSessionId as string | undefined;
-        
-        // 异步初始化
-        void this.initializePageWithParams(initialTab, searchKeyword, searchType, fromGlobalSearch, globalSearchSessionId);
-      }
-    }
-    
     // 注册设备方向监听器
     this.deviceOrientationListener = (deviceInfo: DeviceInfo) => {
       this.isLandscape = deviceInfo.isLandscape;
@@ -510,6 +507,153 @@ export struct SourceDetailPage {
     if (this.sourceId > 0) {
       void this.refreshFavoriteBadges('page_show');
     }
+  }
+
+  private isHostedBySourceDetailAbility(): boolean {
+    return this.sourceDetailHostMode === SOURCE_DETAIL_ABILITY_HOST_MULTITON;
+  }
+
+  private resolveHostAbilityContext(): common.UIAbilityContext | null {
+    try {
+      const hostContext = this.getUIContext()?.getHostContext() as common.UIAbilityContext;
+      return hostContext ? hostContext : null;
+    } catch (error) {
+      logger.warn(TAG, `获取图源详情宿主AbilityContext失败: ${String(error)}`);
+      return null;
+    }
+  }
+
+  private async bringEntryAbilityToFront(reason: string): Promise<void> {
+    const hostContext = this.resolveHostAbilityContext();
+    if (!hostContext) {
+      logger.warn(TAG, `无法拉起主实例: reason=${reason}, hostContext unavailable`);
+      return;
+    }
+
+    const want: Want = {
+      bundleName: APP_BUNDLE_NAME,
+      abilityName: ENTRY_ABILITY_NAME
+    };
+    try {
+      await hostContext.startAbility(want);
+      logger.info(TAG, `已拉起主实例: reason=${reason}`);
+    } catch (error) {
+      logger.warn(TAG, `拉起主实例失败: reason=${reason}, error=${String(error)}`);
+    }
+  }
+
+  private async closeIsolatedSourceDetailAbility(reason: string): Promise<void> {
+    const hostContext = this.resolveHostAbilityContext();
+    if (!hostContext) {
+      logger.warn(TAG, `无法关闭独立图源详情窗口，回退页面栈: reason=${reason}`);
+      try {
+        this.pathStack.pop();
+      } catch (error) {
+        logger.warn(TAG, `独立图源详情回退页面栈失败: reason=${reason}, error=${String(error)}`);
+      }
+      return;
+    }
+
+    try {
+      await hostContext.terminateSelf();
+      logger.info(TAG, `已关闭独立图源详情窗口: reason=${reason}, window=${this.sourceDetailWindowKey}`);
+    } catch (error) {
+      logger.warn(TAG, `关闭独立图源详情窗口失败: reason=${reason}, error=${String(error)}`);
+    }
+  }
+
+  private async returnToMainInstanceAndClose(reason: string): Promise<void> {
+    await this.bringEntryAbilityToFront(reason);
+    await this.closeIsolatedSourceDetailAbility(reason);
+  }
+
+  private handleSourceDetailBack(reason: string): boolean {
+    if (this.isHostedBySourceDetailAbility()) {
+      void this.returnToMainInstanceAndClose(reason);
+      return true;
+    }
+
+    try {
+      this.pathStack.pop();
+      return true;
+    } catch (error) {
+      logger.warn(TAG, `图源详情返回失败: reason=${reason}, error=${String(error)}`);
+      return false;
+    }
+  }
+
+  private openSourceSettingsPage(): void {
+    logger.info(TAG, `准备跳转到设置页, sourceName=${this.sourceName}`);
+    const params: SourceSettingsPageParams = {
+      sourceName: this.sourceName
+    };
+    logger.info(TAG, `跳转参数: ${JSON.stringify(params)}`);
+    this.pathStack.pushPathByName('SourceSettingsPage', params);
+  }
+
+  private async openUnifiedDetailInMainInstance(
+    params: UnifiedDetailPageParams,
+    reason: string
+  ): Promise<void> {
+    params.returnToSourceDetailAbility = true;
+    params.sourceDetailAbilityInstanceId = this.sourceDetailAbilityInstanceId;
+    params.sourceDetailWindowKey = this.sourceDetailWindowKey;
+
+    try {
+      const globalStack = AppStorage.get<NavPathStack>('GlobalNavStack');
+      if (globalStack) {
+        globalStack.pushPathByName('UnifiedDetailPage', params);
+        logger.info(TAG, `已在主实例打开统一详情页: reason=${reason}, contentId=${params.contentId}`);
+      } else {
+        logger.warn(TAG, `主实例导航栈不可用，无法直接打开统一详情页: reason=${reason}, contentId=${params.contentId}`);
+      }
+    } catch (error) {
+      logger.warn(TAG, `推送统一详情页到主实例失败: reason=${reason}, error=${String(error)}`);
+    }
+
+    await this.bringEntryAbilityToFront(reason);
+    logger.info(TAG, `独立图源详情窗口已保留: reason=${reason}, window=${this.sourceDetailWindowKey}`);
+  }
+
+  private resolveSingleWindowRouteParams(pathStack: NavPathStack, fallbackParams: SourceDetailParams | null): SourceDetailParams | null {
+    const paramsList = pathStack.getParamByName('SourceDetailPage') as SourceDetailParams[];
+    if (paramsList && paramsList.length > 0) {
+      for (let index = paramsList.length - 1; index >= 0; index--) {
+        const candidate = paramsList[index];
+        const candidateSourceId: number = candidate ? (candidate.sourceId || 0) : 0;
+        const candidateWindowKey: string = candidate ? (candidate.sourceDetailWindowKey || '') : '';
+        if (candidateSourceId > 0 && candidateWindowKey.length <= 0) {
+          return candidate;
+        }
+      }
+    }
+    return fallbackParams;
+  }
+
+  private applySourceDetailRouteParams(params: SourceDetailParams | null): void {
+    if (this.sourceDetailRouteInitialized) {
+      return;
+    }
+    if (!params || !params.sourceId || params.sourceId <= 0) {
+      logger.warn(TAG, 'SourceDetailPage缺少有效sourceId，跳过初始化');
+      return;
+    }
+
+    this.sourceDetailRouteInitialized = true;
+    this.sourceId = params.sourceId;
+    this.sourceDetailAbilityInstanceId = params.sourceDetailAbilityInstanceId || '';
+    this.sourceDetailWindowKey = params.sourceDetailWindowKey || '';
+    this.sourceDetailHostMode = params.sourceDetailHostMode || '';
+    this.sourceDetailEnterTimestamp = Date.now();
+    logger.info(TAG, `加载图源详情，ID: ${this.sourceId}, instance=${this.sourceDetailAbilityInstanceId || 'main'}, window=${this.sourceDetailWindowKey || 'single'}, host=${this.sourceDetailHostMode || 'main'}`);
+
+    void this.initializePageWithParams(
+      params.initialTab,
+      params.searchKeyword,
+      params.searchType,
+      params.fromGlobalSearch,
+      params.globalSearchSessionId
+    );
   }
 
   /**
@@ -2129,9 +2273,9 @@ export struct SourceDetailPage {
         .align(Alignment.Bottom)
         .backgroundColor(this.getReadingStyleCoverSurface().bottomEdgeColor)
 
-      if (LabelUtils.isTranslatedContent(comic.title)) {
+      if (this.sourceDetailTranslationTagEnabled && LabelUtils.isTranslatedContent(comic.title)) {
         Row() {
-          Text('汉化')
+          Text('汉化/翻译')
             .fontSize(10)
             .fontColor(Color.White)
             .backgroundColor('#E6F44336')
@@ -3086,6 +3230,21 @@ export struct SourceDetailPage {
   private navigateToMangaDetail(manga: MangaInfo): void {
     const sourceType = this.sourceInfo?.type || 'manga';
 
+    if (this.isHostedBySourceDetailAbility()) {
+      const unifiedParams: UnifiedDetailPageParams = {
+        contentType: sourceType === 'ebook' ? UnifiedContentType.EBOOK : UnifiedContentType.MANGA,
+        contentId: manga.id || '',
+        sourceId: this.sourceId.toString(),
+        sourceName: this.sourceInfo?.name || this.sourceName || undefined,
+        sourcePkg: this.sourceInfo?.pkg,
+        cachedTitle: manga.title,
+        cachedCover: manga.cover,
+        cachedAuthor: manga.author || ''
+      };
+      void this.openUnifiedDetailInMainInstance(unifiedParams, 'source_detail_direct_result');
+      return;
+    }
+
     // 根据页面设置决定使用哪个详情页
     const pageType = sourceType === 'ebook' 
       ? PageSettingsHelper.getEBookDetailPageType()
@@ -3217,6 +3376,22 @@ export struct SourceDetailPage {
     
     // 根据图源类型导航到不同的详情页
     const sourceType = this.sourceInfo?.type || 'manga';
+
+    if (this.isHostedBySourceDetailAbility()) {
+      const unifiedParams: UnifiedDetailPageParams = {
+        contentType: sourceType === 'ebook' ? UnifiedContentType.EBOOK : UnifiedContentType.MANGA,
+        contentId: comic.id,
+        sourceId: this.sourceId.toString(),
+        sourceName: this.sourceInfo?.name || this.sourceName || undefined,
+        sourcePkg: this.sourceInfo?.pkg,
+        cachedTitle: comic.title,
+        cachedCoverPath: localCoverPath || undefined,
+        cachedCover: localCoverPath || comic.coverUrl || undefined,
+        cachedAuthor: comic.author || ''
+      };
+      await this.openUnifiedDetailInMainInstance(unifiedParams, 'source_detail_content_click');
+      return;
+    }
     
     // 根据页面设置决定使用哪个详情页
     const pageType = sourceType === 'ebook' 
@@ -3347,10 +3522,7 @@ export struct SourceDetailPage {
         symbol: $r('sys.symbol.gearshape_fill'),
         label: '设置',
         onClick: () => {
-          logger.info(TAG, `准备跳转到设置页, sourceName=${this.sourceName}`);
-          const params = { sourceName: this.sourceName } as SourceSettingsPageParams;
-          logger.info(TAG, `跳转参数: ${JSON.stringify(params)}`);
-          this.pathStack.pushPathByName('SourceSettingsPage', params);
+          this.openSourceSettingsPage();
         },
         enabled: true
       },
@@ -3747,12 +3919,7 @@ export struct SourceDetailPage {
           title: this.sourceInfo?.name || '图源详情',
           appFontFamily: this.appFontFamily,
           backAction: (): boolean => {
-            try {
-              this.pathStack.pop();
-              return true;
-            } catch (_error) {
-              return false;
-            }
+            return this.handleSourceDetailBack('title_back');
           },
           actions: this.getTitleBarActions(),
           maxDirectActions: 2
@@ -3865,8 +4032,19 @@ export struct SourceDetailPage {
     }) */
     .hideTitleBar(true)
     .ignoreLayoutSafeArea([LayoutSafeAreaType.SYSTEM], [LayoutSafeAreaEdge.TOP, LayoutSafeAreaEdge.BOTTOM])
+    .onBackPressed(() => {
+      return this.handleSourceDetailBack('system_back');
+    })
     .onReady((context: NavDestinationContext) => {
       this.pathStack = context.pathStack;
+      const routeParams: SourceDetailParams | null = context.pathInfo
+        ? context.pathInfo.param as SourceDetailParams
+        : null;
+      if (routeParams && (routeParams.sourceDetailWindowKey || '').length > 0) {
+        this.applySourceDetailRouteParams(routeParams);
+      } else {
+        this.applySourceDetailRouteParams(this.resolveSingleWindowRouteParams(context.pathStack, routeParams));
+      }
     })
     .onShown(() => {
       logger.debug(TAG, 'HdsNavDestination onShown: refresh favorite badges');

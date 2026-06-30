@@ -43,6 +43,11 @@ interface SceneGroup {
   scenes: VibrationScene[];
 }
 
+enum InteractionSettingsTab {
+  VIBRATION = 0,
+  HOLDING_AWARENESS = 1
+}
+
 @Component
 export struct InteractionSettingsSubPage {
   @State pathStack: NavPathStack = new NavPathStack();
@@ -51,7 +56,7 @@ export struct InteractionSettingsSubPage {
   @State private settingsTapEnabled: boolean = true;
   private settingsTapUnlockTimer: number = -1;
   private readonly scrollTapGuardDurationMs: number = 140;
-  @State private activeSearchAnchorId: string = '';
+  @State @Watch('onSearchAnchorChanged') private activeSearchAnchorId: string = '';
   @State private searchHighlightPulse: boolean = false;
   private searchHighlightPulseTimer: number = -1;
   private searchHighlightClearTimer: number = -1;
@@ -100,6 +105,7 @@ export struct InteractionSettingsSubPage {
   @State holdingAwarenessTextHighlightThoughtPopupEnabled: boolean = true;
   @State holdingAwarenessStatusText: string = '未检测';
   @State holdingAwarenessPermissionText: string = '未检测';
+  @State private selectedInteractionTab: InteractionSettingsTab = InteractionSettingsTab.VIBRATION;
 
   private markSettingsScrolling(): void {
     if (this.settingsTapEnabled) {
@@ -157,7 +163,7 @@ export struct InteractionSettingsSubPage {
       return;
     }
     SettingsSearchSupport.activateHighlight(this, target.anchorId);
-    const offset = Math.max(0, target.scrollOffset);
+    const offset = this.resolveSearchScrollOffset(target.anchorId, target.scrollOffset);
     logger.info(TAG, `应用设置搜索定位: id=${target.id}, offset=${offset}`);
     setTimeout(() => {
       try {
@@ -166,6 +172,30 @@ export struct InteractionSettingsSubPage {
         logger.warn(TAG, `滚动到设置搜索目标失败: ${String(error)}`);
       }
     }, 140);
+  }
+
+  private getTabForAnchor(anchorId: string): InteractionSettingsTab {
+    if (anchorId === 'interaction_holding_awareness') {
+      return InteractionSettingsTab.HOLDING_AWARENESS;
+    }
+    return InteractionSettingsTab.VIBRATION;
+  }
+
+  onSearchAnchorChanged(): void {
+    if (this.activeSearchAnchorId.length <= 0) {
+      return;
+    }
+    const targetTab: InteractionSettingsTab = this.getTabForAnchor(this.activeSearchAnchorId);
+    if (this.selectedInteractionTab !== targetTab) {
+      this.selectedInteractionTab = targetTab;
+    }
+  }
+
+  private resolveSearchScrollOffset(anchorId: string, fallbackOffset: number): number {
+    if (this.getTabForAnchor(anchorId) === InteractionSettingsTab.HOLDING_AWARENESS) {
+      return 0;
+    }
+    return Math.max(0, fallbackOffset);
   }
 
   private lifecycle = new PageLifecycleManager('InteractionSettingsSubPage', { enableDebug: true });
@@ -410,6 +440,33 @@ export struct InteractionSettingsSubPage {
   }
 
   @Builder
+  buildSettingRow(title: string, description: string, isOn: boolean, onChange: (value: boolean) => void) {
+    Row() {
+      Column({ space: 4 }) {
+        Text(title)
+          .fontSize(15)
+          .fontFamily(this.appFontFamily)
+          .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
+        if (description) {
+          Text(description)
+            .fontSize(12)
+            .fontFamily(this.appFontFamily)
+            .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_muted', this.themeState.currentTheme))
+        }
+      }
+      .alignItems(HorizontalAlign.Start)
+      .layoutWeight(1)
+
+      Toggle({ type: ToggleType.Switch, isOn: isOn })
+        .onChange((value: boolean) => {
+          onChange(value);
+        })
+    }
+    .width('100%')
+    .padding({ left: 16, right: 16, top: 14, bottom: 14 })
+  }
+
+  @Builder
   buildIntensitySelector() {
     Column({ space: 8 }) {
       Text('震动强度')
@@ -486,7 +543,7 @@ export struct InteractionSettingsSubPage {
   @Builder
   buildHoldingAwarenessSettings() {
     Column() {
-      this.buildSettingItem(
+      this.buildSettingRow(
         '启用智感握姿',
         '根据握持手与操作手自动调整支持的交互位置',
         this.holdingAwarenessEnabled,
@@ -503,7 +560,7 @@ export struct InteractionSettingsSubPage {
           .color(ThemeAwareHelper.getTestManagementThemedColor('divider', this.themeState.currentTheme))
           .margin({ left: 16 })
 
-        this.buildSettingItem(
+        this.buildSettingRow(
           '主界面搜索按钮',
           '全局搜索悬浮按钮按握姿自动停靠到易触达侧',
           this.holdingAwarenessMainMenuSearchButtonEnabled,
@@ -520,7 +577,7 @@ export struct InteractionSettingsSubPage {
           .color(ThemeAwareHelper.getTestManagementThemedColor('divider', this.themeState.currentTheme))
           .margin({ left: 16 })
 
-        this.buildSettingItem(
+        this.buildSettingRow(
           '隐私书库退出按钮',
           '隐私模式下的退出悬浮按钮按握姿选择停靠侧',
           this.holdingAwarenessMainMenuPrivacyExitButtonEnabled,
@@ -537,7 +594,7 @@ export struct InteractionSettingsSubPage {
           .color(ThemeAwareHelper.getTestManagementThemedColor('divider', this.themeState.currentTheme))
           .margin({ left: 16 })
 
-        this.buildSettingItem(
+        this.buildSettingRow(
           '书架预览控件',
           '编辑书架时的列数滑条与详情浮层按握姿靠近拇指侧',
           this.holdingAwarenessMainMenuShelfPreviewEnabled,
@@ -554,7 +611,7 @@ export struct InteractionSettingsSubPage {
           .color(ThemeAwareHelper.getTestManagementThemedColor('divider', this.themeState.currentTheme))
           .margin({ left: 16 })
 
-        this.buildSettingItem(
+        this.buildSettingRow(
           '详情页横屏阅读按钮',
           '横屏详情页的阅读与听书浮动按钮组按握姿停靠',
           this.holdingAwarenessDetailLandscapeReadActionsEnabled,
@@ -571,7 +628,7 @@ export struct InteractionSettingsSubPage {
           .color(ThemeAwareHelper.getTestManagementThemedColor('divider', this.themeState.currentTheme))
           .margin({ left: 16 })
 
-        this.buildSettingItem(
+        this.buildSettingRow(
           '听书悬浮球',
           '听书悬浮球未被手动拖动时按握姿选择默认停靠侧',
           this.holdingAwarenessReadAloudFloatingBallEnabled,
@@ -588,7 +645,7 @@ export struct InteractionSettingsSubPage {
           .color(ThemeAwareHelper.getTestManagementThemedColor('divider', this.themeState.currentTheme))
           .margin({ left: 16 })
 
-        this.buildSettingItem(
+        this.buildSettingRow(
           '后台任务悬浮球',
           '后台任务进度悬浮球未被手动拖动时按握姿选择默认停靠侧',
           this.holdingAwarenessTaskFloatingBallEnabled,
@@ -605,7 +662,7 @@ export struct InteractionSettingsSubPage {
           .color(ThemeAwareHelper.getTestManagementThemedColor('divider', this.themeState.currentTheme))
           .margin({ left: 16 })
 
-        this.buildSettingItem(
+        this.buildSettingRow(
           '漫画条漫快速导航',
           '条漫与连续滚动模式的快速导航滑条按握姿切换左右侧',
           this.holdingAwarenessMangaWebtoonQuickNavigationEnabled,
@@ -622,7 +679,7 @@ export struct InteractionSettingsSubPage {
           .color(ThemeAwareHelper.getTestManagementThemedColor('divider', this.themeState.currentTheme))
           .margin({ left: 16 })
 
-        this.buildSettingItem(
+        this.buildSettingRow(
           '文本划线想法悬浮窗',
           '小说划线想法浮窗按握姿靠近易操作侧显示',
           this.holdingAwarenessTextHighlightThoughtPopupEnabled,
@@ -708,6 +765,43 @@ export struct InteractionSettingsSubPage {
     .width('100%')
   }
 
+  @Builder
+  buildInteractionTabButton(tab: InteractionSettingsTab, label: string) {
+    Column() {
+      Text(label)
+        .fontSize(13)
+        .fontFamily(this.appFontFamily)
+        .fontColor(this.selectedInteractionTab === tab
+          ? ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme)
+          : ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
+        .fontWeight(this.selectedInteractionTab === tab ? FontWeight.Bold : FontWeight.Normal)
+        .padding({ left: 16, right: 16, top: 10, bottom: 10 })
+
+      Divider()
+        .strokeWidth(2)
+        .color(this.selectedInteractionTab === tab
+          ? ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme)
+          : Color.Transparent)
+        .width('60%')
+    }
+    .layoutWeight(1)
+    .onClick(() => {
+      this.selectedInteractionTab = tab;
+    })
+  }
+
+  @Builder
+  buildInteractionTabBar() {
+    Row({ space: 0 }) {
+      this.buildInteractionTabButton(InteractionSettingsTab.VIBRATION, '震动反馈')
+      this.buildInteractionTabButton(InteractionSettingsTab.HOLDING_AWARENESS, '智感握姿')
+    }
+    .width('100%')
+    .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('panel_background', this.themeState.currentTheme))
+    .borderRadius(12)
+    .margin({ left: 16, right: 16 })
+  }
+
   build() {
     HdsNavDestination() {
       Stack() {
@@ -722,73 +816,241 @@ export struct InteractionSettingsSubPage {
         Scroll(this.scroller) {
           Column({ space: 16 }) {
             Blank().height(SettingsPageTitleBarManager.getContentTopPadding(this.statusBarHeight))
-            Flex({
-              wrap: FlexWrap.Wrap,
-              justifyContent: this.responsive_isLandscape ? FlexAlign.SpaceBetween : FlexAlign.Start
-            }) {
-              // 全局开关
-              Column() {
+            this.buildInteractionTabBar()
+
+            if (this.selectedInteractionTab === InteractionSettingsTab.VIBRATION) {
+              Flex({
+                wrap: FlexWrap.Wrap,
+                justifyContent: this.responsive_isLandscape ? FlexAlign.SpaceBetween : FlexAlign.Start
+              }) {
+                // 全局开关
                 Column() {
-                  this.buildSettingItem(
-                    '启用震动反馈',
-                    '关闭后所有震动效果将被禁用',
-                    this.vibrationEnabled,
-                    async (value: boolean) => {
-                      this.vibrationEnabled = value;
-                      await this.interactionManager.setVibrationEnabled(value);
-                      if (value) {
-                        this.interactionManager.vibrate(VibrationScene.TOGGLE_SWITCH);
+                  Column() {
+                    this.buildSettingItem(
+                      '启用震动反馈',
+                      '关闭后所有震动效果将被禁用',
+                      this.vibrationEnabled,
+                      async (value: boolean) => {
+                        this.vibrationEnabled = value;
+                        await this.interactionManager.setVibrationEnabled(value);
+                        if (value) {
+                          this.interactionManager.vibrate(VibrationScene.TOGGLE_SWITCH);
+                        }
                       }
-                    }
-                  )
+                    )
+                  }
+                  .backgroundColor(SettingsPanelSurfaceHelper.getBackground(this.themeState.currentTheme))
+                  .linearGradient(SettingsPanelSurfaceHelper.getSurfaceGradient(this.themeState.currentTheme))
+                  .backgroundBlurStyle(SettingsPanelSurfaceHelper.getBlurStyle(this.themeState.currentTheme), SettingsPanelSurfaceHelper.getBlurOptions(this.themeState.currentTheme))
+                  .backgroundEffect(SettingsPanelSurfaceHelper.getBackgroundEffect(this.themeState.currentTheme))
+                  .borderRadius(SettingsPanelSurfaceHelper.getRadius(this.themeState.currentTheme))
+                  .clip(true)
+                  .border({ width: SettingsPanelSurfaceHelper.getBorderWidth(this.themeState.currentTheme), color: SettingsPanelSurfaceHelper.getBorderColor(this.themeState.currentTheme) })
+                  .shadow({
+                    radius: SettingsPanelSurfaceHelper.getRadius(this.themeState.currentTheme) + 4,
+                    color: SettingsPanelSurfaceHelper.getShadowColor(this.themeState.currentTheme),
+                    offsetX: 0,
+                    offsetY: 8
+                  })
                 }
-                .backgroundColor(SettingsPanelSurfaceHelper.getBackground(this.themeState.currentTheme))
-                .linearGradient(SettingsPanelSurfaceHelper.getSurfaceGradient(this.themeState.currentTheme))
-                .backgroundBlurStyle(SettingsPanelSurfaceHelper.getBlurStyle(this.themeState.currentTheme), SettingsPanelSurfaceHelper.getBlurOptions(this.themeState.currentTheme))
-                .backgroundEffect(SettingsPanelSurfaceHelper.getBackgroundEffect(this.themeState.currentTheme))
-                .borderRadius(SettingsPanelSurfaceHelper.getRadius(this.themeState.currentTheme))
-                .clip(true)
-                .border({ width: SettingsPanelSurfaceHelper.getBorderWidth(this.themeState.currentTheme), color: SettingsPanelSurfaceHelper.getBorderColor(this.themeState.currentTheme) })
-                .shadow({
-                  radius: SettingsPanelSurfaceHelper.getRadius(this.themeState.currentTheme) + 4,
-                  color: SettingsPanelSurfaceHelper.getShadowColor(this.themeState.currentTheme),
-                  offsetX: 0,
-                  offsetY: 8
-                })
-              }
-              .width(this.responsive_isLandscape ? '48%' : '100%')
-              .padding(4)
-              .backgroundColor(SettingsSearchSupport.getHighlightOverlayBackground(
-                this.themeState.currentTheme,
-                this.activeSearchAnchorId,
-                'interaction_basic'
-              ))
-              .borderRadius(16)
-              .border({
-                width: SettingsSearchSupport.isHighlightActive(this.activeSearchAnchorId, 'interaction_basic') ? 1 : 0,
-                color: SettingsSearchSupport.getHighlightOverlayBorder(
+                .width(this.responsive_isLandscape ? '48%' : '100%')
+                .padding(4)
+                .backgroundColor(SettingsSearchSupport.getHighlightOverlayBackground(
                   this.themeState.currentTheme,
                   this.activeSearchAnchorId,
                   'interaction_basic'
-                )
-              })
-              .scale({
-                x: SettingsSearchSupport.getHighlightScale(this.activeSearchAnchorId, 'interaction_basic', this.searchHighlightPulse),
-                y: SettingsSearchSupport.getHighlightScale(this.activeSearchAnchorId, 'interaction_basic', this.searchHighlightPulse)
-              })
-              .shadow(SettingsSearchSupport.getHighlightOverlayShadow(
-                this.themeState.currentTheme,
-                this.activeSearchAnchorId,
-                'interaction_basic',
-                this.searchHighlightPulse
-              ))
-              .animation({ duration: 260, curve: Curve.EaseOut })
-              .margin({ bottom: 16 })
+                ))
+                .borderRadius(16)
+                .border({
+                  width: SettingsSearchSupport.isHighlightActive(this.activeSearchAnchorId, 'interaction_basic') ? 1 : 0,
+                  color: SettingsSearchSupport.getHighlightOverlayBorder(
+                    this.themeState.currentTheme,
+                    this.activeSearchAnchorId,
+                    'interaction_basic'
+                  )
+                })
+                .scale({
+                  x: SettingsSearchSupport.getHighlightScale(this.activeSearchAnchorId, 'interaction_basic', this.searchHighlightPulse),
+                  y: SettingsSearchSupport.getHighlightScale(this.activeSearchAnchorId, 'interaction_basic', this.searchHighlightPulse)
+                })
+                .shadow(SettingsSearchSupport.getHighlightOverlayShadow(
+                  this.themeState.currentTheme,
+                  this.activeSearchAnchorId,
+                  'interaction_basic',
+                  this.searchHighlightPulse
+                ))
+                .animation({ duration: 260, curve: Curve.EaseOut })
+                .margin({ bottom: 16 })
 
+                if (this.vibrationEnabled) {
+                  // 震动强度
+                  Column() {
+                    this.buildIntensitySelector()
+                  }
+                  .width(this.responsive_isLandscape ? '48%' : '100%')
+                  .padding(4)
+                  .backgroundColor(SettingsSearchSupport.getHighlightOverlayBackground(
+                    this.themeState.currentTheme,
+                    this.activeSearchAnchorId,
+                    'interaction_intensity'
+                  ))
+                  .borderRadius(16)
+                  .border({
+                    width: SettingsSearchSupport.isHighlightActive(this.activeSearchAnchorId, 'interaction_intensity') ? 1 : 0,
+                    color: SettingsSearchSupport.getHighlightOverlayBorder(
+                      this.themeState.currentTheme,
+                      this.activeSearchAnchorId,
+                      'interaction_intensity'
+                    )
+                  })
+                  .scale({
+                    x: SettingsSearchSupport.getHighlightScale(this.activeSearchAnchorId, 'interaction_intensity', this.searchHighlightPulse),
+                    y: SettingsSearchSupport.getHighlightScale(this.activeSearchAnchorId, 'interaction_intensity', this.searchHighlightPulse)
+                  })
+                  .shadow(SettingsSearchSupport.getHighlightOverlayShadow(
+                    this.themeState.currentTheme,
+                    this.activeSearchAnchorId,
+                    'interaction_intensity',
+                    this.searchHighlightPulse
+                  ))
+                  .animation({ duration: 260, curve: Curve.EaseOut })
+                  .margin({ bottom: 16 })
+
+                  // 场景设置
+                  Flex({
+                    wrap: FlexWrap.Wrap,
+                    justifyContent: this.responsive_isLandscape ? FlexAlign.SpaceBetween : FlexAlign.Start
+                  }) {
+                    ForEach(this.getSceneGroups(), (group: SceneGroup) => {
+                      Column() {
+                        this.buildSceneGroup(group)
+                      }
+                      .width(this.responsive_isLandscape ? '48%' : '100%')
+                      .margin({ bottom: 16 })
+                    })
+                  }
+                  .width('100%')
+                  .padding(4)
+                  .backgroundColor(SettingsSearchSupport.getHighlightOverlayBackground(
+                    this.themeState.currentTheme,
+                    this.activeSearchAnchorId,
+                    'interaction_scene'
+                  ))
+                  .borderRadius(16)
+                  .border({
+                    width: SettingsSearchSupport.isHighlightActive(this.activeSearchAnchorId, 'interaction_scene') ? 1 : 0,
+                    color: SettingsSearchSupport.getHighlightOverlayBorder(
+                      this.themeState.currentTheme,
+                      this.activeSearchAnchorId,
+                      'interaction_scene'
+                    )
+                  })
+                  .scale({
+                    x: SettingsSearchSupport.getHighlightScale(this.activeSearchAnchorId, 'interaction_scene', this.searchHighlightPulse),
+                    y: SettingsSearchSupport.getHighlightScale(this.activeSearchAnchorId, 'interaction_scene', this.searchHighlightPulse)
+                  })
+                  .shadow(SettingsSearchSupport.getHighlightOverlayShadow(
+                    this.themeState.currentTheme,
+                    this.activeSearchAnchorId,
+                    'interaction_scene',
+                    this.searchHighlightPulse
+                  ))
+                  .animation({ duration: 260, curve: Curve.EaseOut })
+
+                  // 重置按钮
+                  Column() {
+                    Button('恢复默认设置')
+                      .width('100%')
+                      .height(44)
+                      .fontSize(14)
+                      .fontFamily(this.appFontFamily)
+                      .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
+                      .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('comp_background_tertiary', this.themeState.currentTheme))
+                      .borderRadius(12)
+                      .border({ width: 1, color: ThemeAwareHelper.getTestManagementThemedColor('panel_border', this.themeState.currentTheme) })
+                      .onClick(async () => {
+                        await this.interactionManager.resetToDefault();
+                        await this.holdingAwarenessManager.setGlobalEnabled(true);
+                        await this.holdingAwarenessManager.setFeatureEnabled(
+                          HoldingAwarenessFeature.MAIN_MENU_FLOATING_SEARCH_BUTTON,
+                          true
+                        );
+                        await this.holdingAwarenessManager.setFeatureEnabled(
+                          HoldingAwarenessFeature.MAIN_MENU_PRIVACY_EXIT_BUTTON,
+                          true
+                        );
+                        await this.holdingAwarenessManager.setFeatureEnabled(
+                          HoldingAwarenessFeature.MAIN_MENU_SHELF_PREVIEW_CONTROLS,
+                          true
+                        );
+                        await this.holdingAwarenessManager.setFeatureEnabled(
+                          HoldingAwarenessFeature.DETAIL_LANDSCAPE_READ_ACTIONS,
+                          true
+                        );
+                        await this.holdingAwarenessManager.setFeatureEnabled(
+                          HoldingAwarenessFeature.READ_ALOUD_FLOATING_BALL,
+                          true
+                        );
+                        await this.holdingAwarenessManager.setFeatureEnabled(
+                          HoldingAwarenessFeature.TASK_FLOATING_BALL,
+                          true
+                        );
+                        await this.holdingAwarenessManager.setFeatureEnabled(
+                          HoldingAwarenessFeature.MANGA_WEBTOON_QUICK_NAVIGATION,
+                          true
+                        );
+                        await this.holdingAwarenessManager.setFeatureEnabled(
+                          HoldingAwarenessFeature.TEXT_HIGHLIGHT_THOUGHT_POPUP,
+                          true
+                        );
+                        this.loadSettings();
+                        this.interactionManager.vibrate(VibrationScene.SUCCESS);
+                      })
+                  }
+                  .width(this.responsive_isLandscape ? '48%' : '100%')
+                  .padding(4)
+                  .backgroundColor(SettingsSearchSupport.getHighlightOverlayBackground(
+                    this.themeState.currentTheme,
+                    this.activeSearchAnchorId,
+                    'interaction_reset'
+                  ))
+                  .borderRadius(16)
+                  .border({
+                    width: SettingsSearchSupport.isHighlightActive(this.activeSearchAnchorId, 'interaction_reset') ? 1 : 0,
+                    color: SettingsSearchSupport.getHighlightOverlayBorder(
+                      this.themeState.currentTheme,
+                      this.activeSearchAnchorId,
+                      'interaction_reset'
+                    )
+                  })
+                  .scale({
+                    x: SettingsSearchSupport.getHighlightScale(this.activeSearchAnchorId, 'interaction_reset', this.searchHighlightPulse),
+                    y: SettingsSearchSupport.getHighlightScale(this.activeSearchAnchorId, 'interaction_reset', this.searchHighlightPulse)
+                  })
+                  .shadow(SettingsSearchSupport.getHighlightOverlayShadow(
+                    this.themeState.currentTheme,
+                    this.activeSearchAnchorId,
+                    'interaction_reset',
+                    this.searchHighlightPulse
+                  ))
+                  .animation({ duration: 260, curve: Curve.EaseOut })
+                  .margin({ bottom: 16 })
+                }
+              }
+              .width('100%')
+              .animation({ duration: 260, curve: Curve.EaseOut })
+              .transition(TransitionEffect.asymmetric(
+                TransitionEffect.OPACITY.animation({ duration: 220, curve: Curve.EaseOut })
+                  .combine(TransitionEffect.translate({ y: 12 }).animation({ duration: 220, curve: Curve.EaseOut })),
+                TransitionEffect.OPACITY.animation({ duration: 160, curve: Curve.EaseIn })
+              ))
+            }
+
+            if (this.selectedInteractionTab === InteractionSettingsTab.HOLDING_AWARENESS) {
               Column() {
                 this.buildHoldingAwarenessSettings()
               }
-              .width(this.responsive_isLandscape ? '48%' : '100%')
+              .width('100%')
               .padding(4)
               .backgroundColor(SettingsSearchSupport.getHighlightOverlayBackground(
                 this.themeState.currentTheme,
@@ -815,164 +1077,13 @@ export struct InteractionSettingsSubPage {
                 this.searchHighlightPulse
               ))
               .animation({ duration: 260, curve: Curve.EaseOut })
+              .transition(TransitionEffect.asymmetric(
+                TransitionEffect.OPACITY.animation({ duration: 220, curve: Curve.EaseOut })
+                  .combine(TransitionEffect.translate({ y: 12 }).animation({ duration: 220, curve: Curve.EaseOut })),
+                TransitionEffect.OPACITY.animation({ duration: 160, curve: Curve.EaseIn })
+              ))
               .margin({ bottom: 16 })
-
-              if (this.vibrationEnabled) {
-                // 震动强度
-                Column() {
-                  this.buildIntensitySelector()
-                }
-                .width(this.responsive_isLandscape ? '48%' : '100%')
-                .padding(4)
-                .backgroundColor(SettingsSearchSupport.getHighlightOverlayBackground(
-                  this.themeState.currentTheme,
-                  this.activeSearchAnchorId,
-                  'interaction_intensity'
-                ))
-                .borderRadius(16)
-                .border({
-                  width: SettingsSearchSupport.isHighlightActive(this.activeSearchAnchorId, 'interaction_intensity') ? 1 : 0,
-                  color: SettingsSearchSupport.getHighlightOverlayBorder(
-                    this.themeState.currentTheme,
-                    this.activeSearchAnchorId,
-                    'interaction_intensity'
-                  )
-                })
-                .scale({
-                  x: SettingsSearchSupport.getHighlightScale(this.activeSearchAnchorId, 'interaction_intensity', this.searchHighlightPulse),
-                  y: SettingsSearchSupport.getHighlightScale(this.activeSearchAnchorId, 'interaction_intensity', this.searchHighlightPulse)
-                })
-                .shadow(SettingsSearchSupport.getHighlightOverlayShadow(
-                  this.themeState.currentTheme,
-                  this.activeSearchAnchorId,
-                  'interaction_intensity',
-                  this.searchHighlightPulse
-                ))
-                .animation({ duration: 260, curve: Curve.EaseOut })
-                .margin({ bottom: 16 })
-
-                // 场景设置
-                Flex({
-                  wrap: FlexWrap.Wrap,
-                  justifyContent: this.responsive_isLandscape ? FlexAlign.SpaceBetween : FlexAlign.Start
-                }) {
-                  ForEach(this.getSceneGroups(), (group: SceneGroup) => {
-                    Column() {
-                      this.buildSceneGroup(group)
-                    }
-                    .width(this.responsive_isLandscape ? '48%' : '100%')
-                    .margin({ bottom: 16 })
-                  })
-                }
-                .width('100%')
-                .padding(4)
-                .backgroundColor(SettingsSearchSupport.getHighlightOverlayBackground(
-                  this.themeState.currentTheme,
-                  this.activeSearchAnchorId,
-                  'interaction_scene'
-                ))
-                .borderRadius(16)
-                .border({
-                  width: SettingsSearchSupport.isHighlightActive(this.activeSearchAnchorId, 'interaction_scene') ? 1 : 0,
-                  color: SettingsSearchSupport.getHighlightOverlayBorder(
-                    this.themeState.currentTheme,
-                    this.activeSearchAnchorId,
-                    'interaction_scene'
-                  )
-                })
-                .scale({
-                  x: SettingsSearchSupport.getHighlightScale(this.activeSearchAnchorId, 'interaction_scene', this.searchHighlightPulse),
-                  y: SettingsSearchSupport.getHighlightScale(this.activeSearchAnchorId, 'interaction_scene', this.searchHighlightPulse)
-                })
-                .shadow(SettingsSearchSupport.getHighlightOverlayShadow(
-                  this.themeState.currentTheme,
-                  this.activeSearchAnchorId,
-                  'interaction_scene',
-                  this.searchHighlightPulse
-                ))
-                .animation({ duration: 260, curve: Curve.EaseOut })
-
-                // 重置按钮
-                Column() {
-                  Button('恢复默认设置')
-                    .width('100%')
-                    .height(44)
-                    .fontSize(14)
-                    .fontFamily(this.appFontFamily)
-                    .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
-                    .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('comp_background_tertiary', this.themeState.currentTheme))
-                    .borderRadius(12)
-                    .border({ width: 1, color: ThemeAwareHelper.getTestManagementThemedColor('panel_border', this.themeState.currentTheme) })
-                    .onClick(async () => {
-                      await this.interactionManager.resetToDefault();
-                      await this.holdingAwarenessManager.setGlobalEnabled(true);
-                      await this.holdingAwarenessManager.setFeatureEnabled(
-                        HoldingAwarenessFeature.MAIN_MENU_FLOATING_SEARCH_BUTTON,
-                        true
-                      );
-                      await this.holdingAwarenessManager.setFeatureEnabled(
-                        HoldingAwarenessFeature.MAIN_MENU_PRIVACY_EXIT_BUTTON,
-                        true
-                      );
-                      await this.holdingAwarenessManager.setFeatureEnabled(
-                        HoldingAwarenessFeature.MAIN_MENU_SHELF_PREVIEW_CONTROLS,
-                        true
-                      );
-                      await this.holdingAwarenessManager.setFeatureEnabled(
-                        HoldingAwarenessFeature.DETAIL_LANDSCAPE_READ_ACTIONS,
-                        true
-                      );
-                      await this.holdingAwarenessManager.setFeatureEnabled(
-                        HoldingAwarenessFeature.READ_ALOUD_FLOATING_BALL,
-                        true
-                      );
-                      await this.holdingAwarenessManager.setFeatureEnabled(
-                        HoldingAwarenessFeature.TASK_FLOATING_BALL,
-                        true
-                      );
-                      await this.holdingAwarenessManager.setFeatureEnabled(
-                        HoldingAwarenessFeature.MANGA_WEBTOON_QUICK_NAVIGATION,
-                        true
-                      );
-                      await this.holdingAwarenessManager.setFeatureEnabled(
-                        HoldingAwarenessFeature.TEXT_HIGHLIGHT_THOUGHT_POPUP,
-                        true
-                      );
-                      this.loadSettings();
-                      this.interactionManager.vibrate(VibrationScene.SUCCESS);
-                    })
-                }
-                .width(this.responsive_isLandscape ? '48%' : '100%')
-                .padding(4)
-                .backgroundColor(SettingsSearchSupport.getHighlightOverlayBackground(
-                  this.themeState.currentTheme,
-                  this.activeSearchAnchorId,
-                  'interaction_reset'
-                ))
-                .borderRadius(16)
-                .border({
-                  width: SettingsSearchSupport.isHighlightActive(this.activeSearchAnchorId, 'interaction_reset') ? 1 : 0,
-                  color: SettingsSearchSupport.getHighlightOverlayBorder(
-                    this.themeState.currentTheme,
-                    this.activeSearchAnchorId,
-                    'interaction_reset'
-                  )
-                })
-                .scale({
-                  x: SettingsSearchSupport.getHighlightScale(this.activeSearchAnchorId, 'interaction_reset', this.searchHighlightPulse),
-                  y: SettingsSearchSupport.getHighlightScale(this.activeSearchAnchorId, 'interaction_reset', this.searchHighlightPulse)
-                })
-                .shadow(SettingsSearchSupport.getHighlightOverlayShadow(
-                  this.themeState.currentTheme,
-                  this.activeSearchAnchorId,
-                  'interaction_reset',
-                  this.searchHighlightPulse
-                ))
-                .animation({ duration: 260, curve: Curve.EaseOut })
-                .margin({ bottom: 16 })
-              }
             }
-            .width('100%')
 
             Blank().height(40)
           }

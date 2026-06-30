@@ -1,6 +1,7 @@
 ﻿import { SafeUtils } from '../../Utils/SafeUtils';
 import { http } from '@kit.NetworkKit';
 import { logger } from '../../Utils/Logger';
+import { base64Encode } from '../../Utils/CryptoUtils';
 import { ChapterInfo, ComicDetailInfo, ComicInfo, PageInfo } from './SourceExecutor';
 import {
   KomgaAuthorOption,
@@ -672,7 +673,7 @@ export class KomgaSource {
     if (instance.authMode === 'API_KEY' && instance.apiKey.trim().length > 0) {
       headers['X-API-Key'] = instance.apiKey.trim();
     } else if (instance.authMode === 'BASIC' && instance.username.trim().length > 0) {
-      headers['Authorization'] = `Basic ${this.base64Encode(`${instance.username}:${instance.password}`)}`;
+      headers['Authorization'] = `Basic ${base64Encode(`${instance.username}:${instance.password}`)}`;
     }
 
     return headers;
@@ -855,23 +856,4 @@ export class KomgaSource {
     return Number.isNaN(parsed) ? 0 : parsed;
   }
 
-  private base64Encode(input: string): string {
-    const chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/';
-    let result = '';
-    let index = 0;
-
-    while (index < input.length) {
-      const a = input.charCodeAt(index++);
-      const b = index < input.length ? input.charCodeAt(index++) : 0;
-      const c = index < input.length ? input.charCodeAt(index++) : 0;
-      const triplet = (a << 16) | (b << 8) | c;
-
-      result += chars.charAt((triplet >> 18) & 0x3F);
-      result += chars.charAt((triplet >> 12) & 0x3F);
-      result += index > input.length + 1 ? '=' : chars.charAt((triplet >> 6) & 0x3F);
-      result += index > input.length ? '=' : chars.charAt(triplet & 0x3F);
-    }
-
-    return result;
-  }
 }

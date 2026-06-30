@@ -229,6 +229,20 @@ export function buildSourceRuntimeConfigVersionKey(sourceId: number): string {
   return `source_runtime_config_version_${sourceId}`;
 }
 
+export type RemoteLibraryProvider = 'suwayomi' | 'komga';
+
+export class RemoteLibraryConfigChangedPayload implements IEventPayload {
+  public provider: RemoteLibraryProvider;
+  public reason: string;
+  public timestamp: number;
+
+  constructor(provider: RemoteLibraryProvider, reason: string) {
+    this.provider = provider;
+    this.reason = reason;
+    this.timestamp = Date.now();
+  }
+}
+
 /**
  * 文件导入请求事件的载荷
  */
@@ -444,6 +458,7 @@ interface GameEventConstants {
   MANGA_READING_PROGRESS_UPDATED: string;
   MANGA_CACHE_UPDATED: string;
   SOURCE_RUNTIME_CONFIG_CHANGED: string;
+  REMOTE_LIBRARY_CONFIG_CHANGED: string;
   // 电子书数据
   EBOOK_UPDATED: string;
   EBOOK_COVER_CHANGED: string;
@@ -515,6 +530,7 @@ export const GameEvent: GameEventConstants = {
   MANGA_READING_PROGRESS_UPDATED: 'mangaReadingProgressUpdated',
   MANGA_CACHE_UPDATED: 'mangaCacheUpdated',
   SOURCE_RUNTIME_CONFIG_CHANGED: 'sourceRuntimeConfigChanged',
+  REMOTE_LIBRARY_CONFIG_CHANGED: 'remoteLibraryConfigChanged',
 
   // --- 电子书数据事件 ---
   EBOOK_UPDATED: 'ebookUpdated',

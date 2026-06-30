@@ -11,6 +11,7 @@
     "pages/ReadAloudPlayerAbilityPage",
     "pages/FileEditorAbilityPage",
     "pages/ExternalFileTaskAbilityPage",
-    "pages/RemoteControlAbilityPage"
+    "pages/RemoteControlAbilityPage",
+    "pages/SourceDetailAbilityPage"
   ]
 }

@@ -27,6 +27,8 @@ export struct SourceFeatureSettingsSubPage {
   @State fontState: FontAwareState = new FontAwareState();
   @StorageLink('appFontFamily') appFontFamily: string = 'HarmonyOS Sans';
   @StorageLink('source_features_enabled') sourceFeaturesEnabled: boolean = false;
+  @StorageLink('source_detail_translation_tag_enabled') sourceDetailTranslationTagEnabled: boolean = true;
+  @StorageLink('source_detail_multi_window_enabled') sourceDetailMultiWindowEnabled: boolean = false;
 
   private readonly componentId: string = 'SourceFeatureSettingsSubPage';
   private readonly settingsManager: SettingsManager = SettingsManager.getInstance();
@@ -86,6 +88,12 @@ export struct SourceFeatureSettingsSubPage {
     } catch (error) {
       logger.warn(TAG, `显示提示失败: ${String(error)}`);
     }
+  }
+
+  private async saveBooleanSetting(key: string, storageKey: string, value: boolean): Promise<void> {
+    await this.settingsManager.setBoolean(key, value);
+    this.settingsManager.syncToAppStorage();
+    AppStorage.setOrCreate(storageKey, value);
   }
 
   private async openSingleGuidePage(step: GuideStep): Promise<void> {
@@ -199,6 +207,117 @@ export struct SourceFeatureSettingsSubPage {
   }
 
   @Builder
+  buildMangaSourceCommonSettingsCard() {
+    Column({ space: 14 }) {
+      Column({ space: 4 }) {
+        Text('漫画图源共通设置')
+          .fontSize(16)
+          .fontWeight(FontWeight.Medium)
+          .fontFamily(this.appFontFamily)
+          .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
+          .width('100%')
+
+        Text('这些选项作用于漫画图源详情页，不会修改单个图源的独立配置。')
+          .fontSize(13)
+          .fontFamily(this.appFontFamily)
+          .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
+          .maxLines(2)
+          .width('100%')
+      }
+      .alignItems(HorizontalAlign.Start)
+      .width('100%')
+
+      Column({ space: 0 }) {
+        Row() {
+          Column({ space: 4 }) {
+            Text('显示“汉化/翻译”标签')
+              .fontSize(15)
+              .fontWeight(FontWeight.Medium)
+              .fontFamily(this.appFontFamily)
+              .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
+
+            Text('在图源详情页的漫画封面上标记标题中带汉化、翻译、中文等关键词的内容。')
+              .fontSize(12)
+              .fontFamily(this.appFontFamily)
+              .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_muted', this.themeState.currentTheme))
+              .maxLines(2)
+              .textOverflow({ overflow: TextOverflow.Ellipsis })
+          }
+          .alignItems(HorizontalAlign.Start)
+          .layoutWeight(1)
+
+          Toggle({ type: ToggleType.Switch, isOn: this.sourceDetailTranslationTagEnabled })
+            .selectedColor(ThemeAwareHelper.getTestManagementThemedColor('accent_blue', this.themeState.currentTheme))
+            .onChange((isOn: boolean) => {
+              this.sourceDetailTranslationTagEnabled = isOn;
+              void this.saveBooleanSetting(
+                SettingKeys.SOURCE_DETAIL_TRANSLATION_TAG_ENABLED,
+                'source_detail_translation_tag_enabled',
+                isOn
+              );
+            })
+        }
+        .width('100%')
+        .padding({ top: 2, bottom: 14 })
+
+        Row()
+          .width('100%')
+          .height(1)
+          .backgroundColor(SettingsPanelSurfaceHelper.getBorderColor(this.themeState.currentTheme))
+          .opacity(0.55)
+
+        Row() {
+          Column({ space: 4 }) {
+            Text('图源详情页多窗口')
+              .fontSize(15)
+              .fontWeight(FontWeight.Medium)
+              .fontFamily(this.appFontFamily)
+              .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
+
+            Text('开启后，可以同时保留多个漫画图源详情页；关闭后沿用单窗口图源详情模式。')
+              .fontSize(12)
+              .fontFamily(this.appFontFamily)
+              .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_muted', this.themeState.currentTheme))
+              .maxLines(2)
+              .textOverflow({ overflow: TextOverflow.Ellipsis })
+          }
+          .alignItems(HorizontalAlign.Start)
+          .layoutWeight(1)
+
+          Toggle({ type: ToggleType.Switch, isOn: this.sourceDetailMultiWindowEnabled })
+            .selectedColor(ThemeAwareHelper.getTestManagementThemedColor('accent_blue', this.themeState.currentTheme))
+            .onChange((isOn: boolean) => {
+              this.sourceDetailMultiWindowEnabled = isOn;
+              void this.saveBooleanSetting(
+                SettingKeys.SOURCE_DETAIL_MULTI_WINDOW_ENABLED,
+                'source_detail_multi_window_enabled',
+                isOn
+              );
+            })
+        }
+        .width('100%')
+        .padding({ top: 14, bottom: 2 })
+      }
+      .width('100%')
+    }
+    .width('100%')
+    .padding(16)
+    .backgroundColor(SettingsPanelSurfaceHelper.getBackground(this.themeState.currentTheme))
+    .linearGradient(SettingsPanelSurfaceHelper.getSurfaceGradient(this.themeState.currentTheme))
+    .backgroundBlurStyle(SettingsPanelSurfaceHelper.getBlurStyle(this.themeState.currentTheme), SettingsPanelSurfaceHelper.getBlurOptions(this.themeState.currentTheme))
+    .backgroundEffect(SettingsPanelSurfaceHelper.getBackgroundEffect(this.themeState.currentTheme))
+    .borderRadius(SettingsPanelSurfaceHelper.getRadius(this.themeState.currentTheme))
+    .clip(true)
+    .border({ width: SettingsPanelSurfaceHelper.getBorderWidth(this.themeState.currentTheme), color: SettingsPanelSurfaceHelper.getBorderColor(this.themeState.currentTheme) })
+    .shadow({
+      radius: SettingsPanelSurfaceHelper.getRadius(this.themeState.currentTheme) + 4,
+      color: SettingsPanelSurfaceHelper.getShadowColor(this.themeState.currentTheme),
+      offsetX: 0,
+      offsetY: 8
+    })
+  }
+
+  @Builder
   buildGuideEntryCard() {
     Column({ space: 14 }) {
       Column({ space: 4 }) {
@@ -257,6 +376,7 @@ export struct SourceFeatureSettingsSubPage {
           Column({ space: 16 }) {
             Blank().height(SettingsPageTitleBarManager.getContentTopPadding(this.statusBarHeight))
             this.buildToggleCard()
+            this.buildMangaSourceCommonSettingsCard()
             this.buildGuideEntryCard()
             Blank().height(40)
           }

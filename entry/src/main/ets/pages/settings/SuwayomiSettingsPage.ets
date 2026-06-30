@@ -6,7 +6,10 @@ import { UIContext } from '@ohos.arkui.UIContext';
 
 import { HdsNavDestination, HdsNavDestinationAttribute, ScrollEffectType } from '@kit.UIDesignKit';
 import { LengthMetrics } from '@kit.ArkUI';
+import { http } from '@kit.NetworkKit';
 import { logger } from '../../Utils/Logger';
+import { SafeUtils } from '../../Utils/SafeUtils';
+import { base64Encode } from '../../Utils/CryptoUtils';
 import { ThemeAwareState, ThemeAwareHelper } from '../../Framework/Components/ThemeAware';
 import { FontAwareState } from '../../Framework/Components/FontAware';
 import { ThemeType } from '../../Framework/Managers/ThemeManager';
@@ -17,6 +20,11 @@ import { GlobalBackgroundLayerMode } from '../../Framework/Components/GlobalBack
 import { SharedPageBackgroundLayer } from '../../Framework/Components/SharedPageBackgroundLayer';
 import { SettingsImmersiveTitleBar } from './SettingsImmersiveTitleBar';
 import { SettingsPageTitleBarManager } from './SettingsPageTitleBarManager';
+import { getSuwayomiSourceExecutor } from '../../Framework/Source/SuwayomiSourceExecutor';
+import { TabContentCacheManager } from '../../Framework/Cache/TabContentCacheManager';
+import SuwayomiCacheManager from '../../Framework/Source/SuwayomiCacheManager';
+import { RemoteLibraryMangaBridge } from '../../Framework/Source/RemoteLibraryMangaBridge';
+import { eventBus, GameEvent, RemoteLibraryConfigChangedPayload } from '../../Framework/EventBus';
 
 const TAG = 'SuwayomiSettingsPage';
 const TITLE_BAR_HEIGHT: number = 56;
@@ -26,6 +34,19 @@ const SETTINGS_TAB_INDEX: number = 6;
 // 页面参数接口
 interface SuwayomiWebUIParams {
   url?: string;
+}
+
+interface SuwayomiTestGraphQLData {
+  __typename?: string;
+}
+
+interface SuwayomiTestGraphQLError {
+  message: string;
+}
+
+interface SuwayomiTestGraphQLResponse {
+  data?: SuwayomiTestGraphQLData;
+  errors?: SuwayomiTestGraphQLError[];
 }
 
 @Component
@@ -162,6 +183,61 @@ export struct SuwayomiSettingsPage {
     });
   }
 
+  private normalizeServerUrl(serverUrl: string): string {
+    const raw = serverUrl.trim();
+    if (raw.length <= 0) {
+      return '';
+    }
+    const hasScheme = /^[a-zA-Z][a-zA-Z0-9+\-.]*:\/\//.test(raw);
+    const withScheme = hasScheme ? raw : `http://${raw}`;
+    return withScheme.endsWith('/') ? withScheme.substring(0, withScheme.length - 1) : withScheme;
+  }
+
+  private buildAuthHeaders(): Record<string, string> {
+    const headers: Record<string, string> = {
+      'Content-Type': 'application/json',
+      'Accept': 'application/json'
+    };
+    if (this.useAuth && this.username.trim().length > 0) {
+      const credentials = `${this.username}:${this.password}`;
+      headers['Authorization'] = `Basic ${base64Encode(credentials)}`;
+    }
+    return headers;
+  }
+
+  private async testConnectionDirectly(): Promise<boolean> {
+    const serverUrl = this.normalizeServerUrl(this.serverUrl);
+    if (serverUrl.length <= 0) {
+      return false;
+    }
+
+    const request = http.createHttp();
+    try {
+      const response = await request.request(`${serverUrl}/api/graphql`, {
+        method: http.RequestMethod.POST,
+        header: this.buildAuthHeaders(),
+        extraData: JSON.stringify({ query: 'query { __typename }' }),
+        connectTimeout: 10000,
+        readTimeout: 30000
+      });
+      if (response.responseCode < 200 || response.responseCode >= 300) {
+        logger.warn(TAG, `Suwayomi 测试连接失败: responseCode=${response.responseCode}`);
+        return false;
+      }
+      const result = SafeUtils.parseObj(response.result as string) as SuwayomiTestGraphQLResponse;
+      if (result.errors && result.errors.length > 0) {
+        logger.warn(TAG, `Suwayomi GraphQL 测试失败: ${result.errors[0].message}`);
+        return false;
+      }
+      return result.data !== undefined;
+    } catch (error) {
+      logger.error(TAG, 'Suwayomi 连接测试异常', String(error));
+      return false;
+    } finally {
+      request.destroy();
+    }
+  }
+
   private async testConnection(): Promise<void> {
     if (!this.serverUrl) {
       this.testResult = '请输入服务器地址';
@@ -172,7 +248,6 @@ export struct SuwayomiSettingsPage {
     this.isTesting = true;
     this.testResult = '';
 
-    // 先保存配置
     const config: SuwayomiConfig = {
       serverUrl: this.serverUrl.trim(),
       username: this.username,
@@ -180,14 +255,28 @@ export struct SuwayomiSettingsPage {
       useAuth: this.useAuth,
       useBrowsePageAsEntry: this.useBrowsePageAsEntry
     };
-    await this.suwayomiTracker.saveConfig(config);
 
-    // 测试连接
-    const success = await this.suwayomiTracker.testConnection();
+    const success = await this.testConnectionDirectly();
 
-    this.isTesting = false;
     this.testSuccess = success;
-    this.testResult = success ? '连接成功！' : '连接失败，请检查地址和认证信息';
+    if (!success) {
+      this.testResult = '连接失败，请检查地址和认证信息';
+      this.isTesting = false;
+      return;
+    }
+
+    this.testResult = '连接成功，正在保存配置...';
+    const saved = await this.suwayomiTracker.saveConfig(config);
+    this.isTesting = false;
+    if (saved) {
+      await getSuwayomiSourceExecutor().initialize(true);
+      this.notifySuwayomiConfigChanged('test_connection_saved');
+      this.testResult = '连接成功，配置已保存';
+      this.showToast('Suwayomi 连接已保存');
+    } else {
+      this.testSuccess = false;
+      this.testResult = '连接成功，但保存配置失败';
+    }
   }
 
   private async saveConfig(): Promise<void> {
@@ -206,6 +295,8 @@ export struct SuwayomiSettingsPage {
     this.isLoading = false;
 
     if (success) {
+      await getSuwayomiSourceExecutor().initialize(true);
+      this.notifySuwayomiConfigChanged('settings_saved');
       this.showToast('配置已保存');
       this.pathStack.pop();
     } else {
@@ -214,14 +305,26 @@ export struct SuwayomiSettingsPage {
   }
 
   private async clearConfig(): Promise<void> {
-    await this.suwayomiTracker.logout();
-    this.serverUrl = '';
-    this.username = '';
-    this.password = '';
-    this.useAuth = false;
-    this.useBrowsePageAsEntry = false;
-    this.testResult = '';
-    this.showToast('配置已清除');
+    if (this.isLoading) {
+      return;
+    }
+    this.isLoading = true;
+    try {
+      await this.suwayomiTracker.logout();
+      this.serverUrl = '';
+      this.username = '';
+      this.password = '';
+      this.useAuth = false;
+      this.useBrowsePageAsEntry = false;
+      this.testResult = '';
+      this.testSuccess = false;
+      await this.clearSuwayomiRuntimeAndCaches();
+      await getSuwayomiSourceExecutor().initialize(true);
+      this.notifySuwayomiConfigChanged('settings_cleared');
+      this.showToast('配置已清除');
+    } finally {
+      this.isLoading = false;
+    }
   }
 
   private async saveConfigSilently(): Promise<void> {
@@ -262,6 +365,25 @@ export struct SuwayomiSettingsPage {
         duration: 2000
       });
     });
+  }
+
+  private notifySuwayomiConfigChanged(reason: string): void {
+    eventBus.publish(
+      GameEvent.REMOTE_LIBRARY_CONFIG_CHANGED,
+      new RemoteLibraryConfigChangedPayload('suwayomi', reason)
+    );
+  }
+
+  private async clearSuwayomiRuntimeAndCaches(): Promise<void> {
+    try {
+      getSuwayomiSourceExecutor().clearDataCache();
+      SuwayomiCacheManager.clearAllCache();
+      await TabContentCacheManager.getInstance().clearSuwayomiCache();
+      await RemoteLibraryMangaBridge.getInstance().clearProviderCache('suwayomi');
+      logger.info(TAG, '已清理 Suwayomi 连接状态与相关缓存');
+    } catch (error) {
+      logger.warn(TAG, `清理 Suwayomi 缓存失败: ${String(error)}`);
+    }
   }
 
   build() {
@@ -326,6 +448,12 @@ export struct SuwayomiSettingsPage {
                     this.testResult = '';
                   })
                   .fontFamily(this.appFontFamily)
+
+                Text('填写 Suwayomi 根地址即可，例如 http://192.168.1.100:4567；不要追加 /api/graphql。')
+                  .fontSize(12)
+                  .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_muted', this.themeState.currentTheme))
+                  .fontFamily(this.appFontFamily)
+                  .width('100%')
               }
               .expandSafeArea([SafeAreaType.SYSTEM], [SafeAreaEdge.TOP, SafeAreaEdge.BOTTOM])
 
@@ -345,6 +473,12 @@ export struct SuwayomiSettingsPage {
               }
               .width('100%')
               .padding({ top: 8, bottom: 8 })
+
+              Text('这里对应 Suwayomi 的 Basic Auth。simple_login 或 ui_login 需要服务端允许 API 会话，否则请改用 Basic Auth。')
+                .fontSize(12)
+                .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_muted', this.themeState.currentTheme))
+                .fontFamily(this.appFontFamily)
+                .width('100%')
 
               // 认证信息（条件显示）
               if (this.useAuth) {
@@ -404,13 +538,13 @@ export struct SuwayomiSettingsPage {
               offsetY: 8
             })
 
-            // 测试连接按钮
-            Button(this.isTesting ? '测试中...' : '测试连接')
+            // 测试并保存按钮
+            Button(this.isTesting ? '测试中...' : '测试并保存')
               .width('100%')
               .height(44)
               .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('accent_blue', this.themeState.currentTheme))
               .fontColor(Color.White)
-              .enabled(!this.isTesting && !!this.serverUrl)
+              .enabled(!this.isTesting && !this.isLoading && !!this.serverUrl)
               .onClick(() => this.testConnection())
               .fontFamily(this.appFontFamily)
 

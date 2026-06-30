@@ -8,6 +8,18 @@ import { ComicInfo, ChapterInfo, PageInfo, ComicDetailInfo } from './SourceExecu
 import { getSuwayomiSource, SuwayomiSource, SuwayomiSourceConfig, SuwayomiCategory, PaginatedResult, MangaSortType, SortDirection, MangaSortOption, MANGA_SORT_OPTIONS } from './SuwayomiSource';
 
 const TAG = 'SuwayomiSourceExecutor';
+const DETAIL_CACHE_TTL_MS: number = 5 * 60 * 1000;
+const PAGES_CACHE_TTL_MS: number = 10 * 60 * 1000;
+
+interface SuwayomiDetailCacheEntry {
+  detail: ComicDetailInfo;
+  timestamp: number;
+}
+
+interface SuwayomiPagesCacheEntry {
+  pages: PageInfo[];
+  timestamp: number;
+}
 
 // Suwayomi 源信息（用于选择不同的 Suwayomi 扩展源）
 export interface SuwayomiExtensionSource {
@@ -27,6 +39,10 @@ export class SuwayomiSourceExecutor {
   private suwayomiSource: SuwayomiSource;
   private currentSourceId: string = ''; // 当前选择的 Suwayomi 扩展源 ID
   private sourceNsfwMap: Map<string, boolean> = new Map(); // 缓存源NSFW状态
+  private detailCache: Map<string, SuwayomiDetailCacheEntry> = new Map();
+  private pagesCache: Map<string, SuwayomiPagesCacheEntry> = new Map();
+  private detailInFlight: Map<string, Promise<ComicDetailInfo | null>> = new Map();
+  private pagesInFlight: Map<string, Promise<PageInfo[]>> = new Map();
 
   private constructor() {
     this.suwayomiSource = getSuwayomiSource();
@@ -42,9 +58,20 @@ export class SuwayomiSourceExecutor {
   /**
    * 初始化
    */
-  public async initialize(): Promise<void> {
-    await this.suwayomiSource.initialize();
-    logger.info(TAG, '初始化完成');
+  public async initialize(forceReload: boolean = false): Promise<void> {
+    await this.suwayomiSource.initialize(forceReload);
+    if (forceReload) {
+      this.clearDataCache();
+    }
+    logger.info(TAG, `初始化完成: forceReload=${forceReload}`);
+  }
+
+  public clearDataCache(): void {
+    this.detailCache.clear();
+    this.pagesCache.clear();
+    this.detailInFlight.clear();
+    this.pagesInFlight.clear();
+    logger.debug(TAG, '已清理 SuwayomiSourceExecutor 数据缓存');
   }
 
   /**
@@ -238,8 +265,29 @@ export class SuwayomiSourceExecutor {
    */
   public async getDetail(mangaId: string): Promise<ComicDetailInfo | null> {
     try {
-      return await this.suwayomiSource.getMangaDetail(mangaId);
+      const cached = this.detailCache.get(mangaId);
+      if (cached && this.isCacheValid(cached.timestamp, DETAIL_CACHE_TTL_MS)) {
+        logger.debug(TAG, `Suwayomi 详情缓存命中: mangaId=${mangaId}`);
+        return cached.detail;
+      }
+      const inFlight = this.detailInFlight.get(mangaId);
+      if (inFlight) {
+        logger.debug(TAG, `Suwayomi 详情请求合并: mangaId=${mangaId}`);
+        return await inFlight;
+      }
+      const detailPromise = this.suwayomiSource.getMangaDetail(mangaId);
+      this.detailInFlight.set(mangaId, detailPromise);
+      const detail = await detailPromise;
+      if (detail !== null) {
+        this.detailCache.set(mangaId, {
+          detail: detail,
+          timestamp: Date.now()
+        });
+      }
+      this.detailInFlight.delete(mangaId);
+      return detail;
     } catch (error) {
+      this.detailInFlight.delete(mangaId);
       logger.error(TAG, `获取详情失败: ${error}`);
       return null;
     }
@@ -250,11 +298,37 @@ export class SuwayomiSourceExecutor {
    */
   public async getPages(chapterId: string): Promise<PageInfo[]> {
     try {
-      return await this.suwayomiSource.getChapterPages(chapterId);
+      const cached = this.pagesCache.get(chapterId);
+      if (cached && this.isCacheValid(cached.timestamp, PAGES_CACHE_TTL_MS)) {
+        logger.debug(TAG, `Suwayomi 页面缓存命中: chapterId=${chapterId}, count=${cached.pages.length}`);
+        return cached.pages.concat();
+      }
+      const inFlight = this.pagesInFlight.get(chapterId);
+      if (inFlight) {
+        logger.debug(TAG, `Suwayomi 页面请求合并: chapterId=${chapterId}`);
+        const pages = await inFlight;
+        return pages.concat();
+      }
+      const pagesPromise = this.suwayomiSource.getChapterPages(chapterId);
+      this.pagesInFlight.set(chapterId, pagesPromise);
+      const pages = await pagesPromise;
+      this.pagesCache.set(chapterId, {
+        pages: pages.concat(),
+        timestamp: Date.now()
+      });
+      this.pagesInFlight.delete(chapterId);
+      return pages;
     } catch (error) {
+      this.pagesInFlight.delete(chapterId);
       logger.error(TAG, `获取页面失败: ${error}`);
       return [];
     }
+  }
+
+  public warmPages(chapterId: string): void {
+    void this.getPages(chapterId).catch((error: Error) => {
+      logger.debug(TAG, `Suwayomi 页面预热失败: chapterId=${chapterId}, error=${error.message}`);
+    });
   }
 
   /**
@@ -322,6 +396,10 @@ export class SuwayomiSourceExecutor {
    */
   public getImageHeaders(): Record<string, string> {
     return this.suwayomiSource.getImageHeaders();
+  }
+
+  private isCacheValid(timestamp: number, ttlMs: number): boolean {
+    return timestamp > 0 && (Date.now() - timestamp) < ttlMs;
   }
 }
 

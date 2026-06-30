@@ -426,6 +426,7 @@ export struct SuwayomiMangaDetailPage {
   }
 
   private openChapter(chapter: SuwayomiDetailChapterInfo, index: number, pageIndex: number = 0): void {
+    this.executor.warmPages(chapter.id);
     const readerParams: MangaReaderPageParams = {
       manga: this.mangaDetail !== null
         ? this.remoteLibraryBridge.buildSuwayomiMangaFromDetail(this.mangaDetail, this.mangaId)

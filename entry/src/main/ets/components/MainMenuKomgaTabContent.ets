@@ -28,6 +28,7 @@ import {
 } from '../Framework/Source/KomgaModels';
 import { getKomgaInstanceDisplayName } from '../Framework/Source/KomgaConfigStore';
 import { KomgaImage } from './KomgaImage';
+import { eventBus, GameEvent, IEventPayload, RemoteLibraryConfigChangedPayload } from '../Framework/EventBus';
 
 const TAG = 'MainMenuKomgaTabContent';
 
@@ -83,14 +84,19 @@ export struct MainMenuKomgaTabContent {
   private readonly componentId: string = 'MainMenuKomgaTabContent';
   private refreshHintTimer: number = -1;
   private initialized: boolean = false;
+  private remoteConfigChangedListener: (payload: IEventPayload) => void = (payload: IEventPayload) => {
+    this.handleRemoteConfigChanged(payload);
+  };
 
   aboutToAppear(): void {
     ThemeAwareHelper.initializeThemeAware(this.componentId, this.themeState, (_theme: ThemeType) => {});
+    eventBus.subscribe(GameEvent.REMOTE_LIBRARY_CONFIG_CHANGED, this.remoteConfigChangedListener);
     void this.prepare();
   }
 
   aboutToDisappear(): void {
     ThemeAwareHelper.cleanupThemeAware(this.componentId);
+    eventBus.unsubscribe(GameEvent.REMOTE_LIBRARY_CONFIG_CHANGED, this.remoteConfigChangedListener);
     if (this.refreshHintTimer >= 0) {
       clearTimeout(this.refreshHintTimer);
       this.refreshHintTimer = -1;
@@ -102,6 +108,30 @@ export struct MainMenuKomgaTabContent {
       return;
     }
     void this.initializePage();
+  }
+
+  private handleRemoteConfigChanged(payload: IEventPayload): void {
+    const changedPayload = payload as RemoteLibraryConfigChangedPayload;
+    if (changedPayload.provider !== 'komga') {
+      return;
+    }
+    logger.info(TAG, `收到 Komga 配置变更事件，准备静默刷新: reason=${changedPayload.reason}`);
+    void this.refreshAfterConfigChanged();
+  }
+
+  private async refreshAfterConfigChanged(): Promise<void> {
+    this.errorMessage = '';
+    this.items = [];
+    this.instances = [];
+    this.currentInstanceId = '';
+    this.hasMore = false;
+    this.currentPage = 1;
+    this.coverCachePaths = new Map<string, string>();
+    this.isLoading = true;
+    this.isLoadingMore = false;
+    this.isRefreshing = false;
+    await this.cacheManager.clearKomgaCache();
+    await this.initializePage();
   }
 
   private color(name: KomgaColorKey): ResourceColor {
@@ -168,6 +198,7 @@ export struct MainMenuKomgaTabContent {
     }
 
     await this.loadFilterOptions(false);
+    this.sanitizeFiltersForCurrentOptions();
     await this.loadItems(true, this.items.length > 0);
   }
 
@@ -187,6 +218,7 @@ export struct MainMenuKomgaTabContent {
         return;
       }
       await this.loadFilterOptions(true);
+      this.sanitizeFiltersForCurrentOptions();
       await this.loadItems(true, this.items.length > 0);
     } catch (error) {
       logger.error(TAG, `刷新 Komga 主标签失败: ${String(error)}`);
@@ -194,6 +226,14 @@ export struct MainMenuKomgaTabContent {
     } finally {
       this.isRefreshing = false;
     }
+  }
+
+  private beginPullRefresh(): void {
+    if (this.isRefreshing) {
+      return;
+    }
+    this.isRefreshing = true;
+    void this.refreshContent();
   }
 
   private async loadPreferences(): Promise<void> {
@@ -293,6 +333,19 @@ export struct MainMenuKomgaTabContent {
     }
   }
 
+  private sanitizeFiltersForCurrentOptions(): void {
+    const availableLibraryIds: string[] = this.filterOptions.libraries.map((item: KomgaLibraryOption): string => item.id);
+    const availableCollectionIds: string[] = this.filterOptions.collections.map((item: KomgaCollectionOption): string => item.id);
+    const nextFilters = this.copyFilters(this.filters);
+    nextFilters.selectedLibraryIds = nextFilters.selectedLibraryIds.filter((libraryId: string): boolean => {
+      return availableLibraryIds.includes(libraryId);
+    });
+    if (nextFilters.collectionId.length > 0 && !availableCollectionIds.includes(nextFilters.collectionId)) {
+      nextFilters.collectionId = '';
+    }
+    this.filters = nextFilters;
+  }
+
   private buildEffectiveFilters(): KomgaBrowseFilters {
     if (this.browseMode === 'discover' &&
       this.filters.selectedLibraryIds.length <= 0 &&
@@ -378,6 +431,50 @@ export struct MainMenuKomgaTabContent {
     this.coverCachePaths = new Map();
     await this.loadFilterOptions(true);
     await this.loadItems(true, false);
+  }
+
+  private openInstanceDialog(): void {
+    if (this.instances.length <= 0) {
+      this.toast('暂无可切换的 Komga 实例');
+      return;
+    }
+    const visibleCount: number = this.instances.length > 6 ? 6 : this.instances.length;
+    const menuButtons: promptAction.Button[] = [];
+    for (let index: number = 0; index < visibleCount; index++) {
+      const instance = this.instances[index];
+      const selectedPrefix: string = instance.id === this.currentInstanceId ? '当前 · ' : '';
+      menuButtons.push({
+        text: `${selectedPrefix}${getKomgaInstanceDisplayName(instance)}`,
+        color: $r('sys.color.ohos_id_color_text_primary')
+      });
+    }
+
+    const buttons = menuButtons as [
+      promptAction.Button,
+      promptAction.Button?,
+      promptAction.Button?,
+      promptAction.Button?,
+      promptAction.Button?,
+      promptAction.Button?
+    ];
+
+    this.getUIContext().getPromptAction().showActionMenu({
+      title: `切换 Komga 实例\n${this.getCurrentInstanceLabel()}`,
+      buttons: buttons
+    }).then((result: promptAction.ActionMenuSuccessResponse) => {
+      if (result.index >= 0 && result.index < visibleCount) {
+        const instance = this.instances[result.index];
+        if (instance.id !== this.currentInstanceId) {
+          void this.switchInstance(instance.id);
+        }
+      }
+    }).catch(() => {
+      logger.info(TAG, '用户取消 Komga 实例切换');
+    });
+
+    if (this.instances.length > visibleCount) {
+      this.toast('系统菜单最多显示 6 个实例，请到设置中调整当前实例');
+    }
   }
 
   private showRefreshHint(): void {
@@ -754,6 +851,11 @@ export struct MainMenuKomgaTabContent {
     return '等待加载内容';
   }
 
+  private getFilterChipLabel(): string {
+    const count: number = this.getActiveFilterCount();
+    return count > 0 ? `筛选 ${count}` : '筛选';
+  }
+
   private getItemDescription(item: ComicInfo): string {
     const description = (item.description || '').trim();
     if (description.length > 0) {
@@ -782,6 +884,19 @@ export struct MainMenuKomgaTabContent {
     .backgroundColor(this.color('comp_background_tertiary'))
     .borderRadius(8)
     .onClick(() => action())
+  }
+
+  @Builder
+  private buildDisplayModeToolbarButton() {
+    if (this.displayMode === 'grid') {
+      this.buildToolbarButton($r('sys.symbol.list_bullet'), () => {
+        this.setDisplayMode('list');
+      })
+    } else {
+      this.buildToolbarButton($r('sys.symbol.square_grid_2x2'), () => {
+        this.setDisplayMode('grid');
+      })
+    }
   }
 
   @Builder
@@ -871,9 +986,17 @@ export struct MainMenuKomgaTabContent {
         .layoutWeight(1)
         .alignItems(HorizontalAlign.Start)
 
-        this.buildToolbarButton($r('sys.symbol.arrow_clockwise'), () => {
-          void this.refreshContent();
-        })
+        Row({ space: 8 }) {
+          this.buildToolbarButton($r('sys.symbol.arrow_left_arrow_right'), () => {
+            this.openInstanceDialog();
+          })
+          this.buildToolbarButton($r('sys.symbol.gearshape'), () => {
+            this.openSettings();
+          })
+          this.buildDisplayModeToolbarButton()
+        }
+        .height(40)
+        .alignItems(VerticalAlign.Center)
       }
       .width('100%')
 
@@ -1012,9 +1135,9 @@ export struct MainMenuKomgaTabContent {
             Blank().height(this.topSpacerHeight)
             this.buildOverviewPanel()
 
-            Row({ space: 8 }) {
+            Column({ space: 10 }) {
               Search({ value: this.searchQuery, placeholder: this.browseMode === 'library' ? '搜索 Komga 书库...' : '搜索 Komga 目录...' })
-                .layoutWeight(1)
+                .width('100%')
                 .height(40)
                 .searchButton('搜索')
                 .onChange((value: string) => {
@@ -1023,71 +1146,28 @@ export struct MainMenuKomgaTabContent {
                 .onSubmit((_value: string) => {
                   void this.loadItems(true, false);
                 })
-              this.buildToolbarButton($r('sys.symbol.gearshape'), () => {
-                this.openSettings();
-              })
-              this.buildToolbarButton(this.displayMode === 'grid' ? $r('sys.symbol.list_bullet') : $r('sys.symbol.square_grid_2x2'), () => {
-                this.setDisplayMode(this.displayMode === 'grid' ? 'list' : 'grid');
-              })
+
+              Scroll() {
+                Row({ space: 0 }) {
+                  this.buildChip('库', this.browseMode === 'library', () => { this.setBrowseMode('library'); })
+                  this.buildChip('发现', this.browseMode === 'discover', () => { this.setBrowseMode('discover'); })
+                  this.buildChip('系列', this.contentType === 'SERIES', () => { this.setContentType('SERIES'); })
+                  this.buildChip('阅读列表', this.contentType === 'READLISTS', () => { this.setContentType('READLISTS'); })
+                  this.buildChip('书籍', this.contentType === 'BOOKS', () => { this.setContentType('BOOKS'); })
+                  if (this.browseMode === 'discover' && this.searchQuery.trim().length <= 0) {
+                    this.buildChip('热门', this.feedType === 'POPULAR', () => { this.setFeedType('POPULAR'); })
+                    this.buildChip('最新', this.feedType === 'LATEST', () => { this.setFeedType('LATEST'); })
+                  }
+                  this.buildChip(this.getFilterChipLabel(), this.showFilters, () => { this.toggleFilterPanel(); })
+                }
+              }
+              .scrollable(ScrollDirection.Horizontal)
+              .scrollBar(BarState.Off)
+              .width('100%')
+              .height(36)
             }
             .width('100%')
             .padding({ left: 16, right: 16, top: 8, bottom: 4 })
-
-            if (this.instances.length > 0) {
-              Column({ space: 8 }) {
-                Row() {
-                  Text('实例')
-                    .fontSize(14)
-                    .fontWeight(FontWeight.Medium)
-                    .fontFamily(this.appFontFamily)
-                    .fontColor(this.color('text_primary'))
-                  Blank()
-                  Text(this.getCurrentInstanceLabel())
-                    .fontSize(12)
-                    .fontFamily(this.appFontFamily)
-                    .fontColor(this.color('text_muted'))
-                    .maxLines(1)
-                    .textOverflow({ overflow: TextOverflow.Ellipsis })
-                }
-                .width('100%')
-
-                Scroll() {
-                  Row({ space: 0 }) {
-                    ForEach(this.instances, (instance: KomgaInstanceConfig) => {
-                      this.buildChip(getKomgaInstanceDisplayName(instance), instance.id === this.currentInstanceId, () => {
-                        void this.switchInstance(instance.id);
-                      })
-                    }, (instance: KomgaInstanceConfig) => instance.id)
-                  }
-                }
-                .scrollable(ScrollDirection.Horizontal)
-                .scrollBar(BarState.Off)
-                .width('100%')
-                .height(44)
-              }
-              .width('100%')
-              .padding({ left: 16, right: 16, top: 4, bottom: 4 })
-            }
-
-            Scroll() {
-              Row({ space: 0 }) {
-                this.buildChip('库', this.browseMode === 'library', () => { this.setBrowseMode('library'); })
-                this.buildChip('发现', this.browseMode === 'discover', () => { this.setBrowseMode('discover'); })
-                this.buildChip('系列', this.contentType === 'SERIES', () => { this.setContentType('SERIES'); })
-                this.buildChip('阅读列表', this.contentType === 'READLISTS', () => { this.setContentType('READLISTS'); })
-                this.buildChip('书籍', this.contentType === 'BOOKS', () => { this.setContentType('BOOKS'); })
-                if (this.browseMode === 'discover' && this.searchQuery.trim().length <= 0) {
-                  this.buildChip('热门', this.feedType === 'POPULAR', () => { this.setFeedType('POPULAR'); })
-                  this.buildChip('最新', this.feedType === 'LATEST', () => { this.setFeedType('LATEST'); })
-                }
-                this.buildChip('筛选', this.showFilters, () => { this.toggleFilterPanel(); })
-              }
-              .padding({ left: 16, right: 16 })
-            }
-            .scrollable(ScrollDirection.Horizontal)
-            .scrollBar(BarState.Off)
-            .width('100%')
-            .height(44)
 
             if (this.browseMode === 'library' && this.filterOptions.libraries.length > 0) {
               Column({ space: 8 }) {
@@ -1467,7 +1547,7 @@ export struct MainMenuKomgaTabContent {
       .expandSafeArea([SafeAreaType.SYSTEM], [SafeAreaEdge.BOTTOM])
     }
     .onRefreshing(() => {
-      void this.refreshContent();
+      this.beginPullRefresh();
     })
     .width('100%')
     .height('100%')

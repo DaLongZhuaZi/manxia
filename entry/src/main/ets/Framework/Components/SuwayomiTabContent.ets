@@ -13,6 +13,7 @@ import { ComicInfo as SuwayomiComicInfo } from '../Source/SourceExecutor';
 import { SettingsPageSurfaceManager } from '../../pages/settings/SettingsPageSurfaceManager';
 import { SuwayomiImage } from '../../components/SuwayomiImage';
 import { SuwayomiSourceBrowseParams } from '../../pages/SuwayomiSourceBrowsePage';
+import { eventBus, GameEvent, IEventPayload, RemoteLibraryConfigChangedPayload } from '../EventBus';
 
 const TAG = 'SuwayomiTabContent';
 
@@ -62,9 +63,13 @@ export struct SuwayomiTabContent {
   private tabContentCacheManager: TabContentCacheManager = TabContentCacheManager.getInstance();
   private readonly SUWAYOMI_PAGE_SIZE: number = 50;
   private readonly componentId: string = 'SuwayomiTabContent';
+  private remoteConfigChangedListener: (payload: IEventPayload) => void = (payload: IEventPayload) => {
+    this.handleRemoteConfigChanged(payload);
+  };
 
   aboutToAppear(): void {
     ThemeAwareHelper.initializeThemeAware(this.componentId, this.themeState, (_theme: ThemeType) => {});
+    eventBus.subscribe(GameEvent.REMOTE_LIBRARY_CONFIG_CHANGED, this.remoteConfigChangedListener);
     void this.tabContentCacheManager.initialize().then(() => {
       this.restoreSuwayomiFromCache();
     });
@@ -72,6 +77,7 @@ export struct SuwayomiTabContent {
 
   aboutToDisappear(): void {
     ThemeAwareHelper.cleanupThemeAware(this.componentId);
+    eventBus.unsubscribe(GameEvent.REMOTE_LIBRARY_CONFIG_CHANGED, this.remoteConfigChangedListener);
     if (this.suwayomiRefreshHintTimer !== -1) {
       clearTimeout(this.suwayomiRefreshHintTimer);
       this.suwayomiRefreshHintTimer = -1;
@@ -80,6 +86,51 @@ export struct SuwayomiTabContent {
 
   private onRefreshSignalChanged(): void {
     void this.silentInitializeSuwayomi();
+  }
+
+  private handleRemoteConfigChanged(payload: IEventPayload): void {
+    const changedPayload = payload as RemoteLibraryConfigChangedPayload;
+    if (changedPayload.provider !== 'suwayomi') {
+      return;
+    }
+    logger.info(TAG, `收到 Suwayomi 配置变更事件，准备静默刷新: reason=${changedPayload.reason}`);
+    void this.refreshAfterConfigChanged();
+  }
+
+  private async refreshAfterConfigChanged(): Promise<void> {
+    this.suwayomiInitialized = false;
+    this.suwayomiErrorMessage = '';
+    this.suwayomiSelectedCategoryId = -1;
+    this.suwayomiCurrentOffset = 0;
+    this.suwayomiHasMore = false;
+    this.suwayomiTotalCount = 0;
+    this.suwayomiMangas = [];
+    this.suwayomiSources = [];
+    this.suwayomiCategories = [];
+    this.suwayomiCoverCachePaths = new Map<string, string>();
+    this.suwayomiSourceIconCachePaths = new Map<string, string>();
+    this.isLoadingSuwayomi = true;
+
+    try {
+      await this.suwayomiExecutor.initialize(true);
+      if (!this.suwayomiExecutor.isConfigured()) {
+        this.suwayomiErrorMessage = '请先配置 Suwayomi 服务器';
+        void this.tabContentCacheManager.clearSuwayomiCache();
+        return;
+      }
+      if (this.suwayomiBrowseMode === 'sources') {
+        await this.loadSuwayomiSources();
+      } else {
+        await this.loadSuwayomiCategories();
+        await this.loadSuwayomiLibraryForCategory(-1, true);
+      }
+      this.suwayomiInitialized = true;
+    } catch (error) {
+      logger.error(TAG, `Suwayomi 配置变更后刷新失败: ${String(error)}`);
+      this.suwayomiErrorMessage = `刷新失败: ${String(error)}`;
+    } finally {
+      this.isLoadingSuwayomi = false;
+    }
   }
 
   /**
@@ -117,10 +168,9 @@ export struct SuwayomiTabContent {
         return;
       }
       await this.loadSuwayomiCategories();
-      if (this.suwayomiSelectedCategoryId === -1 || !this.suwayomiCategories.find(c => c.id === this.suwayomiSelectedCategoryId)) {
-        if (this.suwayomiCategories.length > 0) {
-          this.suwayomiSelectedCategoryId = this.suwayomiCategories[0].id;
-        }
+      if (this.suwayomiSelectedCategoryId !== -1 &&
+        !this.suwayomiCategories.find((category: SuwayomiCategory) => category.id === this.suwayomiSelectedCategoryId)) {
+        this.suwayomiSelectedCategoryId = -1;
       }
       await this.loadSuwayomiLibrary(true);
       this.suwayomiInitialized = true;
@@ -169,7 +219,6 @@ export struct SuwayomiTabContent {
    * 保存Suwayomi Tab当前状态到缓存
    */
   private saveSuwayomiToCache(): void {
-    if (this.suwayomiMangas.length === 0) return;
     this.tabContentCacheManager.saveSuwayomiCache({
       mangas: this.suwayomiMangas,
       categories: this.suwayomiCategories,
@@ -218,6 +267,10 @@ export struct SuwayomiTabContent {
    * 静默刷新：当 reset=true 且已有缓存数据时，保留旧数据显示，加载完成后再替换并显示刷新提示
    */
   private async loadSuwayomiLibrary(reset: boolean = false): Promise<void> {
+    await this.loadSuwayomiLibraryForCategory(this.suwayomiSelectedCategoryId, reset);
+  }
+
+  private async loadSuwayomiLibraryForCategory(categoryId: number, reset: boolean = false): Promise<void> {
     const hasCachedData = reset && this.suwayomiMangas.length > 0;
     if (reset) {
       this.suwayomiCurrentOffset = 0;
@@ -235,7 +288,7 @@ export struct SuwayomiTabContent {
     try {
       const sortOption = MANGA_SORT_OPTIONS[this.suwayomiSelectedSortIndex];
       const result: PaginatedResult<SuwayomiComicInfo> = await this.suwayomiExecutor.getLibraryPaginated(
-        this.suwayomiSelectedCategoryId,
+        categoryId,
         this.suwayomiCurrentOffset,
         this.SUWAYOMI_PAGE_SIZE,
         sortOption.type,
@@ -261,6 +314,20 @@ export struct SuwayomiTabContent {
       this.suwayomiErrorMessage = `加载失败: ${String(error)}`;
     }
     this.isLoadingSuwayomi = false;
+  }
+
+  private selectSuwayomiCategory(categoryId: number): void {
+    if (this.suwayomiSelectedCategoryId === categoryId && this.suwayomiBrowseMode === 'library') {
+      return;
+    }
+    this.suwayomiSelectedCategoryId = categoryId;
+    this.getUIContext().animateTo({
+      duration: 200,
+      curve: Curve.EaseInOut
+    }, () => {
+      this.suwayomiSelectedCategoryId = categoryId;
+    });
+    void this.loadSuwayomiLibraryForCategory(categoryId, true);
   }
 
   /**
@@ -1073,14 +1140,7 @@ export struct SuwayomiTabContent {
                     .fontFamily(this.appFontFamily)
                     .margin({ right: 8, bottom: 8 })
                     .onClick(() => {
-                      // 使用动画过渡切换分类
-                      this.getUIContext().animateTo({
-                        duration: 200,
-                        curve: Curve.EaseInOut
-                      }, () => {
-                        this.suwayomiSelectedCategoryId = -1;
-                      });
-                      this.loadSuwayomiLibrary(true);
+                      this.selectSuwayomiCategory(-1);
                     })
                   ForEach(this.suwayomiCategories, (category: SuwayomiCategory) => {
                     Text(`${category.name} (${category.mangaCount})`)
@@ -1110,14 +1170,7 @@ export struct SuwayomiTabContent {
                       .fontFamily(this.appFontFamily)
                       .margin({ right: 8, bottom: 8 })
                       .onClick(() => {
-                        // 使用动画过渡切换分类
-                        this.getUIContext().animateTo({
-                          duration: 200,
-                          curve: Curve.EaseInOut
-                        }, () => {
-                          this.suwayomiSelectedCategoryId = category.id;
-                        });
-                        this.loadSuwayomiLibrary(true);
+                        this.selectSuwayomiCategory(category.id);
                       })
                   })
                 }
@@ -1153,14 +1206,7 @@ export struct SuwayomiTabContent {
                       .clip(true)
                       .fontFamily(this.appFontFamily)
                       .onClick(() => {
-                        // 使用动画过渡切换分类
-                        this.getUIContext().animateTo({
-                          duration: 200,
-                          curve: Curve.EaseInOut
-                        }, () => {
-                          this.suwayomiSelectedCategoryId = -1;
-                        });
-                        this.loadSuwayomiLibrary(true);
+                        this.selectSuwayomiCategory(-1);
                       })
                     ForEach(this.suwayomiCategories, (category: SuwayomiCategory) => {
                       Text(`${category.name} (${category.mangaCount})`)
@@ -1189,14 +1235,7 @@ export struct SuwayomiTabContent {
                         .clip(true)
                         .fontFamily(this.appFontFamily)
                         .onClick(() => {
-                          // 使用动画过渡切换分类
-                          this.getUIContext().animateTo({
-                            duration: 200,
-                            curve: Curve.EaseInOut
-                          }, () => {
-                            this.suwayomiSelectedCategoryId = category.id;
-                          });
-                          this.loadSuwayomiLibrary(true);
+                          this.selectSuwayomiCategory(category.id);
                         })
                     })
                   }

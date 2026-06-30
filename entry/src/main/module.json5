@@ -329,6 +329,20 @@
         "removeMissionAfterTerminate": true,
         "exported": false,
         "orientation": "auto_rotation"
+      },
+      {
+        "name": "SourceDetailAbility",
+        "srcEntry": "./ets/SourceDetailAbility.ets",
+        "description": "$string:EntryAbility_desc",
+        "icon": "$media:layered_image",
+        "label": "$string:EntryAbility_label",
+        "startWindow": "$profile:start_window_hidden",
+        "startWindowIcon": "$media:start_window_transparent",
+        "startWindowBackground": "$color:transport",
+        "launchType": "multiton",
+        "removeMissionAfterTerminate": true,
+        "exported": false,
+        "orientation": "auto_rotation"
       }
     ],
     "extensionAbilities": [
@@ -454,7 +468,7 @@
         "name": "ohos.permission.INTERNET",
         "reason": "$string:get_internet_reason",
         "usedScene": {
-          "abilities": ["EntryAbility", "MangaReaderAbility", "EBookReaderAbility", "NovelReaderAbility", "ReadAloudPlayerAbility", "FileEditorAbility", "ExternalFileTaskAbility", "RemoteControlAbility"],
+          "abilities": ["EntryAbility", "MangaReaderAbility", "EBookReaderAbility", "NovelReaderAbility", "ReadAloudPlayerAbility", "FileEditorAbility", "ExternalFileTaskAbility", "RemoteControlAbility", "SourceDetailAbility"],
           "when": "always"
         }
       },
@@ -462,7 +476,7 @@
         "name": "ohos.permission.GET_NETWORK_INFO",
         "reason": "$string:get_network_info_reason",
         "usedScene": {
-          "abilities": ["EntryAbility", "MangaReaderAbility", "EBookReaderAbility", "NovelReaderAbility", "ReadAloudPlayerAbility", "FileEditorAbility", "ExternalFileTaskAbility", "RemoteControlAbility"],
+          "abilities": ["EntryAbility", "MangaReaderAbility", "EBookReaderAbility", "NovelReaderAbility", "ReadAloudPlayerAbility", "FileEditorAbility", "ExternalFileTaskAbility", "RemoteControlAbility", "SourceDetailAbility"],
           "when": "inuse"
         }
       },
@@ -470,7 +484,7 @@
         "name": "ohos.permission.DISTRIBUTED_DATASYNC",
         "reason": "$string:distributed_data_sync_reason",
         "usedScene": {
-          "abilities": ["EntryAbility", "MangaReaderAbility", "EBookReaderAbility", "NovelReaderAbility", "ReadAloudPlayerAbility", "FileEditorAbility", "ExternalFileTaskAbility", "RemoteControlAbility"],
+          "abilities": ["EntryAbility", "MangaReaderAbility", "EBookReaderAbility", "NovelReaderAbility", "ReadAloudPlayerAbility", "FileEditorAbility", "ExternalFileTaskAbility", "RemoteControlAbility", "SourceDetailAbility"],
           "when": "always"
         }
       },
@@ -478,14 +492,14 @@
         "name": "ohos.permission.KEEP_BACKGROUND_RUNNING",
         "reason": "$string:background_running_reason",
         "usedScene": {
-          "abilities": ["EntryAbility", "MangaReaderAbility", "EBookReaderAbility", "NovelReaderAbility", "ReadAloudPlayerAbility", "FileEditorAbility", "ExternalFileTaskAbility", "RemoteControlAbility"],
+          "abilities": ["EntryAbility", "MangaReaderAbility", "EBookReaderAbility", "NovelReaderAbility", "ReadAloudPlayerAbility", "FileEditorAbility", "ExternalFileTaskAbility", "RemoteControlAbility", "SourceDetailAbility"],
           "when": "always"
         }
       },
       {
         "name": "ohos.permission.PRIVACY_WINDOW",
         "usedScene": {
-          "abilities": ["EntryAbility", "MangaReaderAbility", "EBookReaderAbility", "NovelReaderAbility", "ReadAloudPlayerAbility", "FileEditorAbility", "ExternalFileTaskAbility", "RemoteControlAbility"],
+          "abilities": ["EntryAbility", "MangaReaderAbility", "EBookReaderAbility", "NovelReaderAbility", "ReadAloudPlayerAbility", "FileEditorAbility", "ExternalFileTaskAbility", "RemoteControlAbility", "SourceDetailAbility"],
           "when": "always"
         }
       },
@@ -496,7 +510,7 @@
         "name": "ohos.permission.VIBRATE",
         "reason": "$string:get_vibrate_reason",
         "usedScene": {
-          "abilities": ["EntryAbility", "MangaReaderAbility", "EBookReaderAbility", "NovelReaderAbility", "ReadAloudPlayerAbility", "FileEditorAbility", "ExternalFileTaskAbility", "RemoteControlAbility"],
+          "abilities": ["EntryAbility", "MangaReaderAbility", "EBookReaderAbility", "NovelReaderAbility", "ReadAloudPlayerAbility", "FileEditorAbility", "ExternalFileTaskAbility", "RemoteControlAbility", "SourceDetailAbility"],
           "when": "inuse"
         }
       },

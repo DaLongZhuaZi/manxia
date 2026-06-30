@@ -22,7 +22,9 @@ export class KomgaCacheManager {
   public getCachedCoverPath(itemKey: string, coverUrl: string): string | null {
     try {
       const cachePath = this.getCoverCachePath(itemKey, coverUrl);
-      SafeFileUtils.accessSync(cachePath);
+      if (!this.isReadableFile(cachePath)) {
+        return null;
+      }
       return cachePath;
     } catch (_error) {
       return null;
@@ -32,7 +34,9 @@ export class KomgaCacheManager {
   public getCachedPagePath(mangaKey: string, chapterKey: string, pageIndex: number): string | null {
     try {
       const cachePath = this.getPageCachePath(mangaKey, chapterKey, pageIndex);
-      SafeFileUtils.accessSync(cachePath);
+      if (!this.isReadableFile(cachePath)) {
+        return null;
+      }
       return cachePath;
     } catch (_error) {
       return null;
@@ -64,12 +68,22 @@ export class KomgaCacheManager {
         return null;
       }
 
+      const imageData = response.result as ArrayBuffer;
+      if (imageData.byteLength <= 0) {
+        logger.warn(TAG, '缓存封面失败，响应内容为空');
+        return null;
+      }
+
       const filePath = this.getCoverCachePath(itemKey, coverUrl);
-      const file = SafeFileUtils.openSync(filePath, fs.OpenMode.CREATE | fs.OpenMode.WRITE_ONLY | fs.OpenMode.TRUNC);
+      const file = fs.openSync(filePath, fs.OpenMode.CREATE | fs.OpenMode.WRITE_ONLY | fs.OpenMode.TRUNC);
       try {
-        SafeFileUtils.writeSync(file.fd, response.result as ArrayBuffer);
+        fs.writeSync(file.fd, imageData);
       } finally {
-        SafeFileUtils.closeSync(file.fd);
+        fs.closeSync(file);
+      }
+      if (!this.isReadableFile(filePath)) {
+        logger.warn(TAG, `缓存封面写入后校验失败: ${filePath}`);
+        return null;
       }
       return filePath;
     } catch (error) {
@@ -111,12 +125,22 @@ export class KomgaCacheManager {
         return null;
       }
 
+      const imageData = response.result as ArrayBuffer;
+      if (imageData.byteLength <= 0) {
+        logger.warn(TAG, `缓存 Komga 章节页失败，响应内容为空, pageIndex=${pageIndex + 1}`);
+        return null;
+      }
+
       const filePath = this.getPageCachePath(mangaKey, chapterKey, pageIndex);
-      const file = SafeFileUtils.openSync(filePath, fs.OpenMode.CREATE | fs.OpenMode.WRITE_ONLY | fs.OpenMode.TRUNC);
+      const file = fs.openSync(filePath, fs.OpenMode.CREATE | fs.OpenMode.WRITE_ONLY | fs.OpenMode.TRUNC);
       try {
-        SafeFileUtils.writeSync(file.fd, response.result as ArrayBuffer);
+        fs.writeSync(file.fd, imageData);
       } finally {
-        SafeFileUtils.closeSync(file.fd);
+        fs.closeSync(file);
+      }
+      if (!this.isReadableFile(filePath)) {
+        logger.warn(TAG, `缓存 Komga 章节页写入后校验失败: ${filePath}`);
+        return null;
       }
       return filePath;
     } catch (error) {
@@ -194,9 +218,15 @@ export class KomgaCacheManager {
   }
 
   private getBaseCacheDir(): string {
-    const context = getContext();
-    const filesDir = typeof context.filesDir === 'string' ? String(context.filesDir) : '';
-    const cacheDir = typeof context.cacheDir === 'string' ? String(context.cacheDir) : '';
+    let filesDir = '';
+    let cacheDir = '';
+    try {
+      const context = getContext();
+      filesDir = typeof context.filesDir === 'string' ? String(context.filesDir) : '';
+      cacheDir = typeof context.cacheDir === 'string' ? String(context.cacheDir) : '';
+    } catch (error) {
+      throw new Error(`无法获取应用上下文: ${String(error)}`);
+    }
     const rootDir = filesDir.length > 0 ? filesDir : cacheDir;
     if (rootDir.length <= 0) {
       throw new Error('无法获取应用缓存目录');
@@ -208,10 +238,20 @@ export class KomgaCacheManager {
   }
 
   private ensureDirectory(path: string): void {
-    try {
-      SafeFileUtils.accessSync(path);
-    } catch (_error) {
+    if (!SafeFileUtils.accessSync(path)) {
       SafeFileUtils.mkdirSync(path, true);
+    }
+  }
+
+  private isReadableFile(path: string): boolean {
+    if (!SafeFileUtils.accessSync(path)) {
+      return false;
+    }
+    try {
+      const stat = fs.statSync(path);
+      return !stat.isDirectory() && stat.size > 0;
+    } catch (_error) {
+      return false;
     }
   }
 

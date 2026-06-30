@@ -1,4 +1,3 @@
-﻿import { SafeFileUtils } from '../Utils/SafeFileUtils';
 import { image } from '@kit.ImageKit';
 import { http } from '@kit.NetworkKit';
 import fs from '@ohos.file.fs';
@@ -148,14 +147,20 @@ export struct KomgaImage {
     let file: fs.File | null = null;
     let imageSource: image.ImageSource | null = null;
     try {
-      SafeFileUtils.accessSync(normalizedPath);
-      file = SafeFileUtils.openSync(normalizedPath, fs.OpenMode.READ_ONLY);
+      if (!fs.accessSync(normalizedPath)) {
+        return null;
+      }
+      const stat = fs.statSync(normalizedPath);
+      if (stat.isDirectory() || stat.size <= 0) {
+        return null;
+      }
+      file = fs.openSync(normalizedPath, fs.OpenMode.READ_ONLY);
       imageSource = image.createImageSource(file.fd);
       return await imageSource.createPixelMap({
         desiredPixelFormat: image.PixelMapFormat.RGBA_8888
       });
     } catch (error) {
-      logger.warn(TAG, `KomgaImage local decode failed: path=${this.previewUrl(normalizedPath)}, error=${String(error)}`);
+      logger.debug(TAG, `KomgaImage local decode skipped: path=${this.previewUrl(normalizedPath)}, error=${String(error)}`);
       return null;
     } finally {
       try {
@@ -164,7 +169,7 @@ export struct KomgaImage {
       }
       try {
         if (file !== null) {
-          SafeFileUtils.closeSync(file);
+          fs.closeSync(file);
         }
       } catch (_error) {
       }
@@ -232,7 +237,7 @@ export struct KomgaImage {
           logger.debug(TAG, `KomgaImage cached cover decoded: ${this.previewUrl(cachedFileUrl)}`);
           return;
         }
-        logger.warn(TAG, `KomgaImage cached file decode failed, retry remote source: ${this.previewUrl(cachedFileUrl)}`);
+        logger.debug(TAG, `KomgaImage cached file unavailable, retry remote source: ${this.previewUrl(cachedFileUrl)}`);
       }
 
       if (Object.keys(headers).length <= 0) {

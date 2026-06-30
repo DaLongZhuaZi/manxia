@@ -22,7 +22,7 @@ import { ComicInfo, ComicDetailInfo, ChapterInfo, PageInfo } from './SourceExecu
 import { getSuwayomiSourceExecutor, SuwayomiSourceExecutor } from './SuwayomiSourceExecutor';
 import { getKomgaSourceExecutor, KomgaSourceExecutor } from './KomgaSourceExecutor';
 import { createDefaultKomgaBrowseFilters, KomgaContentType, KomgaInstanceConfig } from './KomgaModels';
-import { RequestHeaders } from '../Cache/ImageCacheManager';
+import { RequestHeaderEntry, RequestHeaders } from '../Cache/ImageCacheManager';
 
 const TAG = 'RemoteLibraryMangaBridge';
 const REMOTE_LIBRARY_PREF_NAME: string = 'remote_library_bridge_cache';
@@ -32,6 +32,8 @@ const REMOTE_PROVIDER_KOMGA: 'komga' = 'komga';
 const SUWAYOMI_PAGE_SIZE: number = 100;
 const KOMGA_GUARD_MAX_PAGES: number = 1000;
 const KOMGA_CONTENT_TYPES: KomgaContentType[] = ['SERIES', 'READLISTS', 'BOOKS'];
+const REMOTE_LIBRARY_REFRESH_TTL_MS: number = 24 * 60 * 60 * 1000;
+const REMOTE_LIBRARY_CACHE_VERSION: number = 2;
 
 export type RemoteProviderType = 'suwayomi' | 'komga';
 
@@ -48,9 +50,31 @@ export interface ParsedRemoteChapterId {
   instanceId?: string;
 }
 
-interface RemoteLibraryCacheData {
+interface RemoteProviderCacheBucket {
+  providerType: RemoteProviderType;
+  signature: string;
   updatedAt: number;
   mangas: Manga[];
+}
+
+interface RemoteLibraryCacheData {
+  version: number;
+  updatedAt: number;
+  mangas: Manga[];
+  buckets: RemoteProviderCacheBucket[];
+}
+
+interface RemoteLibraryCachePayload {
+  version?: number;
+  updatedAt?: number;
+  mangas?: Manga[];
+  buckets?: RemoteProviderCacheBucket[];
+}
+
+interface RemoteProviderSignature {
+  providerType: RemoteProviderType;
+  signature: string;
+  instanceId: string;
 }
 
 interface SuwayomiLibraryComicInfo extends ComicInfo {
@@ -77,12 +101,15 @@ export class RemoteLibraryMangaBridge {
   private static instance: RemoteLibraryMangaBridge | null = null;
   private initialized: boolean = false;
   private cacheData: RemoteLibraryCacheData = {
+    version: REMOTE_LIBRARY_CACHE_VERSION,
     updatedAt: 0,
-    mangas: []
+    mangas: [],
+    buckets: []
   };
   private readonly suwayomiExecutor: SuwayomiSourceExecutor = getSuwayomiSourceExecutor();
   private readonly komgaExecutor: KomgaSourceExecutor = getKomgaSourceExecutor();
   private readonly dataManager: DataManager = DataManager.getInstance();
+  private refreshInFlight: Promise<Manga[]> | null = null;
 
   private constructor() {
   }
@@ -177,18 +204,22 @@ export class RemoteLibraryMangaBridge {
       const store = await preferences.getPreferences(getContext(), REMOTE_LIBRARY_PREF_NAME);
       const cacheText = await store.get(REMOTE_LIBRARY_CACHE_KEY, '') as string;
       if (cacheText.length > 0) {
-        const parsed = SafeUtils.parseObj(cacheText) as RemoteLibraryCacheData;
+        const parsed = SafeUtils.parseObj<RemoteLibraryCachePayload>(cacheText);
         this.cacheData = {
+          version: REMOTE_LIBRARY_CACHE_VERSION,
           updatedAt: parsed.updatedAt || 0,
-          mangas: this.cloneMangaList(parsed.mangas || [])
+          mangas: this.cloneMangaList(parsed.mangas || []),
+          buckets: this.cloneCacheBuckets(parsed.buckets || [])
         };
-        logger.info(TAG, `loaded remote library cache, count=${this.cacheData.mangas.length}`);
+        logger.info(TAG, `loaded remote library cache, count=${this.cacheData.mangas.length}, buckets=${this.cacheData.buckets.length}`);
       }
     } catch (error) {
       logger.warn(TAG, `initialize remote library cache failed: ${String(error)}`);
       this.cacheData = {
+        version: REMOTE_LIBRARY_CACHE_VERSION,
         updatedAt: 0,
-        mangas: []
+        mangas: [],
+        buckets: []
       };
     }
 
@@ -198,48 +229,160 @@ export class RemoteLibraryMangaBridge {
   public async getCachedLibraryManga(): Promise<Manga[]> {
     await this.initialize();
     const favoriteComicIds = await this.loadFavoriteComicIdSet();
-    const filteredManga = this.cacheData.mangas.filter((item: Manga) => item.isFavorite && favoriteComicIds.has(item.id));
+    const activeSignatures = await this.resolveActiveProviderSignatures();
+    this.migrateLegacyMangaToActiveBuckets(activeSignatures);
+    const filteredManga = this.getFavoriteMangaFromActiveBuckets(activeSignatures, favoriteComicIds);
 
-    if (filteredManga.length !== this.cacheData.mangas.length) {
-      this.cacheData = {
-        updatedAt: this.cacheData.updatedAt,
-        mangas: this.cloneMangaList(filteredManga)
-      };
-      await this.persistCache();
-    }
+    this.cacheData.version = REMOTE_LIBRARY_CACHE_VERSION;
+    this.cacheData.mangas = this.cloneMangaList(filteredManga);
+    await this.persistCache();
 
     return this.cloneMangaList(filteredManga);
   }
 
   public async getCachedMangaById(mangaId: string): Promise<Manga | null> {
     await this.initialize();
-    const target = this.cacheData.mangas.find((item: Manga) => item.id === mangaId);
+    const activeSignatures = await this.resolveActiveProviderSignatures();
+    this.migrateLegacyMangaToActiveBuckets(activeSignatures);
+    const target = this.findMangaInActiveBuckets(mangaId, activeSignatures) || this.findMangaById(this.cacheData.mangas, mangaId);
     return target ? this.cloneManga(target) : null;
   }
 
-  public async refreshAllLibraryManga(): Promise<Manga[]> {
+  public async clearProviderCache(providerType: RemoteProviderType): Promise<void> {
+    await this.initialize();
+    const nextBuckets: RemoteProviderCacheBucket[] = [];
+    for (let index = 0; index < this.cacheData.buckets.length; index++) {
+      const bucket = this.cacheData.buckets[index];
+      if (bucket.providerType !== providerType) {
+        nextBuckets.push({
+          providerType: bucket.providerType,
+          signature: bucket.signature,
+          updatedAt: bucket.updatedAt,
+          mangas: this.cloneMangaList(bucket.mangas)
+        });
+      }
+    }
+
+    const nextMangas: Manga[] = [];
+    for (let index = 0; index < this.cacheData.mangas.length; index++) {
+      const manga = this.cacheData.mangas[index];
+      if (!this.isMangaFromProvider(manga, providerType)) {
+        nextMangas.push(this.cloneManga(manga));
+      }
+    }
+
+    this.cacheData.version = REMOTE_LIBRARY_CACHE_VERSION;
+    this.cacheData.updatedAt = Date.now();
+    this.cacheData.buckets = nextBuckets;
+    this.cacheData.mangas = nextMangas;
+    await this.persistCache();
+    logger.info(TAG, `cleared remote library provider cache: provider=${providerType}`);
+  }
+
+  public async clearKomgaInstanceCache(instanceId: string): Promise<void> {
+    const normalizedInstanceId = String(instanceId || '').trim();
+    if (normalizedInstanceId.length <= 0) {
+      await this.clearProviderCache(REMOTE_PROVIDER_KOMGA);
+      return;
+    }
+
+    await this.initialize();
+    const nextBuckets: RemoteProviderCacheBucket[] = [];
+    const instanceSignaturePart = `instance=${normalizedInstanceId}|`;
+    for (let index = 0; index < this.cacheData.buckets.length; index++) {
+      const bucket = this.cacheData.buckets[index];
+      if (bucket.providerType === REMOTE_PROVIDER_KOMGA && bucket.signature.indexOf(instanceSignaturePart) >= 0) {
+        continue;
+      }
+      nextBuckets.push({
+        providerType: bucket.providerType,
+        signature: bucket.signature,
+        updatedAt: bucket.updatedAt,
+        mangas: this.cloneMangaList(bucket.mangas)
+      });
+    }
+
+    const nextMangas: Manga[] = [];
+    for (let index = 0; index < this.cacheData.mangas.length; index++) {
+      const manga = this.cacheData.mangas[index];
+      if (!this.isMangaFromKomgaInstance(manga, normalizedInstanceId)) {
+        nextMangas.push(this.cloneManga(manga));
+      }
+    }
+
+    this.cacheData.version = REMOTE_LIBRARY_CACHE_VERSION;
+    this.cacheData.updatedAt = Date.now();
+    this.cacheData.buckets = nextBuckets;
+    this.cacheData.mangas = nextMangas;
+    await this.persistCache();
+    logger.info(TAG, `cleared remote library Komga instance cache: instance=${normalizedInstanceId}`);
+  }
+
+  public async refreshAllLibraryManga(forceRefresh: boolean = false): Promise<Manga[]> {
+    if (this.refreshInFlight !== null) {
+      logger.debug(TAG, 'remote library refresh already running, reuse in-flight work');
+      return await this.refreshInFlight;
+    }
+
+    const refreshWork = this.executeLibraryRefresh(forceRefresh);
+    this.refreshInFlight = refreshWork;
+    try {
+      return await refreshWork;
+    } finally {
+      this.refreshInFlight = null;
+    }
+  }
+
+  private async executeLibraryRefresh(forceRefresh: boolean): Promise<Manga[]> {
     await this.initialize();
 
     const favoriteComicIds = await this.loadFavoriteComicIdSet();
-    const workingList = this.cloneMangaList(this.cacheData.mangas)
-      .filter((item: Manga) => favoriteComicIds.has(item.id));
+    const activeSignatures = await this.resolveActiveProviderSignatures();
+    this.migrateLegacyMangaToActiveBuckets(activeSignatures);
+    let workingList = this.getFavoriteMangaFromActiveBuckets(activeSignatures, favoriteComicIds);
+    const hasRemoteFavorites = this.hasRemoteProviderFavorites(favoriteComicIds);
     const refreshedAt = Date.now();
 
-    const suwayomiItems = await this.refreshSuwayomiLibrary(workingList, refreshedAt, favoriteComicIds);
-    if (suwayomiItems !== null) {
-      this.replaceProviderItems(workingList, REMOTE_PROVIDER_SUWAYOMI, suwayomiItems);
+    if (!hasRemoteFavorites) {
+      this.cacheData.version = REMOTE_LIBRARY_CACHE_VERSION;
+      this.cacheData.updatedAt = refreshedAt;
+      this.cacheData.mangas = this.cloneMangaList(workingList);
+      await this.persistCache();
+      logger.info(TAG, 'skip remote library refresh: no remote favorites');
+      return this.cloneMangaList(this.cacheData.mangas);
     }
 
-    const komgaItems = await this.refreshKomgaLibrary(workingList, refreshedAt, favoriteComicIds);
-    if (komgaItems !== null) {
-      this.replaceProviderItems(workingList, REMOTE_PROVIDER_KOMGA, komgaItems);
+    const suwayomiSignatures = this.collectNeededProviderSignatures(REMOTE_PROVIDER_SUWAYOMI, activeSignatures, favoriteComicIds);
+    const komgaSignatures = this.collectNeededProviderSignatures(REMOTE_PROVIDER_KOMGA, activeSignatures, favoriteComicIds);
+    const suwayomiFresh = this.areProviderBucketsFresh(suwayomiSignatures, refreshedAt);
+    const komgaFresh = this.areProviderBucketsFresh(komgaSignatures, refreshedAt);
+
+    if (!forceRefresh && suwayomiFresh && komgaFresh) {
+      this.cacheData.version = REMOTE_LIBRARY_CACHE_VERSION;
+      this.cacheData.mangas = this.cloneMangaList(workingList);
+      await this.persistCache();
+      logger.info(TAG, `use fresh remote library cache, count=${workingList.length}, suwayomiBuckets=${suwayomiSignatures.length}, komgaBuckets=${komgaSignatures.length}`);
+      return this.cloneMangaList(workingList);
     }
 
-    const persistedList = workingList.filter((item: Manga) => item.isFavorite);
-    this.cacheData = {
-      updatedAt: refreshedAt,
-      mangas: this.cloneMangaList(persistedList)
-    };
+    if (suwayomiSignatures.length > 0 && (forceRefresh || !suwayomiFresh)) {
+      const suwayomiItems = await this.refreshSuwayomiLibrary(workingList, refreshedAt, favoriteComicIds);
+      if (suwayomiItems !== null) {
+        this.replaceProviderBuckets(suwayomiSignatures, suwayomiItems, refreshedAt, favoriteComicIds);
+      }
+    }
+
+    if (komgaSignatures.length > 0 && (forceRefresh || !komgaFresh)) {
+      const komgaItems = await this.refreshKomgaLibrary(workingList, refreshedAt, favoriteComicIds, komgaSignatures);
+      if (komgaItems !== null) {
+        this.replaceProviderBuckets(komgaSignatures, komgaItems, refreshedAt, favoriteComicIds);
+      }
+    }
+
+    workingList = this.getFavoriteMangaFromActiveBuckets(activeSignatures, favoriteComicIds);
+    this.cacheData.version = REMOTE_LIBRARY_CACHE_VERSION;
+    this.cacheData.updatedAt = refreshedAt;
+    this.cacheData.mangas = this.cloneMangaList(workingList);
     await this.persistCache();
     return this.cloneMangaList(this.cacheData.mangas);
   }
@@ -431,7 +574,8 @@ export class RemoteLibraryMangaBridge {
   private async refreshKomgaLibrary(
     existingList: Manga[],
     refreshedAt: number,
-    favoriteComicIds: Set<string>
+    favoriteComicIds: Set<string>,
+    targetSignatures: RemoteProviderSignature[]
   ): Promise<Manga[] | null> {
     try {
       await this.komgaExecutor.initialize();
@@ -443,7 +587,7 @@ export class RemoteLibraryMangaBridge {
       const instances = this.komgaExecutor.getInstances();
       for (let instanceIndex = 0; instanceIndex < instances.length; instanceIndex++) {
         const instance = instances[instanceIndex];
-        if (instance.enabled === false) {
+        if (instance.enabled === false || !this.hasSignatureForInstance(targetSignatures, instance.id)) {
           continue;
         }
 
@@ -484,31 +628,6 @@ export class RemoteLibraryMangaBridge {
     } catch (error) {
       logger.warn(TAG, `refresh Komga library failed: ${String(error)}`);
       return null;
-    }
-  }
-
-  private replaceProviderItems(targetList: Manga[], providerType: RemoteProviderType, nextItems: Manga[]): void {
-    const nextIds: Set<string> = new Set<string>();
-    for (let index = 0; index < nextItems.length; index++) {
-      nextIds.add(nextItems[index].id);
-    }
-
-    const preservedItems: Manga[] = [];
-    for (let index = targetList.length - 1; index >= 0; index--) {
-      if (targetList[index].sourceInfo?.providerType === providerType) {
-        if (targetList[index].isFavorite && !nextIds.has(targetList[index].id)) {
-          preservedItems.push(this.cloneManga(targetList[index]));
-        }
-        targetList.splice(index, 1);
-      }
-    }
-
-    for (let index = 0; index < nextItems.length; index++) {
-      targetList.push(this.cloneManga(nextItems[index]));
-    }
-
-    for (let index = 0; index < preservedItems.length; index++) {
-      targetList.push(this.cloneManga(preservedItems[index]));
     }
   }
 
@@ -811,8 +930,23 @@ export class RemoteLibraryMangaBridge {
     if (headers['Sec-Fetch-Site']) {
       result.secFetchSite = headers['Sec-Fetch-Site'];
     }
+    this.appendExtraRequestHeader(result, 'X-API-Key', headers['X-API-Key']);
+    this.appendExtraRequestHeader(result, 'X-Auth-Token', headers['X-Auth-Token']);
 
     return result;
+  }
+
+  private appendExtraRequestHeader(target: RequestHeaders, name: string, value: string | undefined): void {
+    if (!value || value.length <= 0) {
+      return;
+    }
+    const nextEntry: RequestHeaderEntry = {
+      name: name,
+      value: value
+    };
+    target.extraHeaders = target.extraHeaders
+      ? target.extraHeaders.concat([nextEntry])
+      : [nextEntry];
   }
 
   private buildMetadata(authorText: string | undefined, tags: string[]): MangaMetadata {
@@ -854,6 +988,319 @@ export class RemoteLibraryMangaBridge {
       logger.warn(TAG, `load favorite comic ids failed: ${String(error)}`);
     }
     return result;
+  }
+
+  private hasRemoteProviderFavorites(favoriteComicIds: Set<string>): boolean {
+    let result = false;
+    favoriteComicIds.forEach((comicId: string): void => {
+      if (result) {
+        return;
+      }
+      result = RemoteLibraryMangaBridge.parseProviderMangaId(comicId) !== null;
+    });
+    return result;
+  }
+
+  private async resolveActiveProviderSignatures(): Promise<RemoteProviderSignature[]> {
+    const result: RemoteProviderSignature[] = [];
+
+    try {
+      await this.suwayomiExecutor.initialize();
+      if (this.suwayomiExecutor.isConfigured()) {
+        const config = this.suwayomiExecutor.getConfig();
+        const signature = this.buildSuwayomiSignature(
+          this.suwayomiExecutor.getServerUrl() || config.serverUrl,
+          config.useAuth,
+          config.username
+        );
+        if (signature.length > 0) {
+          result.push({
+            providerType: REMOTE_PROVIDER_SUWAYOMI,
+            signature: signature,
+            instanceId: ''
+          });
+        }
+      }
+    } catch (error) {
+      logger.warn(TAG, `resolve Suwayomi cache signature failed: ${String(error)}`);
+    }
+
+    try {
+      await this.komgaExecutor.initialize();
+      const instances = this.komgaExecutor.getInstances();
+      for (let index = 0; index < instances.length; index++) {
+        const instance = instances[index];
+        if (instance.enabled === false || instance.serverUrl.trim().length <= 0) {
+          continue;
+        }
+        const signature = this.buildKomgaSignature(instance);
+        if (signature.length > 0) {
+          result.push({
+            providerType: REMOTE_PROVIDER_KOMGA,
+            signature: signature,
+            instanceId: instance.id
+          });
+        }
+      }
+    } catch (error) {
+      logger.warn(TAG, `resolve Komga cache signatures failed: ${String(error)}`);
+    }
+
+    return result;
+  }
+
+  private buildSuwayomiSignature(serverUrl: string, useAuth: boolean, username: string): string {
+    const normalizedServerUrl = this.normalizeCacheServerUrl(serverUrl);
+    if (normalizedServerUrl.length <= 0) {
+      return '';
+    }
+    const authMode = useAuth ? 'BASIC' : 'NONE';
+    const normalizedUsername = useAuth ? username.trim().toLowerCase() : '';
+    return `suwayomi|server=${normalizedServerUrl}|auth=${authMode}|user=${normalizedUsername}`;
+  }
+
+  private buildKomgaSignature(instance: KomgaInstanceConfig): string {
+    const normalizedServerUrl = this.normalizeCacheServerUrl(this.komgaExecutor.getServerUrl(instance.id) || instance.serverUrl);
+    if (normalizedServerUrl.length <= 0) {
+      return '';
+    }
+    const authMode = instance.authMode || 'NONE';
+    const normalizedUsername = authMode === 'BASIC' ? instance.username.trim().toLowerCase() : '';
+    const apiKeyHash = authMode === 'API_KEY' ? this.shortStableHash(instance.apiKey.trim()) : '';
+    return `komga|instance=${instance.id}|server=${normalizedServerUrl}|auth=${authMode}|user=${normalizedUsername}|key=${apiKeyHash}`;
+  }
+
+  private normalizeCacheServerUrl(serverUrl: string): string {
+    let normalized = String(serverUrl || '').trim();
+    while (normalized.endsWith('/')) {
+      normalized = normalized.substring(0, normalized.length - 1);
+    }
+    return normalized.toLowerCase();
+  }
+
+  private shortStableHash(value: string): string {
+    if (value.length <= 0) {
+      return '';
+    }
+
+    let hash: number = 0;
+    for (let index = 0; index < value.length; index++) {
+      hash = ((hash << 5) - hash) + value.charCodeAt(index);
+      hash = hash & hash;
+    }
+    return Math.abs(hash).toString(36);
+  }
+
+  private collectNeededProviderSignatures(
+    providerType: RemoteProviderType,
+    activeSignatures: RemoteProviderSignature[],
+    favoriteComicIds: Set<string>
+  ): RemoteProviderSignature[] {
+    const result: RemoteProviderSignature[] = [];
+    favoriteComicIds.forEach((comicId: string): void => {
+      const parsed = RemoteLibraryMangaBridge.parseProviderMangaId(comicId);
+      if (parsed === null || parsed.providerType !== providerType) {
+        return;
+      }
+
+      const signature = this.findActiveSignatureForParsedMangaId(parsed, activeSignatures);
+      if (signature !== null && !this.includesSignature(result, signature)) {
+        result.push(signature);
+      }
+    });
+    return result;
+  }
+
+  private areProviderBucketsFresh(signatures: RemoteProviderSignature[], now: number): boolean {
+    for (let index = 0; index < signatures.length; index++) {
+      const signature = signatures[index];
+      const bucket = this.findCacheBucket(signature.providerType, signature.signature);
+      if (bucket === null || bucket.updatedAt <= 0 || now - bucket.updatedAt >= REMOTE_LIBRARY_REFRESH_TTL_MS) {
+        return false;
+      }
+    }
+    return true;
+  }
+
+  private migrateLegacyMangaToActiveBuckets(activeSignatures: RemoteProviderSignature[]): void {
+    for (let index = 0; index < this.cacheData.mangas.length; index++) {
+      const manga = this.cacheData.mangas[index];
+      const parsed = RemoteLibraryMangaBridge.parseProviderMangaId(manga.id);
+      if (parsed === null) {
+        continue;
+      }
+
+      const signature = this.findActiveSignatureForParsedMangaId(parsed, activeSignatures);
+      if (signature === null) {
+        continue;
+      }
+
+      const bucket = this.ensureCacheBucket(signature.providerType, signature.signature, this.cacheData.updatedAt);
+      this.upsertMangaIntoBucket(bucket, manga);
+    }
+  }
+
+  private getFavoriteMangaFromActiveBuckets(activeSignatures: RemoteProviderSignature[], favoriteComicIds: Set<string>): Manga[] {
+    const result: Manga[] = [];
+    const seenIds: Set<string> = new Set<string>();
+    for (let index = 0; index < this.cacheData.buckets.length; index++) {
+      const bucket = this.cacheData.buckets[index];
+      if (!this.includesBucketSignature(activeSignatures, bucket.providerType, bucket.signature)) {
+        continue;
+      }
+      for (let mangaIndex = 0; mangaIndex < bucket.mangas.length; mangaIndex++) {
+        const manga = bucket.mangas[mangaIndex];
+        if (manga.isFavorite && favoriteComicIds.has(manga.id) && !seenIds.has(manga.id)) {
+          result.push(this.cloneManga(manga));
+          seenIds.add(manga.id);
+        }
+      }
+    }
+    return result;
+  }
+
+  private findMangaInActiveBuckets(mangaId: string, activeSignatures: RemoteProviderSignature[]): Manga | null {
+    const parsed = RemoteLibraryMangaBridge.parseProviderMangaId(mangaId);
+    if (parsed === null) {
+      return null;
+    }
+
+    const signature = this.findActiveSignatureForParsedMangaId(parsed, activeSignatures);
+    if (signature === null) {
+      return null;
+    }
+
+    const bucket = this.findCacheBucket(signature.providerType, signature.signature);
+    if (bucket === null) {
+      return null;
+    }
+    return this.findMangaById(bucket.mangas, mangaId);
+  }
+
+  private replaceProviderBuckets(
+    targetSignatures: RemoteProviderSignature[],
+    nextItems: Manga[],
+    refreshedAt: number,
+    favoriteComicIds: Set<string>
+  ): void {
+    for (let signatureIndex = 0; signatureIndex < targetSignatures.length; signatureIndex++) {
+      const targetSignature = targetSignatures[signatureIndex];
+      const bucket = this.ensureCacheBucket(targetSignature.providerType, targetSignature.signature, refreshedAt);
+      const nextIds: Set<string> = new Set<string>();
+      const nextBucketItems: Manga[] = [];
+
+      for (let itemIndex = 0; itemIndex < nextItems.length; itemIndex++) {
+        const item = nextItems[itemIndex];
+        if (!favoriteComicIds.has(item.id) || !this.mangaMatchesSignature(item, targetSignature)) {
+          continue;
+        }
+        nextIds.add(item.id);
+        nextBucketItems.push(this.cloneManga(item));
+      }
+
+      for (let existingIndex = 0; existingIndex < bucket.mangas.length; existingIndex++) {
+        const existing = bucket.mangas[existingIndex];
+        if (existing.isFavorite && favoriteComicIds.has(existing.id) && !nextIds.has(existing.id)) {
+          nextBucketItems.push(this.cloneManga(existing));
+        }
+      }
+
+      bucket.updatedAt = refreshedAt;
+      bucket.mangas = nextBucketItems;
+    }
+  }
+
+  private mangaMatchesSignature(manga: Manga, signature: RemoteProviderSignature): boolean {
+    const parsed = RemoteLibraryMangaBridge.parseProviderMangaId(manga.id);
+    if (parsed === null || parsed.providerType !== signature.providerType) {
+      return false;
+    }
+    if (signature.providerType === REMOTE_PROVIDER_SUWAYOMI) {
+      return true;
+    }
+    return (parsed.instanceId || '') === signature.instanceId;
+  }
+
+  private findActiveSignatureForParsedMangaId(
+    parsed: ParsedRemoteMangaId,
+    activeSignatures: RemoteProviderSignature[]
+  ): RemoteProviderSignature | null {
+    for (let index = 0; index < activeSignatures.length; index++) {
+      const signature = activeSignatures[index];
+      if (signature.providerType !== parsed.providerType) {
+        continue;
+      }
+      if (parsed.providerType === REMOTE_PROVIDER_SUWAYOMI) {
+        return signature;
+      }
+      if (signature.instanceId === (parsed.instanceId || '')) {
+        return signature;
+      }
+    }
+    return null;
+  }
+
+  private includesSignature(signatures: RemoteProviderSignature[], target: RemoteProviderSignature): boolean {
+    for (let index = 0; index < signatures.length; index++) {
+      if (signatures[index].providerType === target.providerType && signatures[index].signature === target.signature) {
+        return true;
+      }
+    }
+    return false;
+  }
+
+  private includesBucketSignature(signatures: RemoteProviderSignature[], providerType: RemoteProviderType, signature: string): boolean {
+    for (let index = 0; index < signatures.length; index++) {
+      if (signatures[index].providerType === providerType && signatures[index].signature === signature) {
+        return true;
+      }
+    }
+    return false;
+  }
+
+  private hasSignatureForInstance(signatures: RemoteProviderSignature[], instanceId: string): boolean {
+    for (let index = 0; index < signatures.length; index++) {
+      if (signatures[index].providerType === REMOTE_PROVIDER_KOMGA && signatures[index].instanceId === instanceId) {
+        return true;
+      }
+    }
+    return false;
+  }
+
+  private findCacheBucket(providerType: RemoteProviderType, signature: string): RemoteProviderCacheBucket | null {
+    for (let index = 0; index < this.cacheData.buckets.length; index++) {
+      const bucket = this.cacheData.buckets[index];
+      if (bucket.providerType === providerType && bucket.signature === signature) {
+        return bucket;
+      }
+    }
+    return null;
+  }
+
+  private ensureCacheBucket(providerType: RemoteProviderType, signature: string, updatedAt: number): RemoteProviderCacheBucket {
+    const existing = this.findCacheBucket(providerType, signature);
+    if (existing !== null) {
+      return existing;
+    }
+
+    const nextBucket: RemoteProviderCacheBucket = {
+      providerType: providerType,
+      signature: signature,
+      updatedAt: updatedAt,
+      mangas: []
+    };
+    this.cacheData.buckets.push(nextBucket);
+    return nextBucket;
+  }
+
+  private upsertMangaIntoBucket(bucket: RemoteProviderCacheBucket, manga: Manga): void {
+    for (let index = 0; index < bucket.mangas.length; index++) {
+      if (bucket.mangas[index].id === manga.id) {
+        bucket.mangas[index] = this.cloneManga(manga);
+        return;
+      }
+    }
+    bucket.mangas.push(this.cloneManga(manga));
   }
 
   private resolvePreferredCoverPath(existing: Manga | null, fallbackCoverPath: string): string {
@@ -920,6 +1367,20 @@ export class RemoteLibraryMangaBridge {
   private async upsertCachedManga(manga: Manga): Promise<void> {
     await this.initialize();
 
+    const activeSignatures = await this.resolveActiveProviderSignatures();
+    const parsed = RemoteLibraryMangaBridge.parseProviderMangaId(manga.id);
+    if (parsed !== null) {
+      const signature = this.findActiveSignatureForParsedMangaId(parsed, activeSignatures);
+      if (signature !== null) {
+        const now = Date.now();
+        const bucket = this.ensureCacheBucket(signature.providerType, signature.signature, now);
+        if (bucket.updatedAt <= 0) {
+          bucket.updatedAt = now;
+        }
+        this.upsertMangaIntoBucket(bucket, manga);
+      }
+    }
+
     let replaced = false;
     for (let index = 0; index < this.cacheData.mangas.length; index++) {
       if (this.cacheData.mangas[index].id === manga.id) {
@@ -938,6 +1399,14 @@ export class RemoteLibraryMangaBridge {
 
   private async removeCachedManga(mangaId: string): Promise<void> {
     await this.initialize();
+    for (let bucketIndex = 0; bucketIndex < this.cacheData.buckets.length; bucketIndex++) {
+      const bucket = this.cacheData.buckets[bucketIndex];
+      for (let index = bucket.mangas.length - 1; index >= 0; index--) {
+        if (bucket.mangas[index].id === mangaId) {
+          bucket.mangas.splice(index, 1);
+        }
+      }
+    }
     for (let index = this.cacheData.mangas.length - 1; index >= 0; index--) {
       if (this.cacheData.mangas[index].id === mangaId) {
         this.cacheData.mangas.splice(index, 1);
@@ -950,8 +1419,10 @@ export class RemoteLibraryMangaBridge {
     try {
       const store = await preferences.getPreferences(getContext(), REMOTE_LIBRARY_PREF_NAME);
       const payload: RemoteLibraryCacheData = {
+        version: REMOTE_LIBRARY_CACHE_VERSION,
         updatedAt: this.cacheData.updatedAt,
-        mangas: this.cloneMangaList(this.cacheData.mangas)
+        mangas: this.cloneMangaList(this.cacheData.mangas),
+        buckets: this.cloneCacheBuckets(this.cacheData.buckets)
       };
       await store.put(REMOTE_LIBRARY_CACHE_KEY, JSON.stringify(payload));
       await store.flush();
@@ -967,6 +1438,36 @@ export class RemoteLibraryMangaBridge {
       }
     }
     return null;
+  }
+
+  private isMangaFromProvider(manga: Manga, providerType: RemoteProviderType): boolean {
+    if (manga.sourceInfo?.providerType === providerType) {
+      return true;
+    }
+    const parsed = RemoteLibraryMangaBridge.parseProviderMangaId(manga.id);
+    return parsed !== null && parsed.providerType === providerType;
+  }
+
+  private isMangaFromKomgaInstance(manga: Manga, instanceId: string): boolean {
+    if (manga.sourceInfo?.providerType === REMOTE_PROVIDER_KOMGA && manga.sourceInfo.providerInstanceId === instanceId) {
+      return true;
+    }
+    const parsed = RemoteLibraryMangaBridge.parseProviderMangaId(manga.id);
+    return parsed !== null && parsed.providerType === REMOTE_PROVIDER_KOMGA && (parsed.instanceId || '') === instanceId;
+  }
+
+  private cloneCacheBuckets(buckets: RemoteProviderCacheBucket[]): RemoteProviderCacheBucket[] {
+    const result: RemoteProviderCacheBucket[] = [];
+    for (let index = 0; index < buckets.length; index++) {
+      const bucket = buckets[index];
+      result.push({
+        providerType: bucket.providerType,
+        signature: bucket.signature,
+        updatedAt: bucket.updatedAt || 0,
+        mangas: this.cloneMangaList(bucket.mangas || [])
+      });
+    }
+    return result;
   }
 
   private cloneMangaList(items: Manga[]): Manga[] {
