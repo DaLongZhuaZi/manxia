@@ -514,7 +514,72 @@ export class ImageCacheManager {
     }
 
     logger.debug(TAG, `使用远程源章节缓存加载图片: ${cachedPath.substring(0, 120)}`);
-    return await this.loadLocalFile(cachedPath, cacheKey, options);
+    const cachedPixelMap = await this.loadLocalFile(cachedPath, cacheKey, options);
+    if (cachedPixelMap || options?.forceRefresh) {
+      return cachedPixelMap;
+    }
+
+    logger.warn(TAG, `远程源章节缓存解码失败，强制刷新缓存: ${cachedPath.substring(0, 120)}`);
+    const forceRefreshOptions = this.buildForceRefreshLoadOptions(options);
+    const refreshedPath = await this.ensureRemoteProviderPageCached(url, forceRefreshOptions);
+    if (!refreshedPath || refreshedPath.length <= 0) {
+      return null;
+    }
+    return await this.loadLocalFile(refreshedPath, cacheKey, forceRefreshOptions);
+  }
+
+  private buildForceRefreshLoadOptions(options?: LoadOptions): LoadOptions {
+    const forced: LoadOptions = {};
+    if (options?.width !== undefined) {
+      forced.width = options.width;
+    }
+    if (options?.height !== undefined) {
+      forced.height = options.height;
+    }
+    if (options?.quality !== undefined) {
+      forced.quality = options.quality;
+    }
+    if (options?.placeholder !== undefined) {
+      forced.placeholder = options.placeholder;
+    }
+    if (options?.errorImage !== undefined) {
+      forced.errorImage = options.errorImage;
+    }
+    if (options?.skipMemoryCache !== undefined) {
+      forced.skipMemoryCache = options.skipMemoryCache;
+    }
+    if (options?.skipDiskCache !== undefined) {
+      forced.skipDiskCache = options.skipDiskCache;
+    }
+    if (options?.headers !== undefined) {
+      forced.headers = options.headers;
+    }
+    if (options?.sourceId !== undefined) {
+      forced.sourceId = options.sourceId;
+    }
+    if (options?.loadingMethod !== undefined) {
+      forced.loadingMethod = options.loadingMethod;
+    }
+    if (options?.partitionKey !== undefined) {
+      forced.partitionKey = options.partitionKey;
+    }
+    if (options?.mangaId !== undefined) {
+      forced.mangaId = options.mangaId;
+    }
+    if (options?.chapterId !== undefined) {
+      forced.chapterId = options.chapterId;
+    }
+    if (options?.pageIndex !== undefined) {
+      forced.pageIndex = options.pageIndex;
+    }
+    if (options?.priority !== undefined) {
+      forced.priority = options.priority;
+    }
+    if (options?.contentType !== undefined) {
+      forced.contentType = options.contentType;
+    }
+    forced.forceRefresh = true;
+    return forced;
   }
 
   private async ensureRemoteProviderPageCached(url: string, options?: LoadOptions): Promise<string | null> {

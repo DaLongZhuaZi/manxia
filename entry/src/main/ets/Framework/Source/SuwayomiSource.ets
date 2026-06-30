@@ -8,6 +8,7 @@ import { SafeUtils } from '../../Utils/SafeUtils';
 import { http } from '@kit.NetworkKit';
 import { preferences } from '@kit.ArkData';
 import { logger } from '../../Utils/Logger';
+import { base64Encode } from '../../Utils/CryptoUtils';
 import { ComicInfo, ChapterInfo, PageInfo, ComicDetailInfo } from './SourceExecutor';
 import { common } from '@kit.AbilityKit';
 import { uiContextManager } from '../Managers/UIContextManager';
@@ -81,6 +82,7 @@ interface GraphQLError {
 
 // GraphQL 数据接口
 interface GraphQLData {
+  __type?: GraphQLTypeInfo | null;
   sources?: GraphQLSourcesConnection;
   mangas?: GraphQLMangasConnection;
   manga?: SuwayomiMangaDetail;
@@ -91,6 +93,10 @@ interface GraphQLData {
   updateChapter?: GraphQLUpdateChapter;
   categories?: GraphQLCategoriesConnection;
   category?: GraphQLCategoryWithMangas;
+}
+
+interface GraphQLTypeInfo {
+  name: string;
 }
 
 interface GraphQLFetchChapterPages {
@@ -175,6 +181,7 @@ interface GraphQLChaptersConnection {
 interface SearchVariables {
   source: string;
   query: string;
+  page: number;
 }
 
 interface MangaIdVariables {
@@ -214,8 +221,25 @@ interface CategoryVariables {
 interface LibraryMangasVariables {
   offset: number;
   limit: number;
-  orderBy: string;
+  order?: MangaOrderVariable[];
 }
+
+interface MangaOrderVariable {
+  by: string;
+  byType: string;
+}
+
+type SuwayomiGraphQLVariables =
+  PaginationVariables |
+  SearchVariables |
+  MangaIdVariables |
+  ChapterIdVariables |
+  BrowseVariables |
+  UpdateChapterVariables |
+  QueryVariables |
+  UpdateMangaVariables |
+  CategoryVariables |
+  LibraryMangasVariables;
 
 // 漫画排序类型
 export type MangaSortType = 'ID' | 'TITLE' | 'LAST_FETCHED_AT' | 'IN_LIBRARY_AT' | 'UNREAD_COUNT' | 'LAST_READ_AT';
@@ -262,6 +286,11 @@ interface SuwayomiComicInfo extends ComicInfo {
   lastFetchedAt?: number;
 }
 
+interface SuwayomiLibraryPageFetchResult {
+  succeeded: boolean;
+  result: PaginatedResult<ComicInfo>;
+}
+
 /**
  * Suwayomi 图源类
  */
@@ -273,6 +302,7 @@ export class SuwayomiSource {
     password: '',
     useAuth: false
   };
+  private mangaOrderSupport: boolean | null = null;
 
   private getAbilityContext(): common.UIAbilityContext {
     const context = uiContextManager.getAbilityContext();
@@ -295,11 +325,14 @@ export class SuwayomiSource {
   /**
    * 初始化
    */
-  public async initialize(): Promise<void> {
-    if (this.isInitialized) {
+  public async initialize(forceReload: boolean = false): Promise<void> {
+    if (this.isInitialized && !forceReload) {
       return;
     }
     await this.loadConfig();
+    if (forceReload) {
+      this.mangaOrderSupport = null;
+    }
     this.isInitialized = true;
     logger.info(TAG, '初始化完成');
   }
@@ -334,7 +367,7 @@ export class SuwayomiSource {
    */
   public async saveConfig(config: SuwayomiSourceConfig): Promise<void> {
     try {
-      const store = await preferences.getPreferences(this.getAbilityContext(), 'suwayomi_source_config');
+      const store = await preferences.getPreferences(this.getAbilityContext(), 'suwayomi_config');
       await store.put('serverUrl', config.serverUrl);
       await store.put('username', config.username);
       await store.put('password', config.password);
@@ -442,7 +475,7 @@ export class SuwayomiSource {
   /**
    * 执行 GraphQL 查询
    */
-  private async executeGraphQL(query: string, variables?: Object): Promise<GraphQLData | null> {
+  private async executeGraphQL(query: string, variables?: SuwayomiGraphQLVariables): Promise<GraphQLData | null> {
     const serverUrl = this.getNormalizedServerUrl();
     if (!serverUrl) {
       logger.error(TAG, '服务器地址未配置');
@@ -459,7 +492,7 @@ export class SuwayomiSource {
       // 添加认证头
       if (this.config.useAuth && this.config.username && this.config.password) {
         const credentials = `${this.config.username}:${this.config.password}`;
-        const encoded = this.base64Encode(credentials);
+        const encoded = base64Encode(credentials);
         headers['Authorization'] = `Basic ${encoded}`;
       }
 
@@ -500,24 +533,25 @@ export class SuwayomiSource {
     }
   }
 
-  /**
-   * Base64 编码
-   */
-  private base64Encode(str: string): string {
-    const chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/';
-    let result = '';
-    let i = 0;
-    while (i < str.length) {
-      const a = str.charCodeAt(i++);
-      const b = i < str.length ? str.charCodeAt(i++) : 0;
-      const c = i < str.length ? str.charCodeAt(i++) : 0;
-      const triplet = (a << 16) | (b << 8) | c;
-      result += chars.charAt((triplet >> 18) & 0x3F);
-      result += chars.charAt((triplet >> 12) & 0x3F);
-      result += i > str.length + 1 ? '=' : chars.charAt((triplet >> 6) & 0x3F);
-      result += i > str.length ? '=' : chars.charAt(triplet & 0x3F);
+  private async supportsMangaOrder(): Promise<boolean> {
+    if (this.mangaOrderSupport !== null) {
+      return this.mangaOrderSupport;
     }
-    return result;
+
+    const query = `
+      query CheckMangaOrderSupport {
+        __type(name: "MangaOrder") {
+          name
+        }
+      }
+    `;
+    const data = await this.executeGraphQL(query);
+    const supported = data?.__type?.name === 'MangaOrder';
+    this.mangaOrderSupport = supported;
+    if (!supported) {
+      logger.info(TAG, '当前 Suwayomi GraphQL schema 不支持 MangaOrder，全部书架将直接使用无排序分页并在本地排序');
+    }
+    return supported;
   }
 
   // ==================== 图源 API ====================
@@ -639,28 +673,38 @@ export class SuwayomiSource {
   }
 
   /**
-   * 构建 GraphQL orderBy 字段
-   * Suwayomi 使用格式: FIELD_ASC 或 FIELD_DESC
-   * 有效值参考: ID, TITLE, IN_LIBRARY_AT, LAST_FETCHED_AT 等
+   * 构建官方 MangaOrder 变量。
+   * Suwayomi 当前只支持 ID、TITLE、IN_LIBRARY_AT、LAST_FETCHED_AT 作为服务端排序字段。
    */
-  private buildOrderByField(sortType: MangaSortType, sortDirection: SortDirection): string {
-    // Suwayomi MangaOrderBy 枚举格式
-    // 注意：需要根据实际 API 支持的值调整
+  private buildMangaOrder(sortType: MangaSortType, sortDirection: SortDirection): MangaOrderVariable[] {
+    let by: string = 'ID';
     switch (sortType) {
       case 'TITLE':
-        return sortDirection === 'ASC' ? 'TITLE_ASC' : 'TITLE_DESC';
+        by = 'TITLE';
+        break;
       case 'LAST_FETCHED_AT':
-        return sortDirection === 'ASC' ? 'LAST_FETCHED_AT_ASC' : 'LAST_FETCHED_AT_DESC';
+        by = 'LAST_FETCHED_AT';
+        break;
       case 'IN_LIBRARY_AT':
-        return sortDirection === 'ASC' ? 'IN_LIBRARY_AT_ASC' : 'IN_LIBRARY_AT_DESC';
+        by = 'IN_LIBRARY_AT';
+        break;
       case 'UNREAD_COUNT':
-        return sortDirection === 'ASC' ? 'UNREAD_COUNT_ASC' : 'UNREAD_COUNT_DESC';
+        logger.debug(TAG, 'Suwayomi 服务端不支持按未读数排序，将在本地排序。');
+        by = 'ID';
+        break;
       case 'LAST_READ_AT':
-        logger.warn(TAG, 'Suwayomi current compatibility path falls back from LAST_READ_AT to IN_LIBRARY_AT.');
-        return sortDirection === 'ASC' ? 'IN_LIBRARY_AT_ASC' : 'IN_LIBRARY_AT_DESC';
+        logger.debug(TAG, 'Suwayomi 服务端不支持按最近阅读排序，将在本地排序。');
+        by = 'ID';
+        break;
       default:
-        return sortDirection === 'ASC' ? 'ID_ASC' : 'ID_DESC';
+        by = 'ID';
+        break;
     }
+    const order: MangaOrderVariable = {
+      by: by,
+      byType: sortDirection
+    };
+    return [order];
   }
 
   /**
@@ -738,16 +782,27 @@ export class SuwayomiSource {
       };
     }
 
-    // 使用服务器端 orderBy 进行排序
-    const allMangas = await this.getAllLibraryMangas(sortType, sortDirection);
-    const totalCount = allMangas.length;
-    const items = allMangas.slice(offset, offset + limit);
+    const canUseServerOrder = await this.supportsMangaOrder();
+    if (canUseServerOrder) {
+      const orderedPage = await this.getLibraryMangaPage(offset, limit, sortType, sortDirection, true);
+      if (orderedPage.succeeded) {
+        if (orderedPage.result.totalCount > 0 &&
+          orderedPage.result.items.length <= 0 &&
+          offset < orderedPage.result.totalCount) {
+          logger.warn(TAG, `带排序的全部书架分页返回空页，降级为无排序分页: offset=${offset}, total=${orderedPage.result.totalCount}, sort=${sortType}_${sortDirection}`);
+        } else {
+          return orderedPage.result;
+        }
+      }
 
-    return {
-      items: items,
-      totalCount: totalCount,
-      hasMore: offset + items.length < totalCount
-    };
+      logger.warn(TAG, `带排序的全部书架分页查询失败，降级为无排序分页: sort=${sortType}_${sortDirection}`);
+    }
+    const fallbackPage = await this.getLibraryMangaPage(offset, limit, sortType, sortDirection, false);
+    if (fallbackPage.succeeded) {
+      return fallbackPage.result;
+    }
+
+    return fallbackPage.result;
   }
 
   /**
@@ -761,13 +816,13 @@ export class SuwayomiSource {
     let offset = 0;
     let allMangas: ComicInfo[] = [];
     let hasMore = true;
-    const orderBy = this.buildOrderByField(sortType, sortDirection);
+    const canUseServerOrder = await this.supportsMangaOrder();
+    const order = canUseServerOrder ? this.buildMangaOrder(sortType, sortDirection) : [];
 
     while (hasMore) {
-      // 使用服务器端 orderBy 进行排序
-      const query = `
-        query GetLibraryMangas($offset: Int!, $limit: Int!, $orderBy: MangaOrderBy) {
-          mangas(condition: { inLibrary: true }, offset: $offset, first: $limit, orderBy: $orderBy) {
+      const queryWithOrder = `
+        query GetLibraryMangas($offset: Int!, $limit: Int!, $order: [MangaOrder!]) {
+          mangas(condition: { inLibrary: true }, offset: $offset, first: $limit, order: $order) {
             totalCount
             nodes {
               id
@@ -785,7 +840,30 @@ export class SuwayomiSource {
           }
         }
       `;
-      const variables: LibraryMangasVariables = { offset: offset, limit: batchSize, orderBy: orderBy };
+      const queryWithoutOrder = `
+        query GetLibraryMangas($offset: Int!, $limit: Int!) {
+          mangas(condition: { inLibrary: true }, offset: $offset, first: $limit) {
+            totalCount
+            nodes {
+              id
+              title
+              thumbnailUrl
+              author
+              artist
+              description
+              genre
+              status
+              inLibraryAt
+              unreadCount
+              lastFetchedAt
+            }
+          }
+        }
+      `;
+      const query = canUseServerOrder ? queryWithOrder : queryWithoutOrder;
+      const variables: LibraryMangasVariables = canUseServerOrder
+        ? { offset: offset, limit: batchSize, order: order }
+        : { offset: offset, limit: batchSize };
       const data = await this.executeGraphQL(query, variables);
 
       const mangasData: GraphQLMangasConnectionWithCount | undefined = data?.mangas as GraphQLMangasConnectionWithCount | undefined;
@@ -828,8 +906,114 @@ export class SuwayomiSource {
       }
     }
 
-    logger.info(TAG, `获取所有库漫画完成: ${allMangas.length} 本，排序: ${orderBy}`);
-    return allMangas;
+    const sortedMangas = this.sortMangas(allMangas, sortType, sortDirection);
+    logger.info(TAG, `获取所有库漫画完成: ${sortedMangas.length} 本，排序: ${sortType}_${sortDirection}`);
+    return sortedMangas;
+  }
+
+  private mapLibraryMangaToComicInfo(manga: SuwayomiManga): ComicInfo {
+    const serverUrl = this.getNormalizedServerUrl();
+    const comicInfo: SuwayomiComicInfo = {
+      id: String(manga.id),
+      title: manga.title,
+      author: manga.author || manga.artist,
+      coverUrl: this.resolveSuwayomiUrl(manga.thumbnailUrl),
+      description: manga.description,
+      status: manga.status,
+      tags: manga.genre,
+      url: `${serverUrl}/manga/${manga.id}`,
+      lastReadAt: manga.lastReadAt || 0,
+      inLibraryAt: manga.inLibraryAt || 0,
+      unreadCount: manga.unreadCount || 0,
+      lastFetchedAt: manga.lastFetchedAt || 0
+    };
+    return comicInfo;
+  }
+
+  private async getLibraryMangaPage(
+    offset: number,
+    limit: number,
+    sortType: MangaSortType,
+    sortDirection: SortDirection,
+    useServerOrder: boolean
+  ): Promise<SuwayomiLibraryPageFetchResult> {
+    const queryWithOrder = `
+      query GetLibraryMangas($offset: Int!, $limit: Int!, $order: [MangaOrder!]) {
+        mangas(condition: { inLibrary: true }, offset: $offset, first: $limit, order: $order) {
+          totalCount
+          nodes {
+            id
+            title
+            thumbnailUrl
+            author
+            artist
+            description
+            genre
+            status
+            inLibraryAt
+            unreadCount
+            lastFetchedAt
+          }
+        }
+      }
+    `;
+    const queryWithoutOrder = `
+      query GetLibraryMangas($offset: Int!, $limit: Int!) {
+        mangas(condition: { inLibrary: true }, offset: $offset, first: $limit) {
+          totalCount
+          nodes {
+            id
+            title
+            thumbnailUrl
+            author
+            artist
+            description
+            genre
+            status
+            inLibraryAt
+            unreadCount
+            lastFetchedAt
+          }
+        }
+      }
+    `;
+
+    const data = useServerOrder
+      ? await this.executeGraphQL(queryWithOrder, {
+        offset: offset,
+        limit: limit,
+        order: this.buildMangaOrder(sortType, sortDirection)
+      })
+      : await this.executeGraphQL(queryWithoutOrder, {
+        offset: offset,
+        limit: limit
+      });
+
+    const mangasData: GraphQLMangasConnectionWithCount | undefined = data?.mangas as GraphQLMangasConnectionWithCount | undefined;
+    if (data === null || mangasData === undefined) {
+      return {
+        succeeded: false,
+        result: {
+          items: [],
+          totalCount: 0,
+          hasMore: false
+        }
+      };
+    }
+
+    const mangas: SuwayomiManga[] = mangasData.nodes || [];
+    const mappedItems: ComicInfo[] = mangas.map((manga: SuwayomiManga): ComicInfo => this.mapLibraryMangaToComicInfo(manga));
+    const items = useServerOrder ? mappedItems : this.sortMangas(mappedItems, sortType, sortDirection);
+    const totalCount: number = mangasData.totalCount || items.length;
+    logger.info(TAG, `Suwayomi 全部书架分页完成: offset=${offset}, limit=${limit}, received=${items.length}, total=${totalCount}, ordered=${useServerOrder}`);
+    return {
+      succeeded: true,
+      result: {
+        items: items,
+        totalCount: totalCount,
+        hasMore: offset + items.length < totalCount
+      }
+    };
   }
 
   /**
@@ -847,8 +1031,8 @@ export class SuwayomiSource {
    */
   public async searchManga(sourceId: string, searchQuery: string): Promise<ComicInfo[]> {
     const query = `
-      mutation SearchManga($source: LongString!, $query: String!) {
-        fetchSourceManga(input: { source: $source, type: SEARCH, query: $query }) {
+      mutation SearchManga($source: LongString!, $query: String!, $page: Int!) {
+        fetchSourceManga(input: { source: $source, type: SEARCH, query: $query, page: $page }) {
           mangas {
             id
             title
@@ -862,7 +1046,7 @@ export class SuwayomiSource {
         }
       }
     `;
-    const variables: SearchVariables = { source: sourceId, query: searchQuery };
+    const variables: SearchVariables = { source: sourceId, query: searchQuery, page: 1 };
     const data = await this.executeGraphQL(query, variables);
     const mangas = data?.fetchSourceManga?.mangas as SuwayomiManga[] | undefined;
     if (!mangas) {
@@ -1186,7 +1370,7 @@ export class SuwayomiSource {
     const headers: Record<string, string> = {};
     if (this.config.useAuth && this.config.username && this.config.password) {
       const credentials = `${this.config.username}:${this.config.password}`;
-      const encoded = this.base64Encode(credentials);
+      const encoded = base64Encode(credentials);
       headers['Authorization'] = `Basic ${encoded}`;
     }
     return headers;

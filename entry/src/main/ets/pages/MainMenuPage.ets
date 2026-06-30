@@ -113,6 +113,7 @@ import { UserAgreementPage } from './UserAgreementPage';
 import { PrivacyPolicyPage } from './PrivacyPolicyPage';
 import { SourceGuidePage } from './SourceGuidePage';
 import { SourceDetailPage } from './SourceDetailPage';
+import type { SourceDetailParams as SourceDetailPageParams } from './SourceDetailPage';
 import { WebViewContainer, GlobalWebViewContainer } from '../Framework/WebView/WebViewContainerPage';
 import { BookTransitionOverlay, startBookOpenTransition, startBookOpenTransitionWithComponentId, CoverPosition, EBookBackgroundSettings } from '../components/BookTransitionOverlay';
 import { EBookReaderParams } from './EBookReaderRouteTypes';
@@ -127,6 +128,7 @@ import { openEBookReaderInIsolatedAbility } from '../Framework/Reader/EBookReade
 import { openNovelReaderInIsolatedAbility } from '../Framework/Reader/NovelReaderAbilityLauncher';
 import { openReadAloudPlayerInIsolatedAbility } from '../Framework/ReadAloud/ReadAloudPlayerAbilityLauncher';
 import { openRemoteControlInIsolatedAbility } from '../Framework/RemoteControl/RemoteControlAbilityLauncher';
+import { openSourceDetailInIsolatedAbility } from '../Framework/Source/SourceDetailAbilityLauncher';
 import { buildNovelReaderParamsFromTxtEBook } from '../Framework/Adapters/LocalTextNovelAdapter';
 import { ThemeSettingsPage } from './ThemeSettingsPage';
 import { CoverSelectionPage } from './CoverSelectionPage';
@@ -398,16 +400,6 @@ interface CoverAspectInfo {
 
 
 // 保留本地定义的电子书详情页参数
-
-/**
- * 图源详情页面参数接口
- */
-interface SourceDetailPageParams {
-  sourceId: number;
-  initialTab?: string;  // 初始标签ID（如 'popular', 'latest', 'search'）
-  searchKeyword?: string;  // 搜索关键词（当initialTab为'search'时使用）
-  searchType?: string;  // 搜索类型（如 'search', 'searchById', 'searchByAuthor'）
-}
 
 interface BookStyleSourceConfigMetadata {
   bookSourceUrl?: string;
@@ -694,6 +686,7 @@ struct MainMenuPage {
   private dataManager: DataManager = DataManager.getInstance();
   private dataService: DataService = DataService.getInstance();
   private settingsManager: SettingsManager = SettingsManager.getInstance();
+  private sourceDetailWindowSequence: number = 0;
   @StorageLink('main_menu_bottom_bar_style') @Watch('onBottomBarStyleStorageChanged') private bottomBarStyle: string = 'custom'; // 'custom' | 'hds'
   @State private mainPageBottomBarAnimationEnabled: boolean = false;
   private appliedBottomBarStyle: string = 'custom';
@@ -797,7 +790,6 @@ struct MainMenuPage {
   @State newShelfColor: string = '#FF6B6B'; // 新书架颜色
   @State addShelfDialogStep: number = 1; // 新增书架对话框步骤（1=基本信息，2=选择内容类型，3=动态书架筛选条件）
   @State isShelfEditMode: boolean = false; // 是否处于书架编辑模式
-  @State shelfCardAnimationScale: number = 1; // 书架卡片动画缩放
   @State deletingShelfId: string = ''; // 正在删除的书架ID（用于动画）
   // 重命名书架相关状态
   @State showRenameShelfDialog: boolean = false; // 是否显示重命名书架对话框
@@ -1224,12 +1216,24 @@ struct MainMenuPage {
 
   @Builder
   buildShelfDetailDisplayFloatingBar() {
-    Column({ space: 6 }) {
+    Column({ space: 10 }) {
+      Text('书架视图显示设置')
+        .fontSize(14)
+        .fontWeight(FontWeight.Medium)
+        .fontFamily(this.appFontFamily)
+        .fontColor(this.getSettingsAnalyticsCardTitleColor())
+
+      Text('书架布局与管理项仅影响书架视图，作者、进度与封面信息会同步作用于书库封面视图')
+        .fontSize(11)
+        .fontFamily(this.appFontFamily)
+        .fontColor(this.getSettingsAnalyticsCardSubtitleColor())
+        .opacity(0.88)
+
       Row({ space: 8 }) {
         Text('筛选栏置底')
           .fontSize(11)
           .fontFamily(this.appFontFamily)
-          .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
+          .fontColor(this.getSettingsAnalyticsCardSubtitleColor())
         Blank()
         Toggle({ type: ToggleType.Switch, isOn: this.isShelfToolbarAtBottom() })
           .onChange((isOn: boolean) => {
@@ -1243,13 +1247,13 @@ struct MainMenuPage {
         Text('作者显示')
           .fontSize(11)
           .fontFamily(this.appFontFamily)
-          .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
+          .fontColor(this.getSettingsAnalyticsCardSubtitleColor())
         Blank()
         Button(this.getLibraryGridInfoDisplayModeShortLabel(this.libraryGridAuthorDisplayModeSetting))
           .height(28)
           .fontSize(11)
           .fontFamily(this.appFontFamily)
-          .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
+          .fontColor(this.getSettingsAnalyticsCardTitleColor())
           .backgroundColor(this.getSettingsAnalyticsCardBackground())
           .backgroundBlurStyle(this.getSettingsAnalyticsCardBlurStyle(), this.getSettingsAnalyticsCardBlurOptions())
           .backgroundEffect(this.getSettingsAnalyticsCardBackgroundEffect())
@@ -1271,16 +1275,16 @@ struct MainMenuPage {
       .alignItems(VerticalAlign.Center)
 
       Row({ space: 8 }) {
-        Text('进度显示')
+        Text('阅读进度')
           .fontSize(11)
           .fontFamily(this.appFontFamily)
-          .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
+          .fontColor(this.getSettingsAnalyticsCardSubtitleColor())
         Blank()
         Button(this.getLibraryGridInfoDisplayModeShortLabel(this.libraryGridProgressDisplayModeSetting))
           .height(28)
           .fontSize(11)
           .fontFamily(this.appFontFamily)
-          .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
+          .fontColor(this.getSettingsAnalyticsCardTitleColor())
           .backgroundColor(this.getSettingsAnalyticsCardBackground())
           .backgroundBlurStyle(this.getSettingsAnalyticsCardBlurStyle(), this.getSettingsAnalyticsCardBlurOptions())
           .backgroundEffect(this.getSettingsAnalyticsCardBackgroundEffect())
@@ -1305,7 +1309,7 @@ struct MainMenuPage {
         Text('焕新封面')
           .fontSize(11)
           .fontFamily(this.appFontFamily)
-          .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
+          .fontColor(this.getSettingsAnalyticsCardSubtitleColor())
         Blank()
         Toggle({ type: ToggleType.Switch, isOn: this.libraryRenewedCoverEnabledSetting })
           .onChange((isOn: boolean) => {
@@ -1314,32 +1318,115 @@ struct MainMenuPage {
       }
       .width('100%')
       .alignItems(VerticalAlign.Center)
+
+      Row({ space: 8 }) {
+        Text('封面类型标记（需重启）')
+          .fontSize(11)
+          .fontFamily(this.appFontFamily)
+          .fontColor(this.getSettingsAnalyticsCardSubtitleColor())
+        Blank()
+        Toggle({ type: ToggleType.Switch, isOn: this.libraryCoverTypeMarkerEnabledSetting })
+          .onChange((isOn: boolean) => {
+            this.updateLibraryCoverTypeMarkerEnabled(isOn);
+          })
+      }
+      .width('100%')
+      .alignItems(VerticalAlign.Center)
+
+      Row({ space: 8 }) {
+        Text('从顶部开始显示')
+          .fontSize(11)
+          .fontFamily(this.appFontFamily)
+          .fontColor(this.getSettingsAnalyticsCardSubtitleColor())
+        Blank()
+        Toggle({ type: ToggleType.Switch, isOn: this.libraryGridStartFromTopSetting })
+          .onChange((isOn: boolean) => {
+            this.updateLibraryGridStartFromTop(isOn);
+          })
+      }
+      .width('100%')
+      .alignItems(VerticalAlign.Center)
+
+      Row({ space: 8 }) {
+        Text('不显示木质书架')
+          .fontSize(11)
+          .fontFamily(this.appFontFamily)
+          .fontColor(this.getSettingsAnalyticsCardSubtitleColor())
+        Blank()
+        Toggle({ type: ToggleType.Switch, isOn: this.hideWoodShelfTexture })
+          .onChange((isOn: boolean) => {
+            this.updateHideWoodShelfTexture(isOn);
+          })
+      }
+      .width('100%')
+      .alignItems(VerticalAlign.Center)
+
+      Row({ space: 8 }) {
+        Text(`每行书架 ${this.getShelfGridColumnsForDisplay()}`)
+          .fontSize(11)
+          .fontFamily(this.appFontFamily)
+          .fontColor(this.getSettingsAnalyticsCardSubtitleColor())
+
+        Slider({
+          value: this.getShelfGridColumnsForDisplay(),
+          min: 1,
+          max: 10,
+          step: 1,
+          style: SliderStyle.OutSet
+        })
+          .layoutWeight(1)
+          .blockColor(ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme))
+          .selectedColor(ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme))
+          .trackColor(ThemeAwareHelper.getTestManagementThemedColor('accent_primary_dimmed', this.themeState.currentTheme))
+          .onChange((value: number) => {
+            this.updateShelfGridColumns(value);
+          })
+      }
+      .width('100%')
+      .alignItems(VerticalAlign.Center)
+
+      Button('完成调整')
+        .width('100%')
+        .height(28)
+        .fontSize(11)
+        .fontFamily(this.appFontFamily)
+        .fontColor(ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme))
+        .backgroundColor(this.getSettingsAnalyticsCardBackground())
+        .backgroundBlurStyle(this.getSettingsAnalyticsCardBlurStyle(), this.getSettingsAnalyticsCardBlurOptions())
+        .backgroundEffect(this.getSettingsAnalyticsCardBackgroundEffect())
+        .border({
+          width: this.getSettingsAnalyticsCardBorderWidth(),
+          color: this.getSettingsAnalyticsCardBorderColor()
+        })
+        .borderRadius(14)
+        .shadow({
+          radius: this.getSettingsAnalyticsCardRadius(),
+          color: this.getSettingsAnalyticsCardShadowColor(),
+          offsetX: 0,
+          offsetY: 2
+        })
+        .clip(true)
+        .onClick(() => {
+          this.completeShelfPreviewAdjustments();
+        })
     }
     .width(this.getShelfPreviewSliderWidth())
-    .padding({ left: 10, right: 10, top: 8, bottom: 8 })
-    .backgroundColor(this.themeState.currentTheme === ThemeType.DARK
-      ? 'rgba(30, 30, 30, 0.45)'
-      : 'rgba(255, 255, 255, 0.45)')
-    .backgroundBlurStyle(BlurStyle.BACKGROUND_THIN, {
-      colorMode: ThemeColorMode.SYSTEM,
-      adaptiveColor: AdaptiveColor.DEFAULT,
-      scale: 1.0
-    })
+    .padding(12)
+    .backgroundColor(this.getSettingsAnalyticsCardBackground())
+    .backgroundBlurStyle(this.getSettingsAnalyticsCardBlurStyle(), this.getSettingsAnalyticsCardBlurOptions())
+    .backgroundEffect(this.getSettingsAnalyticsCardBackgroundEffect())
     .border({
-      width: 1,
-      color: this.themeState.currentTheme === ThemeType.DARK
-        ? 'rgba(255, 255, 255, 0.22)'
-        : 'rgba(255, 255, 255, 0.60)'
+      width: this.getSettingsAnalyticsCardBorderWidth(),
+      color: this.getSettingsAnalyticsCardBorderColor()
     })
-    .borderRadius(22)
+    .borderRadius(this.getSettingsAnalyticsCardRadius())
     .shadow({
-      radius: 12,
-      color: this.themeState.currentTheme === ThemeType.DARK
-        ? 'rgba(0, 0, 0, 0.35)'
-        : 'rgba(0, 0, 0, 0.12)',
+      radius: this.getSettingsAnalyticsCardRadius() + 2,
+      color: this.getSettingsAnalyticsCardShadowColor(),
       offsetX: 0,
-      offsetY: 3
+      offsetY: 4
     })
+    .clip(true)
   }
 
   /**
@@ -2906,12 +2993,12 @@ struct MainMenuPage {
 
     logger.info(TAG, `🔗 图源路由: sourceId=${sourceId}, tab=${tab}, keyword=${keyword}`);
 
-    const params: SourceDetailPageParams = {
-      sourceId: sourceId,
-      initialTab: tab || undefined,
-      searchKeyword: keyword || undefined
-    };
-    this.pathStack.pushPathByName('SourceDetailPage', params);
+    const params: SourceDetailPageParams = this.createSourceDetailPageParams(
+      sourceId,
+      tab || undefined,
+      keyword || undefined
+    );
+    this.pushSourceDetailPage(params);
     logger.info(TAG, `🔗 图源路由跳转成功`);
     return true;
   }
@@ -2932,13 +3019,13 @@ struct MainMenuPage {
     logger.info(TAG, `🔗 内容直达: sourceId=${sourceId}, contentId=${contentId}`);
 
     // 跳转到 SourceDetailPage，以 searchById 方式执行
-    const params: SourceDetailPageParams = {
-      sourceId: sourceId,
-      initialTab: 'search',
-      searchKeyword: contentId,
-      searchType: 'searchById'
-    };
-    this.pathStack.pushPathByName('SourceDetailPage', params);
+    const params: SourceDetailPageParams = this.createSourceDetailPageParams(
+      sourceId,
+      'search',
+      contentId,
+      'searchById'
+    );
+    this.pushSourceDetailPage(params);
     logger.info(TAG, `🔗 内容直达跳转成功`);
     return true;
   }
@@ -4001,6 +4088,44 @@ struct MainMenuPage {
 
   private shouldShowFloatingSearchButton(): boolean {
     return !this.isSideTabNavigationActive();
+  }
+
+  private shouldShowShelfFloatingActionButtons(): boolean {
+    return this.currentTabIndex === TabIndex.LIBRARY
+      && this.libraryViewMode === LibraryViewMode.CATEGORY
+      && !this.showCategoryDetail
+      && this.shouldShowFloatingSearchButton();
+  }
+
+  private getShelfFloatingActionButtonGap(): number {
+    return 8;
+  }
+
+  private getShelfFloatingActionButtonX(buttonIndex: number): number {
+    const searchAnchorLeft: boolean = this.shouldAnchorFloatingSearchButtonToLeft();
+    const sameSidePrivacyOffset: number = this.shouldShowPrivacyExitButton()
+      && this.shouldAnchorFloatingPrivacyExitButtonToLeft() === searchAnchorLeft ? 1 : 0;
+    const slotIndex: number = buttonIndex + sameSidePrivacyOffset;
+    const direction: number = searchAnchorLeft ? 1 : -1;
+    const step: number = this.FLOAT_SEARCH_BUTTON_SIZE + this.getShelfFloatingActionButtonGap();
+    const rawX: number = this.getFloatingSearchButtonX() + direction * slotIndex * step;
+    const minX: number = this.FLOAT_SEARCH_BUTTON_MARGIN;
+    const maxX: number = this.getMainMenuViewportWidth() - this.FLOAT_SEARCH_BUTTON_SIZE - this.FLOAT_SEARCH_BUTTON_MARGIN;
+    if (rawX < minX) {
+      return minX;
+    }
+    if (rawX > maxX) {
+      return maxX;
+    }
+    return rawX;
+  }
+
+  private getShelfManageFloatingButtonX(): number {
+    return this.getShelfFloatingActionButtonX(1);
+  }
+
+  private getShelfAddFloatingButtonX(): number {
+    return this.getShelfFloatingActionButtonX(2);
   }
 
   private openGlobalSearchPage(): void {
@@ -5190,6 +5315,39 @@ struct MainMenuPage {
   /**
    * 打开图源详情页
    */
+  private createSourceDetailPageParams(
+    sourceId: number,
+    initialTab?: string,
+    searchKeyword?: string,
+    searchType?: string,
+    sourceName?: string,
+    sourcePkg?: string
+  ): SourceDetailPageParams {
+    const params: SourceDetailPageParams = {
+      sourceId: sourceId,
+      initialTab: initialTab,
+      searchKeyword: searchKeyword,
+      searchType: searchType,
+      sourceName: sourceName,
+      sourcePkg: sourcePkg
+    };
+    if (this.settingsManager.getBoolean(SettingKeys.SOURCE_DETAIL_MULTI_WINDOW_ENABLED, false)) {
+      this.sourceDetailWindowSequence += 1;
+      params.sourceDetailWindowKey = `source_detail_page_${sourceId}_${Date.now()}_${this.sourceDetailWindowSequence}`;
+    }
+    return params;
+  }
+
+  private pushSourceDetailPage(params: SourceDetailPageParams): void {
+    if (params.sourceDetailWindowKey && params.sourceDetailWindowKey.length > 0) {
+      openSourceDetailInIsolatedAbility(this.getUIContext(), this.pathStack, params, TAG);
+      return;
+    }
+
+    this.pathStack.removeByName('SourceDetailPage');
+    this.pathStack.pushPathByName('SourceDetailPage', params);
+  }
+
   private openSourceDetail(source: SourceInfo): void {
     if (this.isBookStyleSource(source)) {
       logger.info(TAG, `书源型图源仅打开搜索框: ${source.name} (ID: ${source.id})`);
@@ -5199,8 +5357,15 @@ struct MainMenuPage {
 
     try {
       logger.info(TAG, `打开图源详情页: ${source.name} (ID: ${source.id})`);
-      const params: SourceDetailPageParams = { sourceId: source.id };
-      this.pathStack.pushPathByName('SourceDetailPage', params);
+      const params: SourceDetailPageParams = this.createSourceDetailPageParams(
+        source.id,
+        undefined,
+        undefined,
+        undefined,
+        source.name,
+        source.pkg
+      );
+      this.pushSourceDetailPage(params);
     } catch (err) {
       logger.error(TAG, '打开图源详情页失败', String(err));
       this.showToast('打开图源详情页失败');
@@ -5219,8 +5384,15 @@ struct MainMenuPage {
 
     try {
       logger.info(TAG, `打开图源详情页: ${source.name} (ID: ${source.id}), 初始标签: ${initialTab}`);
-      const params: SourceDetailPageParams = { sourceId: source.id, initialTab: initialTab };
-      this.pathStack.pushPathByName('SourceDetailPage', params);
+      const params: SourceDetailPageParams = this.createSourceDetailPageParams(
+        source.id,
+        initialTab,
+        undefined,
+        undefined,
+        source.name,
+        source.pkg
+      );
+      this.pushSourceDetailPage(params);
     } catch (err) {
       logger.error(TAG, '打开图源详情页失败', String(err));
       this.showToast('打开图源详情页失败');
@@ -5410,13 +5582,15 @@ struct MainMenuPage {
     // 直接跳转到图源详情页并执行搜索
     try {
       logger.info(TAG, `执行全局图源搜索: ${source.name}, 类型: ${prefixData.searchType}, 关键词: ${prefixData.query}`);
-      const params: SourceDetailPageParams = {
-        sourceId: source.id,
-        initialTab: 'search',
-        searchKeyword: prefixData.query,
-        searchType: prefixData.searchType
-      };
-      this.pathStack.pushPathByName('SourceDetailPage', params);
+      const params: SourceDetailPageParams = this.createSourceDetailPageParams(
+        source.id,
+        'search',
+        prefixData.query,
+        prefixData.searchType,
+        source.name,
+        source.pkg
+      );
+      this.pushSourceDetailPage(params);
       return true;
     } catch (err) {
       logger.error(TAG, '打开图源详情页失败', String(err));
@@ -5476,13 +5650,15 @@ struct MainMenuPage {
     }
     try {
       logger.info(TAG, `执行图源搜索: ${this.searchTargetSource.name}, 类型: ${this.selectedSourceSearchType}, 关键词: ${keyword}`);
-      const params: SourceDetailPageParams = {
-        sourceId: this.searchTargetSource.id,
-        initialTab: 'search',
-        searchKeyword: keyword,
-        searchType: this.selectedSourceSearchType
-      };
-      this.pathStack.pushPathByName('SourceDetailPage', params);
+      const params: SourceDetailPageParams = this.createSourceDetailPageParams(
+        this.searchTargetSource.id,
+        'search',
+        keyword,
+        this.selectedSourceSearchType,
+        this.searchTargetSource.name,
+        this.searchTargetSource.pkg
+      );
+      this.pushSourceDetailPage(params);
       this.closeSourceSearchDialog();
     } catch (err) {
       logger.error(TAG, '打开图源详情页失败', String(err));
@@ -13941,38 +14117,38 @@ struct MainMenuPage {
         .margin({ right: 8 })
 
         // 搜索按钮
-        Button() {
+        Stack({ alignContent: Alignment.Center }) {
           SymbolGlyph($r('sys.symbol.magnifyingglass'))
             .fontSize(24)
-            .fontColor([ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme)])
+            .fontColor([this.getFloatingSearchButtonIconColor()])
+            .renderingStrategy(SymbolRenderingStrategy.SINGLE)
         }
-        .type(ButtonType.Circle)
         .width(40)
         .height(40)
-        .backgroundColor(this.getSettingsAnalyticsCardBackground())
-        .backgroundBlurStyle(this.getSettingsAnalyticsCardBlurStyle(), this.getSettingsAnalyticsCardBlurOptions())
-        .backgroundEffect(this.getSettingsAnalyticsCardBackgroundEffect())
-        .border({
-          width: this.getSettingsAnalyticsCardBorderWidth(),
-          color: this.getSettingsAnalyticsCardBorderColor()
-        })
         .borderRadius(20)
+        .clip(true)
+        .backgroundColor(this.getMainMenuSearchButtonGlassBackground())
+        .backgroundBlurStyle(this.getMainMenuSearchButtonGlassBlurStyle(), this.getMainMenuSearchButtonGlassBlurOptions())
+        .border({
+          width: 1,
+          color: this.getFloatingSearchButtonBorderColor()
+        })
         .shadow({
-          radius: this.getSettingsAnalyticsCardRadius(),
-          color: this.getSettingsAnalyticsCardShadowColor(),
+          radius: 10,
+          color: this.getMainMenuSearchButtonGlassShadowColor(),
           offsetX: 0,
           offsetY: 2
         })
-        .clip(true)
-        .onClick(() => {
-          try {
-            this.pathStack.pushPath({ name: 'GlobalSearchPage' });
-            logger.info(TAG, '导航到全局搜索页面');
-          } catch (error) {
-            const message: string = error instanceof Error ? error.message : String(error);
-            logger.error(TAG, '导航到搜索页面失败', message);
-            this.showToast('打开搜索页面失败');
+        .stateStyles({
+          pressed: {
+            .scale({ x: 0.94, y: 0.94 })
+            .opacity(0.86)
           }
+        })
+        .accessibilityText('搜索')
+        .accessibilityDescription('打开全局搜索页面')
+        .onClick(() => {
+          this.openGlobalSearchPage();
         })
         .margin({ right: 8 })
 
@@ -14077,38 +14253,38 @@ struct MainMenuPage {
           }
         })
 
-        Button() {
+        Stack({ alignContent: Alignment.Center }) {
           SymbolGlyph($r('sys.symbol.magnifyingglass'))
             .fontSize(24)
-            .fontColor([ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme)])
+            .fontColor([this.getFloatingSearchButtonIconColor()])
+            .renderingStrategy(SymbolRenderingStrategy.SINGLE)
         }
-        .type(ButtonType.Circle)
         .width(40)
         .height(40)
-        .backgroundColor(this.getSettingsAnalyticsCardBackground())
-        .backgroundBlurStyle(this.getSettingsAnalyticsCardBlurStyle(), this.getSettingsAnalyticsCardBlurOptions())
-        .backgroundEffect(this.getSettingsAnalyticsCardBackgroundEffect())
-        .border({
-          width: this.getSettingsAnalyticsCardBorderWidth(),
-          color: this.getSettingsAnalyticsCardBorderColor()
-        })
         .borderRadius(20)
+        .clip(true)
+        .backgroundColor(this.getMainMenuSearchButtonGlassBackground())
+        .backgroundBlurStyle(this.getMainMenuSearchButtonGlassBlurStyle(), this.getMainMenuSearchButtonGlassBlurOptions())
+        .border({
+          width: 1,
+          color: this.getFloatingSearchButtonBorderColor()
+        })
         .shadow({
-          radius: this.getSettingsAnalyticsCardRadius(),
-          color: this.getSettingsAnalyticsCardShadowColor(),
+          radius: 10,
+          color: this.getMainMenuSearchButtonGlassShadowColor(),
           offsetX: 0,
           offsetY: 2
         })
-        .clip(true)
-        .onClick(() => {
-          try {
-            this.pathStack.pushPath({ name: 'GlobalSearchPage' });
-            logger.info(TAG, '导航到全局搜索页面');
-          } catch (error) {
-            const message: string = error instanceof Error ? error.message : String(error);
-            logger.error(TAG, '导航到搜索页面失败', message);
-            this.showToast('打开搜索页面失败');
+        .stateStyles({
+          pressed: {
+            .scale({ x: 0.94, y: 0.94 })
+            .opacity(0.86)
           }
+        })
+        .accessibilityText('搜索')
+        .accessibilityDescription('打开全局搜索页面')
+        .onClick(() => {
+          this.openGlobalSearchPage();
         })
 
         Button() {
@@ -14332,38 +14508,38 @@ struct MainMenuPage {
           }
         })
 
-        Button() {
+        Stack({ alignContent: Alignment.Center }) {
           SymbolGlyph($r('sys.symbol.magnifyingglass'))
             .fontSize(20)
-            .fontColor([ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme)])
+            .fontColor([this.getFloatingSearchButtonIconColor()])
+            .renderingStrategy(SymbolRenderingStrategy.SINGLE)
         }
-        .type(ButtonType.Circle)
         .width(34)
         .height(34)
-        .backgroundColor(this.getSettingsAnalyticsCardBackground())
-        .backgroundBlurStyle(this.getSettingsAnalyticsCardBlurStyle(), this.getSettingsAnalyticsCardBlurOptions())
-        .backgroundEffect(this.getSettingsAnalyticsCardBackgroundEffect())
-        .border({
-          width: this.getSettingsAnalyticsCardBorderWidth(),
-          color: this.getSettingsAnalyticsCardBorderColor()
-        })
         .borderRadius(17)
+        .clip(true)
+        .backgroundColor(this.getMainMenuSearchButtonGlassBackground())
+        .backgroundBlurStyle(this.getMainMenuSearchButtonGlassBlurStyle(), this.getMainMenuSearchButtonGlassBlurOptions())
+        .border({
+          width: 1,
+          color: this.getFloatingSearchButtonBorderColor()
+        })
         .shadow({
-          radius: this.getSettingsAnalyticsCardRadius(),
-          color: this.getSettingsAnalyticsCardShadowColor(),
+          radius: 8,
+          color: this.getMainMenuSearchButtonGlassShadowColor(),
           offsetX: 0,
           offsetY: 2
         })
-        .clip(true)
-        .onClick(() => {
-          try {
-            this.pathStack.pushPath({ name: 'GlobalSearchPage' });
-            logger.info(TAG, '导航到全局搜索页面');
-          } catch (error) {
-            const message: string = error instanceof Error ? error.message : String(error);
-            logger.error(TAG, '导航到搜索页面失败', message);
-            this.showToast('打开搜索页面失败');
+        .stateStyles({
+          pressed: {
+            .scale({ x: 0.94, y: 0.94 })
+            .opacity(0.86)
           }
+        })
+        .accessibilityText('搜索')
+        .accessibilityDescription('打开全局搜索页面')
+        .onClick(() => {
+          this.openGlobalSearchPage();
         })
 
         Button() {
@@ -14427,8 +14603,8 @@ struct MainMenuPage {
     }
     .width(this.FLOAT_SEARCH_BUTTON_SIZE)
     .height(this.FLOAT_SEARCH_BUTTON_SIZE)
-    .backgroundColor(this.getFloatingSearchButtonBackground())
-    .backgroundBlurStyle(this.getBottomBarContainerBlurStyle(), this.getBottomBarContainerBlurOptions())
+    .backgroundColor(this.getMainMenuSearchButtonGlassBackground())
+    .backgroundBlurStyle(this.getMainMenuSearchButtonGlassBlurStyle(), this.getMainMenuSearchButtonGlassBlurOptions())
     .borderRadius(this.FLOAT_SEARCH_BUTTON_SIZE / 2)
     .clip(true)
     .border({
@@ -14442,11 +14618,99 @@ struct MainMenuPage {
       }
     })
     .animation({ duration: 160, curve: Curve.EaseOut })
+    .shadow({
+      radius: 10,
+      color: this.getMainMenuSearchButtonGlassShadowColor(),
+      offsetX: 0,
+      offsetY: 2
+    })
     .hitTestBehavior(HitTestMode.Default)
     .accessibilityText('搜索')
     .accessibilityDescription('打开全局搜索页面')
     .onClick(() => {
       this.openGlobalSearchPage();
+    })
+  }
+
+  @Builder
+  buildShelfManageFloatingButton() {
+    Stack({ alignContent: Alignment.Center }) {
+      SymbolGlyph(this.isShelfEditMode ? $r('sys.symbol.checkmark') : $r('sys.symbol.square_and_pencil'))
+        .fontSize(24)
+        .fontColor([this.getFloatingSearchButtonIconColor()])
+        .renderingStrategy(SymbolRenderingStrategy.SINGLE)
+    }
+    .width(this.FLOAT_SEARCH_BUTTON_SIZE)
+    .height(this.FLOAT_SEARCH_BUTTON_SIZE)
+    .backgroundColor(this.getMainMenuSearchButtonGlassBackground())
+    .backgroundBlurStyle(this.getMainMenuSearchButtonGlassBlurStyle(), this.getMainMenuSearchButtonGlassBlurOptions())
+    .borderRadius(this.FLOAT_SEARCH_BUTTON_SIZE / 2)
+    .clip(true)
+    .border({
+      width: 1,
+      color: this.getFloatingSearchButtonBorderColor()
+    })
+    .stateStyles({
+      pressed: {
+        .scale({ x: 0.94, y: 0.94 })
+        .opacity(0.86)
+      }
+    })
+    .animation({ duration: 160, curve: Curve.EaseOut })
+    .shadow({
+      radius: 10,
+      color: this.getMainMenuSearchButtonGlassShadowColor(),
+      offsetX: 0,
+      offsetY: 2
+    })
+    .hitTestBehavior(HitTestMode.Default)
+    .accessibilityText(this.isShelfEditMode ? '完成管理' : '管理书架')
+    .accessibilityDescription('切换书架管理模式')
+    .onClick(() => {
+      this.getUIContext().animateTo({ duration: 200, curve: Curve.EaseOut }, () => {
+        this.isShelfEditMode = !this.isShelfEditMode;
+      });
+    })
+  }
+
+  @Builder
+  buildShelfAddFloatingButton() {
+    Stack({ alignContent: Alignment.Center }) {
+      SymbolGlyph($r('sys.symbol.plus_circle'))
+        .fontSize(26)
+        .fontColor([this.getFloatingSearchButtonIconColor()])
+        .renderingStrategy(SymbolRenderingStrategy.SINGLE)
+    }
+    .width(this.FLOAT_SEARCH_BUTTON_SIZE)
+    .height(this.FLOAT_SEARCH_BUTTON_SIZE)
+    .backgroundColor(this.getMainMenuSearchButtonGlassBackground())
+    .backgroundBlurStyle(this.getMainMenuSearchButtonGlassBlurStyle(), this.getMainMenuSearchButtonGlassBlurOptions())
+    .borderRadius(this.FLOAT_SEARCH_BUTTON_SIZE / 2)
+    .clip(true)
+    .border({
+      width: 1,
+      color: this.getFloatingSearchButtonBorderColor()
+    })
+    .stateStyles({
+      pressed: {
+        .scale({ x: 0.94, y: 0.94 })
+        .opacity(0.86)
+      }
+    })
+    .animation({ duration: 160, curve: Curve.EaseOut })
+    .shadow({
+      radius: 10,
+      color: this.getMainMenuSearchButtonGlassShadowColor(),
+      offsetX: 0,
+      offsetY: 2
+    })
+    .hitTestBehavior(HitTestMode.Default)
+    .accessibilityText('新建书架')
+    .accessibilityDescription('打开新建书架对话框')
+    .onClick(() => {
+      this.getUIContext().animateTo({ duration: 300, curve: Curve.EaseOut }, () => {
+        this.showAddShelfDialog = true;
+      });
     })
   }
 
@@ -17282,16 +17546,8 @@ struct MainMenuPage {
       && !this.showCategoryDetail;
   }
 
-  private getShelfDetailDisplayFloatingBarEstimatedHeight(): number {
-    return 154;
-  }
-
   private getShelfPreviewSliderFloatingBarEstimatedHeight(): number {
-    return 112;
-  }
-
-  private getShelfPreviewFloatingBarGap(): number {
-    return 12;
+    return 456;
   }
 
   private getShelfPreviewAnchorX(): number {
@@ -17301,8 +17557,8 @@ struct MainMenuPage {
   }
 
   private getShelfPreviewSliderWidth(): number {
-    const minWidth = 170;
-    const maxWidth = 320;
+    const minWidth = 248;
+    const maxWidth = 248;
     const viewportWidth: number = this.getMainMenuViewportWidth();
     const anchorX: number = this.getShelfPreviewAnchorX();
     const available = this.shouldAnchorShelfPreviewControlsToLeft()
@@ -17329,22 +17585,13 @@ struct MainMenuPage {
 
   private getShelfPreviewSliderY(): number {
     const estimatedHeight = this.getShelfPreviewSliderFloatingBarEstimatedHeight();
-    const bottomAnchor = Math.min(
-      this.getFloatingSearchButtonY() + this.FLOAT_SEARCH_BUTTON_SIZE,
-      this.getMainMenuViewportHeight() - this.navigationBarHeight - 12
-    );
+    const bottomAnchor = this.getFloatingSearchButtonY()
+      - this.FLOAT_SEARCH_BUTTON_MARGIN
+      - this.getShelfFloatingActionButtonGap();
     const preferredY = bottomAnchor - estimatedHeight;
     const maxY = this.getMainMenuViewportHeight() - this.navigationBarHeight - estimatedHeight - 12;
     const safeTop = this.statusBarHeight + 8;
     return Math.max(safeTop, Math.min(preferredY, maxY));
-  }
-
-  private getShelfDetailDisplayFloatingBarY(): number {
-    const safeTop = this.statusBarHeight + 8;
-    const preferredY = this.getShelfPreviewSliderY()
-      - this.getShelfPreviewFloatingBarGap()
-      - this.getShelfDetailDisplayFloatingBarEstimatedHeight();
-    return preferredY > safeTop ? preferredY : safeTop;
   }
 
   private getShelfCoverOffsetY(): number {
@@ -17721,34 +17968,6 @@ struct MainMenuPage {
             .animation({ duration: 220, curve: Curve.Linear })
           }, (shelf: TypeShelf) => shelf.id)
 
-          GridItem() {
-            this.buildShelfManageCard()
-          }
-          .transition(
-            TransitionEffect.asymmetric(
-              TransitionEffect.OPACITY.combine(TransitionEffect.scale({ x: 0.92, y: 0.92 }))
-                .animation({ duration: 220, curve: Curve.EaseOut }),
-              TransitionEffect.OPACITY.combine(TransitionEffect.scale({ x: 0.92, y: 0.92 }))
-                .animation({ duration: 180, curve: Curve.EaseIn })
-            )
-          )
-          .scale({ x: this.shelfCardAnimationScale, y: this.shelfCardAnimationScale })
-          .animation({ duration: 220, curve: Curve.Linear })
-
-          GridItem() {
-            this.buildAddShelfCard()
-          }
-          .transition(
-            TransitionEffect.asymmetric(
-              TransitionEffect.OPACITY.combine(TransitionEffect.scale({ x: 0.92, y: 0.92 }))
-                .animation({ duration: 220, curve: Curve.EaseOut }),
-              TransitionEffect.OPACITY.combine(TransitionEffect.scale({ x: 0.92, y: 0.92 }))
-                .animation({ duration: 180, curve: Curve.EaseIn })
-            )
-          )
-          .scale({ x: this.shelfCardAnimationScale, y: this.shelfCardAnimationScale })
-          .animation({ duration: 220, curve: Curve.Linear })
-
           if (this.mangaList.length === 0 && this.ebookList.length === 0 && this.pdfEbookList.length === 0 && this.novelList.length === 0 && this.typeShelves.filter((s: TypeShelf) => !s.isSystem).length === 0) {
             GridItem() {
               this.buildTypeShelfCard(LibraryContentType.MANGA, '默认书架', 0, [])
@@ -17953,7 +18172,7 @@ struct MainMenuPage {
       }
       .width('100%')
       .height(102)
-      
+
       // 书架名称
       Column({ space: 4 }) {
         Text(shelf.name)
@@ -18033,258 +18252,6 @@ struct MainMenuPage {
       }
       this.updateShelfDetailDS();
       this.updateCustomShelfMixedItems();
-    })
-  }
-
-  /**
-   * 构建新增书架卡片
-   */
-  @Builder
-  buildAddShelfCard() {
-    Column({ space: 8 }) {
-      // 书架容器（与普通书架卡片保持一致）
-      Stack({ alignContent: Alignment.Bottom }) {
-        Column()
-          .width('100%')
-          .height('100%')
-          .borderRadius(10)
-          .linearGradient(this.getShelfCardSurfaceGradientById('system_add_shelf'))
-
-        Column()
-          .width('100%')
-          .height(1)
-          .backgroundColor(this.getShelfCardSurfaceTopEdgeColorById('system_add_shelf'))
-
-        Column()
-          .width('100%')
-          .height(1)
-          .align(Alignment.Bottom)
-          .backgroundColor(this.getShelfCardSurfaceBottomEdgeColorById('system_add_shelf'))
-
-        if (this.shouldShowShelfBaseDecoration()) {
-          Row()
-            .width('100%')
-            .height(16)
-            .backgroundColor(this.getShelfBaseLayerColorById('system_add_shelf'))
-            .borderRadius(8)
-            .border({ width: 1, color: this.getShelfBaseLayerBorderColorById('system_add_shelf') })
-            .shadow({ radius: 0, color: 'rgba(0, 0, 0, 0)', offsetY: 0 })
-        }
-
-        if (this.shouldShowShelfBaseDecoration()) {
-          Image($r('app.media.bookshelf'))
-            .width('100%')
-            .height(10)
-            .objectFit(ImageFit.Fill)
-            .opacity(0.45)
-        }
-
-        SymbolGlyph($r('sys.symbol.plus_circle'))
-          .fontSize(30)
-          .fontColor([ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme)])
-          .offset({ y: this.getShelfCoverOffsetY() })
-      }
-      .width('100%')
-      .height(102)
-      
-      // 文字
-      Column({ space: 2 }) {
-        Text('新建书架')
-          .fontSize(16)
-          .fontWeight(FontWeight.Medium)
-          .fontFamily(this.appFontFamily)
-          .fontColor(ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme))
-      }
-      .width('100%')
-      .alignItems(HorizontalAlign.Start)
-    }
-    .width('100%')
-    .height(this.getShelfCardFixedHeight())
-    .padding(10)
-    .backgroundColor(this.getShelfCardBackgroundColorById('system_add_shelf'))
-    .backgroundBlurStyle(this.getShelfCardBlurStyleById('system_add_shelf'), this.getShelfCardBlurOptionsById('system_add_shelf'))
-    .backgroundEffect(this.getShelfCardBackgroundEffectById('system_add_shelf'))
-    .borderRadius(this.getGlassRadius())
-    .opacity(this.getCardOpacity())
-    .shadow({ radius: this.getGlassRadius() + 4, color: this.getShelfCardShadowColorById('system_add_shelf'), offsetY: 4 })
-    .border({ width: 1, color: this.getShelfCardBorderColorById('system_add_shelf') })
-    .onClick(() => {
-      this.getUIContext().animateTo({ duration: 300, curve: Curve.EaseOut }, () => {
-        this.showAddShelfDialog = true;
-      });
-    })
-  }
-
-  /**
-   * 构建管理书架卡片（替代顶部管理按钮）
-   */
-  @Builder
-  buildShelfManageCard() {
-    Column({ space: 8 }) {
-      Stack({ alignContent: Alignment.Bottom }) {
-        Column()
-          .width('100%')
-          .height('100%')
-          .borderRadius(10)
-          .linearGradient(this.getShelfCardSurfaceGradientById('system_manage_shelf'))
-
-        Column()
-          .width('100%')
-          .height(1)
-          .backgroundColor(this.getShelfCardSurfaceTopEdgeColorById('system_manage_shelf'))
-
-        Column()
-          .width('100%')
-          .height(1)
-          .align(Alignment.Bottom)
-          .backgroundColor(this.getShelfCardSurfaceBottomEdgeColorById('system_manage_shelf'))
-
-        if (this.shouldShowShelfBaseDecoration()) {
-          Row()
-            .width('100%')
-            .height(16)
-            .backgroundColor(this.getShelfBaseLayerColorById('system_manage_shelf'))
-            .borderRadius(8)
-            .border({ width: 1, color: this.getShelfBaseLayerBorderColorById('system_manage_shelf') })
-            .shadow({ radius: 0, color: 'rgba(0, 0, 0, 0)', offsetY: 0 })
-        }
-
-        if (this.shouldShowShelfBaseDecoration()) {
-          Image($r('app.media.bookshelf'))
-            .width('100%')
-            .height(10)
-            .objectFit(ImageFit.Fill)
-            .opacity(0.45)
-        }
-
-        SymbolGlyph(this.isShelfEditMode ? $r('sys.symbol.checkmark') : $r('sys.symbol.square_and_pencil'))
-          .fontSize(30)
-          .fontColor([ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme)])
-          .offset({ y: this.getShelfCoverOffsetY() })
-      }
-      .width('100%')
-      .height(102)
-
-      Column({ space: 2 }) {
-        Text(this.isShelfEditMode ? '完成管理' : '管理书架')
-          .fontSize(16)
-          .fontWeight(FontWeight.Medium)
-          .fontFamily(this.appFontFamily)
-          .fontColor(ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme))
-      }
-      .width('100%')
-      .alignItems(HorizontalAlign.Start)
-    }
-    .width('100%')
-    .height(this.getShelfCardFixedHeight())
-    .padding(10)
-    .backgroundColor(this.getShelfCardBackgroundColorById('system_manage_shelf'))
-    .backgroundBlurStyle(this.getShelfCardBlurStyleById('system_manage_shelf'), this.getShelfCardBlurOptionsById('system_manage_shelf'))
-    .backgroundEffect(this.getShelfCardBackgroundEffectById('system_manage_shelf'))
-    .borderRadius(this.getGlassRadius())
-    .opacity(this.getCardOpacity())
-    .shadow({ radius: this.getGlassRadius() + 4, color: this.getShelfCardShadowColorById('system_manage_shelf'), offsetY: 4 })
-    .border({ width: 1, color: this.getShelfCardBorderColorById('system_manage_shelf') })
-    .onClick(() => {
-      this.getUIContext().animateTo({ duration: 200, curve: Curve.EaseOut }, () => {
-        this.isShelfEditMode = !this.isShelfEditMode;
-      });
-    })
-  }
-
-  /**
-   * 构建书架每行数量滑条（与全局搜索按钮同高度）
-   */
-  @Builder
-  buildShelfPreviewSliderFloatingBar() {
-    Column({ space: 6 }) {
-      Row({ space: 8 }) {
-        Text('不显示木质书架')
-          .fontSize(11)
-          .fontFamily(this.appFontFamily)
-          .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
-        Blank()
-        Toggle({ type: ToggleType.Switch, isOn: this.hideWoodShelfTexture })
-          .onChange((isOn: boolean) => {
-            this.updateHideWoodShelfTexture(isOn);
-          })
-      }
-      .width('100%')
-      .alignItems(VerticalAlign.Center)
-
-      Row({ space: 8 }) {
-        Text(`每行书架 ${this.getShelfGridColumnsForDisplay()}`)
-          .fontSize(11)
-          .fontFamily(this.appFontFamily)
-          .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
-
-        Slider({
-          value: this.getShelfGridColumnsForDisplay(),
-          min: 1,
-          max: 10,
-          step: 1,
-          style: SliderStyle.OutSet
-        })
-          .layoutWeight(1)
-          .blockColor(ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme))
-          .selectedColor(ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme))
-          .trackColor(ThemeAwareHelper.getTestManagementThemedColor('accent_primary_dimmed', this.themeState.currentTheme))
-          .onChange((value: number) => {
-            this.updateShelfGridColumns(value)
-          })
-      }
-      .width('100%')
-      .alignItems(VerticalAlign.Center)
-
-      Button('完成调整')
-        .width('100%')
-        .height(28)
-        .fontSize(11)
-        .fontFamily(this.appFontFamily)
-        .fontColor(ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme))
-        .backgroundColor(this.getSettingsAnalyticsCardBackground())
-        .backgroundBlurStyle(this.getSettingsAnalyticsCardBlurStyle(), this.getSettingsAnalyticsCardBlurOptions())
-        .backgroundEffect(this.getSettingsAnalyticsCardBackgroundEffect())
-        .border({
-          width: this.getSettingsAnalyticsCardBorderWidth(),
-          color: this.getSettingsAnalyticsCardBorderColor()
-        })
-        .borderRadius(14)
-        .shadow({
-          radius: this.getSettingsAnalyticsCardRadius(),
-          color: this.getSettingsAnalyticsCardShadowColor(),
-          offsetX: 0,
-          offsetY: 2
-        })
-        .clip(true)
-        .onClick(() => {
-          this.completeShelfPreviewAdjustments();
-        })
-    }
-    .width(this.getShelfPreviewSliderWidth())
-    .padding({ left: 10, right: 10, top: 7, bottom: 7 })
-    .backgroundColor(this.themeState.currentTheme === ThemeType.DARK
-      ? 'rgba(30, 30, 30, 0.45)'
-      : 'rgba(255, 255, 255, 0.45)')
-    .backgroundBlurStyle(BlurStyle.BACKGROUND_THIN, {
-      colorMode: ThemeColorMode.SYSTEM,
-      adaptiveColor: AdaptiveColor.DEFAULT,
-      scale: 1.0
-    })
-    .border({
-      width: 1,
-      color: this.themeState.currentTheme === ThemeType.DARK
-        ? 'rgba(255, 255, 255, 0.22)'
-        : 'rgba(255, 255, 255, 0.60)'
-    })
-    .borderRadius(22)
-    .shadow({
-      radius: 12,
-      color: this.themeState.currentTheme === ThemeType.DARK
-        ? 'rgba(0, 0, 0, 0.35)'
-        : 'rgba(0, 0, 0, 0.12)',
-      offsetX: 0,
-      offsetY: 3
     })
   }
 
@@ -19382,6 +19349,11 @@ struct MainMenuPage {
       this.showToast('未找到可阅读章节');
       return null;
     }
+
+    const warmTargetChapter: MangaChapter = targetChapter;
+    void this.remoteLibraryBridge.loadChapterPages(remoteManga, warmTargetChapter).catch((error: Error) => {
+      logger.debug(TAG, `远程漫画阅读前页面预热失败: mangaId=${remoteManga.id}, chapterId=${warmTargetChapter.id}, error=${error.message}`);
+    });
 
     const params: MangaReaderPageParams = {
       manga: remoteManga,
@@ -25486,22 +25458,8 @@ struct MainMenuPage {
           return;
         }
 
-        const coverPath: string = this.normalizeDisplayPathForManga(manga) || '';
-        startBookOpenTransitionWithComponentId(
-          coverPath,
-          componentId,
-          manga.id,
-          'manga',
-          () => {
-            openMangaReaderInIsolatedAbility(this.getUIContext(), this.pathStack, remoteParams, TAG, false);
-          },
-          undefined,
-          {
-            title: manga.title,
-            author: manga.metadata?.authors?.[0] || '',
-            intro: manga.description || ''
-          }
-        );
+        logger.info(TAG, `远程漫画跳过翻书过渡并直接打开阅读器: provider=${manga.sourceInfo?.providerType || '-'}, chapterId=${remoteParams.chapterId}`);
+        openMangaReaderInIsolatedAbility(this.getUIContext(), this.pathStack, remoteParams, TAG, false);
         return;
       }
 
@@ -31203,25 +31161,50 @@ struct MainMenuPage {
     return SettingsPageSurfaceManager.getFeaturedCardStyle(this.themeState.currentTheme).row.iconColor;
   }
 
-  private getFloatingSearchButtonBackground(): ResourceColor {
+  private getMainMenuSearchButtonGlassBackground(): ResourceColor {
     if (!this.userThemeBlurEnabled) {
       return this.themeState.currentTheme === ThemeType.DARK
-        ? 'rgba(16, 22, 34, 0.54)'
-        : 'rgba(245, 249, 255, 0.66)';
+        ? 'rgba(16, 22, 34, 0.42)'
+        : 'rgba(245, 249, 255, 0.52)';
     }
     return this.themeState.currentTheme === ThemeType.DARK
-      ? 'rgba(8, 14, 24, 0.08)'
-      : 'rgba(255, 255, 255, 0.12)';
+      ? 'rgba(14, 20, 32, 0.20)'
+      : 'rgba(255, 255, 255, 0.24)';
+  }
+
+  private getMainMenuSearchButtonGlassBlurStyle(): BlurStyle | undefined {
+    if (!this.userThemeBlurEnabled) {
+      return undefined;
+    }
+    return BlurStyle.BACKGROUND_THIN;
+  }
+
+  private getMainMenuSearchButtonGlassBlurOptions(): BackgroundBlurStyleOptions {
+    return {
+      colorMode: ThemeColorMode.SYSTEM,
+      adaptiveColor: AdaptiveColor.DEFAULT,
+      scale: this.themeState.currentTheme === ThemeType.DARK ? 0.78 : 0.72,
+      policy: BlurStyleActivePolicy.ALWAYS_ACTIVE
+    };
+  }
+
+  private getMainMenuSearchButtonGlassShadowColor(): string {
+    if (!this.userThemeShadowEnabled) {
+      return 'rgba(0, 0, 0, 0)';
+    }
+    return this.themeState.currentTheme === ThemeType.DARK
+      ? 'rgba(0, 0, 0, 0.14)'
+      : 'rgba(84, 99, 126, 0.07)';
   }
 
   private getFloatingSearchButtonIconColor(): ResourceColor {
-    return this.themeState.currentTheme === ThemeType.DARK ? '#EEF7FF' : '#1F2937';
+    return ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme);
   }
 
   private getFloatingSearchButtonBorderColor(): ResourceColor {
     return this.themeState.currentTheme === ThemeType.DARK
-      ? 'rgba(255, 255, 255, 0.20)'
-      : 'rgba(255, 255, 255, 0.52)';
+      ? 'rgba(255, 255, 255, 0.14)'
+      : 'rgba(255, 255, 255, 0.36)';
   }
 
   private getSettingsAnalyticsCardTitleColor(): ResourceColor {
@@ -31867,13 +31850,23 @@ struct MainMenuPage {
     .width('100%')
     .height(40)
     .borderRadius(10)
-    .backgroundColor(Color.Transparent)
+    .clip(true)
+    .backgroundColor(this.getMainMenuSearchButtonGlassBackground())
+    .backgroundBlurStyle(this.getMainMenuSearchButtonGlassBlurStyle(), this.getMainMenuSearchButtonGlassBlurOptions())
+    .border({
+      width: 1,
+      color: this.getFloatingSearchButtonBorderColor()
+    })
+    .shadow({
+      radius: 8,
+      color: this.getMainMenuSearchButtonGlassShadowColor(),
+      offsetX: 0,
+      offsetY: 2
+    })
     .stateStyles({
       pressed: {
-        .backgroundColor(this.themeState.currentTheme === ThemeType.DARK
-          ? 'rgba(255, 255, 255, 0.10)'
-          : 'rgba(0, 0, 0, 0.06)')
         .scale({ x: 0.96, y: 0.96 })
+        .opacity(0.86)
       }
     })
     .accessibilityText('搜索')
@@ -33150,17 +33143,32 @@ struct MainMenuPage {
           }
           .position({
             x: this.getShelfPreviewSliderX(),
-            y: this.getShelfDetailDisplayFloatingBarY()
+            y: this.getShelfPreviewSliderY()
           })
           .zIndex(20)
-          .key(`shelfDetailDisplay_${this.barRenderKey}`)
+          .key(`shelfViewSettings_${this.barRenderKey}`)
+        }
+
+        if (this.shouldShowShelfFloatingActionButtons()) {
+          Column() {
+            this.buildShelfManageFloatingButton()
+          }
+          .width(this.FLOAT_SEARCH_BUTTON_SIZE)
+          .height(this.FLOAT_SEARCH_BUTTON_SIZE)
+          .position({ x: this.getShelfManageFloatingButtonX(), y: this.getFloatingSearchButtonY() })
+          .animation({ duration: 220, curve: Curve.EaseInOut })
+          .zIndex(20)
+          .key(`shelfManageFloating_${this.barRenderKey}_${this.isShelfEditMode ? 'editing' : 'normal'}`)
 
           Column() {
-            this.buildShelfPreviewSliderFloatingBar()
+            this.buildShelfAddFloatingButton()
           }
-          .position({ x: this.getShelfPreviewSliderX(), y: this.getShelfPreviewSliderY() })
+          .width(this.FLOAT_SEARCH_BUTTON_SIZE)
+          .height(this.FLOAT_SEARCH_BUTTON_SIZE)
+          .position({ x: this.getShelfAddFloatingButtonX(), y: this.getFloatingSearchButtonY() })
+          .animation({ duration: 220, curve: Curve.EaseInOut })
           .zIndex(20)
-          .key(`shelfPreviewSlider_${this.barRenderKey}`)
+          .key(`shelfAddFloating_${this.barRenderKey}`)
         }
 
         if (this.shouldShowFloatingSearchButton()) {

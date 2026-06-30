@@ -1163,6 +1163,17 @@ export struct SourceSettingsPage {
     logger.info(TAG, message);
   }
 
+  private handleSourceSettingsBack(reason: string): boolean {
+    try {
+      this.pathStack.pop();
+      logger.info(TAG, `图源设置页返回: reason=${reason}`);
+      return true;
+    } catch (error) {
+      logger.warn(TAG, `图源设置页返回失败: reason=${reason}, error=${String(error)}`);
+      return false;
+    }
+  }
+
   build() {
     HdsNavDestination() {
       Stack() {
@@ -2434,6 +2445,9 @@ export struct SourceSettingsPage {
           title: '图源设置',
           appFontFamily: this.appFontFamily,
           pathStack: this.pathStack,
+          backAction: (): boolean => {
+            return this.handleSourceSettingsBack('title_back');
+          },
           actions: this.getTitleBarActions()
         })
       }
@@ -2472,6 +2486,9 @@ export struct SourceSettingsPage {
     }) */
     .hideTitleBar(true)
     .ignoreLayoutSafeArea([LayoutSafeAreaType.SYSTEM], [LayoutSafeAreaEdge.TOP, LayoutSafeAreaEdge.BOTTOM])
+    .onBackPressed(() => {
+      return this.handleSourceSettingsBack('system_back');
+    })
     .onReady((context: NavDestinationContext) => {
       this.pathStack = context.pathStack;
       // 从context直接获取参数

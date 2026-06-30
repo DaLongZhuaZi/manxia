@@ -18,6 +18,8 @@ export class SettingKeys {
   static readonly ADVANCED_MODE_ENABLED = 'advanced_mode_enabled';
   static readonly SOURCE_FEATURES_ENABLED = 'source_features_enabled';
   static readonly SOURCE_SETTINGS_VISIBLE = 'source_settings_visible';
+  static readonly SOURCE_DETAIL_TRANSLATION_TAG_ENABLED = 'source_detail_translation_tag_enabled';
+  static readonly SOURCE_DETAIL_MULTI_WINDOW_ENABLED = 'source_detail_multi_window_enabled';
   static readonly ENABLE_LOG_FLOATING_WINDOW = 'enable_log_floating_window';
   static readonly PRELOAD_DEBUG_MODE = 'preload_debug_mode'; // 预加载调试模式：off/on/always
   static readonly GLOBAL_SEARCH_V2_ENABLED = 'global_search_v2_enabled';

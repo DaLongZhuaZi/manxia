@@ -112,9 +112,8 @@ export class SuwayomiCacheManager {
   public isPageCached(mangaTitle: string, chapterTitle: string, pageIndex: number): boolean {
     try {
       const pagePath = this.getPageCachePath(mangaTitle, chapterTitle, pageIndex);
-      SafeFileUtils.accessSync(pagePath);
-      return true;
-    } catch (error) {
+      return this.isReadableFile(pagePath);
+    } catch (_error) {
       return false;
     }
   }
@@ -173,23 +172,28 @@ export class SuwayomiCacheManager {
 
       // 下载图片
       const httpRequest = http.createHttp();
-      const emptyHeaders: Record<string, string> = {};
-      const response = await httpRequest.request(imageUrl, {
-        method: http.RequestMethod.GET,
-        header: headers || emptyHeaders,
-        expectDataType: http.HttpDataType.ARRAY_BUFFER
-      });
+      try {
+        const emptyHeaders: Record<string, string> = {};
+        const response = await httpRequest.request(imageUrl, {
+          method: http.RequestMethod.GET,
+          header: headers || emptyHeaders,
+          expectDataType: http.HttpDataType.ARRAY_BUFFER
+        });
 
-      if (response.responseCode === 200 && response.result) {
-        // 保存到文件
-        const file = SafeFileUtils.openSync(pagePath, fs.OpenMode.CREATE | fs.OpenMode.WRITE_ONLY);
-        SafeFileUtils.writeSync(file.fd, response.result as ArrayBuffer);
-        SafeFileUtils.closeSync(file.fd);
-        logger.debug(TAG, `页面缓存成功: ${pageIndex} -> ${pagePath}`);
-        return true;
-      } else {
-        logger.error(TAG, `下载页面失败: ${response.responseCode}`);
-        return false;
+        if (response.responseCode === 200 && response.result) {
+          const imageData = response.result as ArrayBuffer;
+          if (!this.writeImageBufferToFile(pagePath, imageData)) {
+            logger.warn(TAG, `页面缓存写入后校验失败: ${pageIndex} -> ${pagePath}`);
+            return false;
+          }
+          logger.debug(TAG, `页面缓存成功: ${pageIndex} -> ${pagePath}`);
+          return true;
+        } else {
+          logger.error(TAG, `下载页面失败: ${response.responseCode}`);
+          return false;
+        }
+      } finally {
+        httpRequest.destroy();
       }
     } catch (error) {
       logger.error(TAG, `缓存页面失败: ${error}`);
@@ -241,9 +245,11 @@ export class SuwayomiCacheManager {
   public getCachedPagePath(mangaTitle: string, chapterTitle: string, pageIndex: number): string | null {
     try {
       const pagePath = this.getPageCachePath(mangaTitle, chapterTitle, pageIndex);
-      SafeFileUtils.accessSync(pagePath);
+      if (!this.isReadableFile(pagePath)) {
+        return null;
+      }
       return pagePath;
-    } catch (error) {
+    } catch (_error) {
       return null;
     }
   }
@@ -327,6 +333,41 @@ export class SuwayomiCacheManager {
     return url.length > 120 ? `${url.substring(0, 120)}...` : url;
   }
 
+  private isReadableFile(path: string): boolean {
+    if (!SafeFileUtils.accessSync(path)) {
+      return false;
+    }
+    try {
+      const stat = fs.statSync(path);
+      return !stat.isDirectory() && stat.size > 0;
+    } catch (_error) {
+      return false;
+    }
+  }
+
+  private writeImageBufferToFile(path: string, imageData: ArrayBuffer): boolean {
+    if (imageData.byteLength <= 0) {
+      return false;
+    }
+
+    let file: fs.File | null = null;
+    try {
+      file = fs.openSync(path, fs.OpenMode.CREATE | fs.OpenMode.WRITE_ONLY | fs.OpenMode.TRUNC);
+      fs.writeSync(file.fd, imageData);
+      return this.isReadableFile(path);
+    } catch (error) {
+      logger.warn(TAG, `写入图片缓存失败: ${path}, error=${String(error)}`);
+      return false;
+    } finally {
+      if (file !== null) {
+        try {
+          fs.closeSync(file);
+        } catch (_error) {
+        }
+      }
+    }
+  }
+
   /**
    * 从URL中提取文件扩展名
    */
@@ -364,9 +405,8 @@ export class SuwayomiCacheManager {
   public isCoverCached(mangaId: string, coverUrl: string): boolean {
     try {
       const cachePath = this.getCoverCachePath(mangaId, coverUrl);
-      SafeFileUtils.accessSync(cachePath);
-      return true;
-    } catch (error) {
+      return this.isReadableFile(cachePath);
+    } catch (_error) {
       return false;
     }
   }
@@ -377,9 +417,11 @@ export class SuwayomiCacheManager {
   public getCachedCoverPath(mangaId: string, coverUrl: string): string | null {
     try {
       const cachePath = this.getCoverCachePath(mangaId, coverUrl);
-      SafeFileUtils.accessSync(cachePath);
+      if (!this.isReadableFile(cachePath)) {
+        return null;
+      }
       return cachePath;
-    } catch (error) {
+    } catch (_error) {
       return null;
     }
   }
@@ -408,26 +450,30 @@ export class SuwayomiCacheManager {
 
       // 下载图片
       const httpRequest = http.createHttp();
-      const emptyHeaders: Record<string, string> = {};
-      const response = await httpRequest.request(coverUrl, {
-        method: http.RequestMethod.GET,
-        header: headers || emptyHeaders,
-        expectDataType: http.HttpDataType.ARRAY_BUFFER,
-        connectTimeout: 15000,
-        readTimeout: 30000
-      });
+      try {
+        const emptyHeaders: Record<string, string> = {};
+        const response = await httpRequest.request(coverUrl, {
+          method: http.RequestMethod.GET,
+          header: headers || emptyHeaders,
+          expectDataType: http.HttpDataType.ARRAY_BUFFER,
+          connectTimeout: 15000,
+          readTimeout: 30000
+        });
 
-      httpRequest.destroy();
-
-      if (response.responseCode === 200 && response.result) {
-        const file = SafeFileUtils.openSync(cachePath, fs.OpenMode.CREATE | fs.OpenMode.WRITE_ONLY);
-        SafeFileUtils.writeSync(file.fd, response.result as ArrayBuffer);
-        SafeFileUtils.closeSync(file.fd);
-        logger.debug(TAG, `封面缓存成功: ${mangaId} -> ${cachePath}`);
-        return cachePath;
-      } else {
-        logger.warn(TAG, `下载封面失败: mangaId=${mangaId}, code=${response.responseCode}, url=${this.previewUrl(coverUrl)}`);
-        return null;
+        if (response.responseCode === 200 && response.result) {
+          const imageData = response.result as ArrayBuffer;
+          if (!this.writeImageBufferToFile(cachePath, imageData)) {
+            logger.warn(TAG, `封面缓存写入后校验失败: ${mangaId} -> ${cachePath}`);
+            return null;
+          }
+          logger.debug(TAG, `封面缓存成功: ${mangaId} -> ${cachePath}`);
+          return cachePath;
+        } else {
+          logger.warn(TAG, `下载封面失败: mangaId=${mangaId}, code=${response.responseCode}, url=${this.previewUrl(coverUrl)}`);
+          return null;
+        }
+      } finally {
+        httpRequest.destroy();
       }
     } catch (error) {
       logger.error(TAG, `缓存封面失败: mangaId=${mangaId}, url=${this.previewUrl(coverUrl)}, error=${String(error)}`);
@@ -455,9 +501,8 @@ export class SuwayomiCacheManager {
   public isSourceIconCached(sourceId: string, iconUrl: string): boolean {
     try {
       const cachePath = this.getSourceIconCachePath(sourceId, iconUrl);
-      SafeFileUtils.accessSync(cachePath);
-      return true;
-    } catch (error) {
+      return this.isReadableFile(cachePath);
+    } catch (_error) {
       return false;
     }
   }
@@ -468,9 +513,11 @@ export class SuwayomiCacheManager {
   public getCachedSourceIconPath(sourceId: string, iconUrl: string): string | null {
     try {
       const cachePath = this.getSourceIconCachePath(sourceId, iconUrl);
-      SafeFileUtils.accessSync(cachePath);
+      if (!this.isReadableFile(cachePath)) {
+        return null;
+      }
       return cachePath;
-    } catch (error) {
+    } catch (_error) {
       return null;
     }
   }
@@ -499,26 +546,30 @@ export class SuwayomiCacheManager {
 
       // 下载图片
       const httpRequest = http.createHttp();
-      const emptyHeaders: Record<string, string> = {};
-      const response = await httpRequest.request(iconUrl, {
-        method: http.RequestMethod.GET,
-        header: headers || emptyHeaders,
-        expectDataType: http.HttpDataType.ARRAY_BUFFER,
-        connectTimeout: 15000,
-        readTimeout: 30000
-      });
+      try {
+        const emptyHeaders: Record<string, string> = {};
+        const response = await httpRequest.request(iconUrl, {
+          method: http.RequestMethod.GET,
+          header: headers || emptyHeaders,
+          expectDataType: http.HttpDataType.ARRAY_BUFFER,
+          connectTimeout: 15000,
+          readTimeout: 30000
+        });
 
-      httpRequest.destroy();
-
-      if (response.responseCode === 200 && response.result) {
-        const file = SafeFileUtils.openSync(cachePath, fs.OpenMode.CREATE | fs.OpenMode.WRITE_ONLY);
-        SafeFileUtils.writeSync(file.fd, response.result as ArrayBuffer);
-        SafeFileUtils.closeSync(file.fd);
-        logger.debug(TAG, `图源图标缓存成功: ${sourceId} -> ${cachePath}`);
-        return cachePath;
-      } else {
-        logger.warn(TAG, `下载图源图标失败: sourceId=${sourceId}, code=${response.responseCode}, url=${this.previewUrl(iconUrl)}`);
-        return null;
+        if (response.responseCode === 200 && response.result) {
+          const imageData = response.result as ArrayBuffer;
+          if (!this.writeImageBufferToFile(cachePath, imageData)) {
+            logger.warn(TAG, `图源图标缓存写入后校验失败: ${sourceId} -> ${cachePath}`);
+            return null;
+          }
+          logger.debug(TAG, `图源图标缓存成功: ${sourceId} -> ${cachePath}`);
+          return cachePath;
+        } else {
+          logger.warn(TAG, `下载图源图标失败: sourceId=${sourceId}, code=${response.responseCode}, url=${this.previewUrl(iconUrl)}`);
+          return null;
+        }
+      } finally {
+        httpRequest.destroy();
       }
     } catch (error) {
       logger.error(TAG, `缓存图源图标失败: sourceId=${sourceId}, url=${this.previewUrl(iconUrl)}, error=${String(error)}`);

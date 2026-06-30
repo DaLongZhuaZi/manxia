@@ -89,6 +89,7 @@ import { MangaIdentityResolver, MangaIdentityResolveResult } from '../Framework/
 import webview from '@ohos.web.webview';
 import { EBookDataManager } from '../Framework/Data/EBookDataManager';
 import { SourceManager, SourceInfo } from '../Framework/Source/SourceManager';
+import { SourceDetailReturnCoordinator } from '../Framework/Source/SourceDetailReturnCoordinator';
 import { RemoteLibraryMangaBridge } from '../Framework/Source/RemoteLibraryMangaBridge';
 import { getRemoteLibraryShelfManager, RemoteLibraryShelfManager } from '../Framework/Source/RemoteLibraryShelfManager';
 import { MangaSourceEngine, EngineConfig, EngineResult } from '../Framework/WebView/MangaSourceEngine';
@@ -386,6 +387,7 @@ export struct UnifiedDetailPage {
 
   // 页面参数
   private pageParams: UnifiedDetailPageParams | null = null;
+  private isHandlingSourceDetailReturn: boolean = false;
 
   // 统一内容数据
   @State content: UnifiedContent | null = null;
@@ -2429,7 +2431,7 @@ export struct UnifiedDetailPage {
             message: 'SFW模式已启用，无法查看此内容',
             duration: 2000
           });
-          this.pathStack.pop();
+          this.handleUnifiedDetailBack('sfw_blocked');
           return;
         }
       }
@@ -4940,24 +4942,77 @@ export struct UnifiedDetailPage {
     }
   }
 
-  private returnAfterDelete(): void {
+  private shouldRestoreSourceDetailAbilityOnReturn(): boolean {
+    if (!this.pageParams) {
+      return false;
+    }
+    const instanceId: string = this.pageParams.sourceDetailAbilityInstanceId || '';
+    return this.pageParams.returnToSourceDetailAbility === true && instanceId.length > 0;
+  }
+
+  private resolveHostAbilityContextForSourceDetailReturn(): common.UIAbilityContext | null {
+    try {
+      const hostContext = this.getUIContext()?.getHostContext() as common.UIAbilityContext;
+      return hostContext ? hostContext : null;
+    } catch (error) {
+      logger.warn(TAG, `获取统一详情页宿主AbilityContext失败: ${String(error)}`);
+      return null;
+    }
+  }
+
+  private popUnifiedDetailRoute(reason: string): boolean {
+    try {
+      if (this.pathStack.size() > 0) {
+        this.pathStack.pop();
+        return true;
+      }
+    } catch (error) {
+      logger.warn(TAG, `统一详情页返回当前导航栈失败: reason=${reason}, error=${String(error)}`);
+    }
+
     try {
       const globalStack: NavPathStack | undefined = AppStorage.get<NavPathStack>('GlobalNavStack');
       if (globalStack && globalStack.size() > 0) {
         globalStack.pop();
-        return;
+        return true;
       }
     } catch (error) {
-      logger.warn(TAG, `删除后返回全局导航栈失败: ${String(error)}`);
+      logger.warn(TAG, `统一详情页返回全局导航栈失败: reason=${reason}, error=${String(error)}`);
+    }
+    return false;
+  }
+
+  private handleUnifiedDetailBack(reason: string): boolean {
+    if (this.isHandlingSourceDetailReturn) {
+      return true;
     }
 
-    try {
-      if (this.pathStack.size() > 0) {
-        this.pathStack.pop();
-      }
-    } catch (error) {
-      logger.warn(TAG, `删除后返回当前导航栈失败: ${String(error)}`);
+    this.isHandlingSourceDetailReturn = true;
+    const shouldRestoreSourceDetail: boolean = this.shouldRestoreSourceDetailAbilityOnReturn();
+    const sourceDetailInstanceId: string = this.pageParams?.sourceDetailAbilityInstanceId || '';
+    const abilityContext: common.UIAbilityContext | null = shouldRestoreSourceDetail
+      ? this.resolveHostAbilityContextForSourceDetailReturn()
+      : null;
+
+    const popped: boolean = this.popUnifiedDetailRoute(reason);
+    if (!popped) {
+      this.isHandlingSourceDetailReturn = false;
+      return true;
     }
+
+    if (shouldRestoreSourceDetail) {
+      void SourceDetailReturnCoordinator.restoreSourceDetailAbility(
+        abilityContext,
+        sourceDetailInstanceId,
+        reason
+      );
+    }
+
+    return true;
+  }
+
+  private returnAfterDelete(): void {
+    this.handleUnifiedDetailBack('delete_current_content');
   }
 
   private getLibraryFilesDir(): string {
@@ -11400,6 +11455,9 @@ export struct UnifiedDetailPage {
       .height('100%')
     }
     .hideTitleBar(true)
+    .onBackPressed(() => {
+      return this.handleUnifiedDetailBack('system_back');
+    })
     .onReady((context: NavDestinationContext) => {
       this.pathStack = context.pathStack;
       const params = context.pathInfo?.param as UnifiedDetailPageParams;

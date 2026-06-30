@@ -198,6 +198,10 @@ export interface UnifiedDetailPageParams {
   // 换源相关参数
   isFromChangeSource?: boolean;       // 是否来自换源
   originalBookInfo?: OriginalBookInfo; // 原书信息（仅当isFromChangeSource为true时有效）
+  // 独立图源详情窗口返回参数
+  returnToSourceDetailAbility?: boolean;
+  sourceDetailAbilityInstanceId?: string;
+  sourceDetailWindowKey?: string;
 }
 
 /**

@@ -144,6 +144,7 @@ const SENSITIVE_PREFERENCE_STORES: string[] = [
   'komga_reading_progress',
   'network_folder_preferences',
   'auth_storage',
+  'suwayomi_config',
   'suwayomi_source_config'
 ];
 const CREATE_UNIFIED_ANNOTATION_TABLE_SQL = `

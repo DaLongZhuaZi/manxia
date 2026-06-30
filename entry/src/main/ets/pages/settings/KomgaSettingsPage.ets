@@ -1,11 +1,15 @@
 ﻿import { SafeUtils } from '../../Utils/SafeUtils';
 import { http } from '@kit.NetworkKit';
 import { logger } from '../../Utils/Logger';
+import { base64Encode } from '../../Utils/CryptoUtils';
 import { ThemeAwareState, ThemeAwareHelper } from '../../Framework/Components/ThemeAware';
 import { FontAwareHelper, FontAwareState } from '../../Framework/Components/FontAware';
 import { ThemeType } from '../../Framework/Managers/ThemeManager';
 import { getKomgaTracker } from '../../Framework/Tracking/trackers/KomgaTracker';
 import { getKomgaSourceExecutor } from '../../Framework/Source/KomgaSourceExecutor';
+import { TabContentCacheManager } from '../../Framework/Cache/TabContentCacheManager';
+import KomgaCacheManager from '../../Framework/Source/KomgaCacheManager';
+import { RemoteLibraryMangaBridge } from '../../Framework/Source/RemoteLibraryMangaBridge';
 import {
   KomgaAuthMode,
   KomgaConfig,
@@ -23,6 +27,7 @@ import { GlobalBackgroundLayerMode } from '../../Framework/Components/GlobalBack
 import { SharedPageBackgroundLayer } from '../../Framework/Components/SharedPageBackgroundLayer';
 import { SettingsImmersiveTitleBar } from './SettingsImmersiveTitleBar';
 import { SettingsPageTitleBarManager } from './SettingsPageTitleBarManager';
+import { eventBus, GameEvent, RemoteLibraryConfigChangedPayload } from '../../Framework/EventBus';
 import { SettingsPanelSurfaceHelper } from './SettingsPanelSurfaceHelper';
 
 const TAG = 'KomgaSettingsPage';
@@ -131,6 +136,13 @@ export struct KomgaSettingsPage {
 
   private toast(message: string): void {
     this.getUIContext().getPromptAction().showToast({ message, duration: 2000 });
+  }
+
+  private notifyKomgaConfigChanged(reason: string): void {
+    eventBus.publish(
+      GameEvent.REMOTE_LIBRARY_CONFIG_CHANGED,
+      new RemoteLibraryConfigChangedPayload('komga', reason)
+    );
   }
 
   private revealPageContent(): void {
@@ -254,22 +266,31 @@ export struct KomgaSettingsPage {
     this.testSuccess = false;
   }
 
-  private removeCurrentInstance(): void {
-    if (this.instances.length <= 1) {
-      const instance = createDefaultKomgaInstance();
-      this.instances = [instance];
-      this.selectedInstanceId = instance.id;
-      this.hydrateDraft(instance);
-      this.testConnectionRequestId += 1;
-      this.libraryLoadRequestId += 1;
-      this.isTesting = false;
-      this.isLoadingLibraries = false;
-      this.availableLibraries = [];
-      this.testResult = '';
-      this.testSuccess = false;
+  private async removeCurrentInstance(): Promise<void> {
+    if (this.isLoading) {
       return;
     }
-    this.instances = this.instances.filter(item => item.id !== this.selectedInstanceId);
+    const removedInstanceId = this.selectedInstanceId;
+    this.isLoading = true;
+    if (this.instances.length <= 1) {
+      try {
+        const success = await this.tracker.saveConfig(createEmptyKomgaConfig());
+        if (!success) {
+          this.toast('删除实例失败');
+          return;
+        }
+        await this.clearKomgaRuntimeAndCaches(true, removedInstanceId);
+        await getKomgaSourceExecutor().initialize(true);
+        await this.loadConfig();
+        this.notifyKomgaConfigChanged('instance_removed');
+        this.toast('Komga 实例已删除');
+      } finally {
+        this.isLoading = false;
+      }
+      return;
+    }
+    const nextInstances = this.instances.filter((item: KomgaInstanceConfig) => item.id !== removedInstanceId);
+    this.instances = this.copyInstances(nextInstances);
     this.selectedInstanceId = this.instances[0].id;
     this.hydrateDraft(this.instances[0]);
     this.testConnectionRequestId += 1;
@@ -279,6 +300,21 @@ export struct KomgaSettingsPage {
     this.availableLibraries = [];
     this.testResult = '';
     this.testSuccess = false;
+
+    try {
+      const success = await this.tracker.saveConfig(this.buildConfigForSave());
+      if (!success) {
+        this.toast('删除实例失败');
+        await this.loadConfig();
+        return;
+      }
+      await this.clearKomgaRuntimeAndCaches(false, removedInstanceId);
+      await getKomgaSourceExecutor().initialize(true);
+      this.notifyKomgaConfigChanged('instance_removed');
+      this.toast('Komga 实例已删除');
+    } finally {
+      this.isLoading = false;
+    }
   }
 
   private buildDraftInstance(): KomgaInstanceConfig {
@@ -316,30 +352,13 @@ export struct KomgaSettingsPage {
     if (instance.authMode === 'API_KEY' && instance.apiKey.trim().length > 0) {
       headers['X-API-Key'] = instance.apiKey.trim();
     } else if (instance.authMode === 'BASIC' && instance.username.trim().length > 0) {
-      headers['Authorization'] = `Basic ${this.base64Encode(`${instance.username}:${instance.password}`)}`;
+      headers['Authorization'] = `Basic ${base64Encode(`${instance.username}:${instance.password}`)}`;
     }
     return headers;
   }
 
-  private base64Encode(input: string): string {
-    const chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/';
-    let result = '';
-    let index = 0;
-    while (index < input.length) {
-      const a = input.charCodeAt(index++);
-      const b = index < input.length ? input.charCodeAt(index++) : 0;
-      const c = index < input.length ? input.charCodeAt(index++) : 0;
-      const triplet = (a << 16) | (b << 8) | c;
-      result += chars.charAt((triplet >> 18) & 0x3F);
-      result += chars.charAt((triplet >> 12) & 0x3F);
-      result += index > input.length + 1 ? '=' : chars.charAt((triplet >> 6) & 0x3F);
-      result += index > input.length ? '=' : chars.charAt(triplet & 0x3F);
-    }
-    return result;
-  }
-
   private async testConnection(): Promise<void> {
-    if (this.isTesting) {
+    if (this.isTesting || this.isLoading) {
       return;
     }
     const instance = this.buildDraftInstance();
@@ -364,7 +383,25 @@ export struct KomgaSettingsPage {
       });
       if (requestId === this.testConnectionRequestId && requestInstanceId === this.selectedInstanceId) {
         this.testSuccess = response.responseCode >= 200 && response.responseCode < 300;
-        this.testResult = this.testSuccess ? '连接成功' : `连接失败，响应码：${response.responseCode}`;
+        if (this.testSuccess) {
+          const resultText = response.result as string;
+          this.availableLibraries = SafeUtils.parseArr(resultText) as KomgaLibraryOption[];
+          this.testResult = '连接成功，正在保存配置...';
+          this.commitDraft();
+          const config = this.buildConfigForSave();
+          const saved = await this.tracker.saveConfig(config);
+          if (saved) {
+            await getKomgaSourceExecutor().initialize(true);
+            this.notifyKomgaConfigChanged('test_connection_saved');
+            this.testResult = '连接成功，配置已保存';
+            this.toast('Komga 连接已保存');
+          } else {
+            this.testSuccess = false;
+            this.testResult = '连接成功，但保存配置失败';
+          }
+        } else {
+          this.testResult = `连接失败，响应码：${response.responseCode}`;
+        }
       }
     } catch (error) {
       logger.error(TAG, `测试 Komga 连接失败: ${String(error)}`);
@@ -448,6 +485,7 @@ export struct KomgaSettingsPage {
     }
 
     await getKomgaSourceExecutor().initialize(true);
+    this.notifyKomgaConfigChanged('settings_saved');
     this.toast('Komga 配置已保存');
     if (openBrowseAfterSave) {
       this.pathStack.pushPathByName('KomgaBrowsePage', null);
@@ -462,9 +500,32 @@ export struct KomgaSettingsPage {
       this.toast('清除配置失败');
       return;
     }
+    await this.clearKomgaRuntimeAndCaches(true);
     await getKomgaSourceExecutor().initialize(true);
     await this.loadConfig();
+    this.notifyKomgaConfigChanged('settings_cleared');
     this.toast('Komga 配置已清除');
+  }
+
+  private async clearKomgaRuntimeAndCaches(clearAll: boolean, instanceId?: string): Promise<void> {
+    try {
+      const executor = getKomgaSourceExecutor();
+      const normalizedInstanceId = instanceId !== undefined ? String(instanceId || '').trim() : '';
+      if (clearAll || normalizedInstanceId.length <= 0) {
+        executor.clearDataCache();
+        await executor.clearPersistentDetailCache();
+        await RemoteLibraryMangaBridge.getInstance().clearProviderCache('komga');
+      } else {
+        executor.clearDataCache(normalizedInstanceId);
+        await executor.clearPersistentDetailCache(normalizedInstanceId);
+        await RemoteLibraryMangaBridge.getInstance().clearKomgaInstanceCache(normalizedInstanceId);
+      }
+      KomgaCacheManager.clearAllCache();
+      await TabContentCacheManager.getInstance().clearKomgaCache();
+      logger.info(TAG, `已清理 Komga 连接状态与相关缓存: clearAll=${clearAll}, instanceId=${normalizedInstanceId || '-'}`);
+    } catch (error) {
+      logger.warn(TAG, `清理 Komga 缓存失败: ${String(error)}`);
+    }
   }
 
   private copyStringArray(values: string[]): string[] {
@@ -638,7 +699,7 @@ export struct KomgaSettingsPage {
                 .backgroundColor(this.color('comp_background_tertiary'))
                 .fontColor(this.color('button_text_secondary'))
                 .fontFamily(this.appFontFamily)
-                .onClick(() => this.removeCurrentInstance())
+                .onClick(() => { void this.removeCurrentInstance(); })
             }
             .width('100%')
           }
@@ -686,11 +747,23 @@ export struct KomgaSettingsPage {
                 this.syncDraftToInstances(true, true);
               })
 
+            Text('填写 Komga 根地址即可，例如 http://192.168.1.100:25600；反向代理路径请保留在根地址中。')
+              .fontSize(12)
+              .fontColor(this.color('text_muted'))
+              .fontFamily(this.appFontFamily)
+              .width('100%')
+
             Flex({ wrap: FlexWrap.Wrap }) {
               this.buildAuthModeChip('无需认证', 'NONE')
               this.buildAuthModeChip('Basic Auth', 'BASIC')
               this.buildAuthModeChip('API Key', 'API_KEY')
             }
+
+            Text('Komga 官方支持 Basic Auth 与 X-API-Key。启用认证时建议优先使用 API Key，并确认反向代理不会移除认证请求头。')
+              .fontSize(12)
+              .fontColor(this.color('text_muted'))
+              .fontFamily(this.appFontFamily)
+              .width('100%')
 
             if (this.authMode === 'BASIC') {
               TextInput({ placeholder: '用户名', text: this.username })
@@ -740,12 +813,12 @@ export struct KomgaSettingsPage {
             .width('100%')
 
             Row({ space: 12 }) {
-              Button(this.isTesting ? '测试中...' : '测试连接')
+              Button(this.isTesting ? '测试中...' : '测试并保存')
                 .layoutWeight(1)
-                .backgroundColor(this.getActionButtonBackgroundColor(this.canTestCurrentInstance(), true))
-                .fontColor(this.getActionButtonTextColor(this.canTestCurrentInstance(), true))
+                .backgroundColor(this.getActionButtonBackgroundColor(this.canTestCurrentInstance() && !this.isLoading, true))
+                .fontColor(this.getActionButtonTextColor(this.canTestCurrentInstance() && !this.isLoading, true))
                 .fontFamily(this.appFontFamily)
-                .enabled(this.canTestCurrentInstance())
+                .enabled(this.canTestCurrentInstance() && !this.isLoading)
                 .onClick(() => {
                   void this.testConnection();
                 })

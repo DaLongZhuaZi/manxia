@@ -9,6 +9,7 @@
 import { http } from '@kit.NetworkKit';
 import { preferences } from '@kit.ArkData';
 import { logger } from '../../../Utils/Logger';
+import { base64Encode } from '../../../Utils/CryptoUtils';
 import { common } from '@kit.AbilityKit';
 import { BaseTracker, TrackerAuthState } from './BaseTracker';
 import {
@@ -43,8 +44,8 @@ export interface SuwayomiManga {
   genre: string[];
   status: string;
   inLibrary: boolean;
-  lastChapterRead: number;
-  totalChapters: number;
+  lastChapterRead?: number;
+  totalChapters?: number;
 }
 
 // Suwayomi 章节信息
@@ -76,10 +77,14 @@ interface GraphQLResponse {
 
 interface GraphQLData {
   mangas?: GraphQLMangaConnection;
-  manga?: SuwayomiManga;
+  manga?: SuwayomiMangaDetail;
   chapters?: GraphQLChapterConnection;
-  sources?: SuwayomiSource[];
+  sources?: GraphQLSourcesConnection;
   searchManga?: GraphQLMangaConnection;
+  fetchSourceManga?: GraphQLFetchSourceManga;
+  chapter?: GraphQLChapter;
+  fetchChapterPages?: GraphQLFetchChapterPages;
+  updateChapter?: GraphQLUpdateChapter;
 }
 
 interface GraphQLMangaConnection {
@@ -92,14 +97,45 @@ interface GraphQLChapterConnection {
   totalCount: number;
 }
 
+interface GraphQLSourcesConnection {
+  nodes: SuwayomiSource[];
+}
+
+interface GraphQLFetchSourceManga {
+  mangas: SuwayomiManga[];
+  hasNextPage: boolean;
+}
+
+interface GraphQLChapter {
+  pageCount: number;
+}
+
+interface GraphQLFetchChapterPages {
+  pages: string[];
+}
+
+interface GraphQLUpdateChapter {
+  chapter: SuwayomiChapter;
+}
+
+interface SuwayomiLastReadChapter {
+  chapterNumber: number;
+}
+
+interface SuwayomiMangaDetail extends SuwayomiManga {
+  lastReadChapter?: SuwayomiLastReadChapter;
+  chapters?: GraphQLChapterConnection;
+}
+
 interface GraphQLError {
   message: string;
 }
 
 // GraphQL 变量接口
 interface SourceSearchVariables {
-  sourceId: string;
+  source: string;
   query: string;
+  page: number;
 }
 
 interface MangaIdVariables {
@@ -118,6 +154,13 @@ interface ChapterUpdateVariables {
 interface SearchQueryVariables {
   query: string;
 }
+
+type SuwayomiTrackerGraphQLVariables =
+  SourceSearchVariables |
+  MangaIdVariables |
+  MangaIdNumberVariables |
+  ChapterUpdateVariables |
+  SearchQueryVariables;
 
 // 单例实例
 let suwayomiTrackerInstance: SuwayomiTracker | null = null;
@@ -255,15 +298,26 @@ export class SuwayomiTracker extends BaseTracker {
   /**
    * 执行 GraphQL 查询
    */
-  private async executeGraphQL(query: string, variables?: SourceSearchVariables | MangaIdVariables | MangaIdNumberVariables | ChapterUpdateVariables | SearchQueryVariables): Promise<GraphQLData | null> {
-    if (!this.config.serverUrl) {
+  private getNormalizedServerUrl(): string {
+    const rawServerUrl = (this.config.serverUrl || '').trim();
+    if (!rawServerUrl) {
+      return '';
+    }
+    const hasScheme = /^[a-zA-Z][a-zA-Z0-9+\-.]*:\/\//.test(rawServerUrl);
+    const withScheme = hasScheme ? rawServerUrl : `http://${rawServerUrl}`;
+    return withScheme.endsWith('/') ? withScheme.substring(0, withScheme.length - 1) : withScheme;
+  }
+
+  private async executeGraphQL(query: string, variables?: SuwayomiTrackerGraphQLVariables): Promise<GraphQLData | null> {
+    const serverUrl = this.getNormalizedServerUrl();
+    if (!serverUrl) {
       this.logError('服务器地址未配置');
       return null;
     }
 
     try {
       const httpRequest = http.createHttp();
-      const url = `${this.config.serverUrl}/api/graphql`;
+      const url = `${serverUrl}/api/graphql`;
 
       const headers: Record<string, string> = {
         'Content-Type': 'application/json',
@@ -273,7 +327,7 @@ export class SuwayomiTracker extends BaseTracker {
       // 添加基本认证
       if (this.config.useAuth && this.config.username) {
         const credentials = `${this.config.username}:${this.config.password}`;
-        const base64Credentials = this.base64Encode(credentials);
+        const base64Credentials = base64Encode(credentials);
         headers['Authorization'] = `Basic ${base64Credentials}`;
       }
 
@@ -310,26 +364,6 @@ export class SuwayomiTracker extends BaseTracker {
   }
 
   /**
-   * Base64 编码
-   */
-  private base64Encode(str: string): string {
-    const chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/';
-    let result = '';
-    let i = 0;
-    while (i < str.length) {
-      const a = str.charCodeAt(i++);
-      const b = i < str.length ? str.charCodeAt(i++) : 0;
-      const c = i < str.length ? str.charCodeAt(i++) : 0;
-      const triplet = (a << 16) | (b << 8) | c;
-      result += chars.charAt((triplet >> 18) & 0x3F);
-      result += chars.charAt((triplet >> 12) & 0x3F);
-      result += i > str.length + 1 ? '=' : chars.charAt((triplet >> 6) & 0x3F);
-      result += i > str.length ? '=' : chars.charAt(triplet & 0x3F);
-    }
-    return result;
-  }
-
-  /**
    * 将 Suwayomi 返回的 URL 转为可用绝对地址
    */
   private isHostLikeUrlWithoutScheme(url: string): boolean {
@@ -356,15 +390,10 @@ export class SuwayomiTracker extends BaseTracker {
       return url;
     }
 
-    const serverUrlRaw = (this.config.serverUrl || '').trim();
-    if (!serverUrlRaw) {
+    const serverUrl = this.getNormalizedServerUrl();
+    if (!serverUrl) {
       return url;
     }
-    const hasScheme = /^[a-zA-Z][a-zA-Z0-9+\-.]*:\/\//.test(serverUrlRaw);
-    const normalizedServerUrl = hasScheme ? serverUrlRaw : `http://${serverUrlRaw}`;
-    const serverUrl = normalizedServerUrl.endsWith('/') ?
-      normalizedServerUrl.substring(0, normalizedServerUrl.length - 1) :
-      normalizedServerUrl;
     const protocol = serverUrl.startsWith('https://') ? 'https:' : 'http:';
 
     if (url.startsWith('//')) {
@@ -399,7 +428,7 @@ export class SuwayomiTracker extends BaseTracker {
       }
     `;
     const data = await this.executeGraphQL(query);
-    return data?.sources || [];
+    return data?.sources?.nodes || [];
   }
 
   /**
@@ -407,8 +436,8 @@ export class SuwayomiTracker extends BaseTracker {
    */
   public async searchManga(sourceId: string, searchQuery: string): Promise<SuwayomiManga[]> {
     const query = `
-      query SearchManga($sourceId: LongString!, $query: String!) {
-        fetchSourceManga(sourceId: $sourceId, type: SEARCH, query: $query) {
+      mutation SearchManga($source: LongString!, $query: String!, $page: Int!) {
+        fetchSourceManga(input: { source: $source, type: SEARCH, query: $query, page: $page }) {
           mangas {
             id
             title
@@ -424,15 +453,15 @@ export class SuwayomiTracker extends BaseTracker {
         }
       }
     `;
-    const variables: SourceSearchVariables = { sourceId, query: searchQuery };
+    const variables: SourceSearchVariables = { source: sourceId, query: searchQuery, page: 1 };
     const data = await this.executeGraphQL(query, variables);
-    return data?.searchManga?.nodes || [];
+    return data?.fetchSourceManga?.mangas || [];
   }
 
   /**
    * 获取漫画详情
    */
-  public async getMangaDetails(mangaId: number): Promise<SuwayomiManga | null> {
+  public async getMangaDetails(mangaId: number): Promise<SuwayomiMangaDetail | null> {
     const query = `
       query GetManga($id: Int!) {
         manga(id: $id) {
@@ -446,7 +475,7 @@ export class SuwayomiTracker extends BaseTracker {
           genre
           status
           inLibrary
-          lastChapterRead {
+          lastReadChapter {
             chapterNumber
           }
           chapters {
@@ -466,7 +495,7 @@ export class SuwayomiTracker extends BaseTracker {
   public async getChapters(mangaId: number): Promise<SuwayomiChapter[]> {
     const query = `
       query GetChapters($mangaId: Int!) {
-        chapters(condition: { mangaId: $mangaId }, orderBy: SOURCE_ORDER) {
+        chapters(condition: { mangaId: $mangaId }, order: [{ by: SOURCE_ORDER, byType: ASC }]) {
           nodes {
             id
             name
@@ -489,6 +518,20 @@ export class SuwayomiTracker extends BaseTracker {
    * 获取章节页面
    */
   public async getChapterPages(chapterId: number): Promise<string[]> {
+    const fetchMutation = `
+      mutation FetchChapterPages($id: Int!) {
+        fetchChapterPages(input: { chapterId: $id }) {
+          pages
+        }
+      }
+    `;
+    const chapterVariables: MangaIdVariables = { id: chapterId };
+    const fetchData = await this.executeGraphQL(fetchMutation, chapterVariables);
+    const fetchedPages = fetchData?.fetchChapterPages?.pages;
+    if (fetchedPages && fetchedPages.length > 0) {
+      return fetchedPages.map((pageUrl: string): string => this.resolveSuwayomiUrl(pageUrl));
+    }
+
     const query = `
       query GetChapterPages($id: Int!) {
         chapter(id: $id) {
@@ -496,14 +539,12 @@ export class SuwayomiTracker extends BaseTracker {
         }
       }
     `;
-    const chapterVariables: MangaIdVariables = { id: chapterId };
     const data = await this.executeGraphQL(query, chapterVariables);
-    const pageCount = (data as Record<string, Record<string, number>>)?.chapter?.pageCount || 0;
-
-    // 生成页面 URL 列表
+    const pageCount = data?.chapter?.pageCount || 0;
     const pages: string[] = [];
+    const serverUrl = this.getNormalizedServerUrl();
     for (let i = 0; i < pageCount; i++) {
-      pages.push(`${this.config.serverUrl}/api/v1/manga/chapter/${chapterId}/page/${i}`);
+      pages.push(`${serverUrl}/api/v1/manga/chapter/${chapterId}/page/${i}`);
     }
     return pages;
   }
@@ -619,8 +660,8 @@ export class SuwayomiTracker extends BaseTracker {
     }
 
     const params: UpdateTrackRecordParams = {
-      lastChapterRead: manga.lastChapterRead || 0,
-      totalChapters: manga.totalChapters || 0
+      lastChapterRead: manga.lastReadChapter?.chapterNumber || 0,
+      totalChapters: manga.chapters?.totalCount || 0
     };
     return params;
   }
@@ -680,6 +721,6 @@ export class SuwayomiTracker extends BaseTracker {
    * 获取 WebUI URL
    */
   public getWebUIUrl(): string {
-    return this.config.serverUrl || '';
+    return this.getNormalizedServerUrl();
   }
 }

@@ -8,6 +8,7 @@ import { EBook } from '../Models/EBookModels';
 import { NovelBook, NovelSearchResult, NovelSourceInfo } from '../Models/NovelModels';
 import { ThemeAwareState, ThemeAwareHelper } from '../Framework/Components/ThemeAware';
 import { ThemeManager, ThemeType } from '../Framework/Managers/ThemeManager';
+import { SettingsManager, SettingKeys } from '../Framework/Managers/SettingsManager';
 import { FontAwareHelper, FontAwareState } from '../Framework/Components/FontAware';
 import { DeviceAdaptationManager, DeviceInfo, DeviceChangeListener, Breakpoint } from '../Framework/Managers/DeviceAdaptationManager';
 import { ResponsiveLayoutHelper } from '../Framework/Utils/ResponsiveLayout';
@@ -44,7 +45,9 @@ import { GlobalBackgroundLayerMode } from '../Framework/Components/GlobalBackgro
 import { SharedPageBackgroundLayer } from '../Framework/Components/SharedPageBackgroundLayer';
 import { SettingsPanelSurfaceHelper } from './settings/SettingsPanelSurfaceHelper';
 import { SourceDetailSearchExecutor, getSourceDetailSearchExecutor } from '../Framework/Services/SourceDetailSearchExecutor';
+import { openSourceDetailInIsolatedAbility } from '../Framework/Source/SourceDetailAbilityLauncher';
 import { MangaDetailPageParams } from './MangaDetailPage';
+import type { SourceDetailParams } from './SourceDetailPage';
 import { GlobalSearchSessionHandle } from '../Framework/Search/GlobalSearchSessionTypes';
 import { SearchResultDataSource } from '../Framework/Search/SearchResultDataSource';
 import { GlobalSearchFlowMonitor, getGlobalSearchFlowMonitor } from '../Framework/Search/GlobalSearchFlowMonitor';
@@ -101,12 +104,6 @@ interface MangaDetailNavParam {
 
 interface EBookDetailNavParam {
   bookId: string;
-}
-
-interface OnlineMangaDetailNavParam {
-  sourceId: number;
-  comicId: string;
-  comicTitle?: string;
 }
 
 interface SuwayomiDetailNavParam {
@@ -194,7 +191,9 @@ export struct GlobalSearchPage {
   private searchService: GlobalSearchService = getGlobalSearchService();
   private searchFlowMonitor: GlobalSearchFlowMonitor = getGlobalSearchFlowMonitor();
   private sourceDetailSearchExecutor: SourceDetailSearchExecutor = getSourceDetailSearchExecutor();
+  private settingsManager: SettingsManager = SettingsManager.getInstance();
   private pathStack: NavPathStack = new NavPathStack();
+  private sourceDetailWindowSequence: number = 0;
   private lastProgressUpdate: number = 0;  // 上次进度更新时间戳
   private pendingProgressGroups: SearchSourceGroup[] | null = null;
   private pendingProgressCompleted: number = 0;
@@ -1658,6 +1657,39 @@ export struct GlobalSearchPage {
     return itemId;
   }
 
+  private shouldOpenSourceDetailInNewWindow(): boolean {
+    return this.settingsManager.getBoolean(SettingKeys.SOURCE_DETAIL_MULTI_WINDOW_ENABLED, false);
+  }
+
+  private buildSourceDetailWindowKey(sourceId: number): string {
+    this.sourceDetailWindowSequence += 1;
+    return `source_detail_page_${sourceId}_${Date.now()}_${this.sourceDetailWindowSequence}`;
+  }
+
+  private appendSourceDetailWindowKey(param: SourceDetailParams): SourceDetailParams {
+    if (this.shouldOpenSourceDetailInNewWindow()) {
+      param.sourceDetailWindowKey = this.buildSourceDetailWindowKey(param.sourceId);
+    }
+    return param;
+  }
+
+  private appendSourceSearchWindowKey(param: SourceDetailParams): SourceDetailParams {
+    if (this.shouldOpenSourceDetailInNewWindow()) {
+      param.sourceDetailWindowKey = this.buildSourceDetailWindowKey(param.sourceId);
+    }
+    return param;
+  }
+
+  private pushSourceDetailPath(stack: NavPathStack, param: SourceDetailParams): void {
+    if (param.sourceDetailWindowKey && param.sourceDetailWindowKey.length > 0) {
+      openSourceDetailInIsolatedAbility(this.getUIContext(), stack, param, TAG);
+      return;
+    }
+
+    stack.removeByName('SourceDetailPage');
+    stack.pushPath({ name: 'SourceDetailPage', param: param });
+  }
+
   /**
    * 打开详情页 - 支持统一搜索结果项
    * 根据设置判断跳转到默认详情页还是统一详情页
@@ -1763,10 +1795,12 @@ export struct GlobalSearchPage {
           };
           stack.pushPath({ name: 'UnifiedDetailPage', param: unifiedParam });
         } else {
-          const navParam: OnlineMangaDetailNavParam = {
+          const navParam: SourceDetailParams = {
             sourceId: parseInt(item.sourceId),
             comicId: item.rawOnlineComic.id,
-            comicTitle: item.rawOnlineComic.title
+            comicTitle: item.rawOnlineComic.title,
+            sourceName: item.sourceName,
+            sourcePkg: item.sourcePkg
           };
           if (item.sourcePkg && item.sourcePkg.startsWith('legado.image.')) {
             const mangaDetailParam: MangaDetailPageParams = {
@@ -1778,7 +1812,7 @@ export struct GlobalSearchPage {
             };
             stack.pushPath({ name: 'MangaDetailPage', param: mangaDetailParam });
           } else {
-            stack.pushPath({ name: 'SourceDetailPage', param: navParam });
+            this.pushSourceDetailPath(stack, this.appendSourceDetailWindowKey(navParam));
           }
         }
         logger.debug(TAG, `导航到在线漫画详情页: ${item.rawOnlineComic.title}, pageType=${pageType}`);
@@ -1880,22 +1914,16 @@ export struct GlobalSearchPage {
       
       // 跳转到 SourceDetailPage，传递 initialTab='search' 和 searchKeyword
       // 并标记来自全局搜索，让 SourceDetailPage 优先使用缓存
-      interface SourceSearchNavParam {
-        sourceId: number;
-        initialTab: string;
-        searchKeyword: string;
-        fromGlobalSearch: boolean;  // 标记来自全局搜索
-        globalSearchSessionId?: string;
-      }
-      const navParam: SourceSearchNavParam = {
+      const navParam: SourceDetailParams = {
         sourceId: sourceId,
         initialTab: 'search',
         searchKeyword: this.searchKeyword,
         fromGlobalSearch: true,
-        globalSearchSessionId: flowSessionId
+        globalSearchSessionId: flowSessionId,
+        sourceName: group.groupName
       };
       
-      stack.pushPath({ name: 'SourceDetailPage', param: navParam });
+      this.pushSourceDetailPath(stack, this.appendSourceSearchWindowKey(navParam));
       logger.info(TAG, `跳转到图源搜索页: sourceId=${sourceId}, keyword="${this.searchKeyword}"`);
       this.recordSearchFlowSimpleEvent(flowSessionId, GlobalSearchFlowEventType.NAVIGATE, 'open_source_search_page', true, `sourceId=${sourceId}, keyword="${this.searchKeyword}"`);
     } catch (error) {
