@@ -475,6 +475,7 @@ export struct MangaReaderPage {
   private webViewManager: WebViewSourceManager = WebViewSourceManager.getInstance();
   private mangaEngine: MangaSourceEngine | null = null;
   @State networkHeaders: RequestHeaders | undefined = undefined;
+  private emptyNetworkHeaders: RequestHeaders = {};
   @State networkHeadersTick: number = 0;
   @State chapterTick: number = 0;// [新增] 章节切换计数器，用于通知MangaViewer重新加载
   private currentSourceId: number = -1;
@@ -11003,15 +11004,15 @@ private onlineDownloadedLocalFastPathActive: boolean = false;
           readingSettings: this.getViewerReadingSettings(),
           zoomScale: this.readerState.zoomScale,
           toolbarsVisible: (this.showTopToolbar || this.showBottomToolbar),
-          networkHeaders: this.networkHeaders,
+          networkHeaders: this.networkHeaders ? this.networkHeaders : this.emptyNetworkHeaders,
           networkHeadersTick: this.networkHeadersTick,
           chapterTick: this.chapterTick,// [新增] 传递章节切换计数器
-          sourceId: this.currentSourceId > 0 ? this.currentSourceId : undefined,
-          mangaId: this.readerState.currentManga ? this.readerState.currentManga.id : this.pageParams?.mangaId,
+          sourceId: this.currentSourceId > 0 ? this.currentSourceId : 0,
+          mangaId: this.readerState.currentManga ? this.readerState.currentManga.id : (this.pageParams ? this.pageParams.mangaId : ''),
           readFlowSessionId: this.mangaReadFlowSessionId,
           preloadCurrentPages: this.getEffectiveViewerPreloadCurrentPages(),
           preloadNextPages: this.getEffectiveViewerPreloadNextPages(),
-          contentType: this.pageParams?.contentType,// [新增] 传递内容类型（用于区分在线/本地漫画）
+          contentType: this.pageParams ? this.pageParams.contentType : '',// [新增] 传递内容类型（用于区分在线/本地漫画）
           onlineDownloadedWarmupState: String(this.onlineDownloadedWarmupState),
           onlineDownloadedArchivePath: this.onlineDownloadedArchiveFastPathInfo.archivePath,
           onlineDownloadedExtractDir: this.onlineDownloadedArchiveFastPathInfo.extractDir,
@@ -11020,8 +11021,8 @@ private onlineDownloadedLocalFastPathActive: boolean = false;
           onlineDownloadedNetworkPageCount: this.onlineDownloadedArchiveFastPathInfo.networkPageCount,
           preloadDebugInfo: $preloadDebugInfo,// [新增] 传递预加载调试信息
               // [修复] 条漫模式初始化时跳转到阅读记录位置
-          prevChapter: this.prevChapterForWebtoon,
-          nextChapter: this.nextChapterForWebtoon,
+          prevChapter: this.prevChapterForWebtoon ? this.prevChapterForWebtoon : null,
+          nextChapter: this.nextChapterForWebtoon ? this.nextChapterForWebtoon : null,
               // [修复] 条漫模式初始化时跳转到阅读记录位置
           isFirstChapter: this.isFirstChapterState,
           isLastChapter: this.isLastChapterState,

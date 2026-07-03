@@ -932,7 +932,7 @@ export struct EBookReadingSettingsPanel {
       Row() {
         Column() {
           Text('锁定方向')
-            .fontSize(14)
+            .fontSize(16)
             .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.currentTheme))
           Text(this.getDeviceOrientationLockHint())
             .fontSize(12)
@@ -943,11 +943,13 @@ export struct EBookReadingSettingsPanel {
         .layoutWeight(1)
 
         Toggle({ type: ToggleType.Switch, isOn: this.settings.lockDeviceOrientation ?? false })
+          .selectedColor(ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.currentTheme))
           .onChange((isOn: boolean) => {
             this.updateDeviceOrientationLock(isOn);
           })
       }
       .width('100%')
+      .padding({ top: 12, bottom: 12 })
 
       // 保存间隔
       if (this.settings.autoSave) {

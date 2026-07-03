@@ -163,6 +163,7 @@ export struct ReadingSettingsSubPage {
   @State ebookTapToTurn: boolean = DEFAULT_EBOOK_READING_SETTINGS.tapToTurn ?? true;
   @State ebookVolumeKeyNavigation: boolean = DEFAULT_EBOOK_READING_SETTINGS.volumeKeyNavigation ?? true;
   @State ebookKeepScreenOn: boolean = DEFAULT_EBOOK_READING_SETTINGS.keepScreenOn ?? false;
+  @State ebookLockDeviceOrientation: boolean = DEFAULT_EBOOK_READING_SETTINGS.lockDeviceOrientation ?? false;
   @State ebookShowPageNumber: boolean = DEFAULT_EBOOK_READING_SETTINGS.showPageNumber ?? true;
   @State ebookShowProgress: boolean = DEFAULT_EBOOK_READING_SETTINGS.showProgress ?? false;
   @State ebookShowTime: boolean = DEFAULT_EBOOK_READING_SETTINGS.showTime ?? true;
@@ -185,6 +186,7 @@ export struct ReadingSettingsSubPage {
   @State textTextColor: string = DEFAULT_TEXT_READER_SETTINGS.textStyle.textColor;
   @State textPageTurnAnimation: TextPageTurnAnimation = DEFAULT_TEXT_READER_SETTINGS.pageTurnAnimation;
   @State textKeepScreenOn: boolean = DEFAULT_TEXT_READER_SETTINGS.keepScreenOn;
+  @State textLockDeviceOrientation: boolean = DEFAULT_TEXT_READER_SETTINGS.lockDeviceOrientation ?? false;
   @State textVolumeKeyNav: boolean = DEFAULT_TEXT_READER_SETTINGS.volumeKeyNavigation;
   @State textTapToTurn: boolean = DEFAULT_TEXT_READER_SETTINGS.tapToTurn;
   @State textAutoPageTurnEnabled: boolean = DEFAULT_TEXT_READER_SETTINGS.autoPageTurnEnabled ?? false;
@@ -709,6 +711,10 @@ export struct ReadingSettingsSubPage {
         SettingKeys.GLOBAL_EBOOK_KEEP_SCREEN_ON,
         DEFAULT_EBOOK_READING_SETTINGS.keepScreenOn ?? false
       );
+      this.ebookLockDeviceOrientation = this.settingsManager.getBoolean(
+        SettingKeys.GLOBAL_EBOOK_LOCK_DEVICE_ORIENTATION,
+        DEFAULT_EBOOK_READING_SETTINGS.lockDeviceOrientation ?? false
+      );
       this.ebookShowPageNumber = this.settingsManager.getBoolean(
         SettingKeys.GLOBAL_EBOOK_SHOW_PAGE_NUMBER,
         DEFAULT_EBOOK_READING_SETTINGS.showPageNumber ?? true
@@ -786,6 +792,10 @@ export struct ReadingSettingsSubPage {
       this.textKeepScreenOn = this.settingsManager.getBoolean(
         SettingKeys.GLOBAL_TEXT_KEEP_SCREEN_ON,
         globalNovelSettings.keepScreenOn
+      );
+      this.textLockDeviceOrientation = this.settingsManager.getBoolean(
+        SettingKeys.GLOBAL_TEXT_LOCK_DEVICE_ORIENTATION,
+        globalNovelSettings.lockDeviceOrientation ?? DEFAULT_TEXT_READER_SETTINGS.lockDeviceOrientation ?? false
       );
       this.textVolumeKeyNav = this.settingsManager.getBoolean(
         SettingKeys.GLOBAL_TEXT_VOLUME_KEY_NAV,
@@ -1158,6 +1168,7 @@ export struct ReadingSettingsSubPage {
         right: pageMargin
       },
       keepScreenOn: this.textKeepScreenOn,
+      lockDeviceOrientation: this.textLockDeviceOrientation,
       showPageNumber: this.textShowPageNumber,
       showProgress: this.textShowProgress,
       showTime: this.textShowTime,
@@ -2342,6 +2353,37 @@ export struct ReadingSettingsSubPage {
         await this.settingsManager.setBoolean(SettingKeys.GLOBAL_EBOOK_KEEP_SCREEN_ON, this.ebookKeepScreenOn);
         this.settingsManager.syncToAppStorage();
       })
+      Row() {
+        Column() {
+          Text('锁定方向')
+            .fontSize(16)
+            .fontFamily(this.appFontFamily)
+            .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
+          Text(this.ebookLockDeviceOrientation
+            ? '保持当前屏幕方向，阅读时旋转设备不会改变方向'
+            : '关闭后会跟随系统旋转策略，适合临时横屏阅读')
+            .fontSize(12)
+            .fontFamily(this.appFontFamily)
+            .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
+            .margin({ top: 2 })
+        }
+        .alignItems(HorizontalAlign.Start)
+        .layoutWeight(1)
+
+        Toggle({ type: ToggleType.Switch, isOn: this.ebookLockDeviceOrientation })
+          .selectedColor(ThemeAwareHelper.getTestManagementThemedColor('accent_blue', this.themeState.currentTheme))
+          .onChange(async (isOn: boolean) => {
+            this.ebookLockDeviceOrientation = isOn;
+            await this.settingsManager.setBoolean(
+              SettingKeys.GLOBAL_EBOOK_LOCK_DEVICE_ORIENTATION,
+              this.ebookLockDeviceOrientation
+            );
+            this.settingsManager.syncToAppStorage();
+          })
+      }
+      .width('100%')
+      .padding({ top: 12, bottom: 12 })
+
       this.buildEBookSwitchRow('自动保存进度', this.ebookAutoSave, async (isOn: boolean) => {
         this.ebookAutoSave = isOn;
         await this.settingsManager.setBoolean(SettingKeys.GLOBAL_EBOOK_AUTO_SAVE, this.ebookAutoSave);
@@ -3075,6 +3117,37 @@ export struct ReadingSettingsSubPage {
             })
         }
         .width('100%')
+
+        Row() {
+          Column() {
+            Text('锁定方向')
+              .fontSize(16)
+              .fontFamily(this.appFontFamily)
+              .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
+            Text(this.textLockDeviceOrientation
+              ? '保持当前屏幕方向，阅读时旋转设备不会改变方向'
+              : '关闭后会跟随系统旋转策略，适合临时横屏阅读')
+              .fontSize(12)
+              .fontFamily(this.appFontFamily)
+              .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
+              .margin({ top: 2 })
+          }
+          .alignItems(HorizontalAlign.Start)
+          .layoutWeight(1)
+
+          Toggle({ type: ToggleType.Switch, isOn: this.textLockDeviceOrientation })
+            .selectedColor(ThemeAwareHelper.getTestManagementThemedColor('accent_blue', this.themeState.currentTheme))
+            .onChange(async (isOn: boolean) => {
+              this.textLockDeviceOrientation = isOn;
+              await this.settingsManager.setBoolean(
+                SettingKeys.GLOBAL_TEXT_LOCK_DEVICE_ORIENTATION,
+                this.textLockDeviceOrientation
+              );
+              await this.persistGlobalNovelReaderSettings();
+            })
+        }
+        .width('100%')
+        .padding({ top: 12, bottom: 12 })
 
         Row() {
           Text('音量键翻页')

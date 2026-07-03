@@ -37,6 +37,8 @@ import { DataManager } from '../Data/DataManager';
 import CookieManager from '../Managers/CookieManager';
 import { generatePicaSignature } from '../Source/SignatureHandler';
 import { UserAgentManager } from '../Managers/UserAgentManager';
+import { sourceDiagnosticManager } from '../SourceEditor/SourceDiagnosticManager';
+import { SourceDiagnosticEvent, SourceDiagnosticEventKind, SourceDiagnosticLevel } from '../SourceEditor/SourceDiagnosticTypes';
 
 /**
  * 字段选择器解析结果
@@ -62,6 +64,18 @@ export interface ActionContext {
   currentUrl?: string;
   /** 页面标题 */
   pageTitle?: string;
+  /** 诊断Trace ID */
+  traceId?: string;
+  /** 当前工作流名称 */
+  workflowName?: string;
+  /** 当前操作序号 */
+  actionIndex?: number;
+  /** 图源ID */
+  sourceId?: number;
+  /** 图源包名 */
+  sourcePkg?: string;
+  /** 图源名称 */
+  sourceName?: string;
 }
 
 /**
@@ -173,6 +187,23 @@ export class MangaSourceActionEngine {
 
   private async executeActionInternal(action: Action, context: ActionContext): Promise<ActionResult> {
     const startTime = Date.now();
+    const actionIndex: number = context.actionIndex !== undefined ? context.actionIndex as number : -1;
+    let traceId: string = context.traceId || '';
+    const workflowName: string = context.workflowName || '';
+    const actionDescription: string = action.description || '';
+    let actionTraceStarted: boolean = false;
+    let autoTraceCreated: boolean = false;
+    if (traceId.length > 0) {
+      sourceDiagnosticManager.beginAction(
+        traceId,
+        actionIndex,
+        action.type,
+        actionDescription,
+        context.currentUrl || '',
+        this.buildVariablesPreview(context.variables)
+      );
+      actionTraceStarted = true;
+    }
     
     try {
       logger.info(TAG, `执行操作: ${action.type}`, JSON.stringify(action));
@@ -267,23 +298,140 @@ export class MangaSourceActionEngine {
         logger.debug(TAG, `脚本结果已保存: ${cleanResult.substring(0, 100)}${cleanResult.length > 100 ? '...' : ''}`);
       }
 
-      return {
+      if (traceId.length > 0 && actionTraceStarted) {
+        sourceDiagnosticManager.finishAction(
+          traceId,
+          actionIndex,
+          action.type,
+          true,
+          context.currentUrl || '',
+          '',
+          sourceDiagnosticManager.previewData(result)
+        );
+      }
+      const actionResult: ActionResult = {
         success: true,
         data: result,
-        duration
+        duration,
+        traceId: traceId.length > 0 ? traceId : undefined,
+        workflowName: workflowName.length > 0 ? workflowName : undefined,
+        actionIndex: actionIndex >= 0 ? actionIndex : undefined,
+        actionDescription: actionDescription,
+        currentUrl: context.currentUrl || '',
+        diagnosticEvents: this.getDiagnosticEvents(traceId)
       };
+      return actionResult;
 
     } catch (error) {
       const duration = Date.now() - startTime;
       const errorMessage = error instanceof Error ? error.message : String(error);
       logger.error(TAG, `操作失败: ${action.type}, 错误: ${errorMessage}`);
+      if (traceId.length <= 0) {
+        const autoTrace = sourceDiagnosticManager.startTrace(
+          context.sourceId || 0,
+          context.sourcePkg || '',
+          context.sourceName || '',
+          workflowName.length > 0 ? workflowName : 'unknownWorkflow',
+          this.buildVariablesPreview(context.variables)
+        );
+        traceId = autoTrace.traceId;
+        autoTraceCreated = true;
+        sourceDiagnosticManager.beginAction(
+          traceId,
+          actionIndex,
+          action.type,
+          actionDescription,
+          context.currentUrl || '',
+          this.buildVariablesPreview(context.variables)
+        );
+        actionTraceStarted = true;
+      }
+      if (traceId.length > 0 && actionTraceStarted) {
+        sourceDiagnosticManager.finishAction(
+          traceId,
+          actionIndex,
+          action.type,
+          false,
+          context.currentUrl || '',
+          errorMessage,
+          ''
+        );
+        sourceDiagnosticManager.recordEvent(
+          traceId,
+          SourceDiagnosticLevel.ERROR,
+          this.resolveDiagnosticKind(action.type),
+          actionIndex,
+          action.type,
+          this.buildActionFailureMessage(workflowName, actionIndex, action.type, errorMessage),
+          errorMessage,
+          context.currentUrl || ''
+        );
+        if (autoTraceCreated) {
+          sourceDiagnosticManager.finishTrace(traceId, false, errorMessage);
+        }
+      }
 
       return {
         success: false,
         error: errorMessage,
-        duration
+        duration,
+        traceId: traceId.length > 0 ? traceId : undefined,
+        workflowName: workflowName.length > 0 ? workflowName : undefined,
+        actionIndex: actionIndex >= 0 ? actionIndex : undefined,
+        actionDescription: actionDescription,
+        currentUrl: context.currentUrl || '',
+        diagnosticEvents: this.getDiagnosticEvents(traceId)
       };
     }
+  }
+
+  private buildVariablesPreview(variables: Record<string, string>): string {
+    const safeVariables: Record<string, string> = {};
+    const keys: string[] = Object.keys(variables);
+    for (let i = 0; i < keys.length; i++) {
+      const key = keys[i];
+      if (key === ACTION_QUEUE_OWNER_KEY) {
+        continue;
+      }
+      safeVariables[key] = variables[key];
+    }
+    return sourceDiagnosticManager.sanitize(JSON.stringify(safeVariables));
+  }
+
+  private getDiagnosticEvents(traceId: string): SourceDiagnosticEvent[] | undefined {
+    if (traceId.length <= 0) {
+      return undefined;
+    }
+    const trace = sourceDiagnosticManager.getTraceById(traceId);
+    if (!trace) {
+      return undefined;
+    }
+    return trace.events.slice();
+  }
+
+  private resolveDiagnosticKind(actionType: string): SourceDiagnosticEventKind {
+    if (actionType === ActionType.SCRIPT) {
+      return SourceDiagnosticEventKind.SCRIPT;
+    }
+    if (actionType === ActionType.EXTRACT || actionType === ActionType.WAIT || actionType === ActionType.CLICK) {
+      return SourceDiagnosticEventKind.SELECTOR;
+    }
+    if (actionType === ActionType.NAVIGATE || actionType === ActionType.API_REQUEST || actionType === ActionType.HTTP_REQUEST) {
+      return SourceDiagnosticEventKind.NETWORK;
+    }
+    return SourceDiagnosticEventKind.ACTION;
+  }
+
+  private buildActionFailureMessage(workflowName: string, actionIndex: number, actionType: string, errorMessage: string): string {
+    const workflowLabel: string = workflowName.length > 0 ? workflowName : '当前';
+    const stepLabel: string = actionIndex >= 0 ? `第 ${actionIndex + 1} 步` : '某一步';
+    if (actionType === ActionType.EXTRACT || actionType === ActionType.WAIT || actionType === ActionType.CLICK) {
+      return `${workflowLabel} workflow ${stepLabel} ${actionType} 失败：${errorMessage}`;
+    }
+    if (actionType === ActionType.SCRIPT) {
+      return `${workflowLabel} workflow ${stepLabel} script 失败：${errorMessage}`;
+    }
+    return `${workflowLabel} workflow ${stepLabel} ${actionType} 失败：${errorMessage}`;
   }
 
   /**

@@ -8,8 +8,9 @@ import {
 } from '../Framework/ReadAloud/ReadAloudPlayerAbilityParamStore';
 
 const TAG: string = 'ReadAloudPlayerAbilityPage';
+let readAloudPlayerAbilityPageStorage: LocalStorage = new LocalStorage();
 
-@Entry
+@Entry(readAloudPlayerAbilityPageStorage)
 @Component
 struct ReadAloudPlayerAbilityPage {
   @LocalStorageProp('readAloudPlayerAbilityInstanceId') private playerAbilityInstanceId: string = '';

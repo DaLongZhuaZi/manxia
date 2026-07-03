@@ -143,6 +143,8 @@ import { SourceSettingsPage, SourceSettingsPageParams } from './SourceSettingsPa
 import { SourceLoginPage } from './SourceLoginPage';
 import { BookSourceManagementPage } from './BookSourceManagementPage';
 import { SourceManagementPage } from './SourceManagementPage';
+import { SourceDiagnosticPage } from './SourceDiagnosticPage';
+import { SourceInteractiveEditorPage } from './SourceInteractiveEditorPage';
 import { BackupPage } from './BackupPage';
 
 // 小说页面导入
@@ -31383,6 +31385,10 @@ struct MainMenuPage {
         StorageManagementPage()
       } else if (name === 'SourceDetailPage') {
         SourceDetailPage()
+      } else if (name === 'SourceDiagnosticPage') {
+        SourceDiagnosticPage()
+      } else if (name === 'SourceInteractiveEditorPage') {
+        SourceInteractiveEditorPage()
       } else if (name === 'SourceSettingsPage') {
         SourceSettingsPage()
       } else if (name === 'SourceLoginPage') {

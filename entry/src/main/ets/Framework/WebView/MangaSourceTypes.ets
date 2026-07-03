@@ -1,3 +1,5 @@
+import { SourceDiagnosticEvent } from '../SourceEditor/SourceDiagnosticTypes';
+
 /**
  * 漫画图源引擎类型定义
  * 定义JSON驱动的WebView自动化系统的所有类型接口
@@ -9,6 +11,8 @@
  * 图源元数据
  */
 export interface MangaSourceMetadata {
+  /** 图源唯一包名 */
+  id?: string;
   /** 图源名称 */
   name: string;
   /** 版本号 */
@@ -883,6 +887,18 @@ export interface ActionResult {
   error?: string;
   /** 执行时间 */
   duration: number;
+  /** 诊断Trace ID */
+  traceId?: string;
+  /** 工作流名称 */
+  workflowName?: string;
+  /** 操作序号 */
+  actionIndex?: number;
+  /** 操作描述 */
+  actionDescription?: string;
+  /** 当前页面URL */
+  currentUrl?: string;
+  /** 诊断事件 */
+  diagnosticEvents?: SourceDiagnosticEvent[];
 }
 
 /**

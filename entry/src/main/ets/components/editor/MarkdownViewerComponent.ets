@@ -253,7 +253,8 @@ export struct MarkdownViewerComponent {
    */
   public scrollToHeading(id: string): void {
     if (this.isReady) {
-      this.webController.runJavaScript(`scrollToHeading("${id}")`);
+      const escapedId = JSON.stringify(id || '');
+      this.webController.runJavaScript(`scrollToHeading(${escapedId})`);
     }
   }
   

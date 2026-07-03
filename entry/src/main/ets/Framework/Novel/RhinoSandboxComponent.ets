@@ -39,7 +39,7 @@ export interface RhinoSandboxCallbacks {
 @Component
 export struct RhinoSandboxWebView {
   /** 事件回调 */
-  @Prop callbacks?: RhinoSandboxCallbacks;
+  @Prop callbacks: RhinoSandboxCallbacks | null = null;
   
   /** WebView控制器 */
   private controller: webview.WebviewController = new webview.WebviewController();

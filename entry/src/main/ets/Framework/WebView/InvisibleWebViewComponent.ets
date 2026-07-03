@@ -52,7 +52,7 @@ export struct InvisibleWebView {
   /** WebView配置 */
   @Prop config: WebViewSourceConfig;
   /** 事件回调 */
-  @Prop callbacks?: WebViewEventCallbacks;
+  @Prop callbacks: WebViewEventCallbacks | null = null;
   /** 初始URL */
   @Prop @Watch('onInitialUrlChange') initialUrl: string = 'about:blank';
   

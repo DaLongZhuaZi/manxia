@@ -5,9 +5,9 @@ import { ChapterBoundary } from './MangaWebtoonTypes';
 
 export class MangaWebtoonAdjacentChapterInput {
   public isWebtoonMode: boolean = false;
-  public currentChapter: MangaChapter | undefined = undefined;
-  public prevChapter: MangaChapter | undefined = undefined;
-  public nextChapter: MangaChapter | undefined = undefined;
+  public currentChapter: MangaChapter | null = null;
+  public prevChapter: MangaChapter | null = null;
+  public nextChapter: MangaChapter | null = null;
   public currentChapterId: string = '';
   public chapterBoundaries: ChapterBoundary[] = [];
 }
@@ -72,7 +72,7 @@ export class MangaWebtoonAdjacentChapterPlanner {
     return plan;
   }
 
-  private hasPages(chapter: MangaChapter | undefined): boolean {
+  private hasPages(chapter: MangaChapter | null): boolean {
     return !!(chapter && chapter.pages && chapter.pages.length > 0);
   }
 

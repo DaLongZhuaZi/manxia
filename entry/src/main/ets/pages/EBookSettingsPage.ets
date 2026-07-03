@@ -1443,13 +1443,13 @@ export struct EBookSettingsPage {
       Row() {
         Column() {
           Text('锁定方向')
-            .fontSize(14)
+            .fontSize(16)
             .fontFamily(this.appFontFamily)
-            .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
+            .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
           Text(this.settingLockDeviceOrientation
             ? '保持当前屏幕方向，阅读时旋转设备不会改变方向'
             : '关闭后会跟随系统旋转策略，适合临时横屏阅读')
-            .fontSize(11)
+            .fontSize(12)
             .fontFamily(this.appFontFamily)
             .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
             .margin({ top: 2 })
@@ -1458,12 +1458,14 @@ export struct EBookSettingsPage {
         .layoutWeight(1)
 
         Toggle({ type: ToggleType.Switch, isOn: this.settingLockDeviceOrientation })
+          .selectedColor(ThemeAwareHelper.getTestManagementThemedColor('accent_blue', this.themeState.currentTheme))
           .onChange((isOn: boolean) => {
             this.settingLockDeviceOrientation = isOn;
             this.saveSettingsImmediately();
           })
       }
       .width('100%')
+      .padding({ top: 12, bottom: 12 })
 
       // 保存间隔
       if (this.settingAutoSave) {
@@ -2662,13 +2664,13 @@ export struct EBookSettingsPage {
       Row() {
         Column() {
           Text('锁定方向')
-            .fontSize(14)
+            .fontSize(16)
             .fontFamily(this.appFontFamily)
-            .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
+            .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
           Text(this.settingLockDeviceOrientation
             ? '保持当前屏幕方向，阅读时旋转设备不会改变方向'
             : '关闭后会跟随系统旋转策略，适合临时横屏阅读')
-            .fontSize(11)
+            .fontSize(12)
             .fontFamily(this.appFontFamily)
             .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
             .margin({ top: 2 })
@@ -2677,12 +2679,14 @@ export struct EBookSettingsPage {
         .layoutWeight(1)
 
         Toggle({ type: ToggleType.Switch, isOn: this.settingLockDeviceOrientation })
+          .selectedColor(ThemeAwareHelper.getTestManagementThemedColor('accent_blue', this.themeState.currentTheme))
           .onChange((isOn: boolean) => {
             this.settingLockDeviceOrientation = isOn;
             this.saveSettingsImmediately();
           })
       }
       .width('100%')
+      .padding({ top: 12, bottom: 12 })
     }
     .width('100%')
   }

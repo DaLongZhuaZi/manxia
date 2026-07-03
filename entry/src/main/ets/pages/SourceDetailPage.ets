@@ -39,7 +39,7 @@ import { SourceCredentials } from '../Framework/Data/DataManager';
 import { ProxyManager } from '../Framework/Network/ProxyManager';
 import { PageSettingsHelper, DetailPageType } from './settings/PageSettingsSubPage';
 import { UnifiedDetailPageParams, UnifiedContentType } from '../Models/UnifiedContentModels';
-import { SourceContentCache } from '../Framework/Cache/SourceContentCache';
+import { SourceContentCache, SourceContentCacheFreshness, SourceContentCacheSnapshot } from '../Framework/Cache/SourceContentCache';
 import { SettingsImmersiveTitleBar } from './settings/SettingsImmersiveTitleBar';
 import { SettingsImmersiveTitleActionItem, SettingsPageTitleBarManager } from './settings/SettingsPageTitleBarManager';
 import { SettingsPageSurfaceManager } from './settings/SettingsPageSurfaceManager';
@@ -67,6 +67,10 @@ import {
   GlobalSearchCachedComicInfo
 } from '../Framework/Search/GlobalSearchCacheBridge';
 import { SOURCE_DETAIL_ABILITY_HOST_MULTITON } from '../Framework/Source/SourceDetailAbilityConstants';
+import {
+  SourceDiagnosticPageParams,
+  SourceInteractiveEditorPageParams
+} from '../Framework/SourceEditor/SourceEditorTypes';
 
 
 const TAG = 'SourceDetailPage';
@@ -110,6 +114,60 @@ interface MangaDetailParams {
 interface DownloadTask {
   comic: ComicInfo;
   needDownload: boolean;
+}
+
+enum SourceDetailLoadPhase {
+  BOOTSTRAPPING = 'bootstrapping',
+  LOADING_EMPTY = 'loading_empty',
+  SHOWING_CACHE_REFRESHING = 'showing_cache_refreshing',
+  READY = 'ready',
+  EMPTY = 'empty',
+  ERROR = 'error',
+  PAGING = 'paging'
+}
+
+interface SourceDetailContentRequest {
+  token: number;
+  workflowKey: string;
+  page: number;
+  reason: string;
+  bypassCache: boolean;
+}
+
+interface SourceDetailContentResult {
+  success: boolean;
+  comics: ComicInfo[];
+  hasMore: boolean;
+  errorMessage: string;
+  fromCache: boolean;
+  cacheFreshness: SourceContentCacheFreshness;
+  duration: number;
+  actionCount: number;
+  workflowName: string;
+}
+
+interface SourceDetailLoadSnapshot {
+  phase: SourceDetailLoadPhase;
+  message: string;
+  errorMessage: string;
+  requestToken: number;
+}
+
+enum SourceDetailCoverStatus {
+  UNKNOWN = 'unknown',
+  NO_COVER = 'no_cover',
+  LOCAL_LOADING = 'local_loading',
+  LOCAL_READY = 'local_ready',
+  NETWORK_LOADING = 'network_loading',
+  READY = 'ready',
+  FAILED = 'failed'
+}
+
+interface SourceDetailCoverState {
+  status: SourceDetailCoverStatus;
+  message: string;
+  localPath: string;
+  updatedAt: number;
 }
 
 class ComicListDataSource implements IDataSource {
@@ -403,6 +461,10 @@ export struct SourceDetailPage {
   @State hasLoadedOnce: boolean = false;
   @State comicContentRenderVersion: number = 0;
   @State private showInitialLoadingSkeleton: boolean = false;
+  @State private loadPhase: SourceDetailLoadPhase = SourceDetailLoadPhase.BOOTSTRAPPING;
+  @State private loadMessage: string = '正在准备图源...';
+  @State private loadErrorMessage: string = '';
+  @State private contentRequestToken: number = 0;
   @State private favoritedExternalIds: Set<string> = new Set<string>();
   
   // 筛选历史记录（可折叠显示上次筛选结果）
@@ -428,6 +490,13 @@ export struct SourceDetailPage {
   private sourceDetailHostMode: string = '';
   private sourceDetailAbilityInstanceId: string = '';
   private sourceDetailRouteInitialized: boolean = false;
+  private directComicRouteHandled: boolean = false;
+  private shouldLoadListAfterDirectReturn: boolean = false;
+  private directComicRouteOpenedAt: number = 0;
+  private pendingDirectComicId: string = '';
+  private pendingDirectComicTitle: string = '';
+  private sourceDetailListBootstrapCompleted: boolean = false;
+  private sourceDetailListBootstrapPromise: Promise<void> | null = null;
   private sourceName: string = '';
   private sourceManager: SourceManager = SourceManager.getInstance();
   private dataManager: DataManager = DataManager.getInstance();
@@ -438,6 +507,9 @@ export struct SourceDetailPage {
   @State comicDataSource: ComicListDataSource = new ComicListDataSource([]);
   @State private coverPixelMaps: Map<string, image.PixelMap> = new Map();
   @State private coverAspectRatios: Map<string, number> = new Map();
+  @State private coverStates: Map<string, SourceDetailCoverState> = new Map<string, SourceDetailCoverState>();
+  private readonly firstScreenCoverPreloadLimit: number = 24;
+  private readonly localCoverBufferFallbackMaxBytes: number = 20 * 1024 * 1024;
   
   // 设备方向检测
   @State private isLandscape: boolean = false;
@@ -506,6 +578,13 @@ export struct SourceDetailPage {
   onPageShow(): void {
     if (this.sourceId > 0) {
       void this.refreshFavoriteBadges('page_show');
+    }
+    if (this.shouldLoadListAfterDirectReturn && this.directComicRouteHandled && !this.isLoading && this.comicList.length === 0) {
+      const elapsed: number = Date.now() - this.directComicRouteOpenedAt;
+      if (elapsed > 300) {
+        this.shouldLoadListAfterDirectReturn = false;
+        void this.loadListAfterDirectRouteReturn();
+      }
     }
   }
 
@@ -591,6 +670,26 @@ export struct SourceDetailPage {
     this.pathStack.pushPathByName('SourceSettingsPage', params);
   }
 
+  private openSourceDiagnosticPage(): void {
+    const params: SourceDiagnosticPageParams = {
+      sourceId: this.sourceId,
+      sourceName: this.sourceInfo?.name || this.sourceName || '',
+      traceId: ''
+    };
+    this.pathStack.pushPathByName('SourceDiagnosticPage', params);
+  }
+
+  private openSourceInteractiveEditorPage(): void {
+    const params: SourceInteractiveEditorPageParams = {
+      sourceId: this.sourceId,
+      sourceName: this.sourceInfo?.name || this.sourceName || '',
+      sourcePkg: this.sourceInfo?.pkg || '',
+      initialUrl: this.sourceInfo?.baseUrl || '',
+      createNew: false
+    };
+    this.pathStack.pushPathByName('SourceInteractiveEditorPage', params);
+  }
+
   private async openUnifiedDetailInMainInstance(
     params: UnifiedDetailPageParams,
     reason: string
@@ -645,6 +744,7 @@ export struct SourceDetailPage {
     this.sourceDetailWindowKey = params.sourceDetailWindowKey || '';
     this.sourceDetailHostMode = params.sourceDetailHostMode || '';
     this.sourceDetailEnterTimestamp = Date.now();
+    this.setLoadPhase(SourceDetailLoadPhase.BOOTSTRAPPING, '正在准备图源...');
     logger.info(TAG, `加载图源详情，ID: ${this.sourceId}, instance=${this.sourceDetailAbilityInstanceId || 'main'}, window=${this.sourceDetailWindowKey || 'single'}, host=${this.sourceDetailHostMode || 'main'}`);
 
     void this.initializePageWithParams(
@@ -652,7 +752,9 @@ export struct SourceDetailPage {
       params.searchKeyword,
       params.searchType,
       params.fromGlobalSearch,
-      params.globalSearchSessionId
+      params.globalSearchSessionId,
+      params.comicId,
+      params.comicTitle
     );
   }
 
@@ -664,22 +766,27 @@ export struct SourceDetailPage {
     searchKeyword?: string,
     searchType?: string,
     fromGlobalSearch?: boolean,
-    globalSearchSessionId?: string
+    globalSearchSessionId?: string,
+    directComicId?: string,
+    directComicTitle?: string
   ): Promise<void> {
     await this.loadSourceDebugMode();
-    await this.initializeAsyncWithParams(initialTab, searchKeyword, searchType, fromGlobalSearch, globalSearchSessionId);
+    await this.initializeAsyncWithParams(initialTab, searchKeyword, searchType, fromGlobalSearch, globalSearchSessionId, directComicId, directComicTitle);
   }
 
   private async initializeAsync(): Promise<void> {
-    await this.initializeAsyncWithParams(undefined, undefined, undefined, undefined);
+    await this.initializeAsyncWithParams(undefined, undefined, undefined, undefined, undefined, undefined, undefined);
   }
 
   /**
    * 异步初始化（带参数版本）
    * @param fromGlobalSearch 是否来自全局搜索，如果是则优先使用缓存结果
    */
-  private async initializeAsyncWithParams(initialTab?: string, searchKeyword?: string, searchType?: string, fromGlobalSearch?: boolean, globalSearchSessionId?: string): Promise<void> {
+  private async initializeAsyncWithParams(initialTab?: string, searchKeyword?: string, searchType?: string, fromGlobalSearch?: boolean, globalSearchSessionId?: string, directComicId?: string, directComicTitle?: string): Promise<void> {
     try {
+      this.pendingDirectComicId = directComicId ? directComicId.trim() : '';
+      this.pendingDirectComicTitle = directComicTitle ? directComicTitle.trim() : '';
+
       // 首先加载 sourceName（用于页面跳转参数传递）
       await this.loadSourceName();
       
@@ -707,6 +814,11 @@ export struct SourceDetailPage {
       if (this.requiresCredentialLogin && !this.isLoggedIn) {
         logger.info(TAG, '需要凭据登录，显示登录对话框');
         this.showCredentialDialog = true;
+        this.setLoadPhase(SourceDetailLoadPhase.READY, '等待登录');
+        return;
+      }
+
+      if (this.tryOpenDirectComicRoute(this.pendingDirectComicId, this.pendingDirectComicTitle)) {
         return;
       }
       
@@ -755,6 +867,7 @@ export struct SourceDetailPage {
       
       // 加载筛选设置（使用动态筛选加载，同时加载旧版筛选）
       await this.loadDynamicFilterSettings();
+      this.sourceDetailListBootstrapCompleted = true;
       
       // 加载漫画列表（如果是搜索标签，执行搜索）
       if (this.currentTabId === 'search' && searchKeyword) {
@@ -774,11 +887,13 @@ export struct SourceDetailPage {
         this.comicDataSource.updateItems([]);
         this.touchComicContentRender();
         this.hasLoadedOnce = true;
+        this.setLoadPhase(SourceDetailLoadPhase.EMPTY, '该漫画书源请使用搜索入口');
       } else {
         await this.loadComics();
       }
     } catch (error) {
       logger.error(TAG, '初始化失败', String(error));
+      this.failContentLoad(String(error));
     }
   }
 
@@ -903,9 +1018,14 @@ export struct SourceDetailPage {
       this.comicList = [...comics];
       this.comicDataSource.updateItems([...this.comicList]);
       this.touchComicContentRender();
+      this.prepareCoverStatesForComics(comics);
+      void this.hydrateLocalCoversForVisibleComics(comics, this.contentRequestToken);
+      this.processCoverCacheAsync(comics);
       void this.refreshFavoriteBadges('global_search_cache');
       this.hasMore = false;  // 全局搜索缓存不支持分页
       this.lastSearchKeyword = keyword;
+      this.hasLoadedOnce = true;
+      this.setLoadPhase(comics.length > 0 ? SourceDetailLoadPhase.READY : SourceDetailLoadPhase.EMPTY, comics.length > 0 ? '搜索结果已加载' : '暂无搜索结果');
       
       logger.info(TAG, `成功加载全局搜索缓存: ${comics.length} 条结果`);
       this.recordGlobalSearchCacheEvent(flowSessionId, GlobalSearchFlowEventType.DETAIL_CACHE_HIT, keyword, activeCacheKey, true, `items=${comics.length}`);
@@ -955,6 +1075,129 @@ export struct SourceDetailPage {
    */
   private touchComicContentRender(): void {
     this.comicContentRenderVersion = this.comicContentRenderVersion + 1;
+  }
+
+  private getLoadSnapshot(): SourceDetailLoadSnapshot {
+    const snapshot: SourceDetailLoadSnapshot = {
+      phase: this.loadPhase,
+      message: this.loadMessage,
+      errorMessage: this.loadErrorMessage,
+      requestToken: this.contentRequestToken
+    };
+    return snapshot;
+  }
+
+  private shouldShowInitialLoadingView(): boolean {
+    return this.comicList.length === 0 &&
+      (this.loadPhase === SourceDetailLoadPhase.BOOTSTRAPPING ||
+        this.loadPhase === SourceDetailLoadPhase.LOADING_EMPTY);
+  }
+
+  private shouldShowEmptyContentView(): boolean {
+    return this.comicList.length === 0 && this.loadPhase === SourceDetailLoadPhase.EMPTY;
+  }
+
+  private shouldShowErrorContentView(): boolean {
+    return this.comicList.length === 0 && this.loadPhase === SourceDetailLoadPhase.ERROR;
+  }
+
+  private setLoadPhase(phase: SourceDetailLoadPhase, message: string, errorMessage: string = ''): void {
+    this.loadPhase = phase;
+    this.loadMessage = message;
+    this.loadErrorMessage = errorMessage;
+    this.showInitialLoadingSkeleton = phase === SourceDetailLoadPhase.BOOTSTRAPPING || phase === SourceDetailLoadPhase.LOADING_EMPTY;
+  }
+
+  private beginContentRequest(workflowKey: string, page: number, reason: string, bypassCache: boolean): SourceDetailContentRequest {
+    const nextToken: number = this.contentRequestToken + 1;
+    this.contentRequestToken = nextToken;
+    this.loadErrorMessage = '';
+
+    if (page > 1) {
+      this.isLoading = true;
+      this.setLoadPhase(SourceDetailLoadPhase.PAGING, '正在加载更多...');
+    } else if (this.comicList.length > 0) {
+      this.isLoading = true;
+      this.setLoadPhase(SourceDetailLoadPhase.SHOWING_CACHE_REFRESHING, '正在更新内容...');
+    } else {
+      this.isLoading = true;
+      this.setLoadPhase(SourceDetailLoadPhase.LOADING_EMPTY, '正在加载内容...');
+    }
+
+    const request: SourceDetailContentRequest = {
+      token: nextToken,
+      workflowKey: workflowKey,
+      page: page,
+      reason: reason,
+      bypassCache: bypassCache
+    };
+    return request;
+  }
+
+  private isActiveContentRequest(token: number): boolean {
+    return token === this.contentRequestToken;
+  }
+
+  private finishContentRequest(token: number): void {
+    if (!this.isActiveContentRequest(token)) {
+      return;
+    }
+    this.isLoading = false;
+    this.isRefreshing = false;
+    if (!this.hasLoadedOnce) {
+      this.hasLoadedOnce = true;
+    }
+  }
+
+  private failContentLoad(message: string): void {
+    this.isLoading = false;
+    this.isRefreshing = false;
+    this.hasLoadedOnce = true;
+    const safeMessage: string = message.length > 0 ? message : '加载失败';
+    if (this.comicList.length > 0) {
+      this.setLoadPhase(SourceDetailLoadPhase.ERROR, '当前内容更新失败', safeMessage);
+      this.showRefreshHint(`更新失败: ${safeMessage}`, 'error');
+    } else {
+      this.setLoadPhase(SourceDetailLoadPhase.ERROR, '加载失败', safeMessage);
+    }
+  }
+
+  private applyContentList(
+    comics: ComicInfo[],
+    page: number,
+    hasMore: boolean,
+    token: number,
+    trigger: string
+  ): boolean {
+    if (!this.isActiveContentRequest(token)) {
+      logger.info(TAG, `忽略过期内容回写: trigger=${trigger}, token=${token}, active=${this.contentRequestToken}`);
+      return false;
+    }
+
+    if (page === 1) {
+      this.comicList = comics.slice();
+    } else {
+      const merged: ComicInfo[] = this.comicList.slice();
+      for (let index = 0; index < comics.length; index++) {
+        merged.push(comics[index]);
+      }
+      this.comicList = merged;
+    }
+
+    this.hasMore = hasMore;
+    this.comicDataSource.updateItems(this.comicList.slice());
+    this.touchComicContentRender();
+    void this.refreshFavoriteBadges(trigger);
+    this.prepareCoverStatesForComics(comics);
+    void this.hydrateLocalCoversForVisibleComics(comics, token);
+
+    if (this.comicList.length > 0) {
+      this.setLoadPhase(SourceDetailLoadPhase.READY, '内容已加载');
+    } else {
+      this.setLoadPhase(SourceDetailLoadPhase.EMPTY, '暂无内容');
+    }
+    this.hasLoadedOnce = true;
+    return true;
   }
 
   private normalizeExternalId(externalId: string | undefined): string {
@@ -1023,31 +1266,39 @@ export struct SourceDetailPage {
   }
 
   private async loadComics(): Promise<void> {
-    if (this.isLoading) return;
+    if (this.isLoading && this.currentPage > 1) return;
+
+    const workflowKey = this.generateWorkflowKey();
+    const request: SourceDetailContentRequest = this.beginContentRequest(workflowKey, this.currentPage, 'load_comics', false);
 
     try {
-      this.isLoading = true;
-      
-      // 生成缓存键
-      const workflowKey = this.generateWorkflowKey();
-      
       // 1. 优先从缓存加载（仅第一页）
-      if (this.currentPage === 1) {
-        const cached = this.contentCache.get(this.sourceId, workflowKey);
-        if (cached) {
-          logger.info(TAG, `从缓存加载数据: ${cached.comics.length} 条`);
-          this.comicList = [...cached.comics];
-          this.hasMore = cached.hasMore;
-          this.comicDataSource.updateItems([...this.comicList]);
-          this.touchComicContentRender();
-          void this.refreshFavoriteBadges('cache');
-          
-          // 检查是否需要刷新
-          if (!this.contentCache.needsRefresh(this.sourceId, workflowKey)) {
-            this.isLoading = false;
+      if (request.page === 1) {
+        const snapshot: SourceContentCacheSnapshot = this.contentCache.getSnapshot(this.sourceId, workflowKey);
+        if (snapshot.content && snapshot.content.comics.length > 0) {
+          logger.info(TAG, `从缓存快照加载数据: freshness=${snapshot.freshness}, count=${snapshot.content.comics.length}`);
+          this.prepareCoverStatesForComics(snapshot.content.comics);
+          await this.hydrateLocalCoversForVisibleComics(snapshot.content.comics, request.token);
+          this.applyContentList(snapshot.content.comics, 1, snapshot.content.hasMore, request.token, 'cache');
+          this.processCoverCacheAsync(snapshot.content.comics);
+
+          if (snapshot.freshness === SourceContentCacheFreshness.FRESH && !snapshot.shouldRefresh) {
+            const cacheResult: SourceDetailContentResult = {
+              success: true,
+              comics: snapshot.content.comics,
+              hasMore: snapshot.content.hasMore,
+              errorMessage: '',
+              fromCache: true,
+              cacheFreshness: snapshot.freshness,
+              duration: 0,
+              actionCount: 0,
+              workflowName: workflowKey
+            };
+            logger.info(TAG, `使用新鲜缓存完成加载: workflow=${cacheResult.workflowName}, count=${cacheResult.comics.length}`);
             return;
           }
-          
+
+          this.setLoadPhase(SourceDetailLoadPhase.SHOWING_CACHE_REFRESHING, '正在更新缓存内容...');
           logger.info(TAG, '缓存数据已显示，后台刷新中...');
         }
       }
@@ -1062,56 +1313,67 @@ export struct SourceDetailPage {
         comics = await this.loadComicsWithHTTP();
       }
 
+      if (!this.isActiveContentRequest(request.token)) {
+        logger.info(TAG, `网络结果已过期，忽略: token=${request.token}, active=${this.contentRequestToken}`);
+        return;
+      }
+
+      const networkResult: SourceDetailContentResult = {
+        success: true,
+        comics: comics,
+        hasMore: comics.length >= 20,
+        errorMessage: '',
+        fromCache: false,
+        cacheFreshness: SourceContentCacheFreshness.MISSING,
+        duration: 0,
+        actionCount: 0,
+        workflowName: workflowKey
+      };
+
       // 3. 更新缓存（不缓存空结果，避免加载失败后重试无效）
-      if (this.currentPage === 1 && comics.length > 0) {
+      if (request.page === 1 && networkResult.comics.length > 0) {
         this.contentCache.set(
           this.sourceId,
           this.currentTabId,
           workflowKey,
-          comics,
-          this.currentPage,
-          comics.length >= 20
+          networkResult.comics,
+          request.page,
+          networkResult.hasMore
         );
-      } else if (this.currentPage > 1) {
+      } else if (request.page > 1) {
         this.contentCache.append(
           this.sourceId,
           workflowKey,
-          comics,
-          this.currentPage,
-          comics.length >= 20
+          networkResult.comics,
+          request.page,
+          networkResult.hasMore
         );
       }
 
       // 4. 处理筛选历史（新数据加载完成后，把旧数据折叠到历史）
-      if (this.currentPage === 1 && this.pendingFilterHistory.length > 0 && comics.length > 0) {
+      if (request.page === 1 && this.pendingFilterHistory.length > 0 && networkResult.comics.length > 0) {
         this.saveToFilterHistory(this.pendingFilterHistory, this.pendingFilterLabel);
         this.pendingFilterHistory = [];
         this.pendingFilterLabel = '';
       }
 
       // 5. 更新UI
-      if (this.currentPage === 1) {
-        this.comicList = [...comics];
-      } else {
-        this.comicList = [...this.comicList, ...comics];
+      this.prepareCoverStatesForComics(networkResult.comics);
+      await this.hydrateLocalCoversForVisibleComics(networkResult.comics, request.token);
+      const applied: boolean = this.applyContentList(networkResult.comics, request.page, networkResult.hasMore, request.token, 'load_comics');
+      if (applied) {
+        this.processCoverCacheAsync(networkResult.comics);
       }
-
-      // 后台异步处理封面缓存（不阻塞 UI）
-      this.processCoverCacheAsync(comics);
-      this.hasMore = comics.length >= 20;
-      this.comicDataSource.updateItems([...this.comicList]);
-      this.touchComicContentRender();
-      void this.refreshFavoriteBadges('load_comics');
       logger.info(TAG, `数据源已刷新: ${this.comicList.length} 条数据`);
 
     } catch (error) {
-      logger.error(TAG, '加载漫画列表失败', String(error));
-    } finally {
-      this.isLoading = false;
-      // 标记首次加载已完成
-      if (!this.hasLoadedOnce) {
-        this.hasLoadedOnce = true;
+      const message: string = error instanceof Error ? error.message : String(error);
+      logger.error(TAG, '加载漫画列表失败', message);
+      if (this.isActiveContentRequest(request.token)) {
+        this.failContentLoad(message);
       }
+    } finally {
+      this.finishContentRequest(request.token);
     }
   }
 
@@ -1153,6 +1415,132 @@ export struct SourceDetailPage {
     this.processCoverCacheBackground(comics).catch((error: Error) => {
       logger.error(TAG, '后台封面缓存处理失败', String(error));
     });
+  }
+
+  private createCoverState(status: SourceDetailCoverStatus, message: string, localPath: string = ''): SourceDetailCoverState {
+    const state: SourceDetailCoverState = {
+      status: status,
+      message: message,
+      localPath: localPath,
+      updatedAt: Date.now()
+    };
+    return state;
+  }
+
+  private setCoverState(comicId: string, state: SourceDetailCoverState): void {
+    const nextMap: Map<string, SourceDetailCoverState> = new Map<string, SourceDetailCoverState>(this.coverStates);
+    nextMap.set(comicId, state);
+    this.coverStates = nextMap;
+  }
+
+  private prepareCoverStatesForComics(comics: ComicInfo[]): void {
+    if (comics.length === 0) {
+      return;
+    }
+
+    const nextMap: Map<string, SourceDetailCoverState> = new Map<string, SourceDetailCoverState>(this.coverStates);
+    let changed: boolean = false;
+    for (let index = 0; index < comics.length; index++) {
+      const comic: ComicInfo = comics[index];
+      const coverUrl: string = comic.coverUrl || '';
+      if (coverUrl.length === 0) {
+        nextMap.set(comic.id, this.createCoverState(SourceDetailCoverStatus.NO_COVER, '暂无封面'));
+        changed = true;
+        continue;
+      }
+      if (!nextMap.has(comic.id)) {
+        nextMap.set(comic.id, this.createCoverState(SourceDetailCoverStatus.UNKNOWN, '等待加载封面'));
+        changed = true;
+      }
+    }
+
+    if (changed) {
+      this.coverStates = nextMap;
+    }
+  }
+
+  private async hydrateLocalCoversForVisibleComics(comics: ComicInfo[], token: number): Promise<void> {
+    if (comics.length === 0) {
+      return;
+    }
+
+    try {
+      const visibleComics: ComicInfo[] = comics.slice(0, this.firstScreenCoverPreloadLimit);
+      const validComics: ComicInfo[] = visibleComics.filter((comic: ComicInfo) => (comic.coverUrl || '').length > 0);
+      if (validComics.length === 0) {
+        return;
+      }
+
+      const coverCache = CoverCacheManager.getInstance();
+      if (this.isPhotos18Source()) {
+        for (let index = 0; index < validComics.length; index++) {
+          const comic: ComicInfo = validComics[index];
+          if (!this.isActiveContentRequest(token)) {
+            return;
+          }
+          this.setCoverState(comic.id, this.createCoverState(SourceDetailCoverStatus.LOCAL_LOADING, '正在检查本地封面'));
+          const localPath: string | null = await coverCache.getLocalCoverPathWithReferer(this.sourceId, comic.id, this.resolvePhotos18Referer(comic));
+          if (localPath) {
+            const loaded: boolean = await this.loadLocalCoverPixelMap(comic.id, localPath, SourceDetailCoverStatus.LOCAL_READY);
+            if (!loaded) {
+              await this.loadCoverFromNetwork(comic, 'local_hydrate_fallback');
+            }
+          }
+        }
+        return;
+      }
+
+      const externalIds: string[] = validComics.map((comic: ComicInfo) => comic.id);
+      const localPathsMap: Map<string, string | null> = await coverCache.getBatchLocalCoverPaths(this.sourceId, externalIds);
+      for (let index = 0; index < validComics.length; index++) {
+        if (!this.isActiveContentRequest(token)) {
+          return;
+        }
+        const comic: ComicInfo = validComics[index];
+        const localPath: string | null = localPathsMap.get(comic.id) || null;
+        if (localPath) {
+          const loaded: boolean = await this.loadLocalCoverPixelMap(comic.id, localPath, SourceDetailCoverStatus.LOCAL_READY);
+          if (!loaded) {
+            await this.loadCoverFromNetwork(comic, 'local_hydrate_fallback');
+          }
+        } else {
+          const currentState: SourceDetailCoverState | undefined = this.coverStates.get(comic.id);
+          if (!currentState || currentState.status === SourceDetailCoverStatus.UNKNOWN) {
+            this.setCoverState(comic.id, this.createCoverState(SourceDetailCoverStatus.NETWORK_LOADING, '等待下载封面'));
+          }
+        }
+      }
+    } catch (error) {
+      logger.warn(TAG, `首屏封面本地水化失败: ${String(error)}`);
+    }
+  }
+
+  private async loadLocalCoverPixelMap(comicId: string, localPath: string, readyStatus: SourceDetailCoverStatus): Promise<boolean> {
+    if (this.coverPixelMaps.has(comicId)) {
+      this.setCoverState(comicId, this.createCoverState(readyStatus, '封面已就绪', localPath));
+      this.touchComicContentRender();
+      return true;
+    }
+    try {
+      const pm: image.PixelMap | null = await this.decodeLocalCoverPixelMap(comicId, localPath);
+      if (!pm) {
+        this.setCoverState(comicId, this.createCoverState(SourceDetailCoverStatus.NETWORK_LOADING, '本地封面解码失败'));
+        this.touchComicContentRender();
+        return false;
+      }
+      const newMap: Map<string, image.PixelMap> = new Map<string, image.PixelMap>(this.coverPixelMaps);
+      newMap.set(comicId, pm);
+      this.coverPixelMaps = newMap;
+      this.setCoverState(comicId, this.createCoverState(readyStatus, '封面已就绪', localPath));
+      this.touchComicContentRender();
+      logger.debug(TAG, `封面像素图已刷新: comicId=${comicId}, status=${readyStatus}, localPath=${localPath}`);
+      return true;
+    } catch (error) {
+      logger.warn(TAG, `加载本地封面失败: comicId=${comicId}, error=${String(error)}`);
+      this.setCoverState(comicId, this.createCoverState(SourceDetailCoverStatus.NETWORK_LOADING, '本地封面解码失败'));
+      this.touchComicContentRender();
+      return false;
+    }
   }
 
   /**
@@ -1220,6 +1608,13 @@ export struct SourceDetailPage {
       // 筛选需要下载的漫画
       const needDownload = validComics.filter(comic => !localPathsMap.get(comic.id));
       const cachedCount = validComics.length - needDownload.length;
+      for (let index = 0; index < needDownload.length; index++) {
+        const comic: ComicInfo = needDownload[index];
+        const currentState: SourceDetailCoverState | undefined = this.coverStates.get(comic.id);
+        if (!currentState || currentState.status !== SourceDetailCoverStatus.READY) {
+          this.setCoverState(comic.id, this.createCoverState(SourceDetailCoverStatus.NETWORK_LOADING, '正在下载封面'));
+        }
+      }
 
 
       logger.info(TAG, `封面缓存状态: ${cachedCount}/${validComics.length} 已缓存，后台下载 ${needDownload.length} 个`);
@@ -1231,6 +1626,8 @@ export struct SourceDetailPage {
       // 【修复】提高并发数到10，加快封面下载速度
       const MAX_CONCURRENT = 10;
       let downloadedCount = 0;
+      let refreshedCount = 0;
+      const downloadedPaths: Map<string, string> = new Map<string, string>();
       
       // 【修复】并行下载，不等待批次完成
       const allPromises: Promise<void>[] = [];
@@ -1259,21 +1656,25 @@ export struct SourceDetailPage {
           await Promise.allSettled(allPromises.splice(0, MAX_CONCURRENT));
         }
         
-        const downloadPromise = coverCache.downloadAndCacheCover(
+        const downloadPromise: Promise<void> = coverCache.downloadAndCacheCover(
           this.sourceId,
           comic.id,
           coverUrl,
           headers
-        ).then((savedPath: string | null) => {
+        ).then((savedPath: string | null): void => {
 
           if (savedPath) {
             downloadedCount++;
+            downloadedPaths.set(comic.id, savedPath);
             logger.debug(TAG, `后台封面下载完成 (${downloadedCount}/${needDownload.length}): ${comic.title}`);
-            // 下载完成后，刷新对应的封面显示
-            this.refreshCoverDisplay(comic);
+          } else {
+            this.setCoverState(comic.id, this.createCoverState(SourceDetailCoverStatus.FAILED, '封面下载失败'));
+            this.touchComicContentRender();
           }
         }).catch((error: Error) => {
           logger.debug(TAG, `后台封面下载失败 ${comic.title}: ${String(error)}`);
+          this.setCoverState(comic.id, this.createCoverState(SourceDetailCoverStatus.FAILED, '封面下载失败'));
+          this.touchComicContentRender();
         });
         
         allPromises.push(downloadPromise);
@@ -1282,7 +1683,21 @@ export struct SourceDetailPage {
       // 等待所有剩余的下载完成
       await Promise.allSettled(allPromises);
 
-      logger.info(TAG, `封面后台下载完成: 成功 ${downloadedCount}/${needDownload.length} 个`);
+      // PixelMap 解码比下载更敏感，顺序刷新可避免短时间创建大量解码任务导致 Create PixelMap error。
+      for (let index = 0; index < needDownload.length; index++) {
+        const comic: ComicInfo = needDownload[index];
+        const savedPath: string = downloadedPaths.get(comic.id) || '';
+        if (savedPath.length === 0) {
+          continue;
+        }
+        const refreshed: boolean = await this.refreshCoverDisplay(comic, savedPath);
+        if (refreshed) {
+          refreshedCount++;
+        }
+        logger.debug(TAG, `后台封面显示刷新 (${refreshedCount}/${downloadedCount}): ${comic.title}, displayRefreshed=${refreshed}`);
+      }
+
+      logger.info(TAG, `封面后台下载完成: 下载成功 ${downloadedCount}/${needDownload.length} 个，已刷新显示 ${refreshedCount} 个`);
     } catch (error) {
       logger.error(TAG, '后台封面缓存处理失败', String(error));
     }
@@ -1291,21 +1706,28 @@ export struct SourceDetailPage {
   /**
    * 刷新单个封面显示（下载完成后调用）
    */
-  private async refreshCoverDisplay(comic: ComicInfo): Promise<void> {
+  private async refreshCoverDisplay(comic: ComicInfo, preferredLocalPath: string = ''): Promise<boolean> {
     try {
-      const coverCache = CoverCacheManager.getInstance();
-      const localPath = await coverCache.getLocalCoverPathWithReferer(this.sourceId, comic.id, this.resolvePhotos18Referer(comic));
-      
-      if (localPath) {
-        const imageSource = image.createImageSource(localPath);
-        await this.updateCoverAspectRatioFromImageSource(comic.id, imageSource);
-        const pm = await this.createCoverThumbnailPixelMap(imageSource);
-        const newMap: Map<string, image.PixelMap> = new Map(this.coverPixelMaps);
-        newMap.set(comic.id, pm);
-        this.coverPixelMaps = newMap;
+      let localPath: string = preferredLocalPath;
+      if (localPath.length === 0) {
+        const coverCache = CoverCacheManager.getInstance();
+        const cachedPath: string | null = await coverCache.getLocalCoverPathWithReferer(this.sourceId, comic.id, this.resolvePhotos18Referer(comic));
+        localPath = cachedPath || '';
       }
+      
+      if (localPath.length > 0) {
+        const localLoaded: boolean = await this.loadLocalCoverPixelMap(comic.id, localPath, SourceDetailCoverStatus.READY);
+        if (localLoaded) {
+          return true;
+        }
+        logger.warn(TAG, `本地封面解码失败，回退网络加载: comicId=${comic.id}`);
+      }
+      return await this.loadCoverFromNetwork(comic, 'background_refresh');
     } catch (e) {
       logger.warn(TAG, `刷新封面显示失败: ${e}`);
+      this.setCoverState(comic.id, this.createCoverState(SourceDetailCoverStatus.FAILED, '封面刷新失败'));
+      this.touchComicContentRender();
+      return false;
     }
   }
 
@@ -1499,12 +1921,19 @@ export struct SourceDetailPage {
         await this.waitForWebViewReady();
         await this.loadBaseUrlAndCookieBootstrap();
       }
+
+      if (this.tryOpenDirectComicRoute(this.pendingDirectComicId, this.pendingDirectComicTitle)) {
+        return;
+      }
+
+      await this.loadAllTabDisplayModes();
       
       // 加载标签页配置
       await this.loadTabsConfig();
       
       // 加载筛选设置（使用动态筛选加载）
       await this.loadDynamicFilterSettings();
+      this.sourceDetailListBootstrapCompleted = true;
       
       // 加载漫画列表
       await this.loadComics();
@@ -1988,21 +2417,16 @@ export struct SourceDetailPage {
       return;
     }
     const previousRatio = this.coverAspectRatios.get(comicId);
+    const hasPreviousRatio: boolean = previousRatio !== undefined && Number.isFinite(previousRatio) && previousRatio > 0;
     const previousWide = previousRatio !== undefined && previousRatio > 0 && this.normalizeCoverAspectRatio(previousRatio) >= 1.12;
     const nextWide = ratio >= 1.12;
-    const newMap: Map<string, number> = new Map(this.coverAspectRatios);
+    const newMap: Map<string, number> = new Map<string, number>(this.coverAspectRatios);
     newMap.set(comicId, ratio);
     this.coverAspectRatios = newMap;
-    if (previousWide !== nextWide) {
+    if (!hasPreviousRatio || previousWide !== nextWide) {
+      logger.debug(TAG, `封面尺寸已识别: comicId=${comicId}, ratio=${ratio}, wide=${nextWide}, first=${!hasPreviousRatio}`);
       this.touchComicContentRender();
     }
-  }
-
-  private async updateCoverAspectRatioFromImageSource(comicId: string, imageSource: image.ImageSource): Promise<void> {
-    try {
-      const imageInfo = await imageSource.getImageInfo();
-      this.updateCoverAspectRatio(comicId, imageInfo.size.width, imageInfo.size.height);
-    } catch (_e) {}
   }
 
   private async updateCoverAspectRatioFromPixelMap(comicId: string, pixelMap: image.PixelMap): Promise<void> {
@@ -2012,24 +2436,160 @@ export struct SourceDetailPage {
     } catch (_e) {}
   }
 
-  private async createCoverThumbnailPixelMap(imageSource: image.ImageSource): Promise<image.PixelMap> {
+  private async decodeLocalCoverPixelMap(comicId: string, localPath: string): Promise<image.PixelMap | null> {
+    if (!SafeFileUtils.accessSync(localPath)) {
+      logger.warn(TAG, `本地封面文件不存在: comicId=${comicId}, path=${localPath}`);
+      return null;
+    }
+
+    const fdPixelMap: image.PixelMap | null = await this.decodeLocalCoverPixelMapFromFd(comicId, localPath);
+    if (fdPixelMap) {
+      return fdPixelMap;
+    }
+
+    const bufferPixelMap: image.PixelMap | null = await this.decodeLocalCoverPixelMapFromBuffer(comicId, localPath);
+    if (bufferPixelMap) {
+      return bufferPixelMap;
+    }
+
+    return await this.decodeLocalCoverPixelMapFromUri(comicId, localPath);
+  }
+
+  private async decodeLocalCoverPixelMapFromFd(comicId: string, localPath: string): Promise<image.PixelMap | null> {
+    let file: fs.File | null = null;
     try {
-      const imageInfo = await imageSource.getImageInfo();
-      const maxEdge = Math.max(imageInfo.size.width, imageInfo.size.height);
-      const targetMaxEdge = 360;
-      if (maxEdge > targetMaxEdge) {
-        const ratio = Math.ceil(maxEdge / targetMaxEdge);
-        let sampleSize = 1;
-        while (sampleSize * 2 <= ratio) {
-          sampleSize *= 2;
+      file = fs.openSync(localPath, fs.OpenMode.READ_ONLY);
+      const imageSource: image.ImageSource = image.createImageSource(file.fd);
+      return await this.decodeCoverPixelMapFromImageSource(comicId, localPath, imageSource, 'fd');
+    } catch (error) {
+      logger.warn(TAG, `本地封面fd入口解码失败: comicId=${comicId}, error=${String(error)}`);
+      return null;
+    } finally {
+      if (file !== null) {
+        try {
+          fs.closeSync(file);
+        } catch (closeError) {
+          logger.debug(TAG, `本地封面fd文件关闭失败: comicId=${comicId}, error=${String(closeError)}`);
         }
-        return await imageSource.createPixelMap({
-          sampleSize: sampleSize,
-          editable: false
-        });
       }
-    } catch (_e) {}
-    return await imageSource.createPixelMap();
+    }
+  }
+
+  private async decodeLocalCoverPixelMapFromBuffer(comicId: string, localPath: string): Promise<image.PixelMap | null> {
+    let file: fs.File | null = null;
+    try {
+      const stat: fs.Stat = fs.statSync(localPath);
+      if (stat.isDirectory() || stat.size <= 0) {
+        logger.warn(TAG, `本地封面文件不可读: comicId=${comicId}, size=${stat.size}`);
+        return null;
+      }
+      if (stat.size > this.localCoverBufferFallbackMaxBytes) {
+        logger.warn(TAG, `本地封面Buffer兜底跳过: comicId=${comicId}, size=${stat.size}`);
+        return null;
+      }
+
+      const buffer: ArrayBuffer = new ArrayBuffer(stat.size);
+      file = fs.openSync(localPath, fs.OpenMode.READ_ONLY);
+      SafeFileUtils.readExactSync(file.fd, buffer);
+      try {
+        fs.closeSync(file);
+      } catch (closeError) {
+        logger.debug(TAG, `本地封面Buffer文件关闭失败: comicId=${comicId}, error=${String(closeError)}`);
+      }
+      file = null;
+
+      const imageSource: image.ImageSource = image.createImageSource(buffer);
+      return await this.decodeCoverPixelMapFromImageSource(comicId, localPath, imageSource, 'buffer');
+    } catch (error) {
+      logger.warn(TAG, `本地封面Buffer入口解码失败: comicId=${comicId}, error=${String(error)}`);
+      return null;
+    } finally {
+      if (file !== null) {
+        try {
+          fs.closeSync(file);
+        } catch (closeError) {
+          logger.debug(TAG, `本地封面Buffer文件关闭失败: comicId=${comicId}, error=${String(closeError)}`);
+        }
+      }
+    }
+  }
+
+  private async decodeLocalCoverPixelMapFromUri(comicId: string, localPath: string): Promise<image.PixelMap | null> {
+    try {
+      const imageSource: image.ImageSource = image.createImageSource(localPath);
+      return await this.decodeCoverPixelMapFromImageSource(comicId, localPath, imageSource, 'uri');
+    } catch (error) {
+      logger.warn(TAG, `本地封面uri入口解码失败: comicId=${comicId}, error=${String(error)}`);
+      return null;
+    }
+  }
+
+  private async decodeCoverPixelMapFromImageSource(
+    comicId: string,
+    localPath: string,
+    imageSourceApi: image.ImageSource,
+    sourceLabel: string
+  ): Promise<image.PixelMap | null> {
+    try {
+      let imageInfo: image.ImageInfo | null = null;
+      try {
+        imageInfo = await imageSourceApi.getImageInfo();
+        this.updateCoverAspectRatio(comicId, imageInfo.size.width, imageInfo.size.height);
+      } catch (infoError) {
+        logger.warn(TAG, `本地封面尺寸读取失败: comicId=${comicId}, source=${sourceLabel}, error=${String(infoError)}`);
+      }
+
+      const decodingOptions: image.DecodingOptions = imageInfo
+        ? this.buildCoverThumbnailDecodingOptions(imageInfo.size.width, imageInfo.size.height)
+        : this.buildDefaultCoverDecodingOptions();
+      try {
+        const pixelMap: image.PixelMap = await imageSourceApi.createPixelMap(decodingOptions);
+        logger.debug(TAG, `本地封面解码成功: comicId=${comicId}, source=${sourceLabel}, path=${localPath}`);
+        return pixelMap;
+      } catch (primaryError) {
+        logger.warn(TAG, `本地封面缩略解码失败，尝试默认解码: comicId=${comicId}, source=${sourceLabel}, error=${String(primaryError)}`);
+      }
+
+      const fallbackOptions: image.DecodingOptions = this.buildDefaultCoverDecodingOptions();
+      const fallbackPixelMap: image.PixelMap = await imageSourceApi.createPixelMap(fallbackOptions);
+      logger.debug(TAG, `本地封面默认解码成功: comicId=${comicId}, source=${sourceLabel}, path=${localPath}`);
+      return fallbackPixelMap;
+    } catch (error) {
+      logger.warn(TAG, `本地封面解码入口失败: comicId=${comicId}, source=${sourceLabel}, error=${String(error)}`);
+      return null;
+    } finally {
+      try {
+        imageSourceApi.release();
+      } catch (releaseError) {
+        logger.debug(TAG, `本地封面ImageSource释放失败: comicId=${comicId}, source=${sourceLabel}, error=${String(releaseError)}`);
+      }
+    }
+  }
+
+  private buildDefaultCoverDecodingOptions(): image.DecodingOptions {
+    const options: image.DecodingOptions = {
+      desiredPixelFormat: image.PixelMapFormat.RGBA_8888
+    };
+    return options;
+  }
+
+  private buildCoverThumbnailDecodingOptions(width: number, height: number): image.DecodingOptions {
+    const options: image.DecodingOptions = this.buildDefaultCoverDecodingOptions();
+    if (width <= 0 || height <= 0) {
+      return options;
+    }
+
+    const targetMaxEdge: number = 720;
+    const maxEdge: number = Math.max(width, height);
+    if (maxEdge > targetMaxEdge) {
+      const scale: number = targetMaxEdge / maxEdge;
+      const desiredSize: image.Size = {
+        width: Math.max(1, Math.round(width * scale)),
+        height: Math.max(1, Math.round(height * scale))
+      };
+      options.desiredSize = desiredSize;
+    }
+    return options;
   }
 
   private getComicCoverAspectRatio(comic: ComicInfo): number {
@@ -2238,17 +2798,132 @@ export struct SourceDetailPage {
     })
   }
 
+  private getCoverStatus(comic: ComicInfo): SourceDetailCoverStatus {
+    if (this.coverPixelMaps.has(comic.id)) {
+      return SourceDetailCoverStatus.READY;
+    }
+    const coverUrl: string = comic.coverUrl || '';
+    if (coverUrl.length === 0) {
+      return SourceDetailCoverStatus.NO_COVER;
+    }
+    const state: SourceDetailCoverState | undefined = this.coverStates.get(comic.id);
+    if (state) {
+      return state.status;
+    }
+    return SourceDetailCoverStatus.UNKNOWN;
+  }
+
+  private getCoverPlaceholderText(status: SourceDetailCoverStatus): string {
+    if (status === SourceDetailCoverStatus.NO_COVER) {
+      return '暂无封面';
+    }
+    if (status === SourceDetailCoverStatus.FAILED) {
+      return '封面加载失败';
+    }
+    return '加载封面';
+  }
+
+  private isCoverLoadingStatus(status: SourceDetailCoverStatus): boolean {
+    return status === SourceDetailCoverStatus.UNKNOWN ||
+      status === SourceDetailCoverStatus.LOCAL_LOADING ||
+      status === SourceDetailCoverStatus.NETWORK_LOADING;
+  }
+
   @Builder
   private buildComicCoverImage(comic: ComicInfo) {
-    Image(this.coverPixelMaps.has(comic.id) ? (this.coverPixelMaps.get(comic.id) as image.PixelMap) : $r('app.media.ic_placeholder'))
-      .width('100%')
-      .height('100%')
-      .objectFit(ImageFit.Contain)
-      .backgroundColor(this.getReadingStyleCoverSurface().backgroundColor)
-      .onAppear(() => {
-        this.loadCoverPixelMap(comic);
-      })
-      .transition(TransitionEffect.OPACITY.animation({ duration: 300, curve: Curve.EaseOut }))
+    Stack() {
+      if (this.coverPixelMaps.has(comic.id)) {
+        Image(this.coverPixelMaps.get(comic.id) as image.PixelMap)
+          .width('100%')
+          .height('100%')
+          .objectFit(ImageFit.Contain)
+          .backgroundColor(this.getReadingStyleCoverSurface().backgroundColor)
+          .transition(TransitionEffect.OPACITY.animation({ duration: 260, curve: Curve.EaseOut }))
+      } else {
+        Column({ space: 8 }) {
+          if (this.isCoverLoadingStatus(this.getCoverStatus(comic))) {
+            LoadingProgress()
+              .width(26)
+              .height(26)
+              .color(ThemeAwareHelper.getTestManagementThemedColor('accent_blue', this.themeState.currentTheme))
+          } else if (this.getCoverStatus(comic) === SourceDetailCoverStatus.FAILED) {
+            SymbolGlyph($r('sys.symbol.exclamationmark_triangle'))
+              .fontSize(24)
+              .fontColor([ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme)])
+          } else {
+            Image($r('app.media.ic_placeholder'))
+              .width('44%')
+              .height('44%')
+              .objectFit(ImageFit.Contain)
+              .opacity(0.42)
+          }
+
+          Text(this.getCoverPlaceholderText(this.getCoverStatus(comic)))
+            .fontSize(11)
+            .fontFamily(this.appFontFamily)
+            .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_muted', this.themeState.currentTheme))
+            .maxLines(1)
+            .textOverflow({ overflow: TextOverflow.Ellipsis })
+        }
+        .width('100%')
+        .height('100%')
+        .justifyContent(FlexAlign.Center)
+        .alignItems(HorizontalAlign.Center)
+        .padding({ left: 8, right: 8 })
+        .backgroundColor(this.getReadingStyleCoverSurface().backgroundColor)
+      }
+    }
+    .width('100%')
+    .height('100%')
+    .backgroundColor(this.getReadingStyleCoverSurface().backgroundColor)
+    .onAppear(() => {
+      this.loadCoverPixelMap(comic);
+    })
+  }
+
+  private async loadCoverFromNetwork(comic: ComicInfo, reason: string): Promise<boolean> {
+    const url: string = comic.coverUrl || '';
+    if (url.length === 0) {
+      this.setCoverState(comic.id, this.createCoverState(SourceDetailCoverStatus.NO_COVER, '暂无封面'));
+      this.touchComicContentRender();
+      return false;
+    }
+
+    try {
+      this.setCoverState(comic.id, this.createCoverState(SourceDetailCoverStatus.NETWORK_LOADING, '正在加载封面'));
+      const cacheMgr: ImageCacheManager = ImageCacheManager.getInstance();
+      const cookieMgr: CookieManager = CookieManager.getInstance();
+      const baseHeaders: RequestHeaders = this.buildCoverHeadersForComic(comic);
+      const headers: RequestHeaders = await cookieMgr.buildHeadersWithCookie(baseHeaders, this.sourceId);
+      const opts: LoadOptions = {
+        headers: headers,
+        sourceId: this.sourceId,
+        loadingMethod: 0,
+        partitionKey: headers.cachePartition || 'covers'
+      } as LoadOptions;
+
+      const pm: image.PixelMap | null = await cacheMgr.loadImage(url, opts);
+      if (pm) {
+        await this.updateCoverAspectRatioFromPixelMap(comic.id, pm);
+        const newMap: Map<string, image.PixelMap> = new Map<string, image.PixelMap>(this.coverPixelMaps);
+        newMap.set(comic.id, pm);
+        this.coverPixelMaps = newMap;
+        this.setCoverState(comic.id, this.createCoverState(SourceDetailCoverStatus.READY, '封面已就绪'));
+        this.touchComicContentRender();
+        logger.debug(TAG, `封面像素图已刷新: comicId=${comic.id}, status=${SourceDetailCoverStatus.READY}, source=network, reason=${reason}`);
+        return true;
+      }
+
+      this.setCoverState(comic.id, this.createCoverState(SourceDetailCoverStatus.FAILED, '封面加载失败'));
+      this.touchComicContentRender();
+      logger.warn(TAG, `网络封面加载返回空: comicId=${comic.id}, reason=${reason}`);
+      return false;
+    } catch (error) {
+      logger.warn(TAG, `网络封面加载失败: comic=${comic.title}, reason=${reason}, error=${String(error)}`);
+      this.setCoverState(comic.id, this.createCoverState(SourceDetailCoverStatus.FAILED, '封面加载失败'));
+      this.touchComicContentRender();
+      return false;
+    }
   }
 
   @Builder
@@ -2367,7 +3042,20 @@ export struct SourceDetailPage {
       }
       
       const url: string = comic.coverUrl || '';
-      if (url.length === 0) { return; }
+      if (url.length === 0) {
+        this.setCoverState(comic.id, this.createCoverState(SourceDetailCoverStatus.NO_COVER, '暂无封面'));
+        return;
+      }
+      const existingState: SourceDetailCoverState | undefined = this.coverStates.get(comic.id);
+      if (existingState &&
+        (existingState.status === SourceDetailCoverStatus.LOCAL_LOADING ||
+          existingState.status === SourceDetailCoverStatus.NETWORK_LOADING ||
+          existingState.status === SourceDetailCoverStatus.READY ||
+          existingState.status === SourceDetailCoverStatus.LOCAL_READY)) {
+        return;
+      }
+
+      this.setCoverState(comic.id, this.createCoverState(SourceDetailCoverStatus.LOCAL_LOADING, '正在检查本地封面'));
       if (this.isPhotos18Source()) {
         await this.ensurePhotos18CoverBootstrap();
       }
@@ -2380,39 +3068,19 @@ export struct SourceDetailPage {
       
       // 如果有本地缓存，直接从本地加载
       if (localPath) {
-        try {
-          const imageSource = image.createImageSource(localPath);
-          await this.updateCoverAspectRatioFromImageSource(comic.id, imageSource);
-          const pm = await this.createCoverThumbnailPixelMap(imageSource);
-          const newMap: Map<string, image.PixelMap> = new Map(this.coverPixelMaps);
-          newMap.set(comic.id, pm);
-          this.coverPixelMaps = newMap;
+        const loaded: boolean = await this.loadLocalCoverPixelMap(comic.id, localPath, SourceDetailCoverStatus.LOCAL_READY);
+        if (loaded) {
           return;
-        } catch (e) {
-          logger.warn(TAG, `从本地缓存加载封面失败: ${e}`);
         }
       }
       
       // 没有本地缓存，使用ImageCacheManager加载（会自动缓存）
-      const cacheMgr: ImageCacheManager = ImageCacheManager.getInstance();
-      const cookieMgr: CookieManager = CookieManager.getInstance();
-      const baseHeaders: RequestHeaders = this.buildCoverHeadersForComic(comic);
-      const headers: RequestHeaders = await cookieMgr.buildHeadersWithCookie(baseHeaders, this.sourceId);
-      const opts: LoadOptions = {
-        headers: headers,
-        sourceId: this.sourceId,
-        loadingMethod: 0,
-        partitionKey: headers.cachePartition || 'covers'
-      } as LoadOptions;
-
-      const pm: image.PixelMap | null = await cacheMgr.loadImage(url, opts);
-      if (pm) {
-        await this.updateCoverAspectRatioFromPixelMap(comic.id, pm);
-        const newMap: Map<string, image.PixelMap> = new Map(this.coverPixelMaps);
-        newMap.set(comic.id, pm);
-        this.coverPixelMaps = newMap;
-      }
-    } catch (_e) {}
+      await this.loadCoverFromNetwork(comic, 'card_appear');
+    } catch (error) {
+      logger.warn(TAG, `加载封面失败: comic=${comic.title}, error=${String(error)}`);
+      this.setCoverState(comic.id, this.createCoverState(SourceDetailCoverStatus.FAILED, '封面加载失败'));
+      this.touchComicContentRender();
+    }
   }
 
   /**
@@ -2442,7 +3110,7 @@ export struct SourceDetailPage {
         const currentTab = this.tabsConfig.find(t => t.id === this.currentTabId);
         if (!currentTab) {
           logger.warn(TAG, `未找到标签配置: ${this.currentTabId}`);
-          return [];
+          throw new Error(`未找到标签配置: ${this.currentTabId}`);
         }
 
         // 根据标签类型调用不同的方法
@@ -2546,7 +3214,7 @@ export struct SourceDetailPage {
             continue;
           } else {
             logger.error(TAG, `❌ WebView请求失败（已重试${MAX_RETRIES}次）: ${errorMsg}`);
-            return [];
+            throw new Error(errorMsg);
           }
         }
       } catch (error) {
@@ -2584,7 +3252,7 @@ export struct SourceDetailPage {
       const currentTab = this.tabsConfig.find(t => t.id === this.currentTabId);
       if (!currentTab) {
         logger.warn(TAG, `未找到标签配置: ${this.currentTabId}`);
-        return [];
+        throw new Error(`未找到标签配置: ${this.currentTabId}`);
       }
 
       switch (currentTab.type) {
@@ -2740,14 +3408,14 @@ export struct SourceDetailPage {
       this.comicDataSource.updateItems([...this.comicList]);
       this.touchComicContentRender();
       void this.refreshFavoriteBadges('switch_search_tab');
+      this.setLoadPhase(this.comicList.length > 0 ? SourceDetailLoadPhase.READY : SourceDetailLoadPhase.EMPTY, this.comicList.length > 0 ? '搜索结果已加载' : '暂无搜索结果');
       return;
     }
     
-    // 切换到其他标签时，清空列表并重新加载
-    this.comicList = [];
-    this.comicDataSource.updateItems([]);
-    this.touchComicContentRender();
-    void this.refreshFavoriteBadges('switch_tab_clear');
+    // 切换到其他标签时保留旧内容，等待新标签结果原子替换
+    if (this.comicList.length > 0) {
+      this.setLoadPhase(SourceDetailLoadPhase.SHOWING_CACHE_REFRESHING, '正在切换内容...');
+    }
     await this.loadComics();
   }
 
@@ -3151,20 +3819,30 @@ export struct SourceDetailPage {
     logger.info(TAG, `执行搜索: 类型="${this.selectedSearchType}", 查询="${rawQuery}"`);
 
     this.showSearchDialog = false;
-    this.isLoading = true;
     this.currentPage = 1;
     this.hasMore = true;
     this.lastSearchKeyword = rawQuery;
 
     this.addOrUpdateSearchTab();
     this.currentTabId = 'search';
-    this.searchResults = [];
-    this.comicList = [];
-    this.comicDataSource.updateItems([]);
-    this.touchComicContentRender();
-    void this.refreshFavoriteBadges('search_clear');
+    const workflowKey: string = this.generateWorkflowKey();
+    const request: SourceDetailContentRequest = this.beginContentRequest(workflowKey, 1, 'search', false);
 
     try {
+      const snapshot: SourceContentCacheSnapshot = this.contentCache.getSnapshot(this.sourceId, workflowKey);
+      if (snapshot.content && snapshot.content.comics.length > 0) {
+        logger.info(TAG, `从搜索缓存快照加载数据: freshness=${snapshot.freshness}, count=${snapshot.content.comics.length}`);
+        this.searchResults = snapshot.content.comics.slice();
+        this.prepareCoverStatesForComics(snapshot.content.comics);
+        await this.hydrateLocalCoversForVisibleComics(snapshot.content.comics, request.token);
+        this.applyContentList(snapshot.content.comics, 1, snapshot.content.hasMore, request.token, 'search_cache');
+        this.processCoverCacheAsync(snapshot.content.comics);
+        if (snapshot.freshness === SourceContentCacheFreshness.FRESH && !snapshot.shouldRefresh) {
+          return;
+        }
+        this.setLoadPhase(SourceDetailLoadPhase.SHOWING_CACHE_REFRESHING, '正在更新搜索结果...');
+      }
+
       if (this.useWebView) {
         await this.waitForWebViewReady();
         this.sourceDetailSearchExecutor.attachWebViewController(this.webViewController);
@@ -3177,16 +3855,68 @@ export struct SourceDetailPage {
         page: 1
       });
 
-      this.applySourceDetailSearchResult(result);
+      if (!this.isActiveContentRequest(request.token)) {
+        logger.info(TAG, `忽略过期搜索结果: token=${request.token}, active=${this.contentRequestToken}`);
+        return;
+      }
+
+      if (!result.success) {
+        const message: string = result.errorMessage || '搜索失败';
+        logger.warn(TAG, `搜索失败: ${message}`);
+        this.failContentLoad(message);
+        return;
+      }
+
+      if (result.fallbackReason && result.fallbackReason.length > 0) {
+        logger.warn(TAG, result.fallbackReason);
+      }
+
+      if ((result.resultKind === SourceDetailSearchResultKind.DETAIL ||
+        result.resultKind === SourceDetailSearchResultKind.REDIRECT) && result.directManga) {
+        logger.info(TAG, `搜索直达作品: ${result.directManga.title}`);
+        this.setLoadPhase(SourceDetailLoadPhase.READY, '搜索完成');
+        this.navigateToMangaDetail(result.directManga);
+        return;
+      }
+
+      const comics: ComicInfo[] = result.items;
+      const contentResult: SourceDetailContentResult = {
+        success: true,
+        comics: comics,
+        hasMore: result.hasMore,
+        errorMessage: '',
+        fromCache: false,
+        cacheFreshness: SourceContentCacheFreshness.MISSING,
+        duration: result.duration,
+        actionCount: result.actionCount,
+        workflowName: workflowKey
+      };
+      this.searchResults = contentResult.comics.slice();
+      if (contentResult.comics.length > 0) {
+        this.contentCache.set(
+          this.sourceId,
+          'search',
+          workflowKey,
+          contentResult.comics,
+          1,
+          contentResult.hasMore
+        );
+      }
+      this.prepareCoverStatesForComics(contentResult.comics);
+      await this.hydrateLocalCoversForVisibleComics(contentResult.comics, request.token);
+      const applied: boolean = this.applyContentList(contentResult.comics, 1, contentResult.hasMore, request.token, 'search_result');
+      if (applied) {
+        this.processCoverCacheAsync(contentResult.comics);
+      }
+      logger.info(TAG, `搜索完成，找到 ${contentResult.comics.length} 个结果, route=${result.route}, duration=${contentResult.duration}ms`);
     } catch (error) {
       const message: string = error instanceof Error ? error.message : String(error);
       logger.error(TAG, '搜索失败', message);
-      this.getUIContext().getPromptAction().showToast({
-        message: `搜索失败: ${message}`
-      });
+      if (this.isActiveContentRequest(request.token)) {
+        this.failContentLoad(message);
+      }
     } finally {
-      this.isLoading = false;
-      this.isRefreshing = false;
+      this.finishContentRequest(request.token);
     }
   }
 
@@ -3222,6 +3952,73 @@ export struct SourceDetailPage {
     void this.refreshFavoriteBadges('search_result');
     this.hasMore = result.hasMore;
     logger.info(TAG, `搜索完成，找到 ${comics.length} 个结果, route=${result.route}, duration=${result.duration}ms`);
+  }
+
+  private tryOpenDirectComicRoute(directComicId?: string, directComicTitle?: string): boolean {
+    const comicId: string = directComicId ? directComicId.trim() : '';
+    if (comicId.length <= 0 || this.directComicRouteHandled) {
+      return false;
+    }
+
+    const title: string = directComicTitle && directComicTitle.trim().length > 0
+      ? directComicTitle.trim()
+      : `作品 ${comicId}`;
+    const manga: MangaInfo = {
+      id: comicId,
+      title: title,
+      url: comicId,
+      cover: ''
+    };
+    this.directComicRouteHandled = true;
+    this.shouldLoadListAfterDirectReturn = true;
+    this.directComicRouteOpenedAt = Date.now();
+    this.hasLoadedOnce = true;
+    this.setLoadPhase(SourceDetailLoadPhase.LOADING_EMPTY, `正在打开《${title}》`);
+    logger.info(TAG, `图源详情直达作品链路: sourceId=${this.sourceId}, comicId=${comicId}, title=${title}`);
+    this.navigateToMangaDetail(manga);
+    return true;
+  }
+
+  private async ensureSourceDetailListBootstrapAfterDirectRoute(): Promise<void> {
+    if (this.sourceDetailListBootstrapCompleted) {
+      return;
+    }
+    if (this.sourceDetailListBootstrapPromise) {
+      await this.sourceDetailListBootstrapPromise;
+      return;
+    }
+
+    this.sourceDetailListBootstrapPromise = this.doSourceDetailListBootstrapAfterDirectRoute();
+    try {
+      await this.sourceDetailListBootstrapPromise;
+    } finally {
+      this.sourceDetailListBootstrapPromise = null;
+    }
+  }
+
+  private async doSourceDetailListBootstrapAfterDirectRoute(): Promise<void> {
+    if (this.useWebView) {
+      logger.info(TAG, '直达作品返回后补齐WebView图源列表上下文');
+      await this.waitForWebViewReady();
+      await this.loadBaseUrlAndCookieBootstrap();
+    }
+    await this.loadAllTabDisplayModes();
+    await this.loadTabsConfig();
+    await this.loadDynamicFilterSettings();
+    this.sourceDetailListBootstrapCompleted = true;
+  }
+
+  private async loadListAfterDirectRouteReturn(): Promise<void> {
+    try {
+      this.currentPage = 1;
+      this.setLoadPhase(SourceDetailLoadPhase.LOADING_EMPTY, '正在加载图源内容...');
+      await this.ensureSourceDetailListBootstrapAfterDirectRoute();
+      await this.loadComics();
+    } catch (error) {
+      const message: string = error instanceof Error ? error.message : String(error);
+      logger.warn(TAG, `直达作品返回后加载图源内容失败: ${message}`);
+      this.failContentLoad(message);
+    }
   }
 
   /**
@@ -3516,6 +4313,24 @@ export struct SourceDetailPage {
         },
         enabled: !this.isExportingDebugLog,
         visible: this.sourceDebugModeEnabled
+      },
+      {
+        id: 'source_diagnostic',
+        symbol: $r('sys.symbol.magnifyingglass'),
+        label: '诊断',
+        onClick: () => {
+          this.openSourceDiagnosticPage();
+        },
+        enabled: true
+      },
+      {
+        id: 'source_editor',
+        symbol: $r('sys.symbol.square_and_pencil'),
+        label: '编辑',
+        onClick: () => {
+          this.openSourceInteractiveEditorPage();
+        },
+        enabled: true
       },
       {
         id: 'settings',
@@ -3859,7 +4674,7 @@ export struct SourceDetailPage {
             // 2. 中层：空状态视图
             // 仅在首次加载完成后、非加载中且数据为空时覆盖显示
             // 初次进入页面时不显示"暂无内容"，等待自动加载
-            if (this.hasLoadedOnce && !this.isLoading && this.comicList.length === 0) {
+            if (this.shouldShowEmptyContentView()) {
               // 包裹一层背景色，防止透视到底层的 Grid（虽然此时 Grid 应该是空的）
               Column() {
                 this.buildEmptyView()
@@ -3873,7 +4688,20 @@ export struct SourceDetailPage {
             // 3. 顶层：加载视图
             // 仅在初始加载且列表为空时全屏覆盖
             // 分页加载时的 Loading 由 buildComicGrid 内部的底部条处理
-            if (this.isLoading && this.comicList.length === 0) {
+            if (this.shouldShowErrorContentView()) {
+              Column() {
+                this.buildErrorView()
+              }
+              .width('100%')
+              .height('100%')
+              .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('background_dark', this.themeState.currentTheme))
+              .transition(TransitionEffect.OPACITY.animation({ duration: 200, curve: Curve.EaseInOut }))
+            }
+
+            // 3. 顶层：加载视图
+            // 仅在初始加载且列表为空时全屏覆盖
+            // 分页加载时的 Loading 由 buildComicGrid 内部的底部条处理
+            if (this.shouldShowInitialLoadingView()) {
               Column() {
                 this.buildInitialLoadingSkeleton()
               }
@@ -4618,7 +5446,9 @@ export struct SourceDetailPage {
     try {
       await this.loadComics();
       // 加载完成后显示结果提示
-      if (this.comicList.length > 0) {
+      if (this.loadPhase === SourceDetailLoadPhase.ERROR) {
+        this.showRefreshHint('加载失败，请重试', 'error');
+      } else if (this.comicList.length > 0) {
         this.showRefreshHint(`已加载 ${this.comicList.length} 条结果`, 'success');
       } else {
         this.showRefreshHint('未找到匹配内容', 'info');
@@ -4736,9 +5566,11 @@ export struct SourceDetailPage {
     logger.info(TAG, `已清除缓存: ${workflowKey}`);
     
     this.currentPage = 1;
-    this.comicList = [];
-    this.comicDataSource.updateItems([]);
-    this.touchComicContentRender();
+    if (this.comicList.length === 0) {
+      this.setLoadPhase(SourceDetailLoadPhase.LOADING_EMPTY, '正在重新加载...');
+    } else {
+      this.setLoadPhase(SourceDetailLoadPhase.SHOWING_CACHE_REFRESHING, '正在重新加载...');
+    }
     
     // 根据当前标签类型决定调用哪个方法
     if (this.currentTabId === 'search') {
@@ -4761,6 +5593,7 @@ export struct SourceDetailPage {
     // 保存当前内容的ID集合，用于比对
     const existingIds = new Set(this.comicList.map(comic => comic.id));
     const existingCount = this.comicList.length;
+    this.setLoadPhase(existingCount > 0 ? SourceDetailLoadPhase.SHOWING_CACHE_REFRESHING : SourceDetailLoadPhase.LOADING_EMPTY, '正在刷新内容...');
     
     try {
       // 清除缓存，强制从网络获取最新数据
@@ -4777,8 +5610,17 @@ export struct SourceDetailPage {
       }
       
       if (newComics.length === 0) {
-        // 获取失败或无数据
-        this.showRefreshHint('刷新失败，请稍后重试', 'error');
+        this.hasMore = false;
+        if (existingCount === 0) {
+          this.comicList = [];
+          this.comicDataSource.updateItems([]);
+          this.touchComicContentRender();
+          this.setLoadPhase(SourceDetailLoadPhase.EMPTY, '暂无内容');
+          this.showRefreshHint('暂无内容', 'info');
+        } else {
+          this.setLoadPhase(SourceDetailLoadPhase.READY, '内容已加载');
+          this.showRefreshHint('没有获取到新内容', 'info');
+        }
         return;
       }
       
@@ -4820,6 +5662,8 @@ export struct SourceDetailPage {
           void this.refreshFavoriteBadges('refresh_new_items');
           
           // 后台异步处理封面缓存
+          this.prepareCoverStatesForComics(newItems);
+          void this.hydrateLocalCoversForVisibleComics(newItems, this.contentRequestToken);
           this.processCoverCacheAsync(newItems);
         });
         
@@ -4834,6 +5678,7 @@ export struct SourceDetailPage {
         this.comicDataSource.updateExistingItems(updatedItems);
         this.touchComicContentRender();
         void this.refreshFavoriteBadges('refresh_updated_items');
+        this.prepareCoverStatesForComics(this.comicList);
         this.showRefreshHint('内容已是最新', 'info');
       } else {
         // 完全无变化
@@ -4844,10 +5689,13 @@ export struct SourceDetailPage {
       // 重置页码和hasMore状态
       this.currentPage = 1;
       this.hasMore = newComics.length >= 20;
+      this.setLoadPhase(SourceDetailLoadPhase.READY, '内容已加载');
       
       logger.info(TAG, '下拉刷新完成');
     } catch (error) {
-      logger.error(TAG, '下拉刷新失败', String(error));
+      const message: string = error instanceof Error ? error.message : String(error);
+      logger.error(TAG, '下拉刷新失败', message);
+      this.setLoadPhase(SourceDetailLoadPhase.ERROR, '刷新失败', message);
       this.showRefreshHint('刷新失败', 'error');
     } finally {
       // 延迟关闭刷新状态，让用户看到刷新动画
@@ -5086,7 +5934,7 @@ export struct SourceDetailPage {
               this.showCfVerifyDialog = false;
               // 刷新数据
               this.currentPage = 1;
-              this.comicList = [];
+              this.setLoadPhase(this.comicList.length > 0 ? SourceDetailLoadPhase.SHOWING_CACHE_REFRESHING : SourceDetailLoadPhase.LOADING_EMPTY, '验证完成，正在刷新内容...');
               this.loadComics();
             })
         }
@@ -5985,6 +6833,21 @@ export struct SourceDetailPage {
   @Builder
   private buildInitialLoadingSkeleton() {
     Column({ space: this.displayMode === DisplayMode.LIST ? 12 : 16 }) {
+      Row({ space: 8 }) {
+        LoadingProgress()
+          .width(18)
+          .height(18)
+          .color(ThemeAwareHelper.getTestManagementThemedColor('accent_blue', this.themeState.currentTheme))
+
+        Text(this.getLoadSnapshot().message)
+          .fontSize(14)
+          .fontFamily(this.appFontFamily)
+          .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
+      }
+      .width('100%')
+      .justifyContent(FlexAlign.Center)
+      .padding({ top: 2, bottom: 6 })
+
       ForEach([0, 1, 2, 3, 4, 5], (index: number) => {
         if (this.displayMode === DisplayMode.LIST) {
           Row({ space: 12 }) {
@@ -6084,6 +6947,79 @@ export struct SourceDetailPage {
     .width('100%')
     .layoutWeight(1)
     .justifyContent(FlexAlign.Center)
+  }
+
+  @Builder
+  buildErrorView() {
+    Column({ space: 16 }) {
+      SymbolGlyph($r('sys.symbol.exclamationmark_triangle'))
+        .fontSize(48)
+        .opacity(0.55)
+        .fontColor([ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme)])
+
+      Text(this.loadMessage.length > 0 ? this.loadMessage : '加载失败')
+        .fontSize(16)
+        .fontWeight(FontWeight.Medium)
+        .fontFamily(this.appFontFamily)
+        .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
+
+      if (this.loadErrorMessage.length > 0) {
+        Text(this.loadErrorMessage)
+          .fontSize(13)
+          .fontFamily(this.appFontFamily)
+          .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
+          .maxLines(3)
+          .textOverflow({ overflow: TextOverflow.Ellipsis })
+          .width('72%')
+          .textAlign(TextAlign.Center)
+      }
+
+      Button('重试')
+        .fontSize(14)
+        .padding({ left: 24, right: 24, top: 8, bottom: 8 })
+        .fontFamily(this.appFontFamily)
+        .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('button_primary', this.themeState.currentTheme))
+        .onClick(() => {
+          this.retryLoadContent();
+        })
+    }
+    .width('100%')
+    .layoutWeight(1)
+    .justifyContent(FlexAlign.Center)
+    .alignItems(HorizontalAlign.Center)
+  }
+
+  @Builder
+  buildInlineLoadStateBanner() {
+    if (this.comicList.length > 0 &&
+      (this.loadPhase === SourceDetailLoadPhase.SHOWING_CACHE_REFRESHING ||
+        this.loadPhase === SourceDetailLoadPhase.ERROR)) {
+      Row({ space: 8 }) {
+        if (this.loadPhase === SourceDetailLoadPhase.SHOWING_CACHE_REFRESHING) {
+          LoadingProgress()
+            .width(16)
+            .height(16)
+            .color(ThemeAwareHelper.getTestManagementThemedColor('accent_blue', this.themeState.currentTheme))
+        } else {
+          SymbolGlyph($r('sys.symbol.exclamationmark_triangle'))
+            .fontSize(16)
+            .fontColor([ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme)])
+        }
+
+        Text(this.loadPhase === SourceDetailLoadPhase.ERROR && this.loadErrorMessage.length > 0 ? this.loadErrorMessage : this.loadMessage)
+          .fontSize(13)
+          .fontFamily(this.appFontFamily)
+          .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
+          .maxLines(1)
+          .textOverflow({ overflow: TextOverflow.Ellipsis })
+          .layoutWeight(1)
+      }
+      .width('100%')
+      .padding({ left: 14, right: 14, top: 9, bottom: 9 })
+      .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('comp_background_secondary', this.themeState.currentTheme))
+      .borderRadius(8)
+      .margin(this.isLandscape ? { left: 24, right: 24, top: 12 } : { left: 16, right: 16, top: 10 })
+    }
   }
 
   /**
@@ -6316,6 +7252,8 @@ export struct SourceDetailPage {
       Refresh({ refreshing: $$this.isRefreshing }) {
         Scroll(this.scroller) {
           Column() {
+          this.buildInlineLoadStateBanner()
+
           // 筛选历史记录（可折叠）
           this.buildFilterHistoryList()
           

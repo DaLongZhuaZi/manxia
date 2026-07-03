@@ -345,15 +345,15 @@ export struct MangaViewer {
   @Prop zoomScale: number;
   @Prop toolbarsVisible: boolean;
   @Prop callbacks: MangaViewerCallbacks;
-  @Prop networkHeaders?: RequestHeaders;
+  @Prop networkHeaders: RequestHeaders = {};
   @Prop @Watch('onNetworkHeadersChange') networkHeadersTick: number = 0;
   @Prop @Watch('onChapterChange') chapterTick: number = 0; // [新增] 章节切换计数器
-  @Prop sourceId?: number;
-  @Prop mangaId?: string;
+  @Prop sourceId: number = 0;
+  @Prop mangaId: string = '';
   @Prop readFlowSessionId: string = '';
-  @Prop onlineDownloadedWarmupState?: string;
-  @Prop onlineDownloadedArchivePath?: string;
-  @Prop onlineDownloadedExtractDir?: string;
+  @Prop onlineDownloadedWarmupState: string = '';
+  @Prop onlineDownloadedArchivePath: string = '';
+  @Prop onlineDownloadedExtractDir: string = '';
   @Prop onlineDownloadedReusedExtract: boolean = false;
   @Prop onlineDownloadedArchivePageCount: number = 0;
   @Prop onlineDownloadedNetworkPageCount: number = 0;
@@ -363,8 +363,8 @@ export struct MangaViewer {
   private holdingAwarenessManager: HoldingAwarenessManager = getHoldingAwarenessManager();
 
   // [新增] 条漫模式多章节支持
-  @Prop @Watch('onAdjacentChapterChange') prevChapter?: MangaChapter; // 前一章节
-  @Prop @Watch('onAdjacentChapterChange') nextChapter?: MangaChapter; // 后一章节
+  @Prop @Watch('onAdjacentChapterChange') prevChapter: MangaChapter | null = null; // 前一章节
+  @Prop @Watch('onAdjacentChapterChange') nextChapter: MangaChapter | null = null; // 后一章节
   @Prop isFirstChapter: boolean = false; // 是否是第一章（没有上一章）
   @Prop isLastChapter: boolean = false;  // 是否是最后一章（没有下一章）
   // 注意：回调函数不能使用@Prop装饰器，直接作为普通属性传递
@@ -565,8 +565,8 @@ export struct MangaViewer {
   private softTransitionTargetTranslateY: number = 0;
 
   // 图源预加载设置（从外部传入）
-  @Prop preloadCurrentPages?: number; // 当前章节预加载页数，默认10
-  @Prop preloadNextPages?: number;    // 下一章节预加载页数，默认-1（全部）
+  @Prop preloadCurrentPages: number = 10; // 当前章节预加载页数，默认10
+  @Prop preloadNextPages: number = -1;    // 下一章节预加载页数，默认-1（全部）
 
   // 条漫手势优化
   @State private webtoonZoomScale: number = 1.0;
@@ -675,7 +675,7 @@ export struct MangaViewer {
   private preloadRange: number = 2; // 预加载前后2页
 
   // 内容类型（用于判断预加载策略）
-  @Prop contentType?: string;
+  @Prop contentType: string = '';
 
   // LazyForEach 数据源（ArkUI 要求 IDataSource 实例）
   private pageDataSource: MangaPageDataSource = new MangaPageDataSource([]);
@@ -12050,7 +12050,7 @@ export struct MangaViewer {
     return input;
   }
 
-  private isAdjacentChapterInWebtoonData(chapter: MangaChapter | undefined): boolean {
+  private isAdjacentChapterInWebtoonData(chapter: MangaChapter | null): boolean {
     if (!chapter) {
       return false;
     }
@@ -12514,7 +12514,7 @@ export struct MangaViewer {
     this.prewarmPageListEdges(boundary.chapterId, pages);
   }
 
-  private prewarmChapterObjectEdges(chapter: MangaChapter | undefined): void {
+  private prewarmChapterObjectEdges(chapter: MangaChapter | null): void {
     if (!chapter || !chapter.pages || chapter.pages.length === 0) {
       return;
     }

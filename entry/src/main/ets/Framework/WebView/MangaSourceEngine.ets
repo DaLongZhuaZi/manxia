@@ -34,6 +34,8 @@ import {
   APIPaginationConfig
 } from './MangaSourceTypes';
 import { TaskExecutor, TaskExecutorConfig } from './TaskExecutor';
+import { sourceDiagnosticManager } from '../SourceEditor/SourceDiagnosticManager';
+import { SourceDiagnosticEvent, SourceExecutionTrace } from '../SourceEditor/SourceDiagnosticTypes';
 
 const TAG = 'MangaSourceEngine';
 
@@ -53,6 +55,14 @@ export interface EngineResult<T = Object> {
   duration: number;
   /** 执行的操作数量 */
   actionCount: number;
+  /** 诊断Trace ID */
+  traceId?: string;
+  /** 工作流名称 */
+  workflowName?: string;
+  /** 当前页面URL */
+  currentUrl?: string;
+  /** 诊断事件 */
+  diagnosticEvents?: SourceDiagnosticEvent[];
 }
 
 /**
@@ -2145,6 +2155,17 @@ export class MangaSourceEngine {
 
     const startTime = Date.now();
     logger.info(TAG, `开始执行自定义工作流: ${workflowName}, 页码=${page}`);
+    const sourceId: number = this.engineConfig.sourceId !== undefined ? this.engineConfig.sourceId as number : 0;
+    const sourcePkg: string = this.config.metadata.id || '';
+    const sourceName: string = this.config.metadata.name || '';
+    const trace: SourceExecutionTrace = sourceDiagnosticManager.startTrace(
+      sourceId,
+      sourcePkg,
+      sourceName,
+      workflowName,
+      this.buildWorkflowParamsPreview(page, params)
+    );
+    const traceId: string = trace.traceId;
 
     try {
       // 获取工作流
@@ -2160,6 +2181,11 @@ export class MangaSourceEngine {
       // 执行操作序列
       const context = this.createActionContext();
       await this.populateSourceSettings(context);
+      context.traceId = traceId;
+      context.workflowName = workflowName;
+      context.sourceId = sourceId;
+      context.sourcePkg = sourcePkg;
+      context.sourceName = sourceName;
       context.variables['page'] = page.toString();
       const pageSize: number = Number(context.variables['pageSize'] || '30');
       context.variables['offset'] = ((page - 1) * pageSize).toString();
@@ -2181,6 +2207,7 @@ export class MangaSourceEngine {
       for (let i = 0; i < actions.length; i++) {
         const action = actions[i];
         logger.debug(TAG, `执行操作 ${i + 1}/${actions.length}: ${action.type}`);
+        context.actionIndex = i;
         
         const result = await this.actionEngine.executeAction(action, context);
         
@@ -2205,6 +2232,7 @@ export class MangaSourceEngine {
 
       const duration = Date.now() - startTime;
       logger.info(TAG, `自定义工作流 ${workflowName} 完成，找到 ${results.length} 个结果，耗时 ${duration}ms`);
+      sourceDiagnosticManager.finishTrace(traceId, true);
 
       return {
         success: true,
@@ -2215,7 +2243,11 @@ export class MangaSourceEngine {
           hasNext: results.length >= pageSize
         },
         duration,
-        actionCount: actions.length
+        actionCount: actions.length,
+        traceId: traceId,
+        workflowName: workflowName,
+        currentUrl: context.currentUrl || '',
+        diagnosticEvents: this.getTraceEvents(traceId)
       };
 
     } catch (error) {
@@ -2225,14 +2257,46 @@ export class MangaSourceEngine {
       
       logger.error(TAG, `自定义工作流 ${workflowName} 失败: ${errorMessage}`);
       logger.debug(TAG, `错误堆栈: ${errorStack}`);
+      sourceDiagnosticManager.finishTrace(traceId, false, errorMessage);
       
       return {
         success: false,
         error: errorMessage,
         duration,
-        actionCount: 0
+        actionCount: this.getTraceActionCount(traceId),
+        traceId: traceId,
+        workflowName: workflowName,
+        diagnosticEvents: this.getTraceEvents(traceId)
       };
     }
+  }
+
+  private buildWorkflowParamsPreview(page: number, params?: FilterParams): string {
+    let preview: string = `page=${page}`;
+    if (params) {
+      try {
+        preview += `, params=${JSON.stringify(params)}`;
+      } catch (_error) {
+        preview += ', params=[unserializable]';
+      }
+    }
+    return preview;
+  }
+
+  private getTraceEvents(traceId: string): SourceDiagnosticEvent[] | undefined {
+    const trace = sourceDiagnosticManager.getTraceById(traceId);
+    if (!trace) {
+      return undefined;
+    }
+    return trace.events.slice();
+  }
+
+  private getTraceActionCount(traceId: string): number {
+    const trace = sourceDiagnosticManager.getTraceById(traceId);
+    if (!trace || trace.workflows.length <= 0) {
+      return 0;
+    }
+    return trace.workflows[0].actions.length;
   }
 
   /**
@@ -3311,15 +3375,30 @@ export class MangaSourceEngine {
       }
     }
 
+    let contextSourceId: number = 0;
+    if (this.engineConfig.sourceId !== undefined) {
+      contextSourceId = this.engineConfig.sourceId as number;
+    }
+    const contextSourcePkg: string = this.config?.metadata?.id || '';
+    const contextSourceName: string = this.config?.metadata?.name || '';
+
     // 注入源级设置与登录信息（如果提供了sourceId）
     if (this.engineConfig.sourceId !== undefined) {
-      const sid: number = this.engineConfig.sourceId as number;
-      variables['sourceId'] = String(sid);
+      variables['sourceId'] = String(contextSourceId);
+    }
+    if (contextSourcePkg.length > 0) {
+      variables['sourcePkg'] = contextSourcePkg;
+    }
+    if (contextSourceName.length > 0) {
+      variables['sourceName'] = contextSourceName;
     }
     
     return {
       webViewController: this.engineConfig.webViewController,
-      variables: variables
+      variables: variables,
+      sourceId: contextSourceId,
+      sourcePkg: contextSourcePkg,
+      sourceName: contextSourceName
     };
   }
 

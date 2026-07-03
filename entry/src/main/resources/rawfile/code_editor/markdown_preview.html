@@ -407,6 +407,81 @@
       return clamp((getScrollTop() / maxScrollTop) * 100, 0, 100);
     }
 
+    function decodeAnchorValue(value) {
+      const rawValue = String(value || '');
+      const withoutHash = rawValue.charAt(0) === '#' ? rawValue.substring(1) : rawValue;
+      try {
+        return decodeURIComponent(withoutHash);
+      } catch (e) {
+        return withoutHash;
+      }
+    }
+
+    function normalizeHeadingIdText(text) {
+      return String(text || '')
+        .trim()
+        .toLowerCase()
+        .replace(/\s+/g, '-')
+        .replace(/[^\w\u00C0-\uFFFF-]+/g, '-')
+        .replace(/_+/g, '-')
+        .replace(/-+/g, '-')
+        .replace(/^-|-$/g, '');
+    }
+
+    function buildUniqueHeadingId(text, index, usedIds) {
+      const normalizedText = normalizeHeadingIdText(text);
+      const baseId = normalizedText.length > 0 ? normalizedText : ('heading-' + index);
+      let candidateId = baseId;
+      let counter = 2;
+      while (usedIds[candidateId]) {
+        candidateId = baseId + '-' + counter;
+        counter += 1;
+      }
+      usedIds[candidateId] = true;
+      return candidateId;
+    }
+
+    function ensureHeadingIds() {
+      const usedIds = Object.create(null);
+      const headings = document.querySelectorAll('h1, h2, h3, h4, h5, h6');
+      headings.forEach(function(heading, index) {
+        const existingId = String(heading.id || '').trim();
+        if (existingId.length > 0 && !usedIds[existingId]) {
+          usedIds[existingId] = true;
+          return;
+        }
+        heading.id = buildUniqueHeadingId(heading.textContent || '', index, usedIds);
+      });
+    }
+
+    function findHeadingElementByAnchor(anchor) {
+      ensureHeadingIds();
+      const decodedAnchor = decodeAnchorValue(anchor).trim();
+      if (decodedAnchor.length <= 0) {
+        return null;
+      }
+      const exactElement = document.getElementById(decodedAnchor);
+      if (exactElement) {
+        return exactElement;
+      }
+      const normalizedAnchor = normalizeHeadingIdText(decodedAnchor);
+      if (normalizedAnchor.length > 0) {
+        const normalizedElement = document.getElementById(normalizedAnchor);
+        if (normalizedElement) {
+          return normalizedElement;
+        }
+      }
+      const headings = document.querySelectorAll('h1, h2, h3, h4, h5, h6');
+      for (let i = 0; i < headings.length; i += 1) {
+        const heading = headings[i];
+        const headingText = String(heading.textContent || '').trim();
+        if (headingText === decodedAnchor || normalizeHeadingIdText(headingText) === normalizedAnchor) {
+          return heading;
+        }
+      }
+      return null;
+    }
+
     function buildReaderSnapshot() {
       const maxScrollTop = getMaxScrollTop();
       const scrollTop = clamp(getScrollTop(), 0, maxScrollTop);
@@ -501,7 +576,8 @@
     function scrollToReaderProgress(progress) {
       const safeProgress = clamp(toFiniteNumber(progress, 0), 0, 100);
       const targetTop = getMaxScrollTop() * safeProgress / 100;
-      window.scrollTo({ top: targetTop, behavior: activeReaderStyle.pageTurnAnimation === 'NONE' ? 'auto' : 'smooth' });
+      const behavior = safeProgress <= 0 ? 'auto' : (activeReaderStyle.pageTurnAnimation === 'NONE' ? 'auto' : 'smooth');
+      window.scrollTo({ top: targetTop, behavior: behavior });
       setTimeout(function() {
         notifyProgressChange(true);
       }, 180);
@@ -560,10 +636,11 @@
         // 使用DOMPurify清理HTML，防止XSS攻击
         const cleanHtml = DOMPurify.sanitize(html, {
           ADD_TAGS: ['iframe', 'math', 'semantics', 'mrow', 'mi', 'mo', 'mn', 'msup', 'mfrac', 'annotation'],
-          ADD_ATTR: ['target', 'rel', 'loading'],
+          ADD_ATTR: ['id', 'target', 'rel', 'loading'],
           USE_PROFILES: { html: true, svg: true, mathMl: true }
         });
         content.innerHTML = cleanHtml;
+        ensureHeadingIds();
         
         // 高亮代码块（检查hljs是否可用）
         if (typeof hljs !== 'undefined') {
@@ -626,23 +703,28 @@
     
     // 滚动到指定标题
     function scrollToHeading(id) {
-      const element = document.getElementById(id);
+      const element = findHeadingElementByAnchor(id);
       if (element) {
-        element.scrollIntoView({ behavior: 'smooth' });
+        const targetTop = Math.max(0, element.getBoundingClientRect().top + getScrollTop() - 8);
+        window.scrollTo({
+          top: targetTop,
+          behavior: 'auto'
+        });
+        setTimeout(function() {
+          notifyProgressChange(true);
+        }, 220);
       }
     }
     
     // 获取目录
     function getTableOfContents() {
+      ensureHeadingIds();
       const headings = document.querySelectorAll('h1, h2, h3, h4, h5, h6');
       const toc = [];
       headings.forEach((heading, index) => {
         const level = parseInt(heading.tagName.charAt(1));
-        const text = heading.textContent;
+        const text = heading.textContent || '';
         const id = heading.id || `heading-${index}`;
-        if (!heading.id) {
-          heading.id = id;
-        }
         toc.push({ level, text, id });
       });
       return JSON.stringify(toc);
@@ -724,9 +806,10 @@
         popup.remove();
       }
 
-      if (e.target.tagName === 'A' && !e.target.closest('#footnote-popup')) {
-        const href = e.target.getAttribute('href');
-        if (href && !href.startsWith('#')) {
+      const linkElement = e.target.closest('a');
+      if (linkElement && !e.target.closest('#footnote-popup')) {
+        const href = linkElement.getAttribute('href');
+        if (href) {
           e.preventDefault();
           try {
             if (window.arkts && window.arkts.onLinkClick) {

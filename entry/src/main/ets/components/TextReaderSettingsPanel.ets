@@ -1249,12 +1249,12 @@ export struct TextReaderSettingsPanel {
     Row() {
       Column() {
         Text('锁定方向')
-          .fontSize(14)
+          .fontSize(16)
           .fontColor($r('app.color.text_primary'))
         Text((this.settings.lockDeviceOrientation ?? false)
           ? '保持当前屏幕方向，阅读时旋转设备不会改变方向'
           : '关闭后会跟随系统旋转策略，适合临时横屏阅读')
-          .fontSize(11)
+          .fontSize(12)
           .fontColor($r('app.color.text_secondary'))
           .margin({ top: 2 })
       }
@@ -1262,13 +1262,14 @@ export struct TextReaderSettingsPanel {
       .layoutWeight(1)
 
       Toggle({ type: ToggleType.Switch, isOn: this.settings.lockDeviceOrientation ?? false })
+        .selectedColor($r('app.color.accent'))
         .onChange((value: boolean) => {
           this.settings.lockDeviceOrientation = value;
           this.updateAndNotify();
         })
     }
     .width('100%')
-    .padding({ top: 4, bottom: 4 })
+    .padding({ top: 12, bottom: 12 })
   }
 
   @Builder
