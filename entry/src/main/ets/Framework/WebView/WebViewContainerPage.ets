@@ -121,7 +121,7 @@ export struct WebViewContainer {
         InvisibleWebView({
           controller: item.controller,
           config: item.config,
-          callbacks: item.callbacks,
+          callbacks: item.callbacks ? item.callbacks : null,
           initialUrl: item.initialUrl
         })
       }, (item: WebViewContainerItem) => item.sourceId)

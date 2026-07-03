@@ -977,9 +977,10 @@ export class EBookDataManager {
         SettingKeys.GLOBAL_EBOOK_KEEP_SCREEN_ON,
         baseSettings.keepScreenOn ?? false
       ),
-      lockDeviceOrientation: baseSettings.lockDeviceOrientation ??
-        DEFAULT_EBOOK_READING_SETTINGS.lockDeviceOrientation ??
-        false,
+      lockDeviceOrientation: settingsManager.getBoolean(
+        SettingKeys.GLOBAL_EBOOK_LOCK_DEVICE_ORIENTATION,
+        baseSettings.lockDeviceOrientation ?? DEFAULT_EBOOK_READING_SETTINGS.lockDeviceOrientation ?? false
+      ),
       showPageNumber: settingsManager.getBoolean(
         SettingKeys.GLOBAL_EBOOK_SHOW_PAGE_NUMBER,
         DEFAULT_EBOOK_READING_SETTINGS.showPageNumber ?? true
@@ -1570,6 +1571,7 @@ export class EBookDataManager {
     const currentTapToTurn = settings.tapToTurn ?? true;
     const currentVolumeKeyNavigation = settings.volumeKeyNavigation ?? true;
     const currentKeepScreenOn = settings.keepScreenOn ?? false;
+    const currentLockDeviceOrientation = settings.lockDeviceOrientation ?? false;
     const currentShowPageNumber = settings.showPageNumber ?? true;
     const currentShowProgress = settings.showProgress ?? false;
     const currentShowTime = settings.showTime ?? true;
@@ -1608,6 +1610,7 @@ export class EBookDataManager {
       currentTapToTurn &&
       currentVolumeKeyNavigation &&
       !currentKeepScreenOn &&
+      !currentLockDeviceOrientation &&
       currentShowPageNumber &&
       !currentShowProgress &&
       currentShowTime &&

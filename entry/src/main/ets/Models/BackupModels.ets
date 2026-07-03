@@ -382,10 +382,56 @@ export interface EBookBackupItem {
   readProgress: number;
   lastReadTime: number;
   lastUpdateTime: number;
+  currentChapterIndex?: number;
+  currentChapterId?: string;
+  domPos?: string;
   isFavorite: boolean;
   isPrivate: boolean;
   isNSFW: boolean;
   totalWordCount: number;
+  readingSettings?: EBookReadingSettingsBackup;
+}
+
+/**
+ * 电子书阅读设置备份项
+ */
+export interface EBookReadingSettingsBackup {
+  bookId?: string;
+  userId?: string;
+  fontSize?: number;
+  fontFamily?: string;
+  fontPath?: string;
+  fontWeight?: number;
+  lineHeight?: number;
+  backgroundColor?: string;
+  textColor?: string;
+  themeBgImage?: string;
+  nightMode?: number;
+  followSystemTheme?: number;
+  pageMargin?: number;
+  pageTopMargin?: number;
+  pageBottomMargin?: number;
+  pageMode?: string;
+  brightness?: number;
+  autoSave?: number;
+  saveInterval?: number;
+  letterSpacing?: number;
+  paragraphSpacing?: number;
+  firstLineIndent?: number;
+  textAlignment?: string;
+  pageTurnAnimation?: string;
+  tapToTurn?: number;
+  volumeKeyNavigation?: number;
+  keepScreenOn?: number;
+  lockDeviceOrientation?: number;
+  showPageNumber?: number;
+  showProgress?: number;
+  showTime?: number;
+  showBattery?: number;
+  backgroundType?: string;
+  backgroundImagePath?: string;
+  backgroundImageOpacity?: number;
+  imageReaderSettingsJson?: string;
 }
 
 /**
@@ -567,9 +613,22 @@ export interface HistoryBackupSection {
 /**
  * 阅读器设置备份
  */
+export interface GenericReaderSettingsBackup {
+}
+
+export interface GlobalEBookReaderSettingsBackup {
+  global_ebook_lock_device_orientation: boolean;
+}
+
+export interface GlobalTextReaderSettingsBackup {
+  global_text_lock_device_orientation: boolean;
+}
+
 export interface ReaderSettingsBackup {
-  manga: Record<string, string | number | boolean>;
-  novel: Record<string, string | number | boolean>;
+  manga: GenericReaderSettingsBackup;
+  novel: GenericReaderSettingsBackup;
+  ebook?: GlobalEBookReaderSettingsBackup;
+  text?: GlobalTextReaderSettingsBackup;
 }
 
 /**

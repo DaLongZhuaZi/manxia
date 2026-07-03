@@ -83,6 +83,8 @@ export class PageWindowRegistry {
     'RssSubscriptionPage',
     'SearchPage',
     'SourceDetailPage',
+    'SourceDiagnosticPage',
+    'SourceInteractiveEditorPage',
     'SourceLoginPage',
     'SourceManagementPage',
     'SourceSettingsPage',

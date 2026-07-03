@@ -10,9 +10,9 @@ export enum MangaWebtoonDataPlanKind {
 }
 
 export class MangaWebtoonDataPlannerInput {
-  public currentChapter: MangaChapter | undefined = undefined;
-  public prevChapter: MangaChapter | undefined = undefined;
-  public nextChapter: MangaChapter | undefined = undefined;
+  public currentChapter: MangaChapter | null = null;
+  public prevChapter: MangaChapter | null = null;
+  public nextChapter: MangaChapter | null = null;
   public existingItems: WebtoonDataItem[] = [];
   public existingBoundaries: ChapterBoundary[] = [];
   public existingDataCount: number = 0;

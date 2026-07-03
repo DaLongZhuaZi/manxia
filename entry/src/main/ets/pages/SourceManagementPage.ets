@@ -24,6 +24,10 @@ import { GlobalBackgroundLayerMode } from '../Framework/Components/GlobalBackgro
 import { SharedPageBackgroundLayer } from '../Framework/Components/SharedPageBackgroundLayer';
 import { SettingsPanelSurfaceHelper } from './settings/SettingsPanelSurfaceHelper';
 import { sourceDebugLogManager } from '../Framework/Debug/SourceDebugLogManager';
+import {
+  SourceDiagnosticPageParams,
+  SourceInteractiveEditorPageParams
+} from '../Framework/SourceEditor/SourceEditorTypes';
 
 const TAG = 'SourceManagementPage';
 
@@ -414,6 +418,26 @@ export struct SourceManagementPage {
       logger.error(TAG, `切换图源调试模式失败: ${source.name}`, String(error));
       this.showToast('调试模式切换失败');
     }
+  }
+
+  private openSourceDiagnostic(source: SourceInfo): void {
+    const params: SourceDiagnosticPageParams = {
+      sourceId: source.id,
+      sourceName: source.name,
+      traceId: ''
+    };
+    this.pathStack.pushPathByName('SourceDiagnosticPage', params);
+  }
+
+  private openSourceEditor(source: SourceInfo): void {
+    const params: SourceInteractiveEditorPageParams = {
+      sourceId: source.id,
+      sourceName: source.name,
+      sourcePkg: source.pkg,
+      initialUrl: source.baseUrl,
+      createNew: false
+    };
+    this.pathStack.pushPathByName('SourceInteractiveEditorPage', params);
   }
 
   private sortSourcesByPinned(sources: SourceInfo[]): SourceInfo[] {
@@ -1172,6 +1196,40 @@ export struct SourceManagementPage {
         })
         .onClick(() => {
           void this.toggleSourceDebugMode(source);
+        })
+
+        Button() {
+          SymbolGlyph($r('sys.symbol.magnifyingglass'))
+            .fontSize(16)
+            .fontColor([ThemeAwareHelper.getTestManagementThemedColor('accent_green', this.themeState.currentTheme)])
+        }
+        .layoutWeight(1)
+        .height(34)
+        .borderRadius(8)
+        .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('button_background', this.themeState.currentTheme))
+        .border({
+          width: 1,
+          color: ThemeAwareHelper.getTestManagementThemedColor('divider', this.themeState.currentTheme)
+        })
+        .onClick(() => {
+          this.openSourceDiagnostic(source);
+        })
+
+        Button() {
+          SymbolGlyph($r('sys.symbol.square_and_pencil'))
+            .fontSize(16)
+            .fontColor([ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme)])
+        }
+        .layoutWeight(1)
+        .height(34)
+        .borderRadius(8)
+        .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('button_background', this.themeState.currentTheme))
+        .border({
+          width: 1,
+          color: ThemeAwareHelper.getTestManagementThemedColor('divider', this.themeState.currentTheme)
+        })
+        .onClick(() => {
+          this.openSourceEditor(source);
         })
 
         Button() {

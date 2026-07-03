@@ -4,6 +4,7 @@
     "pages/WelcomeGuidePage",
     "pages/MainMenuPage",
     "pages/TransferFloatingWindowPage",
+    "pages/SourceEditorFloatingInspectorPage",
     "pages/EBookReaderRoutePage",
     "pages/MangaReaderAbilityPage",
     "pages/EBookReaderAbilityPage",

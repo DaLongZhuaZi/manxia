@@ -70,6 +70,12 @@ struct DeveloperAppsPage {
       appGalleryUrl: 'https://appgallery.huawei.com/app/detail?id=com.dlzz.ebookparser&channelId=SHARE&source=appshare'
     },
     {
+      name: 'NGF Coder',
+      icon: $r('app.media.ngfcoder_icon'),
+      description: '移动端AI编程协作工具',
+      appGalleryUrl: 'https://appgallery.huawei.com/app/detail?id=com.dlzz.coder&channelId=SHARE&source=appshare'
+    },
+    {
       name: '神秘APP',
       description: '敬请期待'
     }

@@ -10,7 +10,7 @@ import { DatabaseManager } from '../Database/DatabaseManager';
 import { getNovelDataManager, NovelDataManager } from '../Novel/NovelDataManager';
 import { getNovelSourceManager, NovelSourceManager } from '../Novel/NovelSourceManager';
 import { getNovelSettingsManager, NovelSettingsManager } from '../Novel/NovelSettingsManager';
-import { SettingsManager } from './SettingsManager';
+import { SettingsManager, SettingKeys } from './SettingsManager';
 import { AppInfoManager } from './AppInfoManager';
 import {
   BackupData,
@@ -18,12 +18,16 @@ import {
   MangaBackupItem,
   NovelBackupItem,
   EBookBackupItem,
+  EBookReadingSettingsBackup,
   MangaSourceBackup,
   NovelSourceBackup,
   MangaChapterBackup,
   MangaReadProgressBackup,
   NovelReadProgressBackup,
   ReaderSettingsBackup,
+  GenericReaderSettingsBackup,
+  GlobalEBookReaderSettingsBackup,
+  GlobalTextReaderSettingsBackup,
   GeneralSettingsBackup,
   PrivacySettingsBackup,
   BackupItemCounts,
@@ -31,6 +35,7 @@ import {
   SearchHistoryBackup,
   SettingsBackupSection,
   HistoryBackupSection,
+  SettingItemBackup,
   DEFAULT_BACKUP_OPTIONS,
   UnifiedAnnotationBackupItem
 } from '../../Models/BackupModels';
@@ -159,7 +164,8 @@ export class BackupManager {
         settings: {
           reader: await this.exportReaderSettings(),
           general: await this.exportGeneralSettings(),
-          privacy: await this.exportPrivacySettings()
+          privacy: await this.exportPrivacySettings(),
+          allSettings: await this.exportAllSettings()
         },
         
         history: {
@@ -378,8 +384,17 @@ export class BackupManager {
       
       for (const record of results) {
         const ebook = record as Record<string, DatabaseRecord>;
+        const bookId = String(ebook['id']);
+        const settingsSql = 'SELECT * FROM ebook_reading_settings WHERE bookId = ? LIMIT 1';
+        const settingsResults = await this.dbManager.querySql(settingsSql, [bookId]);
+        let readingSettings: EBookReadingSettingsBackup | undefined = undefined;
+        if (settingsResults.length > 0) {
+          const settingsRecord = settingsResults[0] as Record<string, string | number | boolean | null>;
+          readingSettings = this.createEBookReadingSettingsBackup(settingsRecord);
+        }
+
         backupItems.push({
-          id: String(ebook['id']),
+          id: bookId,
           format: String(ebook['format']),
           title: String(ebook['title']),
           author: String(ebook['author'] || ''),
@@ -399,7 +414,8 @@ export class BackupManager {
           isFavorite: Boolean(ebook['isFavorite']),
           isPrivate: Boolean(ebook['isPrivate']),
           isNSFW: Boolean(ebook['isNSFW']),
-          totalWordCount: Number(ebook['totalWordCount'] || 0)
+          totalWordCount: Number(ebook['totalWordCount'] || 0),
+          readingSettings: readingSettings
         });
       }
       
@@ -409,6 +425,73 @@ export class BackupManager {
       logger.error(TAG, `Failed to export ebook library: ${error}`);
       return [];
     }
+  }
+
+  private createEBookReadingSettingsBackup(
+    settings: Record<string, string | number | boolean | null>
+  ): EBookReadingSettingsBackup {
+    return {
+      bookId: this.getRecordString(settings, 'bookId', ''),
+      userId: this.getRecordString(settings, 'userId', 'default_user'),
+      fontSize: this.getRecordNumber(settings, 'fontSize', 18),
+      fontFamily: this.getRecordString(settings, 'fontFamily', 'HarmonyOS Sans'),
+      fontPath: this.getRecordString(settings, 'fontPath', ''),
+      fontWeight: this.getRecordNumber(settings, 'fontWeight', 400),
+      lineHeight: this.getRecordNumber(settings, 'lineHeight', 1.5),
+      backgroundColor: this.getRecordString(settings, 'backgroundColor', '#FFFFFF'),
+      textColor: this.getRecordString(settings, 'textColor', '#000000'),
+      themeBgImage: this.getRecordString(settings, 'themeBgImage', ''),
+      nightMode: this.getRecordNumber(settings, 'nightMode', 0),
+      followSystemTheme: this.getRecordNumber(settings, 'followSystemTheme', 1),
+      pageMargin: this.getRecordNumber(settings, 'pageMargin', 16),
+      pageTopMargin: this.getRecordNumber(settings, 'pageTopMargin', 24),
+      pageBottomMargin: this.getRecordNumber(settings, 'pageBottomMargin', 24),
+      pageMode: this.getRecordString(settings, 'pageMode', '0'),
+      brightness: this.getRecordNumber(settings, 'brightness', 100),
+      autoSave: this.getRecordNumber(settings, 'autoSave', 1),
+      saveInterval: this.getRecordNumber(settings, 'saveInterval', 30),
+      letterSpacing: this.getRecordNumber(settings, 'letterSpacing', 0),
+      paragraphSpacing: this.getRecordNumber(settings, 'paragraphSpacing', 8),
+      firstLineIndent: this.getRecordNumber(settings, 'firstLineIndent', 2),
+      textAlignment: this.getRecordString(settings, 'textAlignment', 'JUSTIFY'),
+      pageTurnAnimation: this.getRecordString(settings, 'pageTurnAnimation', 'SLIDE'),
+      tapToTurn: this.getRecordNumber(settings, 'tapToTurn', 1),
+      volumeKeyNavigation: this.getRecordNumber(settings, 'volumeKeyNavigation', 1),
+      keepScreenOn: this.getRecordNumber(settings, 'keepScreenOn', 0),
+      lockDeviceOrientation: this.getRecordNumber(settings, 'lockDeviceOrientation', 0),
+      showPageNumber: this.getRecordNumber(settings, 'showPageNumber', 1),
+      showProgress: this.getRecordNumber(settings, 'showProgress', 0),
+      showTime: this.getRecordNumber(settings, 'showTime', 1),
+      showBattery: this.getRecordNumber(settings, 'showBattery', 0),
+      backgroundType: this.getRecordString(settings, 'backgroundType', 'COLOR'),
+      backgroundImagePath: this.getRecordString(settings, 'backgroundImagePath', ''),
+      backgroundImageOpacity: this.getRecordNumber(settings, 'backgroundImageOpacity', 0.3),
+      imageReaderSettingsJson: this.getRecordString(settings, 'imageReaderSettingsJson', '')
+    };
+  }
+
+  private getRecordString(
+    record: Record<string, string | number | boolean | null>,
+    key: string,
+    fallback: string
+  ): string {
+    const value = record[key];
+    if (value === null || value === undefined) {
+      return fallback;
+    }
+    return String(value);
+  }
+
+  private getRecordNumber(
+    record: Record<string, string | number | boolean | null>,
+    key: string,
+    fallback: number
+  ): number {
+    const value = record[key];
+    if (value === null || value === undefined || value === '') {
+      return fallback;
+    }
+    return Number(value);
   }
 
   private async exportMangaSources(): Promise<MangaSourceBackup[]> {
@@ -538,17 +621,51 @@ export class BackupManager {
 
   private async exportReaderSettings(): Promise<ReaderSettingsBackup> {
     try {
-      const emptySettings: Record<string, string | number | boolean> = {};
-      const mangaSettings: Record<string, string | number | boolean> = this.settingsManager.getJSON('manga_reader_settings', emptySettings) as Record<string, string | number | boolean>;
-      const novelSettings: Record<string, string | number | boolean> = this.settingsManager.getJSON('novel_reader_settings', emptySettings) as Record<string, string | number | boolean>;
+      const emptySettings: GenericReaderSettingsBackup = {};
+      const mangaSettings = this.settingsManager.getJSON<GenericReaderSettingsBackup>('manga_reader_settings', emptySettings);
+      const novelSettings = this.settingsManager.getJSON<GenericReaderSettingsBackup>('novel_reader_settings', emptySettings);
+      const ebookSettings: GlobalEBookReaderSettingsBackup = {
+        global_ebook_lock_device_orientation: this.settingsManager.getBoolean(
+          SettingKeys.GLOBAL_EBOOK_LOCK_DEVICE_ORIENTATION,
+          false
+        )
+      };
+      const textSettings: GlobalTextReaderSettingsBackup = {
+        global_text_lock_device_orientation: this.settingsManager.getBoolean(
+          SettingKeys.GLOBAL_TEXT_LOCK_DEVICE_ORIENTATION,
+          false
+        )
+      };
       return {
         manga: mangaSettings,
-        novel: novelSettings
+        novel: novelSettings,
+        ebook: ebookSettings,
+        text: textSettings
       };
     } catch (error) {
       logger.error(TAG, `Failed to export reader settings: ${error}`);
-      const emptyRecord: Record<string, string | number | boolean> = {};
+      const emptyRecord: GenericReaderSettingsBackup = {};
       return { manga: emptyRecord, novel: emptyRecord };
+    }
+  }
+
+  private async exportAllSettings(): Promise<SettingItemBackup[]> {
+    try {
+      const dataManager = (await import('../Data/DataManager')).DataManager.getInstance();
+      const allSettings = await dataManager.getAllSettings();
+      const result: SettingItemBackup[] = [];
+      for (const setting of allSettings) {
+        result.push({
+          settingKey: setting.settingKey,
+          settingValue: setting.settingValue,
+          settingType: setting.settingType
+        });
+      }
+      logger.info(TAG, `Exported all settings: ${result.length} items`);
+      return result;
+    } catch (error) {
+      logger.error(TAG, `Failed to export all settings: ${error}`);
+      return [];
     }
   }
 
@@ -791,6 +908,9 @@ export class BackupManager {
           item.lastUpdateTime, item.isFavorite ? 1 : 0,
           item.isPrivate ? 1 : 0, item.isNSFW ? 1 : 0, item.totalWordCount || 0
         ]);
+        if (item.readingSettings) {
+          await this.restoreEBookReadingSettings(item.id, item.readingSettings);
+        }
       } catch (error) {
         failures.push(`${item.title}: ${String(error)}`);
         logger.error(TAG, `Failed to restore ebook: ${item.title}, ${error}`);
@@ -802,6 +922,62 @@ export class BackupManager {
     }
     
     logger.info(TAG, 'Ebook library restore completed');
+  }
+
+  private async restoreEBookReadingSettings(bookId: string, settings: EBookReadingSettingsBackup): Promise<void> {
+    const now = Date.now();
+    const sql = `
+      INSERT OR REPLACE INTO ebook_reading_settings (
+        bookId, userId, fontSize, fontFamily, fontPath, fontWeight, lineHeight,
+        backgroundColor, textColor, themeBgImage, nightMode, followSystemTheme,
+        pageMargin, pageTopMargin, pageBottomMargin, pageMode, brightness, autoSave, saveInterval,
+        letterSpacing, paragraphSpacing, firstLineIndent, textAlignment,
+        pageTurnAnimation, tapToTurn, volumeKeyNavigation, keepScreenOn, lockDeviceOrientation,
+        showPageNumber, showProgress, showTime, showBattery,
+        backgroundType, backgroundImagePath, backgroundImageOpacity, imageReaderSettingsJson,
+        createTime, updateTime
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `;
+    await this.dbManager.executeSql(sql, [
+      bookId,
+      settings.userId ?? 'default_user',
+      settings.fontSize ?? 18,
+      settings.fontFamily ?? 'HarmonyOS Sans',
+      settings.fontPath ?? '',
+      settings.fontWeight ?? 400,
+      settings.lineHeight ?? 1.5,
+      settings.backgroundColor ?? '#FFFFFF',
+      settings.textColor ?? '#000000',
+      settings.themeBgImage ?? '',
+      settings.nightMode ?? 0,
+      settings.followSystemTheme ?? 1,
+      settings.pageMargin ?? 16,
+      settings.pageTopMargin ?? settings.pageMargin ?? 24,
+      settings.pageBottomMargin ?? settings.pageMargin ?? 24,
+      settings.pageMode ?? '0',
+      settings.brightness ?? 100,
+      settings.autoSave ?? 1,
+      settings.saveInterval ?? 30,
+      settings.letterSpacing ?? 0,
+      settings.paragraphSpacing ?? 8,
+      settings.firstLineIndent ?? 2,
+      settings.textAlignment ?? 'JUSTIFY',
+      settings.pageTurnAnimation ?? 'SLIDE',
+      settings.tapToTurn ?? 1,
+      settings.volumeKeyNavigation ?? 1,
+      settings.keepScreenOn ?? 0,
+      settings.lockDeviceOrientation ?? 0,
+      settings.showPageNumber ?? 1,
+      settings.showProgress ?? 0,
+      settings.showTime ?? 1,
+      settings.showBattery ?? 0,
+      settings.backgroundType ?? 'COLOR',
+      settings.backgroundImagePath ?? '',
+      settings.backgroundImageOpacity ?? 0.3,
+      settings.imageReaderSettingsJson ?? '',
+      now,
+      now
+    ]);
   }
 
   private async restoreMangaSources(items: MangaSourceBackup[]): Promise<void> {
@@ -919,6 +1095,22 @@ export class BackupManager {
         if (settings.reader.novel) {
           this.settingsManager.setJSON('novel_reader_settings', settings.reader.novel);
         }
+        if (settings.reader.ebook) {
+          const ebookLock = this.getBackupBooleanValue(
+            settings.reader.ebook.global_ebook_lock_device_orientation
+          );
+          if (ebookLock !== null) {
+            await this.settingsManager.setBoolean(SettingKeys.GLOBAL_EBOOK_LOCK_DEVICE_ORIENTATION, ebookLock);
+          }
+        }
+        if (settings.reader.text) {
+          const textLock = this.getBackupBooleanValue(
+            settings.reader.text.global_text_lock_device_orientation
+          );
+          if (textLock !== null) {
+            await this.settingsManager.setBoolean(SettingKeys.GLOBAL_TEXT_LOCK_DEVICE_ORIENTATION, textLock);
+          }
+        }
       }
       
       if (settings.general) {
@@ -938,12 +1130,50 @@ export class BackupManager {
           this.settingsManager.setBoolean('private_library_enabled', settings.privacy.privateLibraryEnabled);
         }
       }
+
+      if (settings.allSettings) {
+        await this.restoreAllSettings(settings.allSettings);
+      }
       
       logger.info(TAG, 'Settings restore completed');
     } catch (error) {
       logger.error(TAG, `Failed to restore settings: ${error}`);
       throw new Error(`设置恢复失败: ${error}`);
     }
+  }
+
+  private async restoreAllSettings(allSettings: SettingItemBackup[]): Promise<void> {
+    if (allSettings.length === 0) {
+      return;
+    }
+
+    const dataManager = (await import('../Data/DataManager')).DataManager.getInstance();
+    const failures: string[] = [];
+    for (const setting of allSettings) {
+      try {
+        await dataManager.saveSetting(setting.settingKey, setting.settingValue, setting.settingType);
+      } catch (error) {
+        failures.push(`${setting.settingKey}: ${String(error)}`);
+      }
+    }
+    await this.settingsManager.initialize();
+    this.settingsManager.syncToAppStorage();
+    if (failures.length > 0) {
+      throw new Error(`设置表恢复失败 ${failures.length}/${allSettings.length}: ${failures.join('; ')}`);
+    }
+  }
+
+  private getBackupBooleanValue(value: string | number | boolean | undefined): boolean | null {
+    if (value === undefined) {
+      return null;
+    }
+    if (typeof value === 'boolean') {
+      return value;
+    }
+    if (typeof value === 'number') {
+      return value !== 0;
+    }
+    return value === 'true';
   }
 
   private async restoreHistory(history: HistoryBackupSection): Promise<void> {

@@ -79,7 +79,7 @@ interface DisplayModeTransitionProfile {
   overlayFadeOutDurationMs: number;
 }
 
-export type AppFloatingWindowRouteName = 'TransferFloatingWindowPage';
+export type AppFloatingWindowRouteName = 'TransferFloatingWindowPage' | 'SourceEditorFloatingInspectorPage';
 
 export interface AppFloatingWindowConfig {
   routeName: AppFloatingWindowRouteName;
@@ -96,6 +96,11 @@ interface AppFloatingWindowPixelRect {
   y: number;
   width: number;
   height: number;
+}
+
+interface AppFloatingWindowMovePosition {
+  x: number;
+  y: number;
 }
 
 /**
@@ -145,6 +150,12 @@ export class WindowManager {
   private static isFloatingWindowOpening: boolean = false;
   private static readonly FLOATING_WINDOW_VISIBLE_KEY = 'app_floating_window_visible';
   private static readonly FLOATING_WINDOW_ROUTE_KEY = 'app_floating_window_route';
+  private static readonly FLOATING_WINDOW_MOVE_FRAME_DELAY_MS = 16;
+  private static floatingWindowMoveTimerId: number = -1;
+  private static isFloatingWindowMoveApplying: boolean = false;
+  private static hasPendingFloatingWindowMove: boolean = false;
+  private static pendingFloatingWindowMoveX: number = 0;
+  private static pendingFloatingWindowMoveY: number = 0;
 
   private static getWindowLifecycleErrorMessage(error: BusinessError | Error): string {
     const message = (error as Error).message ?? '';
@@ -1806,25 +1817,25 @@ export class WindowManager {
       targetWindow.setWindowBackgroundColor('#00000000');
       targetWindow.setWindowDecorVisible(false);
     } catch (error) {
-      logger.warn(WindowManager.TAG, `设置应用内小窗基础外观失败: ${String(error)}`);
+      WindowManager.logFloatingWindowAppearanceIssue('设置应用内小窗基础外观', error);
     }
 
     try {
       await targetWindow.setWindowShadowEnabled(false);
     } catch (error) {
-      logger.warn(WindowManager.TAG, `关闭应用内小窗系统阴影开关失败: ${String(error)}`);
+      WindowManager.logFloatingWindowAppearanceIssue('关闭应用内小窗系统阴影开关', error);
     }
 
     try {
       targetWindow.setWindowShadowRadius(0);
     } catch (error) {
-      logger.warn(WindowManager.TAG, `清除应用内小窗系统阴影半径失败: ${String(error)}`);
+      WindowManager.logFloatingWindowAppearanceIssue('清除应用内小窗系统阴影半径', error);
     }
 
     try {
       await targetWindow.setWindowCornerRadius(18);
     } catch (error) {
-      logger.warn(WindowManager.TAG, `设置应用内小窗圆角失败: ${String(error)}`);
+      WindowManager.logFloatingWindowAppearanceIssue('设置应用内小窗圆角', error);
     }
 
     const pixelRect = WindowManager.resolveFloatingWindowPixelRect(config);
@@ -1836,6 +1847,21 @@ export class WindowManager {
     } catch (error) {
       logger.warn(WindowManager.TAG, `设置应用内小窗层级失败: ${String(error)}`);
     }
+  }
+
+  private static logFloatingWindowAppearanceIssue(operation: string, error: Error | string): void {
+    const message: string = String(error);
+    if (WindowManager.isBenignFloatingWindowAppearanceIssue(message)) {
+      logger.debug(WindowManager.TAG, `${operation}已按设备能力降级跳过`);
+      return;
+    }
+    logger.warn(WindowManager.TAG, `${operation}失败: ${message}`);
+  }
+
+  private static isBenignFloatingWindowAppearanceIssue(message: string): boolean {
+    return message.indexOf('This window state is abnormal') >= 0 ||
+      message.indexOf('Capability not supported') >= 0 ||
+      message.indexOf('limited device capabilities') >= 0;
   }
 
   private static resolveFloatingWindowPixelRect(config: AppFloatingWindowConfig): AppFloatingWindowPixelRect {
@@ -1910,13 +1936,13 @@ export class WindowManager {
       return false;
     }
 
-    try {
-      await targetWindow.moveWindowTo(Math.round(x), Math.round(y));
-      return true;
-    } catch (error) {
-      logger.warn(WindowManager.TAG, `移动应用内小窗失败: x=${x}, y=${y}, error=${String(error)}`);
-      return false;
-    }
+    const boundedPosition: AppFloatingWindowMovePosition =
+      WindowManager.resolveBoundedFloatingWindowPosition(targetWindow, x, y);
+    WindowManager.pendingFloatingWindowMoveX = boundedPosition.x;
+    WindowManager.pendingFloatingWindowMoveY = boundedPosition.y;
+    WindowManager.hasPendingFloatingWindowMove = true;
+    WindowManager.schedulePendingFloatingWindowMove();
+    return true;
   }
 
   static async moveAppFloatingWindowByVpOffset(
@@ -1946,6 +1972,7 @@ export class WindowManager {
   }
 
   private static async destroyFloatingWindowRef(reason: string): Promise<void> {
+    WindowManager.clearPendingFloatingWindowMove();
     const targetWindow = WindowManager.floatingWindowRef;
     WindowManager.floatingWindowRef = null;
     WindowManager.floatingWindowRouteName = '';
@@ -1962,6 +1989,77 @@ export class WindowManager {
       logger.warn(WindowManager.TAG, `销毁应用内小窗失败: reason=${reason}, error=${String(error)}`);
       throw new Error(`销毁应用内小窗失败: ${String(error)}`);
     }
+  }
+
+  private static resolveBoundedFloatingWindowPosition(
+    targetWindow: window.Window,
+    x: number,
+    y: number
+  ): AppFloatingWindowMovePosition {
+    try {
+      const displayInfo = display.getDefaultDisplaySync();
+      const rect = targetWindow.getWindowProperties().windowRect;
+      const maxX = Math.max(0, displayInfo.width - rect.width);
+      const maxY = Math.max(0, displayInfo.height - rect.height);
+      const position: AppFloatingWindowMovePosition = {
+        x: Math.round(Math.max(0, Math.min(x, maxX))),
+        y: Math.round(Math.max(0, Math.min(y, maxY)))
+      };
+      return position;
+    } catch (error) {
+      const fallbackPosition: AppFloatingWindowMovePosition = {
+        x: Math.round(x),
+        y: Math.round(y)
+      };
+      return fallbackPosition;
+    }
+  }
+
+  private static schedulePendingFloatingWindowMove(): void {
+    if (WindowManager.floatingWindowMoveTimerId >= 0 || WindowManager.isFloatingWindowMoveApplying) {
+      return;
+    }
+    WindowManager.floatingWindowMoveTimerId = setTimeout((): void => {
+      WindowManager.floatingWindowMoveTimerId = -1;
+      void WindowManager.flushPendingFloatingWindowMove();
+    }, WindowManager.FLOATING_WINDOW_MOVE_FRAME_DELAY_MS);
+  }
+
+  private static async flushPendingFloatingWindowMove(): Promise<void> {
+    if (WindowManager.isFloatingWindowMoveApplying || !WindowManager.hasPendingFloatingWindowMove) {
+      return;
+    }
+    const targetWindow = WindowManager.floatingWindowRef;
+    if (!targetWindow) {
+      WindowManager.clearPendingFloatingWindowMove();
+      return;
+    }
+
+    const targetX: number = WindowManager.pendingFloatingWindowMoveX;
+    const targetY: number = WindowManager.pendingFloatingWindowMoveY;
+    WindowManager.hasPendingFloatingWindowMove = false;
+    WindowManager.isFloatingWindowMoveApplying = true;
+    try {
+      await targetWindow.moveWindowTo(targetX, targetY);
+    } catch (error) {
+      logger.warn(WindowManager.TAG, `移动应用内小窗失败: x=${targetX}, y=${targetY}, error=${String(error)}`);
+    } finally {
+      WindowManager.isFloatingWindowMoveApplying = false;
+      if (WindowManager.hasPendingFloatingWindowMove) {
+        WindowManager.schedulePendingFloatingWindowMove();
+      }
+    }
+  }
+
+  private static clearPendingFloatingWindowMove(): void {
+    if (WindowManager.floatingWindowMoveTimerId >= 0) {
+      clearTimeout(WindowManager.floatingWindowMoveTimerId);
+      WindowManager.floatingWindowMoveTimerId = -1;
+    }
+    WindowManager.isFloatingWindowMoveApplying = false;
+    WindowManager.hasPendingFloatingWindowMove = false;
+    WindowManager.pendingFloatingWindowMoveX = 0;
+    WindowManager.pendingFloatingWindowMoveY = 0;
   }
 
   private static applyDisplayModeWithMainWindow(mainWindow: window.Window, mode: DisplayMode): void {

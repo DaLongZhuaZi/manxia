@@ -50,8 +50,9 @@ const APP_STORAGE_TRANSFER_RECORD_ID: string = 'pendingTransferRecordId';
 const APP_STORAGE_TRANSFER_RESULT: string = 'pendingTransferImportResult';
 const APP_STORAGE_TRANSFER_TRACKING_ACTIVE: string = 'pendingTransferTrackingActive';
 const APP_STORAGE_PENDING_IMPORT_FLOW_ID: string = 'pendingImportFlowId';
+let externalFileTaskAbilityPageStorage: LocalStorage = new LocalStorage();
 
-@Entry
+@Entry(externalFileTaskAbilityPageStorage)
 @Component
 struct ExternalFileTaskAbilityPage {
   @LocalStorageProp('externalFileTaskAbilityInstanceId') private taskInstanceId: string = '';

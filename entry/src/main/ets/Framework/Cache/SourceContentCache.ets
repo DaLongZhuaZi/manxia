@@ -27,11 +27,25 @@ export interface CachedContent {
   expiresAt: number;     // 过期时间戳
 }
 
+export enum SourceContentCacheFreshness {
+  FRESH = 'fresh',
+  STALE = 'stale',
+  MISSING = 'missing'
+}
+
+export interface SourceContentCacheSnapshot {
+  freshness: SourceContentCacheFreshness;
+  content: CachedContent | null;
+  age: number;
+  shouldRefresh: boolean;
+}
+
 /**
  * 缓存配置
  */
 interface CacheConfig {
   maxAge: number;        // 最大缓存时间（毫秒）
+  hardMaxAge: number;    // 最大可展示时间（毫秒）
   maxEntries: number;    // 每个图源最多缓存条目数
 }
 
@@ -52,6 +66,7 @@ export class SourceContentCache {
   private cacheMap: Map<string, CachedContent> = new Map();
   private config: CacheConfig = {
     maxAge: 30 * 60 * 1000,  // 30分钟
+    hardMaxAge: 24 * 60 * 60 * 1000, // 24小时内允许作为过期缓存先展示
     maxEntries: 20            // 每个图源最多20个缓存条目
   };
 
@@ -132,6 +147,45 @@ export class SourceContentCache {
 
     logger.info(TAG, `缓存命中: ${cacheKey}, 漫画数量: ${cached.comics.length}`);
     return cached;
+  }
+
+  getSnapshot(sourceId: number, workflowKey: string): SourceContentCacheSnapshot {
+    const cacheKey = this.generateCacheKey(sourceId, workflowKey);
+    const cached = this.cacheMap.get(cacheKey);
+    const now = Date.now();
+
+    if (!cached) {
+      const missingSnapshot: SourceContentCacheSnapshot = {
+        freshness: SourceContentCacheFreshness.MISSING,
+        content: null,
+        age: 0,
+        shouldRefresh: true
+      };
+      return missingSnapshot;
+    }
+
+    const age = now - cached.timestamp;
+    if (age > this.config.hardMaxAge) {
+      logger.info(TAG, `缓存已超过硬过期时间，删除: ${cacheKey}`);
+      this.cacheMap.delete(cacheKey);
+      const expiredSnapshot: SourceContentCacheSnapshot = {
+        freshness: SourceContentCacheFreshness.MISSING,
+        content: null,
+        age: age,
+        shouldRefresh: true
+      };
+      return expiredSnapshot;
+    }
+
+    const freshness: SourceContentCacheFreshness = now > cached.expiresAt ? SourceContentCacheFreshness.STALE : SourceContentCacheFreshness.FRESH;
+    const snapshot: SourceContentCacheSnapshot = {
+      freshness: freshness,
+      content: cached,
+      age: age,
+      shouldRefresh: freshness !== SourceContentCacheFreshness.FRESH || age > this.config.maxAge / 2
+    };
+    logger.info(TAG, `缓存快照: ${cacheKey}, freshness=${freshness}, 漫画数量=${cached.comics.length}, age=${age}`);
+    return snapshot;
   }
 
   /**
@@ -222,7 +276,7 @@ export class SourceContentCache {
     const keysToDelete: string[] = [];
 
     this.cacheMap.forEach((value, key) => {
-      if (now > value.expiresAt) {
+      if (now - value.timestamp > this.config.hardMaxAge) {
         keysToDelete.push(key);
       }
     });

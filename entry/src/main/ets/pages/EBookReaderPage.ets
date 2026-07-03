@@ -39,6 +39,14 @@ import { EBookReadingSettingsPanel } from '../Framework/Components/EBookReadingS
 import { curves, UIContext } from '@kit.ArkUI';
 import { display } from '@kit.ArkUI';
 import { TextReaderComponent, PaginationMode } from '../components/TextReaderComponent';
+import {
+  MarkdownViewerComponent,
+  MarkdownTheme,
+  MarkdownViewerController,
+  MarkdownReaderStyle,
+  MarkdownProgressSnapshot,
+  MarkdownPageTurnResult
+} from '../components/editor/MarkdownViewerComponent';
 import { MangaViewer } from '../components/MangaViewer';
 import { PreloadDebugInfo } from '../components/PreloadDebugOverlay';
 import { TextReaderSettingsPanel } from '../components/TextReaderSettingsPanel';
@@ -188,6 +196,7 @@ struct EBookReaderPage {
   @State showTopToolbar: boolean = false;
   @State showBottomToolbar: boolean = false;
   @State toolbarOpacity: number = 0.0;
+  @State private stableToolbarStatusBarHeight: number = -1;
   @State showSettingsPanel: boolean = false;
   @State showChapterList: boolean = false;
   @State showMoreMenu: boolean = false;
@@ -254,6 +263,11 @@ struct EBookReaderPage {
   @State textReaderSettingsScale: number = 0.95;
   @State private readerViewportWidth: number = 0;
   @State private readerViewportHeight: number = 0;
+  @State private markdownContent: string = '';
+  @State private markdownChapterProgress: number = 0;
+  @State private markdownOverallProgress: number = 0;
+  @State private markdownCurrentPage: number = 1;
+  @State private markdownPageCount: number = 1;
   private pendingInteractionHintKey: string = '';
   private interactionOverlayDismissTimer: number = -1;
 
@@ -274,6 +288,10 @@ struct EBookReaderPage {
   
   // 阅读时间记录相关
   private readerKitController: ReaderKitViewerController | null = null;
+  private markdownController: MarkdownViewerController | null = null;
+  private pendingMarkdownRestoreProgress: number = -1;
+  private pendingMarkdownHeadingId: string = '';
+  private pendingMarkdownSaveAfterRender: boolean = false;
   private pdfViewerController: PdfViewerController | null = null;
   private readerKitStartupGuardActive: boolean = false;
   private readerKitStartupGuardStartTime: number = 0;
@@ -294,12 +312,13 @@ struct EBookReaderPage {
   private volumeUpCallback: ((event: InputKeyEvent) => void) | null = null;
   private volumeDownCallback: ((event: InputKeyEvent) => void) | null = null;
   private onReadAloudStateChanged: (payload: IEventPayload) => void = (payload: IEventPayload): void => {
-    if (!this.ebook || this.ebook.format !== EBookFormat.TXT) {
+    const ebook = this.ebook;
+    if (!ebook || !this.isTextReaderFormat(ebook.format)) {
       return;
     }
     const statePayload = payload as ReadAloudStatePayload;
     const payloadBookId = statePayload.bookId ?? '';
-    if (!payloadBookId || payloadBookId !== this.ebook.id) {
+    if (!payloadBookId || payloadBookId !== ebook.id) {
       return;
     }
     if (!this.shouldHandleReadAloudUiEvents()) {
@@ -370,6 +389,10 @@ struct EBookReaderPage {
         return false;
       }
       return forward ? this.pdfViewerController.goToNextPage() : this.pdfViewerController.goToPreviousPage();
+    }
+
+    if (this.isUsingMarkdownReader()) {
+      return this.turnMarkdownPage(forward);
     }
 
     if (!this.isUsingTextReader()) {
@@ -1403,6 +1426,35 @@ struct EBookReaderPage {
     }
   }
 
+  private captureToolbarSafeArea(_reason: string): void {
+    const nextHeight = this.statusBarHeight > 0
+      ? this.statusBarHeight
+      : ReaderSafeAreaUtils.DEFAULT_STATUS_BAR_INSET;
+    if (Math.abs(this.stableToolbarStatusBarHeight - nextHeight) > 0.5) {
+      this.stableToolbarStatusBarHeight = nextHeight;
+    }
+  }
+
+  private getToolbarStatusBarHeight(): number {
+    return this.stableToolbarStatusBarHeight > 0
+      ? this.stableToolbarStatusBarHeight
+      : this.statusBarHeight;
+  }
+
+  private getStableTopToolbarHeight(): number {
+    return ReaderSafeAreaUtils.getTopToolbarHeight(this.getToolbarStatusBarHeight());
+  }
+
+  private getStableTopToolbarInset(): number {
+    return ReaderSafeAreaUtils.getStatusBarInset(this.getToolbarStatusBarHeight());
+  }
+
+  private handleReaderOverlayOpening(reason: string): void {
+    this.captureToolbarSafeArea(reason);
+    this.clearToolbarAutoHideTimer();
+    this.clearFullscreenRestoreTimer();
+  }
+
   private scheduleFullscreenRestore(reason: string, delayMs: number = 120): void {
     this.clearFullscreenRestoreTimer();
     this.fullscreenRestoreTimer = setTimeout(() => {
@@ -1420,7 +1472,7 @@ struct EBookReaderPage {
   }
 
   private handleReaderOverlayClosed(reason: string): void {
-    this.scheduleFullscreenRestore(reason);
+    this.clearFullscreenRestoreTimer();
     this.scheduleToolbarAutoHide(reason);
     this.tryShowQueuedInteractionHint(reason, 220);
   }
@@ -1454,6 +1506,14 @@ struct EBookReaderPage {
       await this.tryRepairReaderKitBookData(ebook);
       this.ebook = ebook;
       this.reportTransitionLoadingProgress(0.24, 'ebook_loaded');
+      if (this.isUsingMarkdownReader()) {
+        this.markdownChapterProgress = 0;
+        this.markdownOverallProgress = 0;
+        this.markdownCurrentPage = 1;
+        this.markdownPageCount = 1;
+        this.pendingMarkdownRestoreProgress = 0;
+        this.currentDomPos = '';
+      }
       
       if (ebook.format !== EBookFormat.TXT) {
         const effectiveSettings = await this.ebookDataManager.resolveEffectiveEBookReadingSettings(
@@ -1497,11 +1557,15 @@ struct EBookReaderPage {
         if (ebook.readingProgress.domPos) {
           this.currentDomPos = ebook.readingProgress.domPos;
           logger.info(TAG, `从 currentPosition 恢复页码: ${this.textCurrentPageIndex}`);
-          this.restoreTextReadAloudFromDomPos(ebook.readingProgress.domPos);
+          if (this.isUsingTextReader()) {
+            this.restoreTextReadAloudFromDomPos(ebook.readingProgress.domPos);
+          } else if (this.isUsingMarkdownReader()) {
+            this.restoreMarkdownProgressFromDomPos(ebook.readingProgress.domPos);
+          }
         }
         
       // 加载当前章节
-        if (this.textCurrentPageIndex === 0 && ebook.readingProgress.currentPosition > 0) {
+        if (this.isUsingTextReader() && this.textCurrentPageIndex === 0 && ebook.readingProgress.currentPosition > 0) {
           this.textCurrentPageIndex = ebook.readingProgress.currentPosition;
           logger.info(TAG, `从 currentPosition 恢复页码: ${this.textCurrentPageIndex}`);
         }
@@ -1512,7 +1576,7 @@ struct EBookReaderPage {
 
       // 调试日志：检查章节内容
       this.reportTransitionLoadingProgress(0.48, 'settings_restored');
-      if (ebook.format !== EBookFormat.TXT) {
+      if (!this.isUsingTextReader()) {
         this.syncDeviceOrientationLock('ebook_settings_loaded');
       }
       const chapterCount = ebook.chapters?.length || 0;
@@ -1541,15 +1605,19 @@ struct EBookReaderPage {
       }
 
       // 初始化文本内容（用于纯文本阅读器）
-      if (ebook.format === EBookFormat.TXT) {
+      if (this.isUsingTextReader()) {
         this.loadTextReaderSettingsWithGlobalDefaults(ebook);
       }
       
-      // 初始化文本内容（用于纯文本阅读器）
-      if (ebook.format === EBookFormat.TXT) {
+      // 初始化文本内容（用于文本阅读器）
+      if (this.isUsingTextReader()) {
         this.textContent = this.getTextContent();
-      logger.info(TAG, `电子书加载完成: ${ebook.metadata.title}`);
+        logger.info(TAG, `电子书加载完成: ${ebook.metadata.title}`);
         this.syncTextReadAloudContext();
+      } else if (this.isUsingMarkdownReader()) {
+        this.markdownContent = this.getTextContent();
+        this.markdownOverallProgress = this.calculateMarkdownOverallProgress(this.markdownChapterProgress);
+        logger.info(TAG, `Markdown 电子书加载完成: ${ebook.metadata.title}, contentLength=${this.markdownContent.length}`);
       }
 
       this.reportTransitionLoadingProgress(0.72, 'reader_data_prepared');
@@ -1598,6 +1666,10 @@ struct EBookReaderPage {
     const globalBgImageOpacity = settingsManager.getNumber(SettingKeys.GLOBAL_TEXT_BG_IMAGE_OPACITY, 0.3);
     const globalPageTurnAnimation = settingsManager.getString(SettingKeys.GLOBAL_TEXT_PAGE_TURN_ANIMATION, TextPageTurnAnimation.SLIDE) as TextPageTurnAnimation;
     const globalKeepScreenOn = settingsManager.getBoolean(SettingKeys.GLOBAL_TEXT_KEEP_SCREEN_ON, true);
+    const globalLockDeviceOrientation = settingsManager.getBoolean(
+      SettingKeys.GLOBAL_TEXT_LOCK_DEVICE_ORIENTATION,
+      DEFAULT_TEXT_READER_SETTINGS.lockDeviceOrientation ?? false
+    );
     const globalVolumeKeyNav = settingsManager.getBoolean(SettingKeys.GLOBAL_TEXT_VOLUME_KEY_NAV, true);
     const globalTapToTurn = settingsManager.getBoolean(SettingKeys.GLOBAL_TEXT_TAP_TO_TURN, true);
     
@@ -1615,7 +1687,8 @@ struct EBookReaderPage {
         logger.info(TAG, `纯文本阅读器检测到默认设置，应用全局设置: 字体大小=${globalFontSize}, 字体=${globalFontFamily}, 背景色=${globalBgPreset.backgroundColor}`);
         this.loadTextReaderSettingsFromGlobal(globalFontSize, globalFontFamily, globalFontWeight, globalLineHeight, globalParagraphSpacing, 
           globalFirstLineIndent, globalPageMargin, globalBgPreset, globalUseBgImage, globalBgImagePath, 
-          globalBgImageOpacity, globalPageTurnAnimation, globalKeepScreenOn, globalVolumeKeyNav, globalTapToTurn);
+          globalBgImageOpacity, globalPageTurnAnimation, globalKeepScreenOn, globalLockDeviceOrientation,
+          globalVolumeKeyNav, globalTapToTurn);
         // 用户已修改过设置，使用保存的设置
         ebook.readingSettings.followSystemTheme = false;
         // 用户已修改过设置，使用保存的设置
@@ -1630,7 +1703,8 @@ struct EBookReaderPage {
       logger.info(TAG, `纯文本阅读器无保存设置，应用全局设置: 字体大小=${globalFontSize}, 字体=${globalFontFamily}, 背景色=${globalBgPreset.backgroundColor}`);
       this.loadTextReaderSettingsFromGlobal(globalFontSize, globalFontFamily, globalFontWeight, globalLineHeight, globalParagraphSpacing, 
         globalFirstLineIndent, globalPageMargin, globalBgPreset, globalUseBgImage, globalBgImagePath, 
-        globalBgImageOpacity, globalPageTurnAnimation, globalKeepScreenOn, globalVolumeKeyNav, globalTapToTurn);
+        globalBgImageOpacity, globalPageTurnAnimation, globalKeepScreenOn, globalLockDeviceOrientation,
+        globalVolumeKeyNav, globalTapToTurn);
     }
     this.syncDeviceOrientationLock('text_settings_loaded');
   }
@@ -1642,7 +1716,7 @@ struct EBookReaderPage {
     fontSize: number, fontFamily: string, fontWeight: number, lineHeight: number, paragraphSpacing: number, firstLineIndent: number,
     pageMargin: number, bgPreset: PresetBackground, useBgImage: boolean, bgImagePath: string,
     bgImageOpacity: number, pageTurnAnimation: TextPageTurnAnimation, keepScreenOn: boolean,
-    volumeKeyNav: boolean, tapToTurn: boolean
+    lockDeviceOrientation: boolean, volumeKeyNav: boolean, tapToTurn: boolean
   ): void {
     const savedImages: SavedBackgroundImage[] = [];
     if (useBgImage && bgImagePath && bgImagePath.length > 0) {
@@ -1679,7 +1753,7 @@ struct EBookReaderPage {
         right: pageMargin
       },
       keepScreenOn: keepScreenOn,
-      lockDeviceOrientation: false,
+      lockDeviceOrientation: lockDeviceOrientation,
       showPageNumber: true,
       showProgress: false,
       showTime: true,
@@ -1834,7 +1908,7 @@ struct EBookReaderPage {
   }
 
   private syncTextReadAloudContext(): void {
-    if (!this.ebook || this.ebook.format !== EBookFormat.TXT) {
+    if (!this.isUsingTextReader()) {
       return;
     }
     const readAloudSettings = this.getSafeReadAloudSettings(this.textReaderSettings.readAloud);
@@ -1881,7 +1955,7 @@ struct EBookReaderPage {
   }
 
   private tryPersistTextReadAloudProgress(): void {
-    if (!this.ebook || this.ebook.format !== EBookFormat.TXT) {
+    if (!this.isUsingTextReader()) {
       return;
     }
     if (this.textReadAloudCurrentCharIndex < 0) {
@@ -1905,15 +1979,16 @@ struct EBookReaderPage {
   }
 
   private updateTextReadAloudContextByPosition(): void {
-    if (!this.ebook || this.ebook.format !== EBookFormat.TXT) {
+    const ebook = this.ebook;
+    if (!ebook || !this.isTextReaderFormat(ebook.format)) {
       return;
     }
     this.readAloudController.updateContext({
-      bookId: this.ebook.id,
-      bookTitle: this.ebook.metadata.title || '电子书',
+      bookId: ebook.id,
+      bookTitle: ebook.metadata.title || '电子书',
       chapterIndex: this.currentChapterIndex,
       chapterTitle: this.currentChapter?.title || '',
-      coverUrl: this.ebook.metadata.coverImagePath || '',
+      coverUrl: ebook.metadata.coverImagePath || '',
       content: this.textContent,
       pageIndex: this.textCurrentPageIndex,
       resumeCharIndex: this.getCurrentTextResumeCharIndex()
@@ -1969,7 +2044,7 @@ struct EBookReaderPage {
   }
 
   private onTextUserPageTurnStart(): void {
-    if (!this.ebook || this.ebook.format !== EBookFormat.TXT) {
+    if (!this.isUsingTextReader()) {
       return;
     }
     const readAloudSettings = this.getSafeReadAloudSettings(this.textReaderSettings.readAloud);
@@ -1988,7 +2063,7 @@ struct EBookReaderPage {
   }
 
   private toggleTextReadAloud(): void {
-    if (!this.ebook || this.ebook.format !== EBookFormat.TXT) {
+    if (!this.isUsingTextReader()) {
       return;
     }
 
@@ -2013,7 +2088,7 @@ struct EBookReaderPage {
   }
 
   private openReadAloudSettingsPanel(): void {
-    if (!this.ebook || this.ebook.format !== EBookFormat.TXT) {
+    if (!this.isUsingTextReader()) {
       return;
     }
     const now = Date.now();
@@ -2024,6 +2099,7 @@ struct EBookReaderPage {
       );
       return;
     }
+    this.handleReaderOverlayOpening('read_aloud_panel_open');
     this.showReadAloudPanel = true;
     this.readAloudPanelSettings = this.getSafeReadAloudSettings(this.textReaderSettings.readAloud);
     logger.info(TAG, 'Read-aloud settings refreshed');
@@ -2031,7 +2107,7 @@ struct EBookReaderPage {
   }
 
   private updateReadAloudSettings(partial: Partial<ReadAloudSettings>): void {
-    if (!this.ebook || this.ebook.format !== EBookFormat.TXT) {
+    if (!this.isUsingTextReader()) {
       return;
     }
     logger.debug(TAG, `应用听书设置变更: ${JSON.stringify(partial)}`);
@@ -2058,12 +2134,13 @@ struct EBookReaderPage {
   }
 
   private syncTextReadAloudUiFromController(): void {
-    if (!this.ebook || this.ebook.format !== EBookFormat.TXT) {
+    const ebook = this.ebook;
+    if (!ebook || !this.isTextReaderFormat(ebook.format)) {
       return;
     }
     const context = this.readAloudController.getContextSnapshot();
     const snapshot = this.readAloudController.getSnapshot();
-    if (!context || !snapshot.hasContext || context.bookId !== this.ebook.id) {
+    if (!context || !snapshot.hasContext || context.bookId !== ebook.id) {
       return;
     }
     this.textReadAloudPlaying = snapshot.playbackState === ReadAloudPlaybackState.PLAYING;
@@ -2182,6 +2259,54 @@ struct EBookReaderPage {
     return `page:${safePageIndex};char:${Math.max(0, this.textReadAloudCurrentCharIndex)}`;
   }
 
+  private buildMarkdownDomPos(progress: number): string {
+    const safeProgress = Math.max(0, Math.min(100, progress));
+    return `markdown:${safeProgress.toFixed(2)}`;
+  }
+
+  private parseMarkdownProgressFromDomPos(domPos: string): number {
+    if (!domPos || !domPos.startsWith('markdown:')) {
+      return -1;
+    }
+    const progressText = domPos.substring('markdown:'.length);
+    const progress = Number(progressText);
+    if (!Number.isFinite(progress)) {
+      return -1;
+    }
+    return Math.max(0, Math.min(100, progress));
+  }
+
+  private restoreMarkdownProgressFromDomPos(domPos: string): void {
+    const progress = this.parseMarkdownProgressFromDomPos(domPos);
+    if (progress < 0) {
+      return;
+    }
+    this.markdownChapterProgress = progress;
+    this.pendingMarkdownRestoreProgress = progress;
+    logger.info(TAG, `恢复 Markdown 章节进度: ${progress.toFixed(1)}%`);
+  }
+
+  private calculateMarkdownOverallProgress(chapterProgress: number): number {
+    if (!this.ebook || this.ebook.chapters.length <= 0) {
+      return 0;
+    }
+    const safeChapterProgress = Math.max(0, Math.min(100, chapterProgress));
+    const totalChapters = this.ebook.chapters.length;
+    const overallProgress = ((this.currentChapterIndex + safeChapterProgress / 100) / totalChapters) * 100;
+    return Math.max(0, Math.min(100, overallProgress));
+  }
+
+  private createMarkdownProgressSnapshotFromState(): MarkdownProgressSnapshot {
+    const snapshot: MarkdownProgressSnapshot = {
+      progress: Math.max(0, Math.min(100, this.markdownChapterProgress)),
+      scrollTop: 0,
+      maxScrollTop: 0,
+      currentPage: Math.max(1, this.markdownCurrentPage),
+      pageCount: Math.max(1, this.markdownPageCount)
+    };
+    return snapshot;
+  }
+
   private restoreTextReadAloudFromDomPos(domPos: string): void {
     if (!domPos || !domPos.startsWith('page:')) {
       return;
@@ -2281,7 +2406,7 @@ struct EBookReaderPage {
 
     let wasPlaying = false;
     let readAloudSettings: ReadAloudSettings = this.getSafeReadAloudSettings(this.textReaderSettings.readAloud);
-    if (this.ebook.format === EBookFormat.TXT) {
+    if (this.isUsingTextReader()) {
       readAloudSettings = this.getSafeReadAloudSettings(this.textReaderSettings.readAloud);
       wasPlaying = this.readAloudController.getSnapshot().playbackState === ReadAloudPlaybackState.PLAYING;
       if (wasPlaying && !readAloudSettings.autoPlayNextChapter) {
@@ -2296,8 +2421,14 @@ struct EBookReaderPage {
       this.updateImagePagePreloadDebugInfo();
       this.refreshCurrentEBookBookmarkState('image_page_previous_chapter');
     }
+    if (this.isUsingMarkdownReader()) {
+      this.resetMarkdownChapterContent(0, '', true);
+      this.refreshCurrentEBookBookmarkState('markdown_previous_chapter');
+      logger.info(TAG, `切换到上一章 Markdown: ${this.currentChapter?.title}`);
+      return;
+    }
     // TXT格式使用页码进度保存，其他格式使用通用方法
-    if (this.ebook.format === EBookFormat.TXT) {
+    if (this.isUsingTextReader()) {
       this.textCurrentPageIndex = 0;
       this.textContent = this.getTextContent();
       this.textCurrentPageStartCharIndex = 0;
@@ -2329,7 +2460,7 @@ struct EBookReaderPage {
 
     let wasPlaying = false;
     let readAloudSettings: ReadAloudSettings = this.getSafeReadAloudSettings(this.textReaderSettings.readAloud);
-    if (this.ebook.format === EBookFormat.TXT) {
+    if (this.isUsingTextReader()) {
       readAloudSettings = this.getSafeReadAloudSettings(this.textReaderSettings.readAloud);
       wasPlaying = this.readAloudController.getSnapshot().playbackState === ReadAloudPlaybackState.PLAYING;
       if (wasPlaying && !readAloudSettings.autoPlayNextChapter) {
@@ -2344,8 +2475,14 @@ struct EBookReaderPage {
       this.updateImagePagePreloadDebugInfo();
       this.refreshCurrentEBookBookmarkState('image_page_next_chapter');
     }
+    if (this.isUsingMarkdownReader()) {
+      this.resetMarkdownChapterContent(0, '', true);
+      this.refreshCurrentEBookBookmarkState('markdown_next_chapter');
+      logger.info(TAG, `切换到下一章 Markdown: ${this.currentChapter?.title}`);
+      return;
+    }
     // TXT格式使用页码进度保存，其他格式使用通用方法
-    if (this.ebook.format === EBookFormat.TXT) {
+    if (this.isUsingTextReader()) {
       this.textCurrentPageIndex = 0;
       this.textContent = this.getTextContent();
       this.textCurrentPageStartCharIndex = 0;
@@ -2412,6 +2549,7 @@ struct EBookReaderPage {
         this.readerKitController.applyReadingSettings(settings, true);
         logger.info(TAG, '阅读设置已应用');
       }
+      this.applyMarkdownReaderStyle();
 
       // 延迟保存到数据库
       this.queueEBookSettingsSave();
@@ -2441,6 +2579,7 @@ struct EBookReaderPage {
     if (this.readerKitController && this.readerKitController.isControllerReady()) {
       this.readerKitController.applyReadingSettings(this.ebook.readingSettings, true);
     }
+    this.applyMarkdownReaderStyle();
 
   // 当前 DOM 位置（用于 Reader Kit 精确恢复阅读位置）
     this.queueEBookSettingsSave();
@@ -2483,13 +2622,20 @@ struct EBookReaderPage {
       let progressPercent = 0;
       let chapterIndexToSave = Math.max(0, this.currentChapterIndex);
       
-      if (this.ebook.format === EBookFormat.TXT) {
+      if (this.isUsingTextReader()) {
         domPos = this.buildTextDomPos(this.textCurrentPageIndex);
         currentPosition = this.textCurrentPageIndex;
         chapterId = this.currentChapter?.id || '';
         progressPercent = this.textReadAloudCurrentCharIndex >= 0
           ? this.latestTextProgress
           : (this.ebook.readingProgress?.progress || 0);
+      } else if (this.isUsingMarkdownReader()) {
+        const snapshot = await this.getMarkdownProgressSnapshotForSave();
+        this.applyMarkdownProgressSnapshot(snapshot, 'save_progress');
+        currentPosition = Math.max(0, snapshot.currentPage - 1);
+        domPos = this.buildMarkdownDomPos(snapshot.progress);
+        chapterId = this.currentChapter?.id || '';
+        progressPercent = this.calculateMarkdownOverallProgress(snapshot.progress);
       } else if (this.isUsingImagePageReader()) {
         chapterIndexToSave = Math.max(0, Math.min(this.currentChapterIndex, (this.ebook.chapters?.length || 1) - 1));
         currentPosition = 0;
@@ -2618,7 +2764,8 @@ struct EBookReaderPage {
       return;
     }
     const chapterCount = this.ebook.chapters.length;
-    const readerKitNavigable = this.ebook.format !== EBookFormat.TXT &&
+    const readerKitNavigable = !this.isUsingTextReader() &&
+      !this.isUsingMarkdownReader() &&
       this.isReaderKitSupported(this.ebook.format) &&
       this.readerKitController !== null &&
       this.readerKitController.isControllerReady();
@@ -2629,7 +2776,7 @@ struct EBookReaderPage {
     
     let wasPlaying = false;
     let readAloudSettings: ReadAloudSettings = this.getSafeReadAloudSettings(this.textReaderSettings.readAloud);
-    if (this.ebook.format === EBookFormat.TXT) {
+    if (this.isUsingTextReader()) {
       readAloudSettings = this.getSafeReadAloudSettings(this.textReaderSettings.readAloud);
       wasPlaying = this.readAloudController.getSnapshot().playbackState === ReadAloudPlaybackState.PLAYING;
       if (wasPlaying && !readAloudSettings.autoPlayNextChapter) {
@@ -2655,9 +2802,16 @@ struct EBookReaderPage {
       this.saveReadingProgress();
       return;
     }
+
+    if (this.isUsingMarkdownReader()) {
+      this.resetMarkdownChapterContent(0, '', true);
+      this.refreshCurrentEBookBookmarkState('jump_to_chapter_markdown');
+      logger.info(TAG, `Markdown 阅读器跳转到章节 ${chapterIndex}，内容长度: ${this.markdownContent.length}`);
+      return;
+    }
     
       // 纯文本阅读器：重置页码到第一页，并更新文本内容
-    if (this.ebook.format === EBookFormat.TXT) {
+    if (this.isUsingTextReader()) {
       // 更新文本内容（触发 TextReaderComponent 重新分页）
       this.textCurrentPageIndex = 0;
       this.textCurrentPageStartCharIndex = 0;
@@ -2761,6 +2915,7 @@ struct EBookReaderPage {
   * 显示工具栏（带动画）
   */
   private showToolbarWithAnimation(): void {
+    this.captureToolbarSafeArea('show_toolbar');
     this.clearToolbarAutoHideTimer();
     this.showTopToolbar = true;
     this.showBottomToolbar = true;
@@ -2797,6 +2952,7 @@ struct EBookReaderPage {
   * 显示更多菜单（带动画）
   */
   private showMoreMenuWithAnimation(): void {
+    this.handleReaderOverlayOpening('more_menu_open');
     this.showMoreMenu = true;
     this.getUIContext().animateTo({
       duration: 200,
@@ -2830,6 +2986,7 @@ struct EBookReaderPage {
   * 显示章节列表（带动画）
   */
   private showChapterListWithAnimation(): void {
+    this.handleReaderOverlayOpening('chapter_list_open');
     logger.info(TAG, `显示章节列表，当前章节索引: ${this.currentChapterIndex}`);
     this.showChapterList = true;
     this.getUIContext().animateTo({
@@ -2873,6 +3030,7 @@ struct EBookReaderPage {
   * 显示设置面板（带动画）
   */
   private showSettingsPanelWithAnimation(): void {
+    this.handleReaderOverlayOpening('settings_panel_open');
     this.showSettingsPanel = true;
     this.getUIContext().animateTo({
       duration: 250,
@@ -2906,6 +3064,7 @@ struct EBookReaderPage {
   * 显示书籍信息弹窗（带动画）
   */
   private showBookInfoDialogWithAnimation(): void {
+    this.handleReaderOverlayOpening('book_info_open');
     this.showBookInfoDialog = true;
     this.getUIContext().animateTo({
       duration: 250,
@@ -2935,6 +3094,7 @@ struct EBookReaderPage {
   * 显示字体设置面板（带动画）
   */
   private showFontSettingsPanelWithAnimation(): void {
+    this.handleReaderOverlayOpening('font_settings_open');
     this.showFontSettingsPanel = true;
     this.getUIContext().animateTo({
       duration: 250,
@@ -2966,6 +3126,7 @@ struct EBookReaderPage {
   * 显示阅读设置面板（带动画）
   */
   private showReadingOptionsPanelWithAnimation(): void {
+    this.handleReaderOverlayOpening('reading_options_open');
     this.showReadingOptionsPanel = true;
     this.getUIContext().animateTo({
       duration: 250,
@@ -3102,7 +3263,7 @@ struct EBookReaderPage {
         .width('100%')
         .height('100%')
         .onClick(() => {
-          if (!this.isUsingTextReader()) {
+          if (!this.isUsingTextReader() && !this.isUsingMarkdownReader()) {
             this.toggleToolbar();
           }
         })
@@ -3401,6 +3562,8 @@ struct EBookReaderPage {
         this.buildPdfReaderView();
       } else if (this.isUsingImagePageReader()) {
         this.buildImagePageReaderView();
+      } else if (this.isUsingMarkdownReader()) {
+        this.buildMarkdownReaderView();
       } else if (this.isReaderKitSupported(this.ebook.format)) {
         this.buildReaderKitView();
       } else {
@@ -3422,14 +3585,29 @@ struct EBookReaderPage {
     return format === EBookFormat.EPUB;
   }
 
+  private isTextReaderFormat(format: EBookFormat): boolean {
+    return format === EBookFormat.TXT;
+  }
+
+  private isMarkdownReaderFormat(format: EBookFormat): boolean {
+    return format === EBookFormat.MD;
+  }
+
   /**
-  * 检查当前是否使用文本阅读器（TXT等纯文本格式）
+  * 检查当前是否使用文本阅读器（TXT纯文本格式）
   */
   private isUsingTextReader(): boolean {
     if (!this.ebook) {
       return false;
     }
-    return this.ebook.format === EBookFormat.TXT;
+    return this.isTextReaderFormat(this.ebook.format);
+  }
+
+  private isUsingMarkdownReader(): boolean {
+    if (!this.ebook) {
+      return false;
+    }
+    return this.isMarkdownReaderFormat(this.ebook.format);
   }
 
   private isUsingImagePageReader(): boolean {
@@ -3674,6 +3852,296 @@ struct EBookReaderPage {
       webtoonRightMargin: DEFAULT_READING_SETTINGS.webtoonRightMargin,
       webtoonMarginSync: DEFAULT_READING_SETTINGS.webtoonMarginSync
     };
+  }
+
+  private getMarkdownTheme(): MarkdownTheme {
+    const settings = this.ebook?.readingSettings;
+    if (settings && settings.nightMode) {
+      return MarkdownTheme.DARK;
+    }
+    const bg = (this.bgColor || '').toUpperCase();
+    if (bg === '#1E1E1E' || bg === '#1B3B2F' || bg === '#1A237E' || bg === '#000000') {
+      return MarkdownTheme.DARK;
+    }
+    return MarkdownTheme.LIGHT;
+  }
+
+  private buildMarkdownReaderStyle(): MarkdownReaderStyle {
+    const settings = this.ebook?.readingSettings;
+    const style: MarkdownReaderStyle = {
+      fontSize: clampTextReaderFontSize(this.fontSize),
+      lineHeight: this.lineHeight,
+      fontFamily: settings?.fontFamily || this.appFontFamily || 'HarmonyOS Sans',
+      fontWeight: settings?.fontWeight || 400,
+      textColor: this.textColor,
+      backgroundColor: this.bgColor,
+      pageMargin: this.pageMargin,
+      pageTopMargin: settings?.pageTopMargin ?? (this.pageMargin + 12),
+      pageBottomMargin: settings?.pageBottomMargin ?? (this.pageMargin + 28),
+      letterSpacing: settings?.letterSpacing ?? 0,
+      paragraphSpacing: settings?.paragraphSpacing ?? 8,
+      firstLineIndent: settings?.firstLineIndent ?? 0,
+      textAlignment: settings?.textAlignment || 'LEFT',
+      pageMode: settings?.pageMode || '0',
+      pageTurnAnimation: settings?.pageTurnAnimation || 'SLIDE',
+      tapToTurn: settings?.tapToTurn ?? true
+    };
+    return style;
+  }
+
+  private applyMarkdownReaderStyle(): void {
+    if (this.markdownController && this.markdownController.isControllerReady()) {
+      this.markdownController.applyReaderStyle(this.buildMarkdownReaderStyle());
+    }
+  }
+
+  private handleMarkdownControllerReady(controller: MarkdownViewerController): void {
+    this.markdownController = controller;
+    this.applyMarkdownReaderStyle();
+    logger.info(TAG, 'Markdown viewer controller is ready');
+  }
+
+  private resetMarkdownChapterContent(progress: number, headingId: string = '', saveAfterRender: boolean = false): void {
+    const safeProgress = Math.max(0, Math.min(100, progress));
+    const safeHeadingId = headingId.trim();
+    this.markdownChapterProgress = safeProgress;
+    this.markdownOverallProgress = this.calculateMarkdownOverallProgress(safeProgress);
+    this.markdownCurrentPage = 1;
+    this.markdownPageCount = 1;
+    this.pendingMarkdownRestoreProgress = safeProgress;
+    this.pendingMarkdownHeadingId = safeHeadingId;
+    this.pendingMarkdownSaveAfterRender = saveAfterRender;
+    this.currentDomPos = this.buildMarkdownDomPos(safeProgress);
+    this.markdownContent = this.getTextContent();
+  }
+
+  private handleMarkdownRenderComplete(): void {
+    const controller = this.markdownController;
+    if (controller && controller.isControllerReady()) {
+      const restoreProgress = this.pendingMarkdownRestoreProgress >= 0
+        ? this.pendingMarkdownRestoreProgress
+        : this.markdownChapterProgress;
+      const headingId = this.pendingMarkdownHeadingId.trim();
+      const shouldSaveAfterRender = this.pendingMarkdownSaveAfterRender;
+      this.pendingMarkdownRestoreProgress = -1;
+      this.pendingMarkdownHeadingId = '';
+      this.pendingMarkdownSaveAfterRender = false;
+      setTimeout(() => {
+        if (headingId.length > 0) {
+          controller.scrollToHeading(headingId);
+        } else {
+          controller.scrollToProgress(restoreProgress);
+        }
+        setTimeout(() => {
+          const reason = headingId.length > 0 ? 'render_complete_heading' : 'render_complete';
+          void this.refreshMarkdownProgressSnapshot(reason).then(() => {
+            if (shouldSaveAfterRender) {
+              void this.saveReadingProgress();
+            }
+          });
+        }, 220);
+      }, 0);
+    }
+    this.reportTransitionLoadingProgress(0.96, 'markdown_render_complete');
+    this.notifyTransitionReaderReadyOnce('markdown_render_complete');
+  }
+
+  private async refreshMarkdownProgressSnapshot(reason: string): Promise<void> {
+    let snapshot: MarkdownProgressSnapshot = this.createMarkdownProgressSnapshotFromState();
+    const controller = this.markdownController;
+    if (controller && controller.isControllerReady()) {
+      snapshot = await controller.getScrollSnapshot();
+    }
+    this.applyMarkdownProgressSnapshot(snapshot, reason);
+  }
+
+  private async getMarkdownProgressSnapshotForSave(): Promise<MarkdownProgressSnapshot> {
+    const controller = this.markdownController;
+    if (controller && controller.isControllerReady()) {
+      return await controller.getScrollSnapshot();
+    }
+    return this.createMarkdownProgressSnapshotFromState();
+  }
+
+  private applyMarkdownProgressSnapshot(snapshot: MarkdownProgressSnapshot, reason: string): void {
+    const chapterProgress = Math.max(0, Math.min(100, snapshot.progress));
+    this.markdownChapterProgress = chapterProgress;
+    this.markdownOverallProgress = this.calculateMarkdownOverallProgress(chapterProgress);
+    this.markdownCurrentPage = Math.max(1, snapshot.currentPage);
+    this.markdownPageCount = Math.max(1, snapshot.pageCount);
+    this.currentDomPos = this.buildMarkdownDomPos(chapterProgress);
+    logger.debug(TAG, `Markdown 进度更新: reason=${reason}, chapterProgress=${chapterProgress.toFixed(1)}%, page=${this.markdownCurrentPage}/${this.markdownPageCount}`);
+  }
+
+  private handleMarkdownProgressChange(progress: number): void {
+    const chapterProgress = Math.max(0, Math.min(100, progress));
+    this.markdownChapterProgress = chapterProgress;
+    this.markdownOverallProgress = this.calculateMarkdownOverallProgress(chapterProgress);
+    this.currentDomPos = this.buildMarkdownDomPos(chapterProgress);
+    this.refreshCurrentEBookBookmarkState('markdown_progress_change');
+  }
+
+  private handleMarkdownReaderTap(zone: string): void {
+    if (zone === 'center') {
+      this.toggleToolbar();
+      return;
+    }
+    const tapToTurn = this.ebook?.readingSettings?.tapToTurn ?? true;
+    if (!tapToTurn || this.areReaderMenusVisible()) {
+      return;
+    }
+    this.turnMarkdownPage(zone === 'right');
+  }
+
+  private decodeMarkdownAnchor(anchor: string): string {
+    const rawAnchor = anchor.startsWith('#') ? anchor.substring(1) : anchor;
+    try {
+      return decodeURIComponent(rawAnchor);
+    } catch {
+      return rawAnchor;
+    }
+  }
+
+  private scrollMarkdownToHeading(headingId: string, reason: string): void {
+    const safeHeadingId = headingId.trim();
+    if (safeHeadingId.length <= 0) {
+      return;
+    }
+    const controller = this.markdownController;
+    if (!controller || !controller.isControllerReady()) {
+      this.pendingMarkdownHeadingId = safeHeadingId;
+      logger.info(TAG, `Markdown 标题跳转延后执行: reason=${reason}, headingId=${safeHeadingId}`);
+      return;
+    }
+    controller.scrollToHeading(safeHeadingId);
+    setTimeout(() => {
+      void this.refreshMarkdownProgressSnapshot(reason).then(() => {
+        void this.saveReadingProgress();
+      });
+    }, 260);
+  }
+
+  private jumpToMarkdownChapter(chapterIndex: number, headingId: string): void {
+    if (!this.ebook || chapterIndex < 0 || chapterIndex >= this.ebook.chapters.length) {
+      logger.warn(TAG, `无效的 Markdown 章节跳转: chapterIndex=${chapterIndex}`);
+      return;
+    }
+    const safeHeadingId = headingId.trim();
+    if (chapterIndex === this.currentChapterIndex && safeHeadingId.length > 0) {
+      this.scrollMarkdownToHeading(safeHeadingId, 'markdown_same_chapter_heading_link');
+      return;
+    }
+    this.currentChapterIndex = chapterIndex;
+    this.currentChapter = this.ebook.chapters[chapterIndex];
+    this.currentDomPos = '';
+    this.resetMarkdownChapterContent(0, safeHeadingId, true);
+    this.refreshCurrentEBookBookmarkState(
+      safeHeadingId.length > 0 ? 'jump_to_markdown_heading' : 'jump_to_chapter_markdown'
+    );
+    logger.info(
+      TAG,
+      `Markdown 阅读器跳转: chapterIndex=${chapterIndex}, headingId=${safeHeadingId || '(top)'}, contentLength=${this.markdownContent.length}`
+    );
+  }
+
+  private handleMarkdownLinkClick(url: string): void {
+    const trimmedUrl = url.trim();
+    if (trimmedUrl.startsWith('#')) {
+      this.scrollMarkdownToHeading(this.decodeMarkdownAnchor(trimmedUrl), 'markdown_anchor_link');
+      return;
+    }
+    const manualChapterPrefix = 'https://manxia.local/manual/chapter/';
+    if (trimmedUrl.startsWith(manualChapterPrefix)) {
+      const chapterTextWithAnchor = trimmedUrl.substring(manualChapterPrefix.length);
+      const hashIndex = chapterTextWithAnchor.indexOf('#');
+      let chapterText = chapterTextWithAnchor;
+      let headingId = '';
+      if (hashIndex >= 0) {
+        chapterText = chapterTextWithAnchor.substring(0, hashIndex);
+        headingId = this.decodeMarkdownAnchor(chapterTextWithAnchor.substring(hashIndex + 1));
+      }
+      const queryIndex = chapterText.indexOf('?');
+      if (queryIndex >= 0) {
+        chapterText = chapterText.substring(0, queryIndex);
+      }
+      const chapterIndex = Number(chapterText);
+      if (Number.isFinite(chapterIndex)) {
+        this.jumpToMarkdownChapter(Math.floor(chapterIndex), headingId);
+      }
+      return;
+    }
+    logger.info(TAG, `Markdown 外部链接已拦截: ${trimmedUrl}`);
+  }
+
+  private turnMarkdownPage(forward: boolean): boolean {
+    const controller = this.markdownController;
+    if (!controller || !controller.isControllerReady()) {
+      logger.warn(TAG, 'Markdown viewer controller not ready for page turn');
+      return false;
+    }
+    controller.turnPage(forward)
+      .then((result: MarkdownPageTurnResult) => {
+        this.handleMarkdownPageTurnResult(forward, result);
+      })
+      .catch((error: Error) => {
+        logger.error(TAG, `Markdown 翻页失败: ${error.message}`);
+      });
+    return true;
+  }
+
+  private handleMarkdownPageTurnResult(forward: boolean, result: MarkdownPageTurnResult): void {
+    if (result.moved) {
+      const snapshot: MarkdownProgressSnapshot = {
+        progress: result.progress,
+        scrollTop: result.scrollTop,
+        maxScrollTop: result.maxScrollTop,
+        currentPage: this.markdownCurrentPage,
+        pageCount: this.markdownPageCount
+      };
+      this.applyMarkdownProgressSnapshot(snapshot, 'page_turn');
+      void this.refreshMarkdownProgressSnapshot('page_turn_snapshot');
+      void this.saveReadingProgress();
+      return;
+    }
+    if (forward && result.boundary === 'end') {
+      this.nextChapter();
+      return;
+    }
+    if (!forward && result.boundary === 'start') {
+      this.previousChapter();
+    }
+  }
+
+  @Builder
+  buildMarkdownReaderView() {
+    if (this.ebook) {
+      MarkdownViewerComponent({
+        content: this.markdownContent,
+        theme: this.getMarkdownTheme(),
+        fontSize: clampTextReaderFontSize(this.fontSize),
+        readerStyle: this.buildMarkdownReaderStyle(),
+        callbacks: {
+          onReady: (controller: MarkdownViewerController): void => {
+            this.handleMarkdownControllerReady(controller);
+          },
+          onRenderComplete: (): void => {
+            this.handleMarkdownRenderComplete();
+          },
+          onLinkClick: (url: string): void => {
+            this.handleMarkdownLinkClick(url);
+          },
+          onReaderTap: (zone: string): void => {
+            this.handleMarkdownReaderTap(zone);
+          },
+          onProgressChange: (progress: number): void => {
+            this.handleMarkdownProgressChange(progress);
+          }
+        }
+      })
+        .width('100%')
+        .height('100%')
+        .backgroundColor(this.bgColor)
+    }
   }
 
   @Builder
@@ -4061,6 +4529,7 @@ struct EBookReaderPage {
   * 显示文本阅读器设置（带动画）
   */
   private showTextReaderSettingsWithAnimation(): void {
+    this.handleReaderOverlayOpening('text_reader_settings_open');
     this.showTextReaderSettings = true;
     this.getUIContext().animateTo({
       duration: 250,
@@ -4199,7 +4668,7 @@ struct EBookReaderPage {
   }
 
   private parseReaderKitPositionSnapshot(): ReaderKitPositionSnapshot | null {
-    if (this.isUsingTextReader() || this.isUsingImagePageReader()) {
+    if (this.isUsingTextReader() || this.isUsingMarkdownReader() || this.isUsingImagePageReader()) {
       return null;
     }
     return this.parseReaderKitPositionSnapshotFromDomPos(this.currentDomPos);
@@ -4224,7 +4693,7 @@ struct EBookReaderPage {
 
   private initReaderKitStartupGuard(persistedPageOffset: number): void {
     this.clearReaderKitStartupGuard('reinit');
-    if (!this.ebook || this.isUsingTextReader() || this.isUsingImagePageReader() || !this.isReaderKitSupported(this.ebook.format)) {
+    if (!this.ebook || this.isUsingTextReader() || this.isUsingMarkdownReader() || this.isUsingImagePageReader() || !this.isReaderKitSupported(this.ebook.format)) {
       return;
     }
     if (!Number.isFinite(persistedPageOffset) || persistedPageOffset <= 0) {
@@ -4304,6 +4773,9 @@ struct EBookReaderPage {
       }
       return Math.max(0, Math.min(100, ((this.currentChapterIndex + 1) / total) * 100));
     }
+    if (this.isUsingMarkdownReader()) {
+      return Math.max(0, Math.min(100, this.markdownOverallProgress));
+    }
     const snapshot = this.parseReaderKitPositionSnapshot();
     if (snapshot && snapshot.resourceIndex >= 0 && snapshot.resourceCount > 0) {
       const percent = ((snapshot.resourceIndex + 1) / snapshot.resourceCount) * 100;
@@ -4334,7 +4806,7 @@ struct EBookReaderPage {
   }
 
   private async handleReaderKitProgressSliderEnd(rawValue: number): Promise<void> {
-    if (!this.ebook || this.isUsingTextReader() || !this.isReaderKitSupported(this.ebook.format)) {
+    if (!this.ebook || this.isUsingTextReader() || this.isUsingMarkdownReader() || !this.isReaderKitSupported(this.ebook.format)) {
       return;
     }
     const resourceCount = this.getReaderKitResourceCountForNavigation();
@@ -4355,7 +4827,7 @@ struct EBookReaderPage {
   }
 
   private getBottomToolbarChapterTitle(): string {
-    if (this.isUsingTextReader()) {
+    if (this.isUsingTextReader() || this.isUsingMarkdownReader()) {
       return this.currentChapter?.title || `第${this.currentChapterIndex + 1}章`;
     }
     const chapterIndex = this.getCurrentReaderKitChapterIndex();
@@ -4369,6 +4841,11 @@ struct EBookReaderPage {
   private getBottomToolbarStatusText(): string {
     if (this.isUsingTextReader()) {
       return `${this.currentChapterIndex + 1} / ${this.ebook?.chapters.length || 0}`;
+    }
+    if (this.isUsingMarkdownReader()) {
+      const total = this.ebook?.chapters.length || 0;
+      const progressPercent = this.getCurrentEBookProgressPercent();
+      return `${Math.round(progressPercent)}% · 章节 ${this.currentChapterIndex + 1} / ${total} · 页 ${this.markdownCurrentPage} / ${this.markdownPageCount}`;
     }
     if (this.isUsingImagePageReader()) {
       const total = this.ebook?.chapters.length || 0;
@@ -4397,23 +4874,26 @@ struct EBookReaderPage {
       return null;
     }
     const isTextMode = this.isUsingTextReader();
+    const isMarkdownMode = this.isUsingMarkdownReader();
     const readerKitSnapshot = this.parseReaderKitPositionSnapshot();
-    const chapterIndex = isTextMode
+    const chapterIndex = (isTextMode || isMarkdownMode)
       ? Math.max(0, this.currentChapterIndex)
       : (readerKitSnapshot && readerKitSnapshot.resourceIndex >= 0
           ? readerKitSnapshot.resourceIndex
           : Math.max(0, this.currentChapterIndex));
     const resolvedChapter = this.ebook.chapters[chapterIndex];
-    const chapterTitle = isTextMode
+    const chapterTitle = (isTextMode || isMarkdownMode)
       ? (this.currentChapter?.title || `第${chapterIndex + 1}章`)
       : (resolvedChapter?.title || `第${chapterIndex + 1}章`);
-    const chapterId = isTextMode
+    const chapterId = (isTextMode || isMarkdownMode)
       ? (this.currentChapter?.id || '')
       : (resolvedChapter?.id || `resource_${chapterIndex}`);
-    const pageIndex = isTextMode ? Math.max(0, this.textCurrentPageIndex) : this.getCurrentReaderKitPageIndex();
+    const pageIndex = isTextMode
+      ? Math.max(0, this.textCurrentPageIndex)
+      : (isMarkdownMode ? Math.max(0, this.markdownCurrentPage - 1) : this.getCurrentReaderKitPageIndex());
     const rawProgress = this.isUsingImagePageReader()
       ? this.getCurrentEBookProgressPercent()
-      : this.ebook.readingProgress?.progress;
+      : (isMarkdownMode ? this.markdownOverallProgress : this.ebook.readingProgress?.progress);
     const progress = (typeof rawProgress === 'number' && Number.isFinite(rawProgress) && rawProgress >= 0)
       ? Math.max(0, Math.min(1, rawProgress / 100))
       : -1;
@@ -4576,7 +5056,9 @@ struct EBookReaderPage {
     const chapterIndex = bookmarkContext ? bookmarkContext.chapterIndex : this.currentChapterIndex;
     const pageIndex = bookmarkContext
       ? bookmarkContext.pageIndex
-      : (this.isUsingTextReader() ? this.textCurrentPageIndex : this.getCurrentReaderKitPageIndex());
+      : (this.isUsingTextReader()
+        ? this.textCurrentPageIndex
+        : (this.isUsingMarkdownReader() ? Math.max(0, this.markdownCurrentPage - 1) : this.getCurrentReaderKitPageIndex()));
     const params: AnnotationCenterPageParams = {
       contentType: UnifiedContentType.EBOOK,
       contentId: this.ebook.id,
@@ -4669,8 +5151,8 @@ struct EBookReaderPage {
       })
     }
     .width('100%')
-    .height(ReaderSafeAreaUtils.getTopToolbarHeight(this.statusBarHeight))
-    .padding({ left: 8, right: 8, top: ReaderSafeAreaUtils.getStatusBarInset(this.statusBarHeight) })
+    .height(this.getStableTopToolbarHeight())
+    .padding({ left: 8, right: 8, top: this.getStableTopToolbarInset() })
     .backgroundColor(this.themeManager.getGlassBackgroundResource())
     .backgroundBlurStyle(this.themeManager.getGlassBlurStyle())
     .shadow({ radius: this.themeManager.getGlassRadius(), color: this.themeManager.getGlassShadowColor(), offsetX: 0, offsetY: 4 })
@@ -4704,7 +5186,7 @@ struct EBookReaderPage {
 
           // 阅读设置按钮（主题、翻页等）
       Row() {
-        if (this.isUsingTextReader()) {
+        if (this.isUsingTextReader() || this.isUsingMarkdownReader()) {
           Slider({
             value: this.currentChapterIndex,
             min: 0,
@@ -4940,7 +5422,7 @@ struct EBookReaderPage {
       .scale({ x: this.moreMenuScale, y: this.moreMenuScale })
       .translate({ y: this.moreMenuTranslateY })
       .align(Alignment.TopEnd)
-      .margin({ top: ReaderSafeAreaUtils.getTopToolbarHeight(this.statusBarHeight) + 8, right: 12 })
+      .margin({ top: this.getStableTopToolbarHeight() + 8, right: 12 })
       .constraintSize({ maxWidth: 260 })
       .zIndex(1100)
     }

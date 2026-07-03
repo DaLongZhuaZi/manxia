@@ -12,8 +12,9 @@ import {
 import { ContinuationTriggeredPayload } from '../Framework/EventBus';
 
 const TAG: string = 'RemoteControlAbilityPage';
+let remoteControlAbilityPageStorage: LocalStorage = new LocalStorage();
 
-@Entry
+@Entry(remoteControlAbilityPageStorage)
 @Component
 struct RemoteControlAbilityPage {
   @Provide('NavPathStack') pathStack: NavPathStack = new NavPathStack();

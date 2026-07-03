@@ -305,6 +305,7 @@ export struct TextReaderComponent {
   private paginationRetryCount: number = 0;// 分页重试次数
   private static readonly MAX_PAGINATION_RETRIES: number = 10;// 最大分页重试次数
   private areaChangeDebounceTimer: number = -1;// onAreaChange防抖定时器
+  private initialPaginationTimer: number = -1;// 首次布局后分页兜底定时器
   private static readonly AREA_CHANGE_DEBOUNCE_MS: number = 100;// 防抖时间(100ms)
   private adjacentChapterPreloadTimer: number = -1;
   private settingsRepaginateDebounceTimer: number = -1;
@@ -409,6 +410,7 @@ export struct TextReaderComponent {
     this.lastChapterIndex = this.currentChapterIndex;
     this.updateVolumeKeyListener();
     this.syncAutoPageTurnState('component-appear');
+    this.scheduleInitialPagination('component_appear');
   }
   
   /**
@@ -482,6 +484,32 @@ export struct TextReaderComponent {
       // 异步分页
       this.paginateContentAsync();
     }
+  }
+
+  private clearInitialPaginationTimer(): void {
+    if (this.initialPaginationTimer !== -1) {
+      clearTimeout(this.initialPaginationTimer);
+      this.initialPaginationTimer = -1;
+    }
+  }
+
+  private scheduleInitialPagination(reason: string): void {
+    this.clearInitialPaginationTimer();
+    this.initialPaginationTimer = setTimeout(() => {
+      this.initialPaginationTimer = -1;
+      this.ensurePaginationForCurrentState(reason);
+    }, 0);
+  }
+
+  private ensurePaginationForCurrentState(reason: string): void {
+    if (!this.content || this.content.length === 0) {
+      return;
+    }
+    if (this.pages.length > 0 && this.totalPages > 0) {
+      return;
+    }
+    logger.info(TAG, `触发文本阅读器首次分页兜底: reason=${reason}, contentLength=${this.content.length}`);
+    this.paginateContentAsync();
   }
   
   /**
@@ -919,7 +947,7 @@ export struct TextReaderComponent {
     const chapterId = this.buildTextChapterIdentity(chapterIndex);
     const contentFingerprint = this.buildChapterContentFingerprint(content);
     const cacheKey = this.createChapterPaginationCacheKey(chapterId, paginationSignature, contentFingerprint);
-    const pages = this.buildPagesForContent(content, linesPerPage);
+    const pages = this.ensureNonEmptyPagesForContent(content, this.buildPagesForContent(content, linesPerPage));
     const entry: ChapterPaginationCacheEntry = {
       cacheKey: cacheKey,
       chapterId: chapterId,
@@ -1078,6 +1106,25 @@ export struct TextReaderComponent {
     );
     this.applyPostPaginationState('cache_hit');
     return true;
+  }
+
+  private ensureNonEmptyPagesForContent(content: string, pages: TextPage[]): TextPage[] {
+    if (pages.length > 0) {
+      return pages;
+    }
+    if (!content || content.trim().length <= 0) {
+      return pages;
+    }
+    const fallbackPage: TextPage = {
+      index: 0,
+      content: content,
+      startCharIndex: 0,
+      endCharIndex: content.length
+    };
+    const fallbackPages: TextPage[] = [];
+    fallbackPages.push(fallbackPage);
+    logger.warn(TAG, `分页结果为空，已使用单页兜底: contentLength=${content.length}`);
+    return fallbackPages;
   }
 
   private scheduleAdjacentChapterPaginationPreload(reason: string): void {
@@ -1906,6 +1953,7 @@ export struct TextReaderComponent {
       clearTimeout(this.highlightThoughtPopupHideTimer);
       this.highlightThoughtPopupHideTimer = -1;
     }
+    this.clearInitialPaginationTimer();
     this.clearPendingThoughtPopupRequest();
     if (this.suppressNextTapResetTimer !== -1) {
       clearTimeout(this.suppressNextTapResetTimer);
@@ -2366,7 +2414,7 @@ export struct TextReaderComponent {
       return;
     }
 
-    const pages = this.buildPagesForContent(this.content, linesPerPage);
+    const pages = this.ensureNonEmptyPagesForContent(this.content, this.buildPagesForContent(this.content, linesPerPage));
     this.applyPaginatedPages(pages);
     
     // 分页完成后预加载相邻页面的 PixelMap（用于卷页动画）
@@ -2377,8 +2425,6 @@ export struct TextReaderComponent {
     
     logger.info(TAG, `分页完成: 总页数=${this.totalPages}, 每页行数=${linesPerPage}`);
     
-    // 触发就绪回调
-    this.onReady();
   }
   
   /**
@@ -6134,9 +6180,10 @@ export struct TextReaderComponent {
         if (!this.content || this.content.length === 0) {
           return;
         }
-        this.pendingAnchorCharIndex = this.getCurrentAnchorCharIndex();
-        this.pendingRelayoutAnimation = true;
-        this.startRelayoutAnimation();
+        const shouldPreserveAnchor = this.pages.length > 0 && this.totalPages > 0;
+        this.pendingAnchorCharIndex = shouldPreserveAnchor ? this.getCurrentAnchorCharIndex() : -1;
+        this.pendingRelayoutAnimation = false;
+        this.relayoutOpacity = 1;
         this.releaseAllPixelMapCache();
         this.scrollContentHeight = 0;
         this.paginateContentAsync();
@@ -6423,38 +6470,58 @@ export struct TextReaderComponent {
   @Builder
   buildPageMode() {
     Stack({ alignContent: Alignment.TopStart }) {
-      // 下一页（在底层，滑动时露出）
-      if (this.slideOffset !== 0 || this.showCurlEffect) {
-        Text(this.isForward ? this.nextPageContent : this.prevPageContent)
-          .fontSize(this.getEffectiveFontSize())
-          .fontColor(this.settings.textStyle.textColor)
-          .lineHeight(this.getEffectiveTextLineHeight())
-          .letterSpacing(this.settings.textStyle.letterSpacing)
-          .fontWeight(this.settings.textStyle.fontWeight)
-          .fontFamily(this.settings.textStyle.fontFamily)
-          .textAlign(this.getTextAlign())
-          .padding(this.getEffectiveContentPadding())
+      if (this.totalPages <= 0 || this.pages.length <= 0) {
+        this.buildPaginationLoadingView()
+      } else {
+        // 下一页（在底层，滑动时露出）
+        if (this.slideOffset !== 0 || this.showCurlEffect) {
+          Text(this.isForward ? this.nextPageContent : this.prevPageContent)
+            .fontSize(this.getEffectiveFontSize())
+            .fontColor(this.settings.textStyle.textColor)
+            .lineHeight(this.getEffectiveTextLineHeight())
+            .letterSpacing(this.settings.textStyle.letterSpacing)
+            .fontWeight(this.settings.textStyle.fontWeight)
+            .fontFamily(this.settings.textStyle.fontFamily)
+            .textAlign(this.getTextAlign())
+            .padding(this.getEffectiveContentPadding())
+            .width('100%')
+            .height('100%')
+            .backgroundColor(this.getContentBackgroundColor())
+        }
+
+          // 当前页内容（支持长按选择文本）
+        Stack() {
+          // 卷曲效果由 Canvas 层 PageCurlEffectV2 统一渲染（包含3D卷曲、光影、背面）
+          this.buildCurrentPageTextLayer()
+
+          // 无需额外的 ArkUI 叠加层
+          // 无需额外的 ArkUI 叠加层
+          }
           .width('100%')
           .height('100%')
-          .backgroundColor(this.getContentBackgroundColor())
+          .translate({ x: this.slideOffset })
+          .opacity(this.slideOpacity)
       }
-      
-        // 当前页内容（支持长按选择文本）
-      Stack() {
-        // 卷曲效果由 Canvas 层 PageCurlEffectV2 统一渲染（包含3D卷曲、光影、背面）
-        this.buildCurrentPageTextLayer()
-        
-        // 无需额外的 ArkUI 叠加层
-        // 无需额外的 ArkUI 叠加层
-        }
-        .width('100%')
-        .height('100%')
-        .translate({ x: this.slideOffset })
-        .opacity(this.slideOpacity)
     }
     .width('100%')
     .height('100%')
     .clip(true)
+  }
+
+  @Builder
+  private buildPaginationLoadingView() {
+    Column() {
+      LoadingProgress()
+        .width(36)
+        .height(36)
+        .color(this.settings.textStyle.textColor)
+        .opacity(0.45)
+    }
+    .width('100%')
+    .height('100%')
+    .justifyContent(FlexAlign.Center)
+    .alignItems(HorizontalAlign.Center)
+    .backgroundColor(this.getContentBackgroundColor())
   }
   
   /**
@@ -6695,7 +6762,11 @@ export struct TextReaderComponent {
    */
   @Builder
   buildPageInfo() {
-    if (this.isDualPageMode()) {
+    if (this.totalPages <= 0) {
+      Blank()
+        .width(0)
+        .height(0)
+    } else if (this.isDualPageMode()) {
         // 左下角：左页页码（双页模式始终显示）
       Row() {
         // 左下角：左页页码（双页模式始终显示）

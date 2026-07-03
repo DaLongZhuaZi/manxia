@@ -62,7 +62,7 @@ export struct EpubReaderSettingsPanel {
     tapToTurn: true,
     volumeKeyNavigation: true,
     keepScreenOn: false,
-    lockDeviceOrientation: false,
+    lockDeviceOrientation: DEFAULT_EBOOK_READING_SETTINGS.lockDeviceOrientation ?? false,
     showPageNumber: true,
     showProgress: false,
     showTime: true,
@@ -844,11 +844,11 @@ export struct EpubReaderSettingsPanel {
       Row() {
         Column() {
           Text('锁定方向')
-            .fontSize(14)
+            .fontSize(16)
             .fontColor($r('app.color.text_primary'))
             .fontFamily(this.appFontFamily)
           Text(this.getDeviceOrientationLockHint())
-            .fontSize(11)
+            .fontSize(12)
             .fontColor($r('app.color.text_secondary'))
             .fontFamily(this.appFontFamily)
             .margin({ top: 2 })
@@ -863,6 +863,7 @@ export struct EpubReaderSettingsPanel {
           })
       }
       .width('100%')
+      .padding({ top: 12, bottom: 12 })
     }
     .width('100%')
     .margin({ bottom: 20 })
