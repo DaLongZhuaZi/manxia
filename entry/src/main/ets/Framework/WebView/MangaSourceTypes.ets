@@ -365,6 +365,7 @@ export interface ConditionAction extends BaseAction {
 export interface ScriptAction extends BaseAction {
   type: ActionType.SCRIPT;
   code: string;
+  timeout?: number;
 }
 
 /**

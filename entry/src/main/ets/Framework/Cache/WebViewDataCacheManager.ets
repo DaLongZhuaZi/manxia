@@ -274,6 +274,31 @@ export class WebViewDataCacheManager {
     this.deleteChapterList(sourceId, mangaId);
     logger.info(TAG, `清空漫画缓存: sourceId=${sourceId}, mangaId=${mangaId}`);
   }
+
+  /**
+   * 清空指定图源的详情和章节缓存
+   */
+  clearSource(sourceId: number): void {
+    const prefix = `${sourceId}_`;
+    let clearedCount = 0;
+    const detailKeys = Array.from(this.mangaDetailCache.keys());
+    for (let index = 0; index < detailKeys.length; index++) {
+      const key = detailKeys[index];
+      if (key.startsWith(prefix)) {
+        this.mangaDetailCache.delete(key);
+        clearedCount++;
+      }
+    }
+    const chapterKeys = Array.from(this.chapterListCache.keys());
+    for (let index = 0; index < chapterKeys.length; index++) {
+      const key = chapterKeys[index];
+      if (key.startsWith(prefix)) {
+        this.chapterListCache.delete(key);
+        clearedCount++;
+      }
+    }
+    logger.info(TAG, `清空图源WebView数据缓存: sourceId=${sourceId}, count=${clearedCount}`);
+  }
   
   /**
    * 清理所有过期缓存

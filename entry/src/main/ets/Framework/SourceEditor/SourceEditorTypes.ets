@@ -41,6 +41,9 @@ export interface SourceInteractiveEditorPageParams {
   sourcePkg: string;
   initialUrl: string;
   createNew: boolean;
+  autoRunDiagnostics?: boolean;
+  autoCheckTaskId?: string;
+  openAutoCheckReport?: boolean;
 }
 
 export interface SourceDiagnosticPageParams {

@@ -1,0 +1,52 @@
+Manifest-Version: 1.0
+Built-By: Signflinger
+Created-By: Android Gradle 8.6.1
+
+Name: AndroidManifest.xml
+SHA-256-Digest: Pb8o2PgQeZSWeW0sosU5IHo3cySlb2q/Mu5XdL3yQ8w=
+
+Name: META-INF/com/android/build/gradle/app-metadata.properties
+SHA-256-Digest: 5b7NnKVHLe2yV4/dvvxlKBxFQ6tjoAGCf3rX67hz0AU=
+
+Name: assets/pinyin.txt
+SHA-256-Digest: JiQI3bsxEKxXsL6bs8Z3y34mfAUb7/yNCR0o6MLiuoo=
+
+Name: assets/polyphone.txt
+SHA-256-Digest: Xq1nmON7x33KsOHDGa4P4aCussgvBIjgbDL4XwJOvfU=
+
+Name: assets/simp.txt
+SHA-256-Digest: Fzffnn4VM0aBjWeHekNV91DQeglIw4RVqcjQqIqrVcM=
+
+Name: assets/simplified.txt
+SHA-256-Digest: FDt7O1JrI6a8SgWMRGpjZhoK9V1mmBM/WComgfXl4/Y=
+
+Name: assets/trad.txt
+SHA-256-Digest: nlIc8+AHGFvxE9pP5Z+coyW2VdaeEns7C6chYVfog/8=
+
+Name: assets/traditional.txt
+SHA-256-Digest: vjFWHz2G23DSyk2apgYAKth0a6iTHVIrJzRoQQpCGQk=
+
+Name: assets/unknown.txt
+SHA-256-Digest: zAej+g2Ii8n8N77LeGy5fCiyGcDhMDlcOXK6waQZbOs=
+
+Name: classes.dex
+SHA-256-Digest: oo/5fmfaIsd5fYVaNF0S+rlIf6s+xesIHjLjdjl2RLw=
+
+Name: res/9w.png
+SHA-256-Digest: wdPKhcLuaxc0lcvw9ExOoDYqZqqtsdy34f4+f9RCe6A=
+
+Name: res/FS.png
+SHA-256-Digest: CxPWh4Ryu+37U4LAByzTTAnZps1936kJvJB/oi6vgpg=
+
+Name: res/RJ.png
+SHA-256-Digest: pYXx1q0lYLkanN7N7DD1o6T8ZrIHpFClCyKF7Cf/Xk8=
+
+Name: res/o-.png
+SHA-256-Digest: pGRK0S5DF3qd86FsI4FFcRNpJ3wZ58fBAtrBD2j423Q=
+
+Name: res/yn.png
+SHA-256-Digest: 1kzqxNb8Xorj6KmVoaRLKp0Qr+6Hh+Xz+XOwAcjgYKI=
+
+Name: resources.arsc
+SHA-256-Digest: D+FbKNV/pbhRwIGOsGawn4AhApq3qjvLl652pQSa3NY=
+

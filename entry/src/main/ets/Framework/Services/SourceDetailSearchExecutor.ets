@@ -93,6 +93,7 @@ interface SourceDetailSearchJsonConfig {
 interface SourceDetailSearchContext {
   sourceId: number;
   sourceName: string;
+  sourcePkg: string;
   query: string;
   searchType: string;
   page: number;
@@ -165,6 +166,7 @@ export class SourceDetailSearchExecutor {
     const context: SourceDetailSearchContext = {
       sourceId: params.sourceId,
       sourceName: sourceRecord.name || `图源${params.sourceId}`,
+      sourcePkg: sourceRecord.pkg || '',
       query: query,
       searchType: searchType,
       page: page,
@@ -261,7 +263,7 @@ export class SourceDetailSearchExecutor {
       if (this.isContextCancelled(context)) {
         return this.buildFailureFromContext(context, SourceDetailSearchRoute.KEYWORD, '搜索已取消');
       }
-      const engine = await this.webViewSourceManager.getMangaEngine(context.sourceId, context.sourceName);
+      const engine = await this.webViewSourceManager.getMangaEngine(context.sourceId, context.sourceName, context.sourcePkg);
       const controller = this.resolveRequiredWebViewController();
       engine.updateWebViewController(controller);
 
@@ -300,7 +302,7 @@ export class SourceDetailSearchExecutor {
     }
 
     await this.prepareWebViewSource(context);
-    const engine = await this.webViewSourceManager.getMangaEngine(context.sourceId, context.sourceName);
+    const engine = await this.webViewSourceManager.getMangaEngine(context.sourceId, context.sourceName, context.sourcePkg);
     const controller = this.resolveRequiredWebViewController();
     engine.updateWebViewController(controller);
 
@@ -337,7 +339,7 @@ export class SourceDetailSearchExecutor {
     }
 
     await this.prepareWebViewSource(context);
-    const engine = await this.webViewSourceManager.getMangaEngine(context.sourceId, context.sourceName);
+    const engine = await this.webViewSourceManager.getMangaEngine(context.sourceId, context.sourceName, context.sourcePkg);
     const controller = this.resolveRequiredWebViewController();
     engine.updateWebViewController(controller);
 
@@ -380,7 +382,7 @@ export class SourceDetailSearchExecutor {
     }
 
     await this.prepareWebViewSource(context);
-    const engine = await this.webViewSourceManager.getMangaEngine(context.sourceId, context.sourceName);
+    const engine = await this.webViewSourceManager.getMangaEngine(context.sourceId, context.sourceName, context.sourcePkg);
     const controller = this.resolveRequiredWebViewController();
     engine.updateWebViewController(controller);
 
@@ -410,7 +412,7 @@ export class SourceDetailSearchExecutor {
     }
 
     await this.prepareWebViewSource(context);
-    const engine = await this.webViewSourceManager.getMangaEngine(context.sourceId, context.sourceName);
+    const engine = await this.webViewSourceManager.getMangaEngine(context.sourceId, context.sourceName, context.sourcePkg);
     const controller = this.resolveRequiredWebViewController();
     engine.updateWebViewController(controller);
 

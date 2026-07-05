@@ -6,7 +6,10 @@
 import { notificationManager } from '@kit.NotificationKit';
 import { logger } from '../../Utils/Logger';
 import { common } from '@kit.AbilityKit';
+import wantAgent, { WantAgent } from '@ohos.app.ability.wantAgent';
 import { BusinessError } from '@kit.BasicServicesKit';
+import { Want } from '@kit.AbilityKit';
+import { TaskNavigationTarget } from '../Task/TaskNavigationTypes';
 
 const TAG = 'NotificationManager';
 const TASK_NOTIFICATION_ID_BASE = 100000;
@@ -30,7 +33,10 @@ export enum NotificationType {
   TRANSFER_SERVICE_RUNNING = 'transfer_service_running', // 局域网传书服务运行中
   TRANSFER_UPLOAD_PROGRESS = 'transfer_upload_progress', // 局域网传书上传中
   TRANSFER_UPLOAD_COMPLETE = 'transfer_upload_complete', // 局域网传书上传完成
-  TRANSFER_UPLOAD_FAILED = 'transfer_upload_failed' // 局域网传书上传失败
+  TRANSFER_UPLOAD_FAILED = 'transfer_upload_failed', // 局域网传书上传失败
+  SOURCE_AUTO_CHECK_PROGRESS = 'source_auto_check_progress', // 图源巡检进度
+  SOURCE_AUTO_CHECK_COMPLETE = 'source_auto_check_complete', // 图源巡检完成
+  SOURCE_AUTO_CHECK_FAILED = 'source_auto_check_failed' // 图源巡检失败
 }
 
 /**
@@ -51,6 +57,8 @@ export interface NotificationConfig {
   additionalText?: string;
   progress?: ProgressInfo;
   type: NotificationType;
+  navigation?: TaskNavigationTarget;
+  context?: common.UIAbilityContext;
 }
 
 /**
@@ -155,6 +163,12 @@ export class AppNotificationManager {
         actionButtons: []
       };
 
+      const clickWantAgent: WantAgent | undefined = await this.buildClickWantAgent(config);
+      if (clickWantAgent !== undefined) {
+        notificationRequest.wantAgent = clickWantAgent;
+        notificationRequest.tapDismissed = config.type !== NotificationType.SOURCE_AUTO_CHECK_PROGRESS;
+      }
+
       // 如果有进度信息，优先使用系统模板进度通知
       if (config.progress) {
         const progressPercent = this.calculateProgressPercent(config.progress.current, config.progress.max);
@@ -183,7 +197,8 @@ export class AppNotificationManager {
           config.type === NotificationType.DOWNLOAD_PROGRESS ||
           config.type === NotificationType.VALIDATION_PROGRESS ||
           config.type === NotificationType.PDF_IMPORT_PROGRESS ||
-          config.type === NotificationType.TRANSFER_UPLOAD_PROGRESS
+          config.type === NotificationType.TRANSFER_UPLOAD_PROGRESS ||
+          config.type === NotificationType.SOURCE_AUTO_CHECK_PROGRESS
         ) {
           notificationRequest.isOngoing = true;
           notificationRequest.isAlertOnce = true;
@@ -205,7 +220,9 @@ export class AppNotificationManager {
         config.type === NotificationType.PDF_IMPORT_COMPLETE ||
         config.type === NotificationType.PDF_IMPORT_FAILED ||
         config.type === NotificationType.TRANSFER_UPLOAD_COMPLETE ||
-        config.type === NotificationType.TRANSFER_UPLOAD_FAILED
+        config.type === NotificationType.TRANSFER_UPLOAD_FAILED ||
+        config.type === NotificationType.SOURCE_AUTO_CHECK_COMPLETE ||
+        config.type === NotificationType.SOURCE_AUTO_CHECK_FAILED
       ) {
         notificationRequest.isOngoing = false;
       }
@@ -241,6 +258,37 @@ export class AppNotificationManager {
     }
     const progress = Math.floor((current / total) * 100);
     return Math.max(0, Math.min(100, progress));
+  }
+
+  private async buildClickWantAgent(config: NotificationConfig): Promise<WantAgent | undefined> {
+    if (config.context === undefined || config.navigation === undefined) {
+      return undefined;
+    }
+    try {
+      const notificationWant: Want = {
+        bundleName: config.context.abilityInfo.bundleName,
+        abilityName: 'EntryAbility',
+        parameters: {
+          notificationRouteName: config.navigation.routeName,
+          notificationSourceId: config.navigation.sourceId !== undefined ? config.navigation.sourceId : 0,
+          notificationSourceName: config.navigation.sourceName !== undefined ? config.navigation.sourceName : '',
+          notificationSourcePkg: config.navigation.sourcePkg !== undefined ? config.navigation.sourcePkg : '',
+          notificationInitialUrl: config.navigation.initialUrl !== undefined ? config.navigation.initialUrl : '',
+          notificationAutoCheckTaskId: config.navigation.autoCheckTaskId !== undefined ? config.navigation.autoCheckTaskId : '',
+          notificationOpenAutoCheckReport: config.navigation.openAutoCheckReport === true
+        }
+      };
+      const info: wantAgent.WantAgentInfo = {
+        wants: [notificationWant],
+        actionType: wantAgent.OperationType.START_ABILITY,
+        requestCode: config.id,
+        actionFlags: [wantAgent.WantAgentFlags.UPDATE_PRESENT_FLAG]
+      };
+      return await wantAgent.getWantAgent(info);
+    } catch (error) {
+      logger.warn(TAG, `构建通知点击跳转失败: ${String(error)}`);
+      return undefined;
+    }
   }
 
   /**
@@ -467,6 +515,76 @@ export class AppNotificationManager {
       text: fileName,
       additionalText: reason,
       type: NotificationType.PDF_IMPORT_FAILED
+    };
+    return this.sendNotification(config);
+  }
+
+  /**
+   * 发送图源巡检进度通知
+   */
+  public async sendSourceAutoCheckProgressNotification(
+    taskId: string,
+    sourceName: string,
+    current: number,
+    total: number,
+    stageText: string,
+    navigation?: TaskNavigationTarget,
+    context?: common.UIAbilityContext
+  ): Promise<boolean> {
+    const progress = this.calculateProgressPercent(current, total);
+    const config: NotificationConfig = {
+      id: this.getNotificationId(taskId),
+      title: '图源巡检中',
+      text: sourceName,
+      additionalText: stageText.length > 0 ? `${progress}% · ${stageText}` : `${progress}%`,
+      progress: { current: current, max: total },
+      type: NotificationType.SOURCE_AUTO_CHECK_PROGRESS,
+      navigation: navigation,
+      context: context
+    };
+    return this.sendNotification(config);
+  }
+
+  /**
+   * 发送图源巡检完成通知
+   */
+  public async sendSourceAutoCheckCompleteNotification(
+    taskId: string,
+    sourceName: string,
+    summary: string,
+    navigation?: TaskNavigationTarget,
+    context?: common.UIAbilityContext
+  ): Promise<boolean> {
+    const config: NotificationConfig = {
+      id: this.getNotificationId(taskId),
+      title: '图源巡检完成',
+      text: sourceName,
+      additionalText: summary,
+      type: NotificationType.SOURCE_AUTO_CHECK_COMPLETE,
+      navigation: navigation,
+      context: context
+    };
+    return this.sendNotification(config);
+  }
+
+  /**
+   * 发送图源巡检失败通知
+   */
+  public async sendSourceAutoCheckFailedNotification(
+    taskId: string,
+    sourceName: string,
+    reason: string,
+    navigation?: TaskNavigationTarget,
+    context?: common.UIAbilityContext
+  ): Promise<boolean> {
+    const config: NotificationConfig = {
+      id: this.getNotificationId(taskId),
+      title: '图源巡检失败',
+      text: sourceName,
+      additionalText: reason,
+      type: NotificationType.SOURCE_AUTO_CHECK_FAILED,
+      navigation: navigation,
+      context: context
     };
     return this.sendNotification(config);
   }

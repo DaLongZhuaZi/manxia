@@ -1,0 +1,53 @@
+Signature-Version: 1.0
+Created-By: Android Gradle 8.6.1
+SHA-256-Digest-Manifest: U0Droqw5WUmefItkZziws7iuz62i5EDM0Ach9dTIDI0=
+X-Android-APK-Signed: 2
+
+Name: AndroidManifest.xml
+SHA-256-Digest: SZaCOvK+9v8TP5AspoAf2uD38wRmCIz2MO+w1Bt9PAk=
+
+Name: META-INF/com/android/build/gradle/app-metadata.properties
+SHA-256-Digest: JR1r17iSjjTpyGhgDyAN6BwM8uMmra/kapOBRw30i+g=
+
+Name: assets/pinyin.txt
+SHA-256-Digest: G31qZ5MwPzB27rUhx9DNwETDNeSnACMDfpeIQQJGiY0=
+
+Name: assets/polyphone.txt
+SHA-256-Digest: yHQ53bTxpwBdifW9gmoBEbaX1Nz95HD50Ntv2Gj0+ek=
+
+Name: assets/simp.txt
+SHA-256-Digest: qSvAf4wzZGjPMOUMLVr6lvXR+WpGnCWrX7I22TeskRE=
+
+Name: assets/simplified.txt
+SHA-256-Digest: S3UYrj19hmaboo5QmMTO21150rucAdQovfuCHUAzIFo=
+
+Name: assets/trad.txt
+SHA-256-Digest: v2pkMdgDhwFqEZj7D9O9vTbf0CrrWkmbF5MVtg7RDmo=
+
+Name: assets/traditional.txt
+SHA-256-Digest: aJigQpbdzTvx353EK/DTuc61mWi1qqyme4h3h8YS0EQ=
+
+Name: assets/unknown.txt
+SHA-256-Digest: AGm+kM66WkX71Wr4cPKE+tvuPGU6/IoXTbuKhOmXby8=
+
+Name: classes.dex
+SHA-256-Digest: 5U/UJr6lOZwopVau7vvPOldUPGlRf+/EfREygwSaSSw=
+
+Name: res/9w.png
+SHA-256-Digest: JqVcT18uiqcM3zRx5BFFvsNP76HABL612XhXv0FxZnA=
+
+Name: res/FS.png
+SHA-256-Digest: ZPpTuL9WA1hNLnxpj+TG3iol/OUqViaY2AElcqCbFAA=
+
+Name: res/RJ.png
+SHA-256-Digest: e9AKZp4Qx/gOkhgd8lC9eUVYLZWsE3tyk4c2ruuPkVE=
+
+Name: res/o-.png
+SHA-256-Digest: nAZDW8+p5qcDNV1DdSL7nnu8k9Tago5ZOyuPpa3BdTQ=
+
+Name: res/yn.png
+SHA-256-Digest: ujAWPclJMMFkH0NcKZYZ1PuEjBae7ECzX02NGsRrBKY=
+
+Name: resources.arsc
+SHA-256-Digest: lJmcr6DS8UP2JOglA+x9CjbrL8RLx8EiCt39aGIUUO4=
+

@@ -21,7 +21,7 @@ Tachiyomi/Mihon等系列的中文漫畫書源，現已支持拷貝漫畫/vomic/�
   <img height="36" style="border-radius:12px;height:36px;" src="https://pic1.afdiancdn.com/static/img/welcome/button-sponsorme.jpg" alt="在爱发电支持我" />
   </a>
 
-## 拷貝漫畫 v1.4.80
+## 拷貝漫畫 v1.4.82
 
 > Info
 + 新版本與Tachidesk/Suwayomi最新版本兼容
@@ -29,10 +29,10 @@ Tachiyomi/Mihon等系列的中文漫畫書源，現已支持拷貝漫畫/vomic/�
 + 支持獲取拷貝/熱辣源站書櫃漫畫選項 (需登入，此功能意在使用戶能方便遷移在拷貝中收藏的漫畫)
 
 > New Updates (近期更新)
-> (1.4.80)
-+ 更新漫畫吐槽域名至拷貝漫畫目前最新域名
+> (1.4.82)
++ 登入使用的api從固定改為根據API域名設置
 
-## vomic漫 v1.4.2
+## vomic漫 v1.4.3
 > Info
 + 使用前請先至插鍵設置登入帳號
 + 支援熱門漫畫/最新更新漫畫
@@ -40,6 +40,15 @@ Tachiyomi/Mihon等系列的中文漫畫書源，現已支持拷貝漫畫/vomic/�
 + 支援顯示章節評論
 + 支援簡繁轉換(搜索支持自動轉成簡體)
 
+> New Updates (近期更新)
+> (1.4.3)
++ 修復Mihon(v0.20.0+)解析錯誤問題
+
+## 漫蛙2 v1.4.1
+> Info
++ 支援圖源多線路切換
++ 支援源站所有篩選方法
++ 免登入支援源站所有作品
 
 ## 包子漫畫 v1.4.1
 > Info

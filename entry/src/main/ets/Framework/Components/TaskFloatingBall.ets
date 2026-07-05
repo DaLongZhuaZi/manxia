@@ -6,6 +6,8 @@ import { BackgroundTaskManager, BackgroundTask, TaskStatus, TaskProgress, TaskSt
 import { logger } from '../../Utils/Logger';
 import { display } from '@kit.ArkUI';
 import { AppColors, ColorRole } from '../Theme/AppColors';
+import { SourceInteractiveEditorPageParams } from '../SourceEditor/SourceEditorTypes';
+import { TaskNavigationTarget } from '../Task/TaskNavigationTypes';
 import {
   getHoldingAwarenessManager,
   HoldingAwarenessFeature,
@@ -332,12 +334,68 @@ export struct TaskFloatingBall {
         .maxLines(1)
         .textOverflow({ overflow: TextOverflow.Ellipsis })
         .width('100%')
+
+      if (this.canCancelTask(task)) {
+        Button('停止')
+          .height(24)
+          .fontSize(10)
+          .fontColor(AppColors.error)
+          .backgroundColor(AppColors.surfaceVariant)
+          .borderRadius(6)
+          .onClick(() => {
+            this.cancelTaskFromFloatingBall(task.id);
+          })
+      }
     }
     .width('100%')
     .padding({ left: 12, right: 12, top: 4, bottom: 4 })
     .backgroundColor(AppColors.surface)
     .borderRadius(8)
     .margin({ left: 8, right: 8 })
+    .onClick(() => {
+      this.openTaskFromFloatingBall(task);
+    })
+  }
+
+  private canCancelTask(task: BackgroundTask): boolean {
+    return task.status === TaskStatus.PENDING || task.status === TaskStatus.RUNNING;
+  }
+
+  private cancelTaskFromFloatingBall(taskId: string): void {
+    this.taskManager.cancelTask(taskId);
+    this.refreshTaskState(this.isVisible);
+  }
+
+  private openTaskFromFloatingBall(task: BackgroundTask): void {
+    const navigation: TaskNavigationTarget | undefined = task.navigation;
+    if (navigation === undefined || navigation.routeName.length <= 0) {
+      this.isExpanded = !this.isExpanded;
+      return;
+    }
+    try {
+      const globalStack: NavPathStack | undefined = AppStorage.get<NavPathStack>('GlobalNavStack');
+      if (globalStack === undefined) {
+        logger.warn(TAG, `打开后台任务页面失败，GlobalNavStack 不存在: taskId=${task.id}`);
+        return;
+      }
+      if (navigation.routeName === 'SourceInteractiveEditorPage') {
+        const params: SourceInteractiveEditorPageParams = {
+          sourceId: navigation.sourceId !== undefined ? navigation.sourceId : 0,
+          sourceName: navigation.sourceName !== undefined && navigation.sourceName.length > 0 ? navigation.sourceName : task.name,
+          sourcePkg: navigation.sourcePkg !== undefined ? navigation.sourcePkg : '',
+          initialUrl: navigation.initialUrl !== undefined ? navigation.initialUrl : '',
+          createNew: false,
+          autoRunDiagnostics: false,
+          autoCheckTaskId: navigation.autoCheckTaskId !== undefined && navigation.autoCheckTaskId.length > 0 ?
+            navigation.autoCheckTaskId : task.id,
+          openAutoCheckReport: true
+        };
+        globalStack.pushPathByName('SourceInteractiveEditorPage', params);
+        this.isExpanded = false;
+      }
+    } catch (error) {
+      logger.warn(TAG, `打开后台任务页面失败: ${String(error)}`);
+    }
   }
 
   private getTaskStatusText(status: TaskStatus): string {

@@ -93,6 +93,9 @@ export default class EntryAbility extends UIAbility {
     if (want.parameters && want.parameters['share_import_files']) {
       this.handleShareImport(want);
     }
+    else if (this.handleNotificationNavigation(want, false)) {
+      logger.info('EntryAbility', '📣 已记录通知点击导航目标');
+    }
     // 检查是否通过 Deep Link 打开应用（manxia:// 或 https://manxia.top/）
     else if (this.isDeepLinkUri(want.uri || '')) {
       const uri: string = want.uri || '';
@@ -1160,6 +1163,10 @@ export default class EntryAbility extends UIAbility {
       this.restoreContinuationState(want);
     }
 
+    if (this.handleNotificationNavigation(want, true)) {
+      return;
+    }
+
     // 检查是否通过 Deep Link 打开应用（manxia:// 或 https://manxia.top/）
     const deepLinkUri: string = want.uri || '';
     if (this.isDeepLinkUri(deepLinkUri)) {
@@ -1219,6 +1226,30 @@ export default class EntryAbility extends UIAbility {
     const current = AppStorage.get<number>('deepLinkTrigger') || 0;
     AppStorage.setOrCreate('deepLinkTrigger', current + 1);
     logger.info('EntryAbility', `📣 通知UI处理Deep Link (trigger: ${current + 1})`);
+  }
+
+  private handleNotificationNavigation(want: Want, notifyUi: boolean): boolean {
+    if (!want.parameters) {
+      return false;
+    }
+    const routeName: string = want.parameters['notificationRouteName'] as string;
+    if (!routeName || routeName.length <= 0) {
+      return false;
+    }
+    AppStorage.setOrCreate('widgetTargetPage', 'sourceAutoCheck');
+    AppStorage.setOrCreate('sourceAutoCheckRouteName', routeName);
+    AppStorage.setOrCreate('sourceAutoCheckSourceId', want.parameters['notificationSourceId'] as number);
+    AppStorage.setOrCreate('sourceAutoCheckSourceName', want.parameters['notificationSourceName'] as string);
+    AppStorage.setOrCreate('sourceAutoCheckSourcePkg', want.parameters['notificationSourcePkg'] as string);
+    AppStorage.setOrCreate('sourceAutoCheckInitialUrl', want.parameters['notificationInitialUrl'] as string);
+    AppStorage.setOrCreate('sourceAutoCheckTaskId', want.parameters['notificationAutoCheckTaskId'] as string);
+    AppStorage.setOrCreate('sourceAutoCheckOpenReport', want.parameters['notificationOpenAutoCheckReport'] as boolean);
+    if (notifyUi) {
+      const current = AppStorage.get<number>('sourceAutoCheckNavigationTrigger') || 0;
+      AppStorage.setOrCreate('sourceAutoCheckNavigationTrigger', current + 1);
+      logger.info('EntryAbility', `📣 通知UI打开图源巡检页面 (trigger: ${current + 1})`);
+    }
+    return true;
   }
 
   private isDeepLinkUri(uri: string): boolean {

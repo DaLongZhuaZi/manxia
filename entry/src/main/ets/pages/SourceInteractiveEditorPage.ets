@@ -11,14 +11,31 @@ import { SafeUtils } from '../Utils/SafeUtils';
 import { AppFloatingWindowConfig, WindowManager } from '../Utils/WindowManager';
 import { ThemeAwareHelper, ThemeAwareState } from '../Framework/Components/ThemeAware';
 import { ThemeManager, ThemeType } from '../Framework/Managers/ThemeManager';
+import { AppColors } from '../Framework/Theme/AppColors';
 import { FontAwareHelper, FontAwareState } from '../Framework/Components/FontAware';
 import { SharedPageBackgroundLayer } from '../Framework/Components/SharedPageBackgroundLayer';
 import { GlobalBackgroundLayerMode } from '../Framework/Components/GlobalBackgroundLayer';
 import { SettingsImmersiveTitleBar } from './settings/SettingsImmersiveTitleBar';
 import { SettingsImmersiveTitleActionItem, SettingsPageTitleBarManager } from './settings/SettingsPageTitleBarManager';
 import { SettingsPanelSurfaceHelper } from './settings/SettingsPanelSurfaceHelper';
+import {
+  BackgroundTaskManager,
+  BackgroundTask,
+  TaskCancelSignal,
+  TaskNotificationScene,
+  TaskStatus,
+  TaskType
+} from '../Framework/Task/BackgroundTaskManager';
+import { TaskNavigationTarget } from '../Framework/Task/TaskNavigationTypes';
+import {
+  sourceAutoCheckHistoryService,
+  SourceAutoCheckRecord,
+  SourceAutoCheckRecordStatus
+} from '../Framework/SourceEditor/SourceAutoCheckHistoryService';
 import { interactiveSourceEditorService } from '../Framework/SourceEditor/InteractiveSourceEditorService';
 import {
+  createEmptySourceEditorSelectionAssessment,
+  createEmptySourceEditorWorkflowPreview,
   SourceEditorInspectorSnapshot,
   sourceEditorInspectorStateManager
 } from '../Framework/SourceEditor/SourceEditorInspectorStateManager';
@@ -49,10 +66,24 @@ const SOURCE_EDITOR_FLOATING_INSPECTOR_CONFIG: AppFloatingWindowConfig = {
 };
 const GUIDE_POLL_INTERVAL_MS: number = 450;
 const PREVIEW_RETRY_DELAY_MS: number = 900;
+const AUTO_CHECK_PAGE_SETTLE_MS: number = 2200;
+const AUTO_CHECK_SCRIPT_TIMEOUT_MS: number = 3600;
+const AUTO_CHECK_MAX_RETRIES: number = 2;
+const AUTO_CHECK_PROGRESS_TICK_MS: number = 350;
+const AUTO_CHECK_WORKFLOW_PROGRESS_ESTIMATE_MS: number = 8200;
+const AUTO_CHECK_EXTERNAL_WORKFLOW_KEYS: string[] = ['popular', 'latest', 'search'];
+const AUTO_CHECK_HISTORY_PREVIEW_LIMIT: number = 6;
 
 interface SourceEditorTaskOption {
   taskType: SourceEditorTaskType;
   label: string;
+}
+
+interface SourceAutoCheckTaskOption {
+  workflowKey: string;
+  taskType: SourceEditorTaskType;
+  label: string;
+  useInspectorStep: boolean;
 }
 
 interface DomSelectionRawCandidate {
@@ -98,6 +129,96 @@ interface WorkflowPreviewRaw {
   pending?: boolean;
 }
 
+interface SourceEditorSiteOption {
+  id: string;
+  label: string;
+  baseUrl: string;
+}
+
+type SourceEditorStringMap = Record<string, string>;
+type SourceEditorWorkflowMap = Record<string, Object>;
+
+interface SourceEditorSiteMetadata {
+  baseUrl?: string;
+  alternativeUrls?: Object;
+}
+
+interface SourceEditorSiteSettingOption {
+  value?: string;
+  label?: string;
+}
+
+interface SourceEditorSiteSetting {
+  name?: string;
+  default?: string;
+  options?: SourceEditorSiteSettingOption[];
+}
+
+interface SourceEditorSiteSettings {
+  domain?: SourceEditorSiteSetting;
+  apiDomain?: SourceEditorSiteSetting;
+  baseUrl?: SourceEditorSiteSetting;
+  siteUrl?: SourceEditorSiteSetting;
+}
+
+interface SourceEditorSiteRawConfig {
+  metadata?: SourceEditorSiteMetadata;
+  settings?: SourceEditorSiteSettings;
+  mirrors?: string[];
+  workflows?: Object;
+}
+
+interface SourceEditorAutoRawAction {
+  type?: string;
+  selector?: string;
+  code?: string;
+  url?: string;
+}
+
+interface SourceEditorAutoRawWorkflowObject {
+  actions?: SourceEditorAutoRawAction[];
+}
+
+interface SourceAutoCheckWorkflowResult {
+  siteId: string;
+  siteLabel: string;
+  siteBaseUrl: string;
+  workflowKey: string;
+  taskLabel: string;
+  status: SourceEditorWorkflowPreviewStatus;
+  score: number;
+  attemptCount: number;
+  durationMs: number;
+  targetUrl: string;
+  summary: string;
+  detail: string;
+  errorMessage: string;
+  selectorCount: number;
+  scriptCount: number;
+  sampleTitle: string;
+  sampleUrl: string;
+}
+
+interface SourceAutoCheckSiteReport {
+  siteId: string;
+  siteLabel: string;
+  siteBaseUrl: string;
+  score: number;
+  successCount: number;
+  totalCount: number;
+  durationMs: number;
+  summary: string;
+  recommended: boolean;
+  workflowResults: SourceAutoCheckWorkflowResult[];
+}
+
+interface SourceAutoCheckTaskResult {
+  sourceName: string;
+  recommendedSiteBaseUrl: string;
+  summary: string;
+  reportJson: string;
+}
+
 @Component
 export struct SourceInteractiveEditorPage {
   @State pathStack: NavPathStack = new NavPathStack();
@@ -114,6 +235,22 @@ export struct SourceInteractiveEditorPage {
   @State generatedWorkflowJson: string = '';
   @State configPreview: string = '';
   @State saveMessage: string = '';
+  @State siteOptions: SourceEditorSiteOption[] = [];
+  @State selectedSiteBaseUrl: string = '';
+  @State autoCheckRunning: boolean = false;
+  @State autoCheckReportReady: boolean = false;
+  @State autoCheckProgressText: string = '';
+  @State autoCheckSiteReports: SourceAutoCheckSiteReport[] = [];
+  @State autoCheckRecommendedSiteBaseUrl: string = '';
+  @State autoCheckActiveSiteId: string = '';
+  @State autoCheckActiveSiteBaseUrl: string = '';
+  @State autoCheckActiveTargetUrl: string = '';
+  @State autoCheckProgressTick: number = 0;
+  @State showAutoCheckScopePicker: boolean = false;
+  @State autoCheckScopeOptions: SourceAutoCheckTaskOption[] = [];
+  @State selectedAutoCheckWorkflowKeys: string[] = [];
+  @State autoCheckHistoryRecords: SourceAutoCheckRecord[] = [];
+  @State expandedAutoCheckHistoryTaskId: string = '';
   @State isLoading: boolean = true;
   @State pickerInjected: boolean = false;
   @State inspectorActive: boolean = false;
@@ -123,6 +260,7 @@ export struct SourceInteractiveEditorPage {
   private componentId: string = `SourceInteractiveEditorPage_${Date.now()}`;
   private themeManager: ThemeManager = ThemeManager.getInstance();
   private webController: webview.WebviewController = new webview.WebviewController();
+  private backgroundTaskManager: BackgroundTaskManager = BackgroundTaskManager.getInstance();
   private draft: SourceEditorDraft | null = null;
   private guidePollTimerId: number = -1;
   private pendingLoadTimerId: number = -1;
@@ -136,6 +274,14 @@ export struct SourceInteractiveEditorPage {
   private lastLoadedGuideUrl: string = '';
   private lastCommittedLoadUrl: string = '';
   private mainFrameLoaded: boolean = false;
+  private autoCheckRequestToken: number = 0;
+  private autoCheckCancelRequested: boolean = false;
+  private autoCheckBackgroundTaskId: string = '';
+  private autoCheckRunStartTime: number = 0;
+  private autoCheckCurrentSiteCount: number = 0;
+  private autoCheckRecordRefreshTimerId: number = -1;
+  private autoCheckProgressTimerId: number = -1;
+  private autoCheckActiveWorkflowStartedAt: number = 0;
 
   aboutToAppear() {
     ThemeAwareHelper.initializeThemeAware(this.componentId, this.themeState, (theme: ThemeType) => {
@@ -153,6 +299,8 @@ export struct SourceInteractiveEditorPage {
     this.stopGuidePolling();
     this.clearPendingLoadTimer();
     this.clearPreviewTimer();
+    this.stopAutoCheckRecordRefresh();
+    this.stopAutoCheckProgressTimer();
     void this.closeFloatingInspectorOnLeave();
     sourceEditorInspectorStateManager.resetGuide('SourceInteractiveEditorPage aboutToDisappear');
   }
@@ -195,7 +343,8 @@ export struct SourceInteractiveEditorPage {
         sourceName: '新建图源',
         sourcePkg: '',
         initialUrl: '',
-        createNew: true
+        createNew: true,
+        autoRunDiagnostics: false
       };
       const draft: SourceEditorDraft = await interactiveSourceEditorService.createDraft(pageParams);
       this.draft = draft;
@@ -203,7 +352,19 @@ export struct SourceInteractiveEditorPage {
       this.syncDraftState(draft);
       this.applyGuideSnapshot(true);
       this.ensureInitialTargetLoaded();
-      void this.openFloatingInspector();
+      const hostContext = this.getUIContext().getHostContext() as common.UIAbilityContext;
+      await sourceAutoCheckHistoryService.initialize(hostContext);
+      if (pageParams.autoCheckTaskId !== undefined && pageParams.autoCheckTaskId.length > 0) {
+        await this.restoreAutoCheckRecord(pageParams.autoCheckTaskId);
+      } else if (pageParams.openAutoCheckReport === true) {
+        await this.restoreLatestAutoCheckRecord();
+      } else if (pageParams.autoRunDiagnostics === true) {
+        setTimeout((): void => {
+          void this.startAutoCheckForExternalEntry();
+        }, 450);
+      } else {
+        void this.openFloatingInspector();
+      }
     } catch (error) {
       logger.error(TAG, `初始化交互式编辑器失败: ${String(error)}`);
       this.saveMessage = `初始化失败: ${String(error)}`;
@@ -220,6 +381,7 @@ export struct SourceInteractiveEditorPage {
     this.editorMode = draft.mode;
     this.generatedWorkflowJson = draft.generatedWorkflowJson;
     this.configPreview = draft.configJson;
+    this.refreshSiteOptions(draft.configJson, draft.testUrl);
     if (draft.lastSelection) {
       this.selectedSummary = `${draft.lastSelection.tagName} · ${draft.lastSelection.cssSelector} · ${draft.lastSelection.matchedCount}`;
     }
@@ -228,6 +390,1517 @@ export struct SourceInteractiveEditorPage {
 
   private refreshFloatingInspectorState(): void {
     sourceEditorInspectorStateManager.updateDraft(this.draft, this.selectedSummary, this.saveMessage);
+  }
+
+  private refreshSiteOptions(configJson: string, currentUrl: string): void {
+    const options: SourceEditorSiteOption[] = this.buildSiteOptions(configJson);
+    this.siteOptions = options;
+    this.selectedSiteBaseUrl = this.resolveSelectedSiteBaseUrl(options, currentUrl);
+  }
+
+  private buildSiteOptions(configJson: string): SourceEditorSiteOption[] {
+    const options: SourceEditorSiteOption[] = [];
+    const rawConfig: SourceEditorSiteRawConfig = SafeUtils.parseObj<SourceEditorSiteRawConfig>(configJson);
+    const metadata: SourceEditorSiteMetadata | undefined = rawConfig.metadata;
+    if (metadata) {
+      this.addSiteOption(options, 'default', '默认', metadata.baseUrl);
+    }
+
+    const settings: SourceEditorSiteSettings | undefined = rawConfig.settings;
+    if (settings) {
+      this.collectSettingSiteOptions(options, settings.domain, '域名');
+      this.collectSettingSiteOptions(options, settings.apiDomain, 'API');
+      this.collectSettingSiteOptions(options, settings.baseUrl, '站点');
+      this.collectSettingSiteOptions(options, settings.siteUrl, '站点');
+    }
+    if (metadata) {
+      this.collectAlternativeUrlOptions(options, metadata.alternativeUrls);
+    }
+
+    const mirrors: string[] | undefined = rawConfig.mirrors;
+    if (mirrors) {
+      for (let index = 0; index < mirrors.length; index += 1) {
+        this.addSiteOption(options, `mirror_${index}`, `镜像${index + 1}`, mirrors[index]);
+      }
+    }
+    return options;
+  }
+
+  private collectAlternativeUrlOptions(options: SourceEditorSiteOption[], alternativeUrls: Object | undefined): void {
+    if (!alternativeUrls) {
+      return;
+    }
+    const keys: string[] = Object.keys(alternativeUrls);
+    const urlMap: SourceEditorStringMap = alternativeUrls as SourceEditorStringMap;
+    for (let index = 0; index < keys.length; index += 1) {
+      const key: string = keys[index];
+      const value: string | undefined = urlMap[key];
+      if (value !== undefined && typeof value === 'string') {
+        this.addSiteOption(options, `alt_${key}`, key, value);
+      }
+    }
+  }
+
+  private collectSettingSiteOptions(
+    options: SourceEditorSiteOption[],
+    setting: SourceEditorSiteSetting | undefined,
+    labelPrefix: string
+  ): void {
+    if (!setting) {
+      return;
+    }
+    const settingName: string = setting.name && setting.name.length > 0 ? setting.name : labelPrefix;
+    this.addSiteOption(options, `${labelPrefix}_default`, settingName, setting.default);
+    const settingOptions: SourceEditorSiteSettingOption[] | undefined = setting.options;
+    if (!settingOptions) {
+      return;
+    }
+    for (let index = 0; index < settingOptions.length; index += 1) {
+      const option: SourceEditorSiteSettingOption = settingOptions[index];
+      const label: string = option.label && option.label.length > 0 ? option.label : `${settingName}${index + 1}`;
+      this.addSiteOption(options, `${labelPrefix}_${index}`, label, option.value);
+    }
+  }
+
+  private addSiteOption(options: SourceEditorSiteOption[], id: string, label: string, url: string | undefined): void {
+    const baseUrl: string = this.normalizeSiteBaseUrl(url);
+    if (baseUrl.length <= 0) {
+      return;
+    }
+    for (let index = 0; index < options.length; index += 1) {
+      if (this.normalizeSiteBaseUrl(options[index].baseUrl) === baseUrl) {
+        return;
+      }
+    }
+    const option: SourceEditorSiteOption = {
+      id: `${id}_${options.length}`,
+      label: this.resolveSiteLabel(label, baseUrl),
+      baseUrl: baseUrl
+    };
+    options.push(option);
+  }
+
+  private resolveSiteLabel(label: string, baseUrl: string): string {
+    const trimmedLabel: string = label.trim();
+    if (trimmedLabel.length > 0 && trimmedLabel.length <= 20) {
+      return trimmedLabel;
+    }
+    const host: string = this.resolveHostFromUrl(baseUrl);
+    if (host.length > 0) {
+      return host;
+    }
+    return baseUrl;
+  }
+
+  private normalizeSiteBaseUrl(url: string | undefined): string {
+    if (!url) {
+      return '';
+    }
+    let trimmed: string = url.trim();
+    if (trimmed.startsWith('//')) {
+      trimmed = `https:${trimmed}`;
+    }
+    if (!trimmed.startsWith('http://') && !trimmed.startsWith('https://')) {
+      return '';
+    }
+    while (trimmed.length > 1 && trimmed.endsWith('/')) {
+      trimmed = trimmed.substring(0, trimmed.length - 1);
+    }
+    return trimmed;
+  }
+
+  private resolveHostFromUrl(url: string): string {
+    const baseUrl: string = this.normalizeSiteBaseUrl(url);
+    const schemeIndex: number = baseUrl.indexOf('://');
+    if (schemeIndex < 0) {
+      return '';
+    }
+    const hostStart: number = schemeIndex + 3;
+    const pathIndex: number = baseUrl.indexOf('/', hostStart);
+    if (pathIndex < 0) {
+      return baseUrl.substring(hostStart);
+    }
+    return baseUrl.substring(hostStart, pathIndex);
+  }
+
+  private resolveSelectedSiteBaseUrl(options: SourceEditorSiteOption[], currentUrl: string): string {
+    const currentBaseUrl: string = this.normalizeSiteBaseUrl(this.resolveBaseUrlFromTestUrl(currentUrl));
+    for (let index = 0; index < options.length; index += 1) {
+      const optionBaseUrl: string = this.normalizeSiteBaseUrl(options[index].baseUrl);
+      if (optionBaseUrl.length > 0 && optionBaseUrl === currentBaseUrl) {
+        return optionBaseUrl;
+      }
+    }
+    if (options.length > 0) {
+      return options[0].baseUrl;
+    }
+    return '';
+  }
+
+  private switchTestSite(option: SourceEditorSiteOption): void {
+    const nextUrl: string = this.buildSwitchedTestUrl(option.baseUrl);
+    this.selectedSiteBaseUrl = option.baseUrl;
+    if (this.draft) {
+      this.draft.testUrl = nextUrl;
+      this.draft.updateTime = Date.now();
+      this.refreshFloatingInspectorState();
+    }
+    sourceEditorInspectorStateManager.updateCurrentTargetUrl(nextUrl);
+    this.requestWorkflowTargetLoad(nextUrl, true);
+  }
+
+  private buildSwitchedTestUrl(nextBaseUrl: string): string {
+    const normalizedNextBaseUrl: string = this.normalizeSiteBaseUrl(nextBaseUrl);
+    if (normalizedNextBaseUrl.length <= 0) {
+      return this.testUrl;
+    }
+    const currentUrl: string = this.testUrl.trim();
+    const currentBaseUrl: string = this.normalizeSiteBaseUrl(this.resolveBaseUrlFromTestUrl(currentUrl));
+    if (currentBaseUrl.length <= 0) {
+      return normalizedNextBaseUrl;
+    }
+    if (!this.isKnownSiteBaseUrl(currentBaseUrl)) {
+      return normalizedNextBaseUrl;
+    }
+    if (currentUrl.length <= currentBaseUrl.length) {
+      return normalizedNextBaseUrl;
+    }
+    return `${normalizedNextBaseUrl}${currentUrl.substring(currentBaseUrl.length)}`;
+  }
+
+  private isKnownSiteBaseUrl(baseUrl: string): boolean {
+    const normalizedBaseUrl: string = this.normalizeSiteBaseUrl(baseUrl);
+    for (let index = 0; index < this.siteOptions.length; index += 1) {
+      if (this.normalizeSiteBaseUrl(this.siteOptions[index].baseUrl) === normalizedBaseUrl) {
+        return true;
+      }
+    }
+    return false;
+  }
+
+  private cancelAutoCheck(reason: string): void {
+    if (!this.autoCheckRunning) {
+      return;
+    }
+    if (this.autoCheckBackgroundTaskId.length > 0) {
+      this.backgroundTaskManager.cancelTask(this.autoCheckBackgroundTaskId);
+    }
+    this.autoCheckCancelRequested = true;
+    this.autoCheckRequestToken += 1;
+    this.autoCheckRunning = false;
+    this.autoCheckActiveSiteId = '';
+    this.autoCheckActiveSiteBaseUrl = '';
+    this.autoCheckActiveTargetUrl = '';
+    this.autoCheckActiveWorkflowStartedAt = 0;
+    this.stopAutoCheckProgressTimer();
+    this.autoCheckProgressText = reason;
+  }
+
+  private startAutoCheckMode(): void {
+    this.openAutoCheckScopePicker();
+  }
+
+  private async startAutoCheckForExternalEntry(): Promise<void> {
+    const supportedTasks: SourceAutoCheckTaskOption[] = this.getAutoCheckTasksByWorkflowKeys(AUTO_CHECK_EXTERNAL_WORKFLOW_KEYS);
+    await this.startAutoCheckWithTasks(supportedTasks, '当前图源未配置热门、最新或搜索巡检流程');
+  }
+
+  private openAutoCheckScopePicker(): void {
+    if (this.draft === null) {
+      this.getUIContext().getPromptAction().showToast({ message: '草稿未就绪' });
+      return;
+    }
+    if (this.autoCheckRunning) {
+      this.getUIContext().getPromptAction().showToast({ message: '自动检查正在运行' });
+      return;
+    }
+    const supportedTasks: SourceAutoCheckTaskOption[] = this.getConfigAutoCheckTasks();
+    if (supportedTasks.length <= 0) {
+      this.getUIContext().getPromptAction().showToast({ message: '当前图源没有可自动检查的工作流' });
+      return;
+    }
+    this.autoCheckScopeOptions = supportedTasks;
+    this.selectedAutoCheckWorkflowKeys = this.resolveDefaultAutoCheckSelection(supportedTasks);
+    this.autoCheckHistoryRecords = [];
+    this.expandedAutoCheckHistoryTaskId = '';
+    this.showAutoCheckScopePicker = true;
+    void this.loadAutoCheckHistoryRecords();
+  }
+
+  private async loadAutoCheckHistoryRecords(): Promise<void> {
+    if (this.draft === null) {
+      return;
+    }
+    try {
+      const hostContext = this.getUIContext().getHostContext() as common.UIAbilityContext;
+      await sourceAutoCheckHistoryService.initialize(hostContext);
+      const records: SourceAutoCheckRecord[] = await sourceAutoCheckHistoryService.getRecordsForSource(
+        this.draft.sourceId,
+        this.sourcePkg,
+        AUTO_CHECK_HISTORY_PREVIEW_LIMIT
+      );
+      this.autoCheckHistoryRecords = records;
+    } catch (error) {
+      logger.warn(TAG, `加载巡检历史失败: ${String(error)}`);
+      this.autoCheckHistoryRecords = [];
+    }
+  }
+
+  private async startAutoCheckWithTasks(supportedTasks: SourceAutoCheckTaskOption[], emptyMessage: string): Promise<void> {
+    if (this.draft === null) {
+      this.getUIContext().getPromptAction().showToast({ message: '草稿未就绪' });
+      return;
+    }
+    if (this.autoCheckRunning) {
+      this.getUIContext().getPromptAction().showToast({ message: '自动检查正在运行' });
+      return;
+    }
+    if (supportedTasks.length <= 0) {
+      this.getUIContext().getPromptAction().showToast({ message: emptyMessage });
+      return;
+    }
+    const sites: SourceEditorSiteOption[] = this.getAutoCheckSites();
+    if (sites.length <= 0) {
+      this.getUIContext().getPromptAction().showToast({ message: '没有可测试的源站点' });
+      return;
+    }
+
+    const hostContext = this.getUIContext().getHostContext() as common.UIAbilityContext;
+    await sourceAutoCheckHistoryService.initialize(hostContext);
+    const token: number = this.prepareAutoCheckRun();
+    this.autoCheckCurrentSiteCount = sites.length;
+    const taskId: string = this.backgroundTaskManager.createTask(
+      TaskType.SOURCE_AUTO_CHECK,
+      `图源巡检: ${this.sourceName}`,
+      async (
+        onProgress: (current: number, total: number, message: string) => void,
+        cancelSignal: TaskCancelSignal
+      ): Promise<Object | undefined> => {
+        return await this.executeAutoCheckTask(token, sites, supportedTasks, onProgress, cancelSignal);
+      },
+      {
+        context: hostContext,
+        enableBackgroundRunning: true,
+        notification: {
+          scene: TaskNotificationScene.SOURCE_AUTO_CHECK,
+          targetName: this.sourceName.length > 0 ? this.sourceName : '图源'
+        }
+      }
+    );
+    const navigationTarget: TaskNavigationTarget = this.createAutoCheckNavigationTarget(taskId);
+    this.backgroundTaskManager.updateTaskNavigation(taskId, navigationTarget);
+    this.autoCheckBackgroundTaskId = taskId;
+    await this.persistAutoCheckRecord(taskId, 'RUNNING', supportedTasks, [], '准备自动检查', '');
+    void this.backgroundTaskManager.startTask(taskId).catch((error: Error): void => {
+      if (this.autoCheckCancelRequested) {
+        logger.info(TAG, `图源自动巡检已取消: ${String(error)}`);
+        return;
+      }
+      this.autoCheckRunning = false;
+      this.autoCheckActiveSiteId = '';
+      this.autoCheckActiveSiteBaseUrl = '';
+      this.autoCheckActiveTargetUrl = '';
+      this.autoCheckActiveWorkflowStartedAt = 0;
+      this.stopAutoCheckProgressTimer();
+      const errorMessage: string = error.message.length > 0 ? error.message : String(error);
+      this.autoCheckProgressText = `自动检查失败: ${errorMessage}`;
+      void this.persistAutoCheckRecord(taskId, 'FAILED', supportedTasks, this.autoCheckSiteReports, this.autoCheckProgressText, errorMessage);
+      logger.warn(TAG, `图源自动巡检后台任务失败: ${String(error)}`);
+    });
+  }
+
+  private prepareAutoCheckRun(): number {
+    this.stopAutoCheckRecordRefresh();
+    this.autoCheckRequestToken += 1;
+    const token: number = this.autoCheckRequestToken;
+    this.autoCheckRunStartTime = Date.now();
+    this.autoCheckCancelRequested = false;
+    this.autoCheckRunning = true;
+    this.autoCheckReportReady = false;
+    this.autoCheckProgressText = '准备自动检查';
+    this.autoCheckSiteReports = [];
+    this.autoCheckRecommendedSiteBaseUrl = '';
+    this.autoCheckActiveSiteId = '';
+    this.autoCheckActiveSiteBaseUrl = '';
+    this.autoCheckActiveTargetUrl = '';
+    this.autoCheckActiveWorkflowStartedAt = 0;
+    this.autoCheckProgressTick = Date.now();
+    this.autoCheckBackgroundTaskId = '';
+    this.autoCheckCurrentSiteCount = 0;
+    this.clearPreviewTimer();
+    void this.closeFloatingInspectorOnLeave();
+    this.startAutoCheckProgressTimer();
+    return token;
+  }
+
+  private async executeAutoCheckTask(
+    token: number,
+    sites: SourceEditorSiteOption[],
+    supportedTasks: SourceAutoCheckTaskOption[],
+    onProgress: (current: number, total: number, message: string) => void,
+    cancelSignal: TaskCancelSignal
+  ): Promise<Object | undefined> {
+    const totalWork: number = sites.length * supportedTasks.length;
+    let completedWork: number = 0;
+    onProgress(0, totalWork, '准备自动检查');
+
+    const reports: SourceAutoCheckSiteReport[] = [];
+    const runStartedAt: number = Date.now();
+    for (let siteIndex = 0; siteIndex < sites.length; siteIndex += 1) {
+      if (!this.isAutoCheckActive(token, cancelSignal)) {
+        break;
+      }
+      const site: SourceEditorSiteOption = sites[siteIndex];
+      const report: SourceAutoCheckSiteReport = this.createAutoCheckSiteReport(site, supportedTasks.length);
+      reports.push(report);
+      this.autoCheckActiveSiteId = site.id;
+      this.autoCheckActiveSiteBaseUrl = site.baseUrl;
+      this.autoCheckSiteReports = this.cloneAutoCheckSiteReports(reports);
+      let chainedSampleUrl: string = '';
+      const siteStartedAt: number = Date.now();
+      for (let taskIndex = 0; taskIndex < supportedTasks.length; taskIndex += 1) {
+        if (!this.isAutoCheckActive(token, cancelSignal)) {
+          break;
+        }
+        const task: SourceAutoCheckTaskOption = supportedTasks[taskIndex];
+        this.beginAutoCheckWorkflowProgress(site, reports);
+        this.autoCheckProgressText = `${site.label} · ${task.label} (${siteIndex + 1}/${sites.length})`;
+        onProgress(completedWork, totalWork, this.autoCheckProgressText);
+        const result: SourceAutoCheckWorkflowResult = await this.runAutoCheckWorkflow(
+          token,
+          site,
+          task,
+          chainedSampleUrl,
+          cancelSignal
+        );
+        report.workflowResults.push(result);
+        if (result.status === SourceEditorWorkflowPreviewStatus.OK && result.sampleUrl.length > 0) {
+          chainedSampleUrl = result.sampleUrl;
+        }
+        this.updateAutoCheckSiteReport(report, Date.now() - siteStartedAt);
+        this.autoCheckSiteReports = this.cloneAutoCheckSiteReports(reports);
+        await this.persistAutoCheckRecord(this.autoCheckBackgroundTaskId, 'RUNNING', supportedTasks, reports,
+          this.autoCheckProgressText, '');
+        completedWork += 1;
+        onProgress(completedWork, totalWork, `${site.label} · ${task.label}: ${this.getAutoCheckStatusText(result.status)}`);
+      }
+    }
+
+    if (!this.isAutoCheckActive(token, cancelSignal)) {
+      this.handleAutoCheckCancelled('自动检查已取消');
+      await this.persistAutoCheckRecord(this.autoCheckBackgroundTaskId, 'CANCELLED', supportedTasks, reports, '自动检查已取消', '');
+      throw new Error('自动检查已取消');
+    }
+    const summary: string = this.finishAutoCheckReports(reports, Date.now() - runStartedAt);
+    await this.persistAutoCheckRecord(this.autoCheckBackgroundTaskId, 'COMPLETED', supportedTasks, reports, summary, '');
+    onProgress(totalWork, totalWork, summary);
+    const taskResult: SourceAutoCheckTaskResult = {
+      sourceName: this.sourceName,
+      recommendedSiteBaseUrl: this.autoCheckRecommendedSiteBaseUrl,
+      summary: summary,
+      reportJson: JSON.stringify(reports)
+    };
+    return taskResult as Object;
+  }
+
+  private isAutoCheckActive(token: number, cancelSignal?: TaskCancelSignal): boolean {
+    const taskCancelled: boolean = cancelSignal !== undefined && cancelSignal.isCancelled;
+    return this.autoCheckRunning && !this.autoCheckCancelRequested && !taskCancelled && token === this.autoCheckRequestToken;
+  }
+
+  private handleAutoCheckCancelled(reason: string): void {
+    this.autoCheckCancelRequested = true;
+    this.autoCheckRunning = false;
+    this.autoCheckActiveSiteId = '';
+    this.autoCheckActiveSiteBaseUrl = '';
+    this.autoCheckActiveTargetUrl = '';
+    this.autoCheckActiveWorkflowStartedAt = 0;
+    this.stopAutoCheckProgressTimer();
+    this.autoCheckProgressText = reason;
+  }
+
+  private beginAutoCheckWorkflowProgress(site: SourceEditorSiteOption, reports: SourceAutoCheckSiteReport[]): void {
+    this.autoCheckActiveSiteId = site.id;
+    this.autoCheckActiveSiteBaseUrl = site.baseUrl;
+    this.autoCheckActiveWorkflowStartedAt = Date.now();
+    this.autoCheckProgressTick = this.autoCheckActiveWorkflowStartedAt;
+    this.autoCheckSiteReports = this.cloneAutoCheckSiteReports(reports);
+    this.startAutoCheckProgressTimer();
+  }
+
+  private startAutoCheckProgressTimer(): void {
+    if (this.autoCheckProgressTimerId >= 0) {
+      return;
+    }
+    this.autoCheckProgressTimerId = setInterval((): void => {
+      if (!this.autoCheckRunning) {
+        this.stopAutoCheckProgressTimer();
+        return;
+      }
+      this.autoCheckProgressTick = Date.now();
+    }, AUTO_CHECK_PROGRESS_TICK_MS);
+  }
+
+  private stopAutoCheckProgressTimer(): void {
+    if (this.autoCheckProgressTimerId >= 0) {
+      clearInterval(this.autoCheckProgressTimerId);
+      this.autoCheckProgressTimerId = -1;
+    }
+  }
+
+  private createAutoCheckNavigationTarget(taskId: string): TaskNavigationTarget {
+    const target: TaskNavigationTarget = {
+      routeName: 'SourceInteractiveEditorPage',
+      sourceId: this.draft !== null ? this.draft.sourceId : 0,
+      sourceName: this.sourceName,
+      sourcePkg: this.sourcePkg,
+      initialUrl: this.testUrl,
+      autoCheckTaskId: taskId,
+      openAutoCheckReport: true
+    };
+    return target;
+  }
+
+  private async persistAutoCheckRecord(
+    taskId: string,
+    status: SourceAutoCheckRecordStatus,
+    tasks: SourceAutoCheckTaskOption[],
+    reports: SourceAutoCheckSiteReport[],
+    summary: string,
+    errorMessage: string
+  ): Promise<void> {
+    if (taskId.length <= 0 || this.draft === null) {
+      return;
+    }
+    const now: number = Date.now();
+    const endTime: number = status === 'RUNNING' ? 0 : now;
+    const startTime: number = this.autoCheckRunStartTime > 0 ? this.autoCheckRunStartTime : now;
+    const record: SourceAutoCheckRecord = {
+      taskId: taskId,
+      sourceId: this.draft.sourceId,
+      sourcePkg: this.sourcePkg,
+      sourceName: this.sourceName,
+      initialUrl: this.testUrl,
+      status: status,
+      startTime: startTime,
+      endTime: endTime,
+      durationMs: status === 'RUNNING' ? now - startTime : endTime - startTime,
+      workflowKeysJson: this.stringifyAutoCheckWorkflowKeys(tasks),
+      workflowLabelsJson: this.stringifyAutoCheckWorkflowLabels(tasks),
+      siteCount: this.autoCheckCurrentSiteCount > 0 ? this.autoCheckCurrentSiteCount : reports.length,
+      recommendedSiteBaseUrl: this.autoCheckRecommendedSiteBaseUrl,
+      summary: summary,
+      errorMessage: errorMessage,
+      reportJson: JSON.stringify(reports),
+      updateTime: now
+    };
+    await sourceAutoCheckHistoryService.saveRecord(record);
+  }
+
+  private stringifyAutoCheckWorkflowKeys(tasks: SourceAutoCheckTaskOption[]): string {
+    const keys: string[] = [];
+    for (let index = 0; index < tasks.length; index += 1) {
+      keys.push(tasks[index].workflowKey);
+    }
+    return JSON.stringify(keys);
+  }
+
+  private stringifyAutoCheckWorkflowLabels(tasks: SourceAutoCheckTaskOption[]): string {
+    const labels: string[] = [];
+    for (let index = 0; index < tasks.length; index += 1) {
+      labels.push(tasks[index].label);
+    }
+    return JSON.stringify(labels);
+  }
+
+  private async restoreLatestAutoCheckRecord(): Promise<void> {
+    if (this.draft === null) {
+      return;
+    }
+    const record: SourceAutoCheckRecord | null =
+      await sourceAutoCheckHistoryService.getLatestRecordForSource(this.draft.sourceId, this.sourcePkg);
+    if (record === null) {
+      this.getUIContext().getPromptAction().showToast({ message: '暂无该图源的巡检记录' });
+      return;
+    }
+    this.applyAutoCheckRecord(record);
+  }
+
+  private async restoreAutoCheckRecord(taskId: string): Promise<void> {
+    const record: SourceAutoCheckRecord | null = await sourceAutoCheckHistoryService.getRecord(taskId);
+    if (record === null) {
+      this.autoCheckBackgroundTaskId = taskId;
+      const task: BackgroundTask | undefined = this.backgroundTaskManager.getTask(taskId);
+      if (task !== undefined) {
+        this.applyAutoCheckTaskSnapshot(task);
+        this.startAutoCheckRecordRefresh(taskId);
+        return;
+      }
+      this.getUIContext().getPromptAction().showToast({ message: '未找到巡检记录' });
+      return;
+    }
+    this.applyAutoCheckRecord(record);
+  }
+
+  private applyAutoCheckRecord(record: SourceAutoCheckRecord): void {
+    this.autoCheckBackgroundTaskId = record.taskId;
+    this.autoCheckRunStartTime = record.startTime;
+    this.autoCheckCurrentSiteCount = record.siteCount;
+    this.autoCheckRecommendedSiteBaseUrl = record.recommendedSiteBaseUrl;
+    this.autoCheckSiteReports = this.cloneAutoCheckSiteReports(SafeUtils.parseArr<SourceAutoCheckSiteReport[]>(record.reportJson));
+    this.autoCheckProgressText = record.summary.length > 0 ? record.summary : this.getAutoCheckRecordStatusText(record.status);
+    const task: BackgroundTask | undefined = this.backgroundTaskManager.getTask(record.taskId);
+    if (task !== undefined && (task.status === TaskStatus.PENDING || task.status === TaskStatus.RUNNING)) {
+      this.applyAutoCheckTaskSnapshot(task);
+      this.startAutoCheckRecordRefresh(record.taskId);
+      return;
+    }
+    this.autoCheckRunning = false;
+    this.autoCheckReportReady = true;
+    this.stopAutoCheckRecordRefresh();
+    this.stopAutoCheckProgressTimer();
+  }
+
+  private applyAutoCheckTaskSnapshot(task: BackgroundTask): void {
+    this.autoCheckBackgroundTaskId = task.id;
+    this.autoCheckRunning = task.status === TaskStatus.PENDING || task.status === TaskStatus.RUNNING;
+    this.autoCheckReportReady = !this.autoCheckRunning;
+    this.autoCheckProgressText = task.progress.message.length > 0 ? task.progress.message : this.autoCheckProgressText;
+    if (this.autoCheckRunning) {
+      this.startAutoCheckProgressTimer();
+    } else {
+      this.stopAutoCheckProgressTimer();
+    }
+  }
+
+  private startAutoCheckRecordRefresh(taskId: string): void {
+    this.stopAutoCheckRecordRefresh();
+    this.autoCheckRecordRefreshTimerId = setInterval((): void => {
+      void this.refreshAutoCheckRecord(taskId);
+    }, 1000);
+  }
+
+  private stopAutoCheckRecordRefresh(): void {
+    if (this.autoCheckRecordRefreshTimerId >= 0) {
+      clearInterval(this.autoCheckRecordRefreshTimerId);
+      this.autoCheckRecordRefreshTimerId = -1;
+    }
+  }
+
+  private async refreshAutoCheckRecord(taskId: string): Promise<void> {
+    const record: SourceAutoCheckRecord | null = await sourceAutoCheckHistoryService.getRecord(taskId);
+    if (record !== null) {
+      this.autoCheckSiteReports = this.cloneAutoCheckSiteReports(SafeUtils.parseArr<SourceAutoCheckSiteReport[]>(record.reportJson));
+      this.autoCheckRecommendedSiteBaseUrl = record.recommendedSiteBaseUrl;
+      if (record.summary.length > 0) {
+        this.autoCheckProgressText = record.summary;
+      }
+      if (record.status !== 'RUNNING') {
+        this.applyAutoCheckRecord(record);
+        return;
+      }
+    }
+    const task: BackgroundTask | undefined = this.backgroundTaskManager.getTask(taskId);
+    if (task !== undefined) {
+      this.applyAutoCheckTaskSnapshot(task);
+    } else if (record !== null) {
+      this.autoCheckRunning = false;
+      this.autoCheckReportReady = true;
+      this.stopAutoCheckRecordRefresh();
+    }
+  }
+
+  private getAutoCheckRecordStatusText(status: SourceAutoCheckRecordStatus): string {
+    if (status === 'COMPLETED') {
+      return '巡检已完成';
+    }
+    if (status === 'FAILED') {
+      return '巡检失败';
+    }
+    if (status === 'CANCELLED') {
+      return '巡检已取消';
+    }
+    return '巡检进行中';
+  }
+
+  private getConfigAutoCheckTasks(): SourceAutoCheckTaskOption[] {
+    const tasks: SourceAutoCheckTaskOption[] = [];
+    if (this.draft === null) {
+      return tasks;
+    }
+    const rawConfig: SourceEditorSiteRawConfig = SafeUtils.parseObj<SourceEditorSiteRawConfig>(this.draft.configJson);
+    const workflows: Object | undefined = rawConfig.workflows;
+    if (workflows === undefined) {
+      return tasks;
+    }
+    const keys: string[] = Object.keys(workflows);
+    for (let index = 0; index < keys.length; index += 1) {
+      const workflowKey: string = keys[index];
+      const actions: SourceEditorAutoRawAction[] = this.getAutoRawWorkflowActions(workflows, workflowKey);
+      if (actions.length <= 0) {
+        continue;
+      }
+      const task: SourceAutoCheckTaskOption = {
+        workflowKey: workflowKey,
+        taskType: this.inferAutoCheckTaskType(workflowKey),
+        label: this.getAutoCheckWorkflowLabel(workflowKey),
+        useInspectorStep: false
+      };
+      tasks.push(task);
+    }
+    return tasks;
+  }
+
+  private getAutoCheckTasksByWorkflowKeys(workflowKeys: string[]): SourceAutoCheckTaskOption[] {
+    const allTasks: SourceAutoCheckTaskOption[] = this.getConfigAutoCheckTasks();
+    const selectedTasks: SourceAutoCheckTaskOption[] = [];
+    for (let keyIndex = 0; keyIndex < workflowKeys.length; keyIndex += 1) {
+      const workflowKey: string = workflowKeys[keyIndex];
+      for (let taskIndex = 0; taskIndex < allTasks.length; taskIndex += 1) {
+        const task: SourceAutoCheckTaskOption = allTasks[taskIndex];
+        if (task.workflowKey === workflowKey) {
+          selectedTasks.push(task);
+          break;
+        }
+      }
+    }
+    return selectedTasks;
+  }
+
+  private resolveDefaultAutoCheckSelection(tasks: SourceAutoCheckTaskOption[]): string[] {
+    const selectedKeys: string[] = [];
+    for (let index = 0; index < AUTO_CHECK_EXTERNAL_WORKFLOW_KEYS.length; index += 1) {
+      const workflowKey: string = AUTO_CHECK_EXTERNAL_WORKFLOW_KEYS[index];
+      if (this.hasAutoCheckWorkflowTask(tasks, workflowKey)) {
+        selectedKeys.push(workflowKey);
+      }
+    }
+    if (selectedKeys.length > 0) {
+      return selectedKeys;
+    }
+    for (let index = 0; index < tasks.length; index += 1) {
+      selectedKeys.push(tasks[index].workflowKey);
+    }
+    return selectedKeys;
+  }
+
+  private hasAutoCheckWorkflowTask(tasks: SourceAutoCheckTaskOption[], workflowKey: string): boolean {
+    for (let index = 0; index < tasks.length; index += 1) {
+      if (tasks[index].workflowKey === workflowKey) {
+        return true;
+      }
+    }
+    return false;
+  }
+
+  private isAutoCheckWorkflowSelected(workflowKey: string): boolean {
+    for (let index = 0; index < this.selectedAutoCheckWorkflowKeys.length; index += 1) {
+      if (this.selectedAutoCheckWorkflowKeys[index] === workflowKey) {
+        return true;
+      }
+    }
+    return false;
+  }
+
+  private toggleAutoCheckWorkflowSelection(workflowKey: string): void {
+    const nextKeys: string[] = [];
+    let removed: boolean = false;
+    for (let index = 0; index < this.selectedAutoCheckWorkflowKeys.length; index += 1) {
+      const selectedKey: string = this.selectedAutoCheckWorkflowKeys[index];
+      if (selectedKey === workflowKey) {
+        removed = true;
+        continue;
+      }
+      nextKeys.push(selectedKey);
+    }
+    if (!removed) {
+      nextKeys.push(workflowKey);
+    }
+    this.selectedAutoCheckWorkflowKeys = nextKeys;
+  }
+
+  private selectAllAutoCheckWorkflows(): void {
+    const selectedKeys: string[] = [];
+    for (let index = 0; index < this.autoCheckScopeOptions.length; index += 1) {
+      selectedKeys.push(this.autoCheckScopeOptions[index].workflowKey);
+    }
+    this.selectedAutoCheckWorkflowKeys = selectedKeys;
+  }
+
+  private clearAutoCheckWorkflowSelection(): void {
+    this.selectedAutoCheckWorkflowKeys = [];
+  }
+
+  private getSelectedAutoCheckTasks(): SourceAutoCheckTaskOption[] {
+    const selectedTasks: SourceAutoCheckTaskOption[] = [];
+    for (let optionIndex = 0; optionIndex < this.autoCheckScopeOptions.length; optionIndex += 1) {
+      const option: SourceAutoCheckTaskOption = this.autoCheckScopeOptions[optionIndex];
+      if (this.isAutoCheckWorkflowSelected(option.workflowKey)) {
+        selectedTasks.push(option);
+      }
+    }
+    return selectedTasks;
+  }
+
+  private getAutoRawWorkflowActions(workflows: Object, workflowKey: string): SourceEditorAutoRawAction[] {
+    const workflowMap: SourceEditorWorkflowMap = workflows as SourceEditorWorkflowMap;
+    const workflow: Object | undefined = workflowMap[workflowKey];
+    if (workflow === undefined) {
+      return [];
+    }
+    if (Array.isArray(workflow)) {
+      return workflow as SourceEditorAutoRawAction[];
+    }
+    const workflowObject: SourceEditorAutoRawWorkflowObject = workflow as SourceEditorAutoRawWorkflowObject;
+    if (workflowObject.actions !== undefined && Array.isArray(workflowObject.actions)) {
+      return workflowObject.actions;
+    }
+    return [];
+  }
+
+  private inferAutoCheckTaskType(workflowKey: string): SourceEditorTaskType {
+    if (workflowKey === 'getMangaDetail' || workflowKey === 'getBookDetail' || workflowKey.indexOf('Detail') >= 0) {
+      return SourceEditorTaskType.DETAIL;
+    }
+    if (workflowKey === 'getChapterList' || workflowKey.indexOf('Chapter') >= 0) {
+      return SourceEditorTaskType.CHAPTERS;
+    }
+    if (workflowKey === 'getPageList' || workflowKey.indexOf('Page') >= 0) {
+      return SourceEditorTaskType.PAGES;
+    }
+    return SourceEditorTaskType.SEARCH;
+  }
+
+  private getAutoCheckWorkflowLabel(workflowKey: string): string {
+    if (workflowKey === 'popular') {
+      return '热门';
+    }
+    if (workflowKey === 'latest') {
+      return '最新';
+    }
+    if (workflowKey === 'search') {
+      return '搜索';
+    }
+    if (workflowKey === 'filter') {
+      return '筛选';
+    }
+    if (workflowKey === 'getMangaDetail' || workflowKey === 'getBookDetail') {
+      return '详情';
+    }
+    if (workflowKey === 'getChapterList') {
+      return '章节';
+    }
+    if (workflowKey === 'getPageList') {
+      return '图片';
+    }
+    if (workflowKey === 'directSearch') {
+      return '直达';
+    }
+    if (workflowKey === 'initialize') {
+      return '初始化';
+    }
+    if (workflowKey === 'login') {
+      return '登录';
+    }
+    return workflowKey;
+  }
+
+  private getAutoCheckSites(): SourceEditorSiteOption[] {
+    if (this.siteOptions.length > 0) {
+      return this.siteOptions.slice();
+    }
+    const fallbackUrl: string = this.draft !== null && this.draft.testUrl.length > 0 ? this.draft.testUrl : this.testUrl;
+    const baseUrl: string = this.normalizeSiteBaseUrl(this.resolveBaseUrlFromTestUrl(fallbackUrl));
+    if (baseUrl.length <= 0) {
+      return [];
+    }
+    const option: SourceEditorSiteOption = {
+      id: 'fallback_0',
+      label: this.resolveSiteLabel('当前站点', baseUrl),
+      baseUrl: baseUrl
+    };
+    const options: SourceEditorSiteOption[] = [];
+    options.push(option);
+    return options;
+  }
+
+  private createAutoCheckSiteReport(site: SourceEditorSiteOption, totalCount: number): SourceAutoCheckSiteReport {
+    const workflowResults: SourceAutoCheckWorkflowResult[] = [];
+    const report: SourceAutoCheckSiteReport = {
+      siteId: site.id,
+      siteLabel: site.label,
+      siteBaseUrl: site.baseUrl,
+      score: 0,
+      successCount: 0,
+      totalCount: totalCount,
+      durationMs: 0,
+      summary: '等待检查',
+      recommended: false,
+      workflowResults: workflowResults
+    };
+    return report;
+  }
+
+  private cloneAutoCheckWorkflowResult(result: SourceAutoCheckWorkflowResult): SourceAutoCheckWorkflowResult {
+    const clonedResult: SourceAutoCheckWorkflowResult = {
+      siteId: result.siteId,
+      siteLabel: result.siteLabel,
+      siteBaseUrl: result.siteBaseUrl,
+      workflowKey: result.workflowKey,
+      taskLabel: result.taskLabel,
+      status: result.status,
+      score: result.score,
+      attemptCount: result.attemptCount,
+      durationMs: result.durationMs,
+      targetUrl: result.targetUrl,
+      summary: result.summary,
+      detail: result.detail,
+      errorMessage: result.errorMessage,
+      selectorCount: result.selectorCount,
+      scriptCount: result.scriptCount,
+      sampleTitle: result.sampleTitle,
+      sampleUrl: result.sampleUrl
+    };
+    return clonedResult;
+  }
+
+  private cloneAutoCheckSiteReport(report: SourceAutoCheckSiteReport): SourceAutoCheckSiteReport {
+    const workflowResults: SourceAutoCheckWorkflowResult[] = [];
+    for (let index = 0; index < report.workflowResults.length; index += 1) {
+      workflowResults.push(this.cloneAutoCheckWorkflowResult(report.workflowResults[index]));
+    }
+    const clonedReport: SourceAutoCheckSiteReport = {
+      siteId: report.siteId,
+      siteLabel: report.siteLabel,
+      siteBaseUrl: report.siteBaseUrl,
+      score: report.score,
+      successCount: report.successCount,
+      totalCount: report.totalCount,
+      durationMs: report.durationMs,
+      summary: report.summary,
+      recommended: report.recommended,
+      workflowResults: workflowResults
+    };
+    return clonedReport;
+  }
+
+  private cloneAutoCheckSiteReports(reports: SourceAutoCheckSiteReport[]): SourceAutoCheckSiteReport[] {
+    const clonedReports: SourceAutoCheckSiteReport[] = [];
+    for (let index = 0; index < reports.length; index += 1) {
+      clonedReports.push(this.cloneAutoCheckSiteReport(reports[index]));
+    }
+    return clonedReports;
+  }
+
+  private async runAutoCheckWorkflow(
+    token: number,
+    site: SourceEditorSiteOption,
+    task: SourceAutoCheckTaskOption,
+    chainedSampleUrl: string,
+    cancelSignal: TaskCancelSignal
+  ): Promise<SourceAutoCheckWorkflowResult> {
+    const startedAt: number = Date.now();
+    let step: SourceEditorWorkflowGuideStep | null = this.resolveAutoCheckWorkflowStep(site, task);
+    if (step === null || !step.workflowExists) {
+      return this.createAutoCheckWorkflowResult(site, task, SourceEditorWorkflowPreviewStatus.ERROR, 0, 0,
+        Date.now() - startedAt, site.baseUrl, '工作流不可用', '', '当前图源未配置该工作流');
+    }
+
+    let bestPreview: SourceEditorWorkflowPreview = this.createAutoCheckPreview(SourceEditorWorkflowPreviewStatus.EMPTY, '未识别到目标内容', '', '');
+    let targetUrl: string = '';
+    let attemptCount: number = 0;
+    for (let attempt = 0; attempt <= AUTO_CHECK_MAX_RETRIES; attempt += 1) {
+      if (!this.isAutoCheckActive(token, cancelSignal)) {
+        break;
+      }
+      attemptCount = attempt + 1;
+      targetUrl = this.resolveAutoWorkflowTargetUrl(site, step, chainedSampleUrl);
+      if (task.useInspectorStep) {
+        sourceEditorInspectorStateManager.updateCurrentTargetUrl(targetUrl);
+      }
+      this.loadAutoCheckTarget(targetUrl, site);
+      await this.waitAutoCheck(AUTO_CHECK_PAGE_SETTLE_MS + attempt * 700, cancelSignal);
+      if (!this.isAutoCheckActive(token, cancelSignal)) {
+        break;
+      }
+      step = task.useInspectorStep ? sourceEditorInspectorStateManager.getSnapshot().currentStep :
+        this.resolveAutoCheckWorkflowStep(site, task);
+      if (step === null) {
+        break;
+      }
+      const preview: SourceEditorWorkflowPreview = await this.runAutoCheckPreviewScript(
+        step,
+        AUTO_CHECK_SCRIPT_TIMEOUT_MS,
+        cancelSignal
+      );
+      bestPreview = this.pickBetterAutoCheckPreview(bestPreview, preview);
+      if (preview.status === SourceEditorWorkflowPreviewStatus.OK) {
+        break;
+      }
+    }
+
+    const score: number = this.scoreAutoCheckPreview(bestPreview);
+    return this.createAutoCheckWorkflowResult(site, task, bestPreview.status, score, attemptCount,
+      Date.now() - startedAt, targetUrl, bestPreview.summary, bestPreview.detail, bestPreview.errorMessage,
+      bestPreview.selectorCount, bestPreview.scriptCount, bestPreview.sampleTitle, bestPreview.sampleUrl);
+  }
+
+  private resolveAutoCheckWorkflowStep(
+    site: SourceEditorSiteOption,
+    task: SourceAutoCheckTaskOption
+  ): SourceEditorWorkflowGuideStep | null {
+    if (task.useInspectorStep) {
+      sourceEditorInspectorStateManager.selectWorkflow(task.taskType);
+      this.taskType = task.taskType;
+      return sourceEditorInspectorStateManager.getSnapshot().currentStep;
+    }
+    return this.buildAutoCheckRawWorkflowStep(site, task);
+  }
+
+  private buildAutoCheckRawWorkflowStep(
+    site: SourceEditorSiteOption,
+    task: SourceAutoCheckTaskOption
+  ): SourceEditorWorkflowGuideStep | null {
+    if (this.draft === null) {
+      return null;
+    }
+    const rawConfig: SourceEditorSiteRawConfig = SafeUtils.parseObj<SourceEditorSiteRawConfig>(this.draft.configJson);
+    if (rawConfig.workflows === undefined) {
+      return null;
+    }
+    const actions: SourceEditorAutoRawAction[] = this.getAutoRawWorkflowActions(rawConfig.workflows, task.workflowKey);
+    if (actions.length <= 0) {
+      return null;
+    }
+    const step: SourceEditorWorkflowGuideStep = {
+      taskType: task.taskType,
+      label: task.label,
+      description: task.label,
+      expectedDomLabel: task.label,
+      selectionInstruction: '',
+      targetUrl: this.resolveAutoRawWorkflowTargetUrl(actions, site.baseUrl),
+      workflowExists: true,
+      actionCount: actions.length,
+      waitSelector: this.findAutoRawSelector(actions, 'wait'),
+      extractSelector: this.findAutoRawSelector(actions, 'extract'),
+      scriptCode: this.findAutoRawScriptCode(actions),
+      completed: false,
+      preview: createEmptySourceEditorWorkflowPreview(),
+      selectionAssessment: createEmptySourceEditorSelectionAssessment()
+    };
+    return step;
+  }
+
+  private findAutoRawSelector(actions: SourceEditorAutoRawAction[], actionType: string): string {
+    for (let index = 0; index < actions.length; index += 1) {
+      const action: SourceEditorAutoRawAction = actions[index];
+      if (action.type === actionType && action.selector !== undefined) {
+        return action.selector;
+      }
+    }
+    return '';
+  }
+
+  private findAutoRawScriptCode(actions: SourceEditorAutoRawAction[]): string {
+    for (let index = actions.length - 1; index >= 0; index -= 1) {
+      const action: SourceEditorAutoRawAction = actions[index];
+      if (action.type === 'script' && action.code !== undefined) {
+        return action.code;
+      }
+    }
+    return '';
+  }
+
+  private resolveAutoRawWorkflowTargetUrl(actions: SourceEditorAutoRawAction[], baseUrl: string): string {
+    for (let index = 0; index < actions.length; index += 1) {
+      const action: SourceEditorAutoRawAction = actions[index];
+      if (action.type === 'navigate' && action.url !== undefined) {
+        return this.resolveAutoTemplateUrl(action.url, baseUrl);
+      }
+    }
+    return baseUrl;
+  }
+
+  private resolveAutoTemplateUrl(url: string, baseUrl: string): string {
+    let output: string = url;
+    output = output.split('{{baseUrl}}').join(baseUrl);
+    output = output.split('{{page}}').join('1');
+    output = output.split('{{searchKeyword}}').join('test');
+    output = output.split('{{query}}').join('test');
+    output = output.split('{{mangaId}}').join('');
+    output = output.split('{{chapterId}}').join('');
+    output = output.split('{{scriptResult}}').join('');
+    if (output.length <= 0 || output.indexOf('{{') >= 0) {
+      return baseUrl;
+    }
+    if (output.startsWith('/')) {
+      return `${baseUrl}${output}`;
+    }
+    return output;
+  }
+
+  private loadAutoCheckTarget(targetUrl: string, site: SourceEditorSiteOption): void {
+    this.clearPendingLoadTimer();
+    this.clearPreviewTimer();
+    this.autoCheckActiveTargetUrl = targetUrl;
+    this.autoCheckActiveSiteId = site.id;
+    this.autoCheckActiveSiteBaseUrl = site.baseUrl;
+    this.lastLoadedGuideUrl = targetUrl;
+    this.lastCommittedLoadUrl = targetUrl;
+    this.mainFrameLoaded = false;
+    try {
+      this.webController.loadUrl(targetUrl);
+    } catch (error) {
+      logger.warn(TAG, `自动检查加载目标失败: ${String(error)}`);
+    }
+  }
+
+  private resolveAutoWorkflowTargetUrl(
+    site: SourceEditorSiteOption,
+    step: SourceEditorWorkflowGuideStep,
+    chainedSampleUrl: string
+  ): string {
+    if (step.taskType !== SourceEditorTaskType.SEARCH && chainedSampleUrl.length > 0) {
+      return this.replaceKnownSiteBaseUrl(chainedSampleUrl, site.baseUrl);
+    }
+    const stepUrl: string = step.targetUrl.trim();
+    if (stepUrl.length <= 0 || stepUrl.indexOf('{{') >= 0 || stepUrl === 'about:blank') {
+      return site.baseUrl;
+    }
+    return this.replaceKnownSiteBaseUrl(stepUrl, site.baseUrl);
+  }
+
+  private replaceKnownSiteBaseUrl(url: string, nextBaseUrl: string): string {
+    const normalizedNextBaseUrl: string = this.normalizeSiteBaseUrl(nextBaseUrl);
+    if (normalizedNextBaseUrl.length <= 0) {
+      return url;
+    }
+    const trimmedUrl: string = url.trim();
+    const currentBaseUrl: string = this.normalizeSiteBaseUrl(this.resolveBaseUrlFromTestUrl(trimmedUrl));
+    if (currentBaseUrl.length <= 0) {
+      return normalizedNextBaseUrl;
+    }
+    if (!this.isKnownSiteBaseUrl(currentBaseUrl)) {
+      return trimmedUrl;
+    }
+    if (trimmedUrl.length <= currentBaseUrl.length) {
+      return normalizedNextBaseUrl;
+    }
+    return `${normalizedNextBaseUrl}${trimmedUrl.substring(currentBaseUrl.length)}`;
+  }
+
+  private runAutoCheckPreviewScript(
+    step: SourceEditorWorkflowGuideStep,
+    timeoutMs: number,
+    cancelSignal: TaskCancelSignal
+  ): Promise<SourceEditorWorkflowPreview> {
+    return new Promise<SourceEditorWorkflowPreview>((resolve: (value: SourceEditorWorkflowPreview) => void): void => {
+      let settled: boolean = false;
+      let timeoutTimerId: number = -1;
+      let cancelTimerId: number = -1;
+      const clearTimers = (): void => {
+        if (timeoutTimerId >= 0) {
+          clearTimeout(timeoutTimerId);
+          timeoutTimerId = -1;
+        }
+        if (cancelTimerId >= 0) {
+          clearInterval(cancelTimerId);
+          cancelTimerId = -1;
+        }
+      };
+      timeoutTimerId = setTimeout((): void => {
+        if (settled) {
+          return;
+        }
+        settled = true;
+        clearTimers();
+        resolve(this.createAutoCheckPreview(SourceEditorWorkflowPreviewStatus.ERROR, '检查超时', '', '脚本执行超时'));
+      }, timeoutMs);
+      cancelTimerId = setInterval((): void => {
+        if (settled || !cancelSignal.isCancelled) {
+          return;
+        }
+        settled = true;
+        clearTimers();
+        resolve(this.createAutoCheckPreview(SourceEditorWorkflowPreviewStatus.ERROR, '检查已停止', '', '自动检查已取消'));
+      }, 160);
+      try {
+        this.webController.runJavaScript(this.buildWorkflowPreviewScript(step), (error: BusinessError | null, result: string): void => {
+          if (settled) {
+            return;
+          }
+          settled = true;
+          clearTimers();
+          if (error) {
+            resolve(this.createAutoCheckPreview(SourceEditorWorkflowPreviewStatus.ERROR, '脚本运行失败', '', error.message));
+            return;
+          }
+          resolve(this.parseWorkflowPreview(result));
+        });
+      } catch (error) {
+        if (settled) {
+          return;
+        }
+        settled = true;
+        clearTimers();
+        resolve(this.createAutoCheckPreview(SourceEditorWorkflowPreviewStatus.ERROR, '脚本异常', '', String(error)));
+      }
+    });
+  }
+
+  private waitAutoCheck(durationMs: number, cancelSignal: TaskCancelSignal): Promise<void> {
+    return new Promise<void>((resolve: () => void): void => {
+      let settled: boolean = false;
+      let waitTimerId: number = -1;
+      let cancelTimerId: number = -1;
+      const finish = (): void => {
+        if (settled) {
+          return;
+        }
+        settled = true;
+        if (waitTimerId >= 0) {
+          clearTimeout(waitTimerId);
+          waitTimerId = -1;
+        }
+        if (cancelTimerId >= 0) {
+          clearInterval(cancelTimerId);
+          cancelTimerId = -1;
+        }
+        resolve();
+      };
+      waitTimerId = setTimeout((): void => {
+        finish();
+      }, durationMs);
+      cancelTimerId = setInterval((): void => {
+        if (cancelSignal.isCancelled) {
+          finish();
+        }
+      }, 160);
+    });
+  }
+
+  private createAutoCheckPreview(
+    status: SourceEditorWorkflowPreviewStatus,
+    summary: string,
+    detail: string,
+    errorMessage: string
+  ): SourceEditorWorkflowPreview {
+    const preview: SourceEditorWorkflowPreview = {
+      status: status,
+      summary: summary,
+      detail: detail,
+      selectorCount: 0,
+      scriptCount: 0,
+      sampleTitle: '',
+      sampleUrl: '',
+      sampleCover: '',
+      errorMessage: errorMessage
+    };
+    return preview;
+  }
+
+  private pickBetterAutoCheckPreview(
+    current: SourceEditorWorkflowPreview,
+    candidate: SourceEditorWorkflowPreview
+  ): SourceEditorWorkflowPreview {
+    const currentScore: number = this.scoreAutoCheckPreview(current);
+    const candidateScore: number = this.scoreAutoCheckPreview(candidate);
+    return candidateScore >= currentScore ? candidate : current;
+  }
+
+  private scoreAutoCheckPreview(preview: SourceEditorWorkflowPreview): number {
+    if (preview.status === SourceEditorWorkflowPreviewStatus.OK) {
+      const evidenceScore: number = Math.min(30, preview.selectorCount * 4 + preview.scriptCount * 6);
+      return Math.min(100, 70 + evidenceScore);
+    }
+    if (preview.status === SourceEditorWorkflowPreviewStatus.EMPTY) {
+      return 25;
+    }
+    if (preview.status === SourceEditorWorkflowPreviewStatus.WAITING) {
+      return 18;
+    }
+    return 0;
+  }
+
+  private createAutoCheckWorkflowResult(
+    site: SourceEditorSiteOption,
+    task: SourceAutoCheckTaskOption,
+    status: SourceEditorWorkflowPreviewStatus,
+    score: number,
+    attemptCount: number,
+    durationMs: number,
+    targetUrl: string,
+    summary: string,
+    detail: string,
+    errorMessage: string,
+    selectorCount: number = 0,
+    scriptCount: number = 0,
+    sampleTitle: string = '',
+    sampleUrl: string = ''
+  ): SourceAutoCheckWorkflowResult {
+    const result: SourceAutoCheckWorkflowResult = {
+      siteId: site.id,
+      siteLabel: site.label,
+      siteBaseUrl: site.baseUrl,
+      workflowKey: task.workflowKey,
+      taskLabel: task.label,
+      status: status,
+      score: score,
+      attemptCount: attemptCount,
+      durationMs: durationMs,
+      targetUrl: targetUrl,
+      summary: summary,
+      detail: detail,
+      errorMessage: errorMessage,
+      selectorCount: selectorCount,
+      scriptCount: scriptCount,
+      sampleTitle: sampleTitle,
+      sampleUrl: sampleUrl
+    };
+    return result;
+  }
+
+  private updateAutoCheckSiteReport(report: SourceAutoCheckSiteReport, durationMs: number): void {
+    let scoreTotal: number = 0;
+    let successCount: number = 0;
+    for (let index = 0; index < report.workflowResults.length; index += 1) {
+      const result: SourceAutoCheckWorkflowResult = report.workflowResults[index];
+      scoreTotal += result.score;
+      if (result.status === SourceEditorWorkflowPreviewStatus.OK) {
+        successCount += 1;
+      }
+    }
+    report.successCount = successCount;
+    report.durationMs = durationMs;
+    report.score = report.workflowResults.length > 0 ? Math.round(scoreTotal / report.workflowResults.length) : 0;
+    report.summary = `${successCount}/${report.totalCount} 通过 · ${report.score}分`;
+  }
+
+  private getAutoCheckSiteProgressPercent(report: SourceAutoCheckSiteReport): number {
+    if (report.totalCount <= 0) {
+      return 0;
+    }
+    let progressCount: number = report.workflowResults.length;
+    if (this.autoCheckRunning && this.autoCheckActiveSiteId === report.siteId && progressCount < report.totalCount) {
+      const currentTick: number = this.autoCheckProgressTick > 0 ? this.autoCheckProgressTick : Date.now();
+      const startedAt: number = this.autoCheckActiveWorkflowStartedAt > 0 ? this.autoCheckActiveWorkflowStartedAt : currentTick;
+      const elapsedMs: number = Math.max(0, currentTick - startedAt);
+      const activeWorkflowProgress: number = Math.min(0.92, elapsedMs / AUTO_CHECK_WORKFLOW_PROGRESS_ESTIMATE_MS);
+      progressCount += Math.max(0.08, activeWorkflowProgress);
+    }
+    const percent: number = Math.floor((progressCount / report.totalCount) * 100);
+    return Math.max(0, Math.min(100, percent));
+  }
+
+  private getAutoCheckSiteReportHeight(report: SourceAutoCheckSiteReport): number {
+    if (report.workflowResults.length <= 0) {
+      return 54;
+    }
+    const contentHeight: number = 42 + report.workflowResults.length * 24;
+    return Math.max(72, contentHeight);
+  }
+
+  private getAutoCheckSiteToneColor(report: SourceAutoCheckSiteReport): ResourceColor {
+    if (report.workflowResults.length <= 0) {
+      if (this.autoCheckRunning && this.autoCheckActiveSiteId === report.siteId) {
+        return ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme);
+      }
+      return ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme);
+    }
+    if (report.workflowResults.length < report.totalCount) {
+      return ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme);
+    }
+    if (report.successCount === report.totalCount && report.totalCount > 0) {
+      return AppColors.success;
+    }
+    if (report.successCount <= 0) {
+      return AppColors.error;
+    }
+    return AppColors.warning;
+  }
+
+  private getAutoCheckWorkflowToneColor(result: SourceAutoCheckWorkflowResult): ResourceColor {
+    if (result.status === SourceEditorWorkflowPreviewStatus.OK) {
+      return AppColors.success;
+    }
+    if (result.status === SourceEditorWorkflowPreviewStatus.ERROR) {
+      return AppColors.error;
+    }
+    if (result.status === SourceEditorWorkflowPreviewStatus.EMPTY) {
+      return AppColors.warning;
+    }
+    if (result.status === SourceEditorWorkflowPreviewStatus.RUNNING) {
+      return ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme);
+    }
+    return ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme);
+  }
+
+  private getAutoCheckSiteSummaryText(report: SourceAutoCheckSiteReport): string {
+    if (report.workflowResults.length > 0) {
+      return report.summary;
+    }
+    if (this.autoCheckRunning && this.autoCheckActiveSiteId === report.siteId) {
+      return '检查中';
+    }
+    return '等待检查';
+  }
+
+  private getAutoCheckSelectedSiteBaseUrl(): string {
+    if (this.autoCheckRunning && this.autoCheckActiveSiteBaseUrl.length > 0) {
+      return this.autoCheckActiveSiteBaseUrl;
+    }
+    return this.selectedSiteBaseUrl;
+  }
+
+  private getToolbarUrlText(): string {
+    if (this.autoCheckRunning && this.autoCheckActiveTargetUrl.length > 0) {
+      return this.autoCheckActiveTargetUrl;
+    }
+    return this.testUrl;
+  }
+
+  private getAutoCheckPanelReports(): SourceAutoCheckSiteReport[] {
+    if (!this.autoCheckReportReady || this.autoCheckRunning || this.autoCheckRecommendedSiteBaseUrl.length <= 0) {
+      return this.autoCheckSiteReports;
+    }
+    const reports: SourceAutoCheckSiteReport[] = [];
+    const recommendedBaseUrl: string = this.normalizeSiteBaseUrl(this.autoCheckRecommendedSiteBaseUrl);
+    for (let index = 0; index < this.autoCheckSiteReports.length; index += 1) {
+      const report: SourceAutoCheckSiteReport = this.autoCheckSiteReports[index];
+      if (report.recommended ||
+        this.normalizeSiteBaseUrl(report.siteBaseUrl) === recommendedBaseUrl) {
+        continue;
+      }
+      reports.push(report);
+    }
+    return reports;
+  }
+
+  private shouldShowAutoCheckRecommendationPreview(): boolean {
+    return this.autoCheckReportReady && !this.autoCheckRunning && this.autoCheckRecommendedSiteBaseUrl.length > 0;
+  }
+
+  private getRecommendedAutoCheckSiteReport(): SourceAutoCheckSiteReport | null {
+    const recommendedBaseUrl: string = this.normalizeSiteBaseUrl(this.autoCheckRecommendedSiteBaseUrl);
+    for (let index = 0; index < this.autoCheckSiteReports.length; index += 1) {
+      const report: SourceAutoCheckSiteReport = this.autoCheckSiteReports[index];
+      if (report.recommended || this.normalizeSiteBaseUrl(report.siteBaseUrl) === recommendedBaseUrl) {
+        return report;
+      }
+    }
+    return null;
+  }
+
+  private getRecommendedAutoCheckSiteReportOrEmpty(): SourceAutoCheckSiteReport {
+    const report: SourceAutoCheckSiteReport | null = this.getRecommendedAutoCheckSiteReport();
+    if (report !== null) {
+      return report;
+    }
+    const workflowResults: SourceAutoCheckWorkflowResult[] = [];
+    const emptyReport: SourceAutoCheckSiteReport = {
+      siteId: 'recommended_empty',
+      siteLabel: this.resolveSiteLabel('推荐站点', this.autoCheckRecommendedSiteBaseUrl),
+      siteBaseUrl: this.autoCheckRecommendedSiteBaseUrl,
+      score: 0,
+      successCount: 0,
+      totalCount: 0,
+      durationMs: 0,
+      summary: '暂无详细结果',
+      recommended: true,
+      workflowResults: workflowResults
+    };
+    return emptyReport;
+  }
+
+  private finishAutoCheckReports(reports: SourceAutoCheckSiteReport[], durationMs: number): string {
+    const recommendedIndex: number = this.findRecommendedSiteReportIndex(reports);
+    for (let index = 0; index < reports.length; index += 1) {
+      reports[index].recommended = index === recommendedIndex;
+    }
+    this.autoCheckRunning = false;
+    this.autoCheckReportReady = true;
+    this.autoCheckSiteReports = this.cloneAutoCheckSiteReports(reports);
+    this.autoCheckRecommendedSiteBaseUrl = recommendedIndex >= 0 ? reports[recommendedIndex].siteBaseUrl : '';
+    this.autoCheckActiveSiteId = '';
+    this.autoCheckActiveSiteBaseUrl = '';
+    this.autoCheckActiveTargetUrl = '';
+    this.autoCheckActiveWorkflowStartedAt = 0;
+    this.stopAutoCheckProgressTimer();
+    this.autoCheckProgressText = recommendedIndex >= 0 ?
+      `检查完成，用时 ${Math.ceil(durationMs / 1000)} 秒，推荐 ${reports[recommendedIndex].siteLabel}` :
+      `检查完成，用时 ${Math.ceil(durationMs / 1000)} 秒`;
+    if (this.autoCheckRecommendedSiteBaseUrl.length > 0) {
+      this.selectedSiteBaseUrl = this.autoCheckRecommendedSiteBaseUrl;
+    }
+    return this.autoCheckProgressText;
+  }
+
+  private findRecommendedSiteReportIndex(reports: SourceAutoCheckSiteReport[]): number {
+    let bestIndex: number = -1;
+    for (let index = 0; index < reports.length; index += 1) {
+      const report: SourceAutoCheckSiteReport = reports[index];
+      if (bestIndex < 0) {
+        bestIndex = index;
+        continue;
+      }
+      const bestReport: SourceAutoCheckSiteReport = reports[bestIndex];
+      if (report.score > bestReport.score ||
+        (report.score === bestReport.score && report.successCount > bestReport.successCount) ||
+        (report.score === bestReport.score && report.successCount === bestReport.successCount &&
+          report.durationMs < bestReport.durationMs)) {
+        bestIndex = index;
+      }
+    }
+    return bestIndex;
+  }
+
+  private applyAutoCheckRecommendation(): void {
+    if (this.draft === null || this.autoCheckRecommendedSiteBaseUrl.length <= 0) {
+      this.getUIContext().getPromptAction().showToast({ message: '暂无推荐站点' });
+      return;
+    }
+    const rawConfig: SourceEditorSiteRawConfig = SafeUtils.parseObj<SourceEditorSiteRawConfig>(this.draft.configJson);
+    if (rawConfig.metadata === undefined) {
+      const metadata: SourceEditorSiteMetadata = {
+        baseUrl: this.autoCheckRecommendedSiteBaseUrl
+      };
+      rawConfig.metadata = metadata;
+    }
+    if (rawConfig.settings !== undefined && rawConfig.settings.domain !== undefined &&
+      this.isSiteSettingOption(rawConfig.settings.domain, this.autoCheckRecommendedSiteBaseUrl)) {
+      rawConfig.settings.domain.default = this.autoCheckRecommendedSiteBaseUrl;
+    } else if (rawConfig.metadata !== undefined) {
+      rawConfig.metadata.baseUrl = this.autoCheckRecommendedSiteBaseUrl;
+    }
+    const nextConfigJson: string = JSON.stringify(rawConfig, null, 2);
+    this.draft.configJson = nextConfigJson;
+    this.draft.testUrl = this.autoCheckRecommendedSiteBaseUrl;
+    this.draft.updateTime = Date.now();
+    this.configPreview = nextConfigJson;
+    this.testUrl = this.autoCheckRecommendedSiteBaseUrl;
+    this.selectedSiteBaseUrl = this.autoCheckRecommendedSiteBaseUrl;
+    this.refreshSiteOptions(nextConfigJson, this.autoCheckRecommendedSiteBaseUrl);
+    this.saveMessage = '已把推荐站点应用到当前草稿，请保存后生效';
+    this.refreshFloatingInspectorState();
+    this.getUIContext().getPromptAction().showToast({ message: '已应用推荐站点到草稿' });
+  }
+
+  private isSiteSettingOption(setting: SourceEditorSiteSetting, baseUrl: string): boolean {
+    const normalizedBaseUrl: string = this.normalizeSiteBaseUrl(baseUrl);
+    if (setting.default !== undefined && this.normalizeSiteBaseUrl(setting.default) === normalizedBaseUrl) {
+      return true;
+    }
+    const options: SourceEditorSiteSettingOption[] | undefined = setting.options;
+    if (options === undefined) {
+      return false;
+    }
+    for (let index = 0; index < options.length; index += 1) {
+      const option: SourceEditorSiteSettingOption = options[index];
+      if (option.value !== undefined && this.normalizeSiteBaseUrl(option.value) === normalizedBaseUrl) {
+        return true;
+      }
+    }
+    return false;
   }
 
   private getTaskOptions(): SourceEditorTaskOption[] {
@@ -241,6 +1914,15 @@ export struct SourceInteractiveEditorPage {
 
   private getTitleBarActions(): SettingsImmersiveTitleActionItem[] {
     return [
+      {
+        id: 'auto_check',
+        symbol: $r('sys.symbol.waveform_path_ecg_magnifyingglass'),
+        label: '自动检查',
+        onClick: () => {
+          void this.startAutoCheckMode();
+        },
+        enabled: !this.autoCheckRunning
+      },
       {
         id: 'inspector',
         symbol: $r('sys.symbol.arrow_up_left_and_arrow_down_right'),
@@ -269,6 +1951,7 @@ export struct SourceInteractiveEditorPage {
       this.getUIContext().getPromptAction().showToast({ message: '请输入测试URL' });
       return;
     }
+    this.selectedSiteBaseUrl = this.resolveSelectedSiteBaseUrl(this.siteOptions, url);
     if (this.draft) {
       this.draft.testUrl = url;
       this.draft.updateTime = Date.now();
@@ -320,6 +2003,7 @@ export struct SourceInteractiveEditorPage {
     this.taskType = step.taskType;
     if (step.targetUrl.length > 0) {
       this.testUrl = step.targetUrl;
+      this.selectedSiteBaseUrl = this.resolveSelectedSiteBaseUrl(this.siteOptions, step.targetUrl);
       if (this.draft) {
         this.draft.taskType = step.taskType;
         this.draft.testUrl = step.targetUrl;
@@ -365,6 +2049,7 @@ export struct SourceInteractiveEditorPage {
     }
     this.lastLoadedGuideUrl = trimmedUrl;
     this.testUrl = trimmedUrl;
+    this.selectedSiteBaseUrl = this.resolveSelectedSiteBaseUrl(this.siteOptions, trimmedUrl);
     this.mainFrameLoaded = false;
     this.workflowPreviewRetryCount = 0;
     this.loadRequestVersion += 1;
@@ -400,6 +2085,9 @@ export struct SourceInteractiveEditorPage {
   }
 
   private maybeRunWorkflowPreviewWatchdog(): void {
+    if (this.autoCheckRunning) {
+      return;
+    }
     const snapshot: SourceEditorInspectorSnapshot = sourceEditorInspectorStateManager.getSnapshot();
     const step: SourceEditorWorkflowGuideStep | null = snapshot.currentStep;
     if (step === null || snapshot.guidePhase !== SourceEditorGuidePhase.PREVIEW) {
@@ -430,6 +2118,9 @@ export struct SourceInteractiveEditorPage {
   }
 
   private runWorkflowPreview(): void {
+    if (this.autoCheckRunning) {
+      return;
+    }
     const snapshot: SourceEditorInspectorSnapshot = sourceEditorInspectorStateManager.getSnapshot();
     const step: SourceEditorWorkflowGuideStep | null = snapshot.currentStep;
     if (step === null || snapshot.guidePhase !== SourceEditorGuidePhase.PREVIEW) {
@@ -830,10 +2521,14 @@ export struct SourceInteractiveEditorPage {
     if (!this.isInspectableUrl(url)) {
       return;
     }
+    if (this.autoCheckRunning) {
+      return;
+    }
     this.mainFrameLoaded = false;
     this.workflowPreviewRetryCount = 0;
     this.lastCommittedLoadUrl = url;
     this.lastLoadedGuideUrl = url;
+    this.selectedSiteBaseUrl = this.resolveSelectedSiteBaseUrl(this.siteOptions, url);
     sourceEditorInspectorStateManager.updateCurrentTargetUrl(url);
     const preview: SourceEditorWorkflowPreview = {
       status: SourceEditorWorkflowPreviewStatus.RUNNING,
@@ -850,10 +2545,14 @@ export struct SourceInteractiveEditorPage {
   }
 
   private handleWebPageEnd(url: string): void {
+    if (this.autoCheckRunning) {
+      return;
+    }
     if (this.isInspectableUrl(url)) {
       this.mainFrameLoaded = true;
       this.lastCommittedLoadUrl = url;
       this.lastLoadedGuideUrl = url;
+      this.selectedSiteBaseUrl = this.resolveSelectedSiteBaseUrl(this.siteOptions, url);
       sourceEditorInspectorStateManager.updateCurrentTargetUrl(url);
     }
     const snapshot: SourceEditorInspectorSnapshot = sourceEditorInspectorStateManager.getSnapshot();
@@ -1262,6 +2961,7 @@ export struct SourceInteractiveEditorPage {
         Column({ space: 10 }) {
           Blank().height(SettingsPageTitleBarManager.getContentTopPadding(this.statusBarHeight))
           this.buildToolbar()
+          this.buildAutoCheckPanel()
           this.buildWebPanel()
           Blank().height(this.navigationBarHeight)
         }
@@ -1278,6 +2978,11 @@ export struct SourceInteractiveEditorPage {
       }
       .width('100%')
       .height('100%')
+      .bindSheet($$this.showAutoCheckScopePicker, this.buildAutoCheckScopePicker(), {
+        height: '100%',
+        showClose: false,
+        dragBar: true
+      })
     }
     .hideTitleBar(true)
     .ignoreLayoutSafeArea([LayoutSafeAreaType.SYSTEM], [LayoutSafeAreaEdge.TOP, LayoutSafeAreaEdge.BOTTOM])
@@ -1296,6 +3001,7 @@ export struct SourceInteractiveEditorPage {
 
   private handleTestUrlChange(value: string): void {
     this.testUrl = value;
+    this.selectedSiteBaseUrl = this.resolveSelectedSiteBaseUrl(this.siteOptions, value);
     if (this.draft) {
       this.draft.testUrl = value;
       this.draft.updateTime = Date.now();
@@ -1312,6 +3018,603 @@ export struct SourceInteractiveEditorPage {
       this.refreshFloatingInspectorState();
     }
     this.applyGuideSnapshot(true);
+  }
+
+  private getAutoCheckHistoryStatusText(status: SourceAutoCheckRecordStatus): string {
+    if (status === 'RUNNING') {
+      return '进行中';
+    }
+    if (status === 'COMPLETED') {
+      return '已完成';
+    }
+    if (status === 'FAILED') {
+      return '失败';
+    }
+    return '已取消';
+  }
+
+  private getAutoCheckRecordToneColor(status: SourceAutoCheckRecordStatus): ResourceColor {
+    if (status === 'COMPLETED') {
+      return AppColors.success;
+    }
+    if (status === 'FAILED') {
+      return AppColors.error;
+    }
+    if (status === 'CANCELLED') {
+      return AppColors.warning;
+    }
+    return ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme);
+  }
+
+  private formatTwoDigit(value: number): string {
+    if (value < 10) {
+      return `0${value}`;
+    }
+    return `${value}`;
+  }
+
+  private formatAutoCheckRecordTime(time: number): string {
+    if (time <= 0) {
+      return '未知时间';
+    }
+    const date: Date = new Date(time);
+    const month: number = date.getMonth() + 1;
+    const day: number = date.getDate();
+    const hour: number = date.getHours();
+    const minute: number = date.getMinutes();
+    return `${month}-${this.formatTwoDigit(day)} ${this.formatTwoDigit(hour)}:${this.formatTwoDigit(minute)}`;
+  }
+
+  private formatAutoCheckDuration(record: SourceAutoCheckRecord): string {
+    let durationMs: number = record.durationMs;
+    if (record.status === 'RUNNING' && record.startTime > 0) {
+      durationMs = Date.now() - record.startTime;
+    }
+    if (durationMs <= 0) {
+      return '未记录耗时';
+    }
+    const seconds: number = Math.max(1, Math.ceil(durationMs / 1000));
+    if (seconds < 60) {
+      return `${seconds}秒`;
+    }
+    const minutes: number = Math.floor(seconds / 60);
+    const restSeconds: number = seconds - minutes * 60;
+    if (restSeconds <= 0) {
+      return `${minutes}分`;
+    }
+    return `${minutes}分${restSeconds}秒`;
+  }
+
+  private getAutoCheckHistoryReports(record: SourceAutoCheckRecord): SourceAutoCheckSiteReport[] {
+    return this.cloneAutoCheckSiteReports(SafeUtils.parseArr<SourceAutoCheckSiteReport[]>(record.reportJson));
+  }
+
+  private getAutoCheckHistoryWorkflowText(record: SourceAutoCheckRecord): string {
+    const labels: string[] = SafeUtils.parseArr<string[]>(record.workflowLabelsJson);
+    if (labels.length <= 0) {
+      return '未记录范围';
+    }
+    let text: string = '';
+    for (let index = 0; index < labels.length; index += 1) {
+      if (text.length > 0) {
+        text += '、';
+      }
+      text += labels[index];
+    }
+    return text;
+  }
+
+  private getAutoCheckHistoryProgressText(record: SourceAutoCheckRecord): string {
+    const reports: SourceAutoCheckSiteReport[] = this.getAutoCheckHistoryReports(record);
+    let totalWorkflowCount: number = 0;
+    let checkedWorkflowCount: number = 0;
+    for (let index = 0; index < reports.length; index += 1) {
+      const report: SourceAutoCheckSiteReport = reports[index];
+      totalWorkflowCount += report.totalCount;
+      checkedWorkflowCount += Math.min(report.workflowResults.length, report.totalCount);
+    }
+    if (totalWorkflowCount > 0) {
+      return `${checkedWorkflowCount}/${totalWorkflowCount} 步`;
+    }
+    if (record.siteCount > 0) {
+      return `${record.siteCount}个站点`;
+    }
+    return '暂无进度';
+  }
+
+  private getAutoCheckHistoryRecommendationText(record: SourceAutoCheckRecord): string {
+    if (record.recommendedSiteBaseUrl.length <= 0) {
+      return '未生成推荐';
+    }
+    const reports: SourceAutoCheckSiteReport[] = this.getAutoCheckHistoryReports(record);
+    for (let index = 0; index < reports.length; index += 1) {
+      const report: SourceAutoCheckSiteReport = reports[index];
+      if (report.siteBaseUrl === record.recommendedSiteBaseUrl || report.recommended) {
+        return `推荐 ${report.siteLabel}`;
+      }
+    }
+    return `推荐 ${record.recommendedSiteBaseUrl}`;
+  }
+
+  private getAutoCheckStatusText(status: SourceEditorWorkflowPreviewStatus): string {
+    if (status === SourceEditorWorkflowPreviewStatus.OK) {
+      return '通过';
+    }
+    if (status === SourceEditorWorkflowPreviewStatus.EMPTY) {
+      return '空结果';
+    }
+    if (status === SourceEditorWorkflowPreviewStatus.WAITING) {
+      return '等待';
+    }
+    if (status === SourceEditorWorkflowPreviewStatus.RUNNING) {
+      return '运行中';
+    }
+    return '失败';
+  }
+
+  @Builder
+  private buildAutoCheckWorkflowResult(result: SourceAutoCheckWorkflowResult) {
+    Row({ space: 8 }) {
+      Text(result.taskLabel)
+        .width(48)
+        .fontSize(12)
+        .fontFamily(this.appFontFamily)
+        .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
+        .maxLines(1)
+      Text(this.getAutoCheckStatusText(result.status))
+        .width(54)
+        .fontSize(12)
+        .fontFamily(this.appFontFamily)
+        .fontColor(this.getAutoCheckWorkflowToneColor(result))
+        .maxLines(1)
+      Text(`${result.score}分`)
+        .width(44)
+        .fontSize(12)
+        .fontFamily(this.appFontFamily)
+        .fontColor(this.getAutoCheckWorkflowToneColor(result))
+        .maxLines(1)
+      Text(result.summary.length > 0 ? result.summary : result.errorMessage)
+        .layoutWeight(1)
+        .fontSize(12)
+        .fontFamily(this.appFontFamily)
+        .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
+        .maxLines(1)
+        .textOverflow({ overflow: TextOverflow.Ellipsis })
+    }
+    .width('100%')
+    .height(24)
+  }
+
+  @Builder
+  private buildAutoCheckSiteReport(report: SourceAutoCheckSiteReport) {
+    Stack({ alignContent: Alignment.Start }) {
+      Column() {
+      }
+        .width(`${this.getAutoCheckSiteProgressPercent(report)}%`)
+        .height('100%')
+        .backgroundColor(this.getAutoCheckSiteToneColor(report))
+        .opacity(0.18)
+
+      Column({ space: 6 }) {
+        Row({ space: 8 }) {
+          Text(report.siteLabel)
+            .fontSize(13)
+            .fontWeight(FontWeight.Medium)
+            .fontFamily(this.appFontFamily)
+            .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
+            .layoutWeight(1)
+            .maxLines(1)
+            .textOverflow({ overflow: TextOverflow.Ellipsis })
+          if (report.recommended) {
+            Text('推荐')
+              .fontSize(11)
+              .fontFamily(this.appFontFamily)
+              .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_white', this.themeState.currentTheme))
+              .padding({ left: 8, right: 8, top: 3, bottom: 3 })
+              .borderRadius(8)
+              .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme))
+          }
+          Text(this.getAutoCheckSiteSummaryText(report))
+            .fontSize(12)
+            .fontFamily(this.appFontFamily)
+            .fontColor(this.getAutoCheckSiteToneColor(report))
+            .maxLines(1)
+        }
+        .width('100%')
+
+        ForEach(report.workflowResults, (result: SourceAutoCheckWorkflowResult) => {
+          this.buildAutoCheckWorkflowResult(result)
+        }, (result: SourceAutoCheckWorkflowResult) => `${result.siteId}_${result.workflowKey}_${result.status}_${result.score}`)
+      }
+      .width('100%')
+      .padding(8)
+    }
+    .width('100%')
+    .height(this.getAutoCheckSiteReportHeight(report))
+    .borderRadius(8)
+    .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('background_secondary', this.themeState.currentTheme))
+    .border({
+      width: report.workflowResults.length > 0 ? 1 : 0,
+      color: this.getAutoCheckSiteToneColor(report)
+    })
+    .clip(true)
+  }
+
+  @Builder
+  private buildAutoCheckHistoryDetail(record: SourceAutoCheckRecord) {
+    Column({ space: 8 }) {
+      Row({ space: 8 }) {
+        Text(`范围：${this.getAutoCheckHistoryWorkflowText(record)}`)
+          .fontSize(12)
+          .fontFamily(this.appFontFamily)
+          .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
+          .layoutWeight(1)
+          .maxLines(2)
+          .textOverflow({ overflow: TextOverflow.Ellipsis })
+        Text(this.getAutoCheckHistoryRecommendationText(record))
+          .fontSize(12)
+          .fontFamily(this.appFontFamily)
+          .fontColor(ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme))
+          .maxLines(1)
+          .textOverflow({ overflow: TextOverflow.Ellipsis })
+      }
+      .width('100%')
+
+      if (this.getAutoCheckHistoryReports(record).length > 0) {
+        ForEach(this.getAutoCheckHistoryReports(record), (report: SourceAutoCheckSiteReport) => {
+          this.buildAutoCheckSiteReport(report)
+        }, (report: SourceAutoCheckSiteReport) => `${record.taskId}_${report.siteId}_${report.workflowResults.length}_${report.score}`)
+      } else {
+        Text(record.summary.length > 0 ? record.summary : '暂无详细站点结果')
+          .fontSize(12)
+          .fontFamily(this.appFontFamily)
+          .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
+          .width('100%')
+          .padding({ top: 4, bottom: 4 })
+      }
+    }
+    .width('100%')
+  }
+
+  @Builder
+  private buildAutoCheckHistoryRecord(record: SourceAutoCheckRecord) {
+    Column({ space: 8 }) {
+      Row({ space: 8 }) {
+        Text(this.getAutoCheckHistoryStatusText(record.status))
+          .fontSize(11)
+          .fontFamily(this.appFontFamily)
+          .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_white', this.themeState.currentTheme))
+          .padding({ left: 8, right: 8, top: 3, bottom: 3 })
+          .borderRadius(8)
+          .backgroundColor(this.getAutoCheckRecordToneColor(record.status))
+        Text(this.formatAutoCheckRecordTime(record.startTime))
+          .fontSize(12)
+          .fontFamily(this.appFontFamily)
+          .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
+          .layoutWeight(1)
+          .maxLines(1)
+        Text(this.getAutoCheckHistoryProgressText(record))
+          .fontSize(12)
+          .fontFamily(this.appFontFamily)
+          .fontColor(this.getAutoCheckRecordToneColor(record.status))
+          .maxLines(1)
+        SymbolGlyph(this.expandedAutoCheckHistoryTaskId === record.taskId ?
+          $r('sys.symbol.chevron_up') : $r('sys.symbol.chevron_down'))
+          .fontSize(14)
+          .fontColor([ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme)])
+      }
+      .width('100%')
+
+      Text(record.summary.length > 0 ? record.summary : this.getAutoCheckHistoryRecommendationText(record))
+        .fontSize(12)
+        .fontFamily(this.appFontFamily)
+        .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
+        .width('100%')
+        .maxLines(2)
+        .textOverflow({ overflow: TextOverflow.Ellipsis })
+
+      Row({ space: 8 }) {
+        Text(this.getAutoCheckHistoryWorkflowText(record))
+          .fontSize(11)
+          .fontFamily(this.appFontFamily)
+          .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
+          .layoutWeight(1)
+          .maxLines(1)
+          .textOverflow({ overflow: TextOverflow.Ellipsis })
+        Text(this.formatAutoCheckDuration(record))
+          .fontSize(11)
+          .fontFamily(this.appFontFamily)
+          .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
+          .maxLines(1)
+      }
+      .width('100%')
+
+      if (this.expandedAutoCheckHistoryTaskId === record.taskId) {
+        this.buildAutoCheckHistoryDetail(record)
+      }
+    }
+    .width('100%')
+    .padding(10)
+    .borderRadius(8)
+    .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('background_secondary', this.themeState.currentTheme))
+    .border({
+      width: 1,
+      color: this.getAutoCheckRecordToneColor(record.status)
+    })
+    .onClick(() => {
+      this.expandedAutoCheckHistoryTaskId =
+        this.expandedAutoCheckHistoryTaskId === record.taskId ? '' : record.taskId;
+    })
+  }
+
+  @Builder
+  private buildAutoCheckHistorySection() {
+    Column({ space: 8 }) {
+      Row({ space: 8 }) {
+        SymbolGlyph($r('sys.symbol.clock_arrow_2_circlepath'))
+          .fontSize(15)
+          .fontColor([ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme)])
+        Text('历史巡检')
+          .fontSize(14)
+          .fontWeight(FontWeight.Medium)
+          .fontFamily(this.appFontFamily)
+          .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
+        Blank()
+        Text(`${this.autoCheckHistoryRecords.length}条`)
+          .fontSize(12)
+          .fontFamily(this.appFontFamily)
+          .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
+      }
+      .width('100%')
+
+      if (this.autoCheckHistoryRecords.length > 0) {
+        ForEach(this.autoCheckHistoryRecords, (record: SourceAutoCheckRecord) => {
+          this.buildAutoCheckHistoryRecord(record)
+        }, (record: SourceAutoCheckRecord) => record.taskId)
+      } else {
+        Text('暂无该图源的巡检记录')
+          .fontSize(12)
+          .fontFamily(this.appFontFamily)
+          .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
+          .width('100%')
+          .padding({ left: 12, right: 12, top: 10, bottom: 10 })
+          .borderRadius(8)
+          .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('background_secondary', this.themeState.currentTheme))
+      }
+    }
+    .width('100%')
+  }
+
+  @Builder
+  private buildAutoCheckScopeOption(option: SourceAutoCheckTaskOption) {
+    Row({ space: 10 }) {
+      Column({ space: 3 }) {
+        Text(option.label)
+          .fontSize(14)
+          .fontWeight(FontWeight.Medium)
+          .fontFamily(this.appFontFamily)
+          .fontColor(this.isAutoCheckWorkflowSelected(option.workflowKey) ?
+            ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme) :
+            ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
+          .maxLines(1)
+          .textOverflow({ overflow: TextOverflow.Ellipsis })
+        Text(option.workflowKey)
+          .fontSize(11)
+          .fontFamily(this.appFontFamily)
+          .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
+          .maxLines(1)
+          .textOverflow({ overflow: TextOverflow.Ellipsis })
+      }
+      .layoutWeight(1)
+      .alignItems(HorizontalAlign.Start)
+
+      if (this.isAutoCheckWorkflowSelected(option.workflowKey)) {
+        SymbolGlyph($r('sys.symbol.checkmark'))
+          .fontSize(18)
+          .fontColor([ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme)])
+      }
+    }
+    .width('100%')
+    .height(54)
+    .padding({ left: 14, right: 14 })
+    .borderRadius(8)
+    .backgroundColor(this.isAutoCheckWorkflowSelected(option.workflowKey) ?
+      ThemeAwareHelper.getTestManagementThemedColor('accent_primary_dimmed', this.themeState.currentTheme) :
+      ThemeAwareHelper.getTestManagementThemedColor('background_secondary', this.themeState.currentTheme))
+    .onClick(() => {
+      this.toggleAutoCheckWorkflowSelection(option.workflowKey);
+    })
+  }
+
+  @Builder
+  private buildAutoCheckScopePicker() {
+    Column({ space: 12 }) {
+      Row({ space: 8 }) {
+        SymbolGlyph($r('sys.symbol.waveform_path_ecg_magnifyingglass'))
+          .fontSize(18)
+          .fontColor([ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme)])
+        Text('选择巡检范围')
+          .fontSize(16)
+          .fontWeight(FontWeight.Medium)
+          .fontFamily(this.appFontFamily)
+          .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
+        Blank()
+        Text(`${this.selectedAutoCheckWorkflowKeys.length}/${this.autoCheckScopeOptions.length}`)
+          .fontSize(12)
+          .fontFamily(this.appFontFamily)
+          .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
+      }
+      .width('100%')
+
+      Scroll() {
+        Column({ space: 12 }) {
+          this.buildAutoCheckHistorySection()
+
+          Column({ space: 8 }) {
+            Row({ space: 8 }) {
+              Text('本次巡检范围')
+                .fontSize(14)
+                .fontWeight(FontWeight.Medium)
+                .fontFamily(this.appFontFamily)
+                .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
+              Blank()
+              this.buildActionTextButton('全选', 68, () => {
+                this.selectAllAutoCheckWorkflows();
+              })
+              this.buildActionTextButton('清空', 68, () => {
+                this.clearAutoCheckWorkflowSelection();
+              })
+            }
+            .width('100%')
+
+            ForEach(this.autoCheckScopeOptions, (option: SourceAutoCheckTaskOption) => {
+              this.buildAutoCheckScopeOption(option)
+            }, (option: SourceAutoCheckTaskOption) => option.workflowKey)
+          }
+          .width('100%')
+        }
+        .width('100%')
+        .padding({ bottom: 4 })
+      }
+      .width('100%')
+      .layoutWeight(1)
+      .scrollBar(BarState.Auto)
+
+      Row({ space: 10 }) {
+        Button('取消')
+          .layoutWeight(1)
+          .height(40)
+          .fontSize(13)
+          .fontFamily(this.appFontFamily)
+          .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('background_secondary', this.themeState.currentTheme))
+          .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
+          .onClick(() => {
+            this.showAutoCheckScopePicker = false;
+          })
+        Button('开始巡检')
+          .layoutWeight(1)
+          .height(40)
+          .fontSize(13)
+          .fontFamily(this.appFontFamily)
+          .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme))
+          .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_white', this.themeState.currentTheme))
+          .enabled(this.selectedAutoCheckWorkflowKeys.length > 0)
+          .onClick(() => {
+            const selectedTasks: SourceAutoCheckTaskOption[] = this.getSelectedAutoCheckTasks();
+            this.showAutoCheckScopePicker = false;
+            void this.startAutoCheckWithTasks(selectedTasks, '请选择至少一个巡检范围');
+          })
+      }
+      .width('100%')
+    }
+    .width('100%')
+    .height('100%')
+    .padding(16)
+  }
+
+  @Builder
+  private buildAutoCheckPanel() {
+    if (this.autoCheckRunning || this.autoCheckReportReady) {
+      Column({ space: 8 }) {
+        Row({ space: 8 }) {
+          SymbolGlyph($r('sys.symbol.waveform_path_ecg_magnifyingglass'))
+            .fontSize(16)
+            .fontColor([ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme)])
+          Text(this.autoCheckRunning ? '自动检查中' : '自动检查报告')
+            .fontSize(14)
+            .fontWeight(FontWeight.Medium)
+            .fontFamily(this.appFontFamily)
+            .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
+          Blank()
+          if (this.autoCheckRunning) {
+            Button('停止')
+              .height(28)
+              .fontSize(12)
+              .fontFamily(this.appFontFamily)
+              .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('background_secondary', this.themeState.currentTheme))
+              .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
+              .onClick(() => {
+                this.cancelAutoCheck('自动检查已停止');
+              })
+          }
+        }
+        .width('100%')
+
+        Text(this.autoCheckProgressText.length > 0 ? this.autoCheckProgressText : '等待自动检查')
+          .fontSize(12)
+          .fontFamily(this.appFontFamily)
+          .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
+          .maxLines(2)
+          .textOverflow({ overflow: TextOverflow.Ellipsis })
+          .width('100%')
+
+        Scroll() {
+          Column({ space: 8 }) {
+            ForEach(this.getAutoCheckPanelReports(), (report: SourceAutoCheckSiteReport) => {
+              this.buildAutoCheckSiteReport(report)
+            }, (report: SourceAutoCheckSiteReport) => `${report.siteId}_${report.workflowResults.length}_${report.score}_${report.successCount}`)
+          }
+          .width('100%')
+        }
+        .width('100%')
+        .height(this.getAutoCheckPanelReports().length > 0 ? 210 : 40)
+        .scrollBar(BarState.Auto)
+      }
+      .width('100%')
+      .padding(10)
+      .backgroundColor(SettingsPanelSurfaceHelper.getBackground(this.themeState.currentTheme))
+      .borderRadius(SettingsPanelSurfaceHelper.getRadius(this.themeState.currentTheme))
+    }
+  }
+
+  @Builder
+  private buildSiteOptionButton(option: SourceEditorSiteOption) {
+    Button() {
+      Row({ space: 4 }) {
+        if (this.normalizeSiteBaseUrl(option.baseUrl) === this.normalizeSiteBaseUrl(this.getAutoCheckSelectedSiteBaseUrl())) {
+          SymbolGlyph($r('sys.symbol.circle_fill'))
+            .fontSize(12)
+            .fontColor([ThemeAwareHelper.getTestManagementThemedColor('text_white', this.themeState.currentTheme)])
+        }
+        Text(option.label)
+          .fontSize(12)
+          .fontFamily(this.appFontFamily)
+          .fontColor(this.normalizeSiteBaseUrl(option.baseUrl) === this.normalizeSiteBaseUrl(this.getAutoCheckSelectedSiteBaseUrl()) ? ThemeAwareHelper.getTestManagementThemedColor('text_white', this.themeState.currentTheme) : ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
+          .maxLines(1)
+          .textOverflow({ overflow: TextOverflow.Ellipsis })
+      }
+      .height(30)
+      .constraintSize({ maxWidth: 156 })
+    }
+    .height(30)
+    .padding({ left: 10, right: 10 })
+    .borderRadius(8)
+    .backgroundColor(this.normalizeSiteBaseUrl(option.baseUrl) === this.normalizeSiteBaseUrl(this.getAutoCheckSelectedSiteBaseUrl()) ? ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme) : ThemeAwareHelper.getTestManagementThemedColor('background_secondary', this.themeState.currentTheme))
+    .enabled(!this.autoCheckRunning)
+    .onClick(() => {
+      this.switchTestSite(option);
+    })
+  }
+
+  @Builder
+  private buildSiteSwitcher() {
+    if (this.siteOptions.length > 1) {
+      Scroll() {
+        Row({ space: 8 }) {
+          SymbolGlyph($r('sys.symbol.swap'))
+            .fontSize(14)
+            .fontColor([ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme)])
+          ForEach(this.siteOptions, (option: SourceEditorSiteOption) => {
+            this.buildSiteOptionButton(option)
+          }, (option: SourceEditorSiteOption) => option.id)
+        }
+        .height(30)
+      }
+      .width('100%')
+      .height(30)
+      .scrollable(ScrollDirection.Horizontal)
+      .scrollBar(BarState.Off)
+    }
   }
 
   @Builder
@@ -1356,10 +3659,11 @@ export struct SourceInteractiveEditorPage {
   private buildToolbar() {
     Column({ space: 8 }) {
       Row({ space: 8 }) {
-        TextInput({ text: this.testUrl, placeholder: 'https://example.com' })
+        TextInput({ text: this.getToolbarUrlText(), placeholder: 'https://example.com' })
           .layoutWeight(1)
           .height(38)
           .fontSize(13)
+          .enabled(!this.autoCheckRunning)
           .onChange((value: string) => {
             this.handleTestUrlChange(value);
           })
@@ -1372,11 +3676,14 @@ export struct SourceInteractiveEditorPage {
         .height(38)
         .borderRadius(8)
         .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme))
+        .enabled(!this.autoCheckRunning)
         .onClick(() => {
           this.loadTestUrl();
         })
       }
       .width('100%')
+
+      this.buildSiteSwitcher()
 
       Scroll() {
         Row({ space: 8 }) {
@@ -1403,6 +3710,84 @@ export struct SourceInteractiveEditorPage {
     .padding(10)
     .backgroundColor(SettingsPanelSurfaceHelper.getBackground(this.themeState.currentTheme))
     .borderRadius(SettingsPanelSurfaceHelper.getRadius(this.themeState.currentTheme))
+  }
+
+  @Builder
+  private buildAutoCheckRecommendationPreview(report: SourceAutoCheckSiteReport) {
+    Column({ space: 12 }) {
+      Row({ space: 8 }) {
+        SymbolGlyph($r('sys.symbol.checkmark_circle'))
+          .fontSize(18)
+          .fontColor([ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme)])
+        Text('推荐源站')
+          .fontSize(16)
+          .fontWeight(FontWeight.Medium)
+          .fontFamily(this.appFontFamily)
+          .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
+        Blank()
+        Button('应用推荐')
+          .height(30)
+          .fontSize(12)
+          .fontFamily(this.appFontFamily)
+          .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme))
+          .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_white', this.themeState.currentTheme))
+          .onClick(() => {
+            this.applyAutoCheckRecommendation();
+          })
+      }
+      .width('100%')
+
+      Column({ space: 6 }) {
+        Text(report.siteLabel)
+          .fontSize(18)
+          .fontWeight(FontWeight.Medium)
+          .fontFamily(this.appFontFamily)
+          .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
+          .maxLines(1)
+          .textOverflow({ overflow: TextOverflow.Ellipsis })
+        Text(report.siteBaseUrl)
+          .fontSize(12)
+          .fontFamily(this.appFontFamily)
+          .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
+          .maxLines(1)
+          .textOverflow({ overflow: TextOverflow.Ellipsis })
+      }
+      .width('100%')
+      .alignItems(HorizontalAlign.Start)
+
+      Row({ space: 8 }) {
+        Text(`${report.successCount}/${report.totalCount} 通过`)
+          .fontSize(13)
+          .fontFamily(this.appFontFamily)
+          .fontColor(this.getAutoCheckSiteToneColor(report))
+          .layoutWeight(1)
+        Text(`${report.score}分`)
+          .fontSize(13)
+          .fontFamily(this.appFontFamily)
+          .fontColor(this.getAutoCheckSiteToneColor(report))
+        Text(`${Math.ceil(report.durationMs / 1000)}秒`)
+          .fontSize(13)
+          .fontFamily(this.appFontFamily)
+          .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
+      }
+      .width('100%')
+
+      Scroll() {
+        Column({ space: 8 }) {
+          ForEach(report.workflowResults, (result: SourceAutoCheckWorkflowResult) => {
+            this.buildAutoCheckWorkflowResult(result)
+          }, (result: SourceAutoCheckWorkflowResult) => `recommended_${result.siteId}_${result.workflowKey}`)
+        }
+        .width('100%')
+      }
+      .width('100%')
+      .layoutWeight(1)
+      .scrollBar(BarState.Auto)
+    }
+    .width('100%')
+    .height('100%')
+    .padding(16)
+    .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('background_secondary', this.themeState.currentTheme))
   }
 
   @Builder
@@ -1462,6 +3847,10 @@ export struct SourceInteractiveEditorPage {
         .justifyContent(FlexAlign.Center)
         .alignItems(HorizontalAlign.Center)
         .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('background_secondary', this.themeState.currentTheme))
+      }
+
+      if (this.shouldShowAutoCheckRecommendationPreview()) {
+        this.buildAutoCheckRecommendationPreview(this.getRecommendedAutoCheckSiteReportOrEmpty())
       }
     }
     .width('100%')

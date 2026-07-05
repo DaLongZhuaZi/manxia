@@ -51,6 +51,7 @@ interface FieldSelectorParseResult {
 const TAG = 'MangaSourceActionEngine';
 const ACTION_QUEUE_OWNER_KEY = '__actionQueueOwner';
 const SCRIPT_EXECUTION_TIMEOUT_MS = 8000;
+const SCRIPT_EXECUTION_MAX_TIMEOUT_MS = 120000;
 
 /**
  * 操作执行上下文
@@ -966,7 +967,18 @@ export class MangaSourceActionEngine {
     // 输出关键筛选变量
     logger.debug(TAG, `脚本变量: category=${context.variables['category']}, sort=${context.variables['sort']}, time=${context.variables['time']}, timeType=${context.variables['timeType']}, page=${context.variables['page']}`);
 
-    return await this.executeJavaScriptWithTimeout<string>(code, SCRIPT_EXECUTION_TIMEOUT_MS);
+    const timeoutMs = this.resolveScriptTimeout(action.timeout);
+    return await this.executeJavaScriptWithTimeout<string>(code, timeoutMs);
+  }
+
+  private resolveScriptTimeout(configuredTimeout?: number): number {
+    if (configuredTimeout === undefined || configuredTimeout <= 0) {
+      return SCRIPT_EXECUTION_TIMEOUT_MS;
+    }
+    if (configuredTimeout > SCRIPT_EXECUTION_MAX_TIMEOUT_MS) {
+      return SCRIPT_EXECUTION_MAX_TIMEOUT_MS;
+    }
+    return Math.floor(configuredTimeout);
   }
 
   /**

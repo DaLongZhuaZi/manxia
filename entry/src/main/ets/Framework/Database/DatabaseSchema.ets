@@ -988,10 +988,12 @@ export const CREATE_INDEX_SQL: string[] = [
   ,
   'CREATE INDEX IF NOT EXISTS idx_online_comic_source ON online_comic_info (sourceId)',
   'CREATE INDEX IF NOT EXISTS idx_online_comic_external ON online_comic_info (sourceId, externalId)',
+  'CREATE INDEX IF NOT EXISTS idx_online_comic_pkg_external ON online_comic_info (sourcePkg, externalId)',
   'CREATE INDEX IF NOT EXISTS idx_online_chapter_comic ON online_chapter (comicId)',
   'CREATE INDEX IF NOT EXISTS idx_online_chapter_external ON online_chapter (comicId, externalId)',
   'CREATE INDEX IF NOT EXISTS idx_online_chapter_cache_comic ON online_chapter_cache_state (comicId, cacheStatus)',
   'CREATE INDEX IF NOT EXISTS idx_online_chapter_cache_source ON online_chapter_cache_state (sourceId, cacheStatus)',
+  'CREATE INDEX IF NOT EXISTS idx_online_chapter_cache_pkg ON online_chapter_cache_state (sourcePkg, cacheStatus)',
   'CREATE INDEX IF NOT EXISTS idx_online_chapter_cache_status ON online_chapter_cache_state (cacheStatus)',
   'CREATE INDEX IF NOT EXISTS idx_online_page_chapter ON online_page (chapterId)',
   'CREATE INDEX IF NOT EXISTS idx_online_page_number ON online_page (chapterId, pageNumber)',
@@ -1137,5 +1139,10 @@ export const MIGRATION_SCRIPTS: Record<number, string[]> = {
   15: [
     // 版本15：在线漫画页面保存页面级请求头，用于 Legado IMAGE / 反盗链图源缓存恢复
     'ALTER TABLE online_page ADD COLUMN requestHeaders TEXT DEFAULT \'\''
+  ],
+  17: [
+    // 版本17：为图源稳定 pkg 身份增加查询索引
+    'CREATE INDEX IF NOT EXISTS idx_online_comic_pkg_external ON online_comic_info (sourcePkg, externalId)',
+    'CREATE INDEX IF NOT EXISTS idx_online_chapter_cache_pkg ON online_chapter_cache_state (sourcePkg, cacheStatus)'
   ]
 };

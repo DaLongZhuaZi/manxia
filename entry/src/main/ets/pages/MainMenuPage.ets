@@ -6,7 +6,7 @@ import { SafeUtils } from '../Utils/SafeUtils';
 import { logger } from '../Utils/Logger';
 import { widgetDataSync } from '../Utils/WidgetDataSync';
 import { common } from '@kit.AbilityKit';
-import { deviceInfo, BusinessError } from '@kit.BasicServicesKit';
+import { deviceInfo, BusinessError, pasteboard } from '@kit.BasicServicesKit';
 import { CommonModifier, LengthMetrics, promptAction, router, curves } from '@kit.ArkUI';
 import { image } from '@kit.ImageKit';
 import fs from '@ohos.file.fs';
@@ -145,6 +145,7 @@ import { BookSourceManagementPage } from './BookSourceManagementPage';
 import { SourceManagementPage } from './SourceManagementPage';
 import { SourceDiagnosticPage } from './SourceDiagnosticPage';
 import { SourceInteractiveEditorPage } from './SourceInteractiveEditorPage';
+import { SourceInteractiveEditorPageParams } from '../Framework/SourceEditor/SourceEditorTypes';
 import { BackupPage } from './BackupPage';
 
 // 小说页面导入
@@ -406,6 +407,7 @@ interface CoverAspectInfo {
 interface BookStyleSourceConfigMetadata {
   bookSourceUrl?: string;
   bookSourceName?: string;
+  bookSourceType?: number;
 }
 
 interface BookStyleSourceConfig {
@@ -415,6 +417,46 @@ interface BookStyleSourceConfig {
 interface BookStyleSourceIdentity {
   bookSourceUrl: string;
   bookSourceName: string;
+  bookSourceType: number;
+}
+
+interface LocalSourceImportMetadata {
+  id?: string;
+  name?: string;
+  version?: string;
+  description?: string;
+  baseUrl?: string;
+  language?: string;
+  type?: string;
+}
+
+interface LocalSourceImportConfig {
+  metadata?: LocalSourceImportMetadata;
+  workflows?: Object;
+}
+
+type LocalSourceVersionChange = 'new' | 'upgrade' | 'downgrade' | 'same' | 'unknown';
+type LocalSourceInstallState = 'pending' | 'installing' | 'success' | 'failed';
+
+interface PendingLocalSourceImport {
+  fileUri: string;
+  fileName: string;
+  jsonContent: string;
+  pkg: string;
+  name: string;
+  version: string;
+  description: string;
+  baseUrl: string;
+  language: string;
+  type: string;
+  isUpdate: boolean;
+  existingVersion: string;
+  versionChange: LocalSourceVersionChange;
+  iconPath: string;
+  valid: boolean;
+  error: string;
+  installState: LocalSourceInstallState;
+  installError: string;
 }
 
 /**
@@ -889,9 +931,18 @@ struct MainMenuPage {
   @State syncLogMessages: string[] = []; // 同步日志消息
   @State syncProgress: number = 0; // 同步进度 (0-100)
   @State syncProgressMessage: string = ''; // 同步进度消息
+  @State pendingLocalSourceImports: PendingLocalSourceImport[] = [];
+  @State isParsingLocalSourceImports: boolean = false;
+  @State isInstallingLocalSourceImports: boolean = false;
+  @State localSourceImportSummary: string = '';
+  @State localSourceImportProgress: number = 0;
+  @State localSourceImportActiveIndex: number = -1;
+  @State localSourceImportCompleted: boolean = false;
+  @State localSourceImportCompletedSuccessfully: boolean = false;
   private readonly SOURCE_REPO_SELECTOR_EXPANDED_HEIGHT: number = 200;
   private readonly SOURCE_REPO_SELECTOR_ANIMATION_DURATION: number = 220;
   private sourceRepoDialogController: CustomDialogController | undefined = undefined;
+  private localSourceImportAutoCloseTimerId: number = -1;
   private repositoryManager: SourceRepositoryManager = SourceRepositoryManager.getInstance();
 
   // 深度链接跳转对话框状态
@@ -1667,6 +1718,8 @@ struct MainMenuPage {
   @StorageProp('externalImportNavigationTrigger') @Watch('onExternalImportNavigationTriggerChanged') private externalImportNavigationTrigger: number = 0;
   // 深度链接对话框触发器——响应 DeepLinkDialogManager 设置的跳转请求
   @StorageProp('deepLinkTrigger') @Watch('onDeepLinkTriggerChanged') private deepLinkTrigger: number = 0;
+  @StorageProp('sourceAutoCheckNavigationTrigger') @Watch('onSourceAutoCheckNavigationTriggerChanged')
+  private sourceAutoCheckNavigationTrigger: number = 0;
   private deepLinkHandling: boolean = false;
   private deepLinkRetryTimer: number = -1;
   private deepLinkRetryCount: number = 0;
@@ -2332,6 +2385,17 @@ struct MainMenuPage {
       // 清除标记
       AppStorage.setOrCreate('widgetTargetPage', '');
 
+      if (targetPage === 'sourceAutoCheck') {
+        if (startupFastRoute) {
+          this.navigateToPendingSourceAutoCheck();
+          return;
+        }
+        setTimeout(() => {
+          this.navigateToPendingSourceAutoCheck();
+        }, 200);
+        return;
+      }
+
       if (targetPage === 'readingAnalytics') {
         const targetView = AppStorage.get<string>('widgetTargetView') || 'daily';
         AppStorage.setOrCreate('widgetTargetView', '');
@@ -2564,6 +2628,57 @@ struct MainMenuPage {
         null
       );
     }
+  }
+
+  private navigateToPendingSourceAutoCheck(): void {
+    const routeName: string = AppStorage.get<string>('sourceAutoCheckRouteName') || 'SourceInteractiveEditorPage';
+    const sourceId: number = AppStorage.get<number>('sourceAutoCheckSourceId') || 0;
+    let sourceName: string = AppStorage.get<string>('sourceAutoCheckSourceName') || '';
+    let sourcePkg: string = AppStorage.get<string>('sourceAutoCheckSourcePkg') || '';
+    let initialUrl: string = AppStorage.get<string>('sourceAutoCheckInitialUrl') || '';
+    const taskId: string = AppStorage.get<string>('sourceAutoCheckTaskId') || '';
+    const openReport: boolean = AppStorage.get<boolean>('sourceAutoCheckOpenReport') === true;
+
+    AppStorage.setOrCreate('sourceAutoCheckRouteName', '');
+    AppStorage.setOrCreate('sourceAutoCheckSourceId', 0);
+    AppStorage.setOrCreate('sourceAutoCheckSourceName', '');
+    AppStorage.setOrCreate('sourceAutoCheckSourcePkg', '');
+    AppStorage.setOrCreate('sourceAutoCheckInitialUrl', '');
+    AppStorage.setOrCreate('sourceAutoCheckTaskId', '');
+    AppStorage.setOrCreate('sourceAutoCheckOpenReport', false);
+
+    for (let index = 0; index < this.sourceList.length; index += 1) {
+      const source: SourceInfo = this.sourceList[index];
+      if (source.id === sourceId) {
+        if (sourceName.length <= 0) {
+          sourceName = source.name;
+        }
+        if (sourcePkg.length <= 0 && source.pkg !== undefined) {
+          sourcePkg = source.pkg;
+        }
+        if (initialUrl.length <= 0) {
+          initialUrl = source.baseUrl;
+        }
+        break;
+      }
+    }
+
+    if (routeName !== 'SourceInteractiveEditorPage') {
+      logger.warn(TAG, `忽略未知通知巡检路由: ${routeName}`);
+      return;
+    }
+    const params: SourceInteractiveEditorPageParams = {
+      sourceId: sourceId,
+      sourceName: sourceName.length > 0 ? sourceName : '图源',
+      sourcePkg: sourcePkg,
+      initialUrl: initialUrl,
+      createNew: false,
+      autoRunDiagnostics: false,
+      autoCheckTaskId: taskId,
+      openAutoCheckReport: openReport
+    };
+    logger.info(TAG, `通过通知/后台任务打开图源巡检页面: source=${params.sourceName}, taskId=${taskId}`);
+    this.pathStack.pushPathByName('SourceInteractiveEditorPage', params);
   }
 
   private async navigateNovelToReadAloud(novel: NovelBook): Promise<void> {
@@ -4440,9 +4555,18 @@ struct MainMenuPage {
   private createEmptyBookStyleSourceIdentity(): BookStyleSourceIdentity {
     const identity: BookStyleSourceIdentity = {
       bookSourceUrl: '',
-      bookSourceName: ''
+      bookSourceName: '',
+      bookSourceType: -1
     };
     return identity;
+  }
+
+  private isLegadoMangaBookStyleSource(source: SourceInfo): boolean {
+    return LegadoMangaSourceBridge.isLegadoMangaPkg(source.pkg);
+  }
+
+  private isLegadoMangaBookStyleIdentity(identity: BookStyleSourceIdentity): boolean {
+    return identity.bookSourceType === LegadoBookSourceType.IMAGE && identity.bookSourceUrl.length > 0;
   }
 
   private async resolveBookStyleSourceIdentity(source: SourceInfo): Promise<BookStyleSourceIdentity> {
@@ -4463,10 +4587,42 @@ struct MainMenuPage {
       if (metadata.bookSourceName) {
         identity.bookSourceName = metadata.bookSourceName.trim();
       }
+      if (metadata.bookSourceType === LegadoBookSourceType.TEXT ||
+        metadata.bookSourceType === LegadoBookSourceType.AUDIO ||
+        metadata.bookSourceType === LegadoBookSourceType.IMAGE ||
+        metadata.bookSourceType === LegadoBookSourceType.FILE) {
+        identity.bookSourceType = metadata.bookSourceType;
+      }
     } catch (error) {
       logger.warn(TAG, `解析书源型图源身份失败: ${source.name}, ${String(error)}`);
     }
     return identity;
+  }
+
+  private async copyLegadoMangaBaseUrlFromSource(source: SourceInfo): Promise<void> {
+    try {
+      if (!this.isLegadoMangaBookStyleSource(source)) {
+        logger.warn(TAG, `非Legado漫画书源不支持复制基础URL: ${source.name}`);
+        this.showToast('仅支持Legado漫画书源');
+        return;
+      }
+
+      const identity: BookStyleSourceIdentity = await this.resolveBookStyleSourceIdentity(source);
+      if (!this.isLegadoMangaBookStyleIdentity(identity)) {
+        logger.warn(TAG, `未找到Legado漫画书源真实配置URL: ${source.name} (ID: ${source.id})`);
+        this.showToast('未找到真实基础URL');
+        return;
+      }
+
+      const pasteData = pasteboard.createData(pasteboard.MIMETYPE_TEXT_PLAIN, identity.bookSourceUrl);
+      const systemPasteboard = pasteboard.getSystemPasteboard();
+      await systemPasteboard.setData(pasteData);
+      logger.info(TAG, `已复制Legado漫画书源基础URL: ${source.name}`);
+      this.showToast('基础URL已复制');
+    } catch (error) {
+      logger.error(TAG, `复制Legado漫画书源基础URL失败: ${source.name}, ${String(error)}`);
+      this.showToast('复制基础URL失败');
+    }
   }
 
   private findNovelSourceByIdentity(
@@ -4948,8 +5104,11 @@ struct MainMenuPage {
    * 导入图源
    */
   private async importSource(): Promise<void> {
+    await this.selectLocalSourceFilesForPreview();
+  }
+
+  private async selectLocalSourceFilesForPreview(): Promise<void> {
     try {
-      // 获取UIAbilityContext
       const context = (this.getUIContext().getHostContext() as common.UIAbilityContext) as common.UIAbilityContext;
       if (!context) {
         this.showToast('无法获取应用上下文');
@@ -4957,57 +5116,508 @@ struct MainMenuPage {
         return;
       }
 
-      // 创建文档选择器
       const documentPicker = new picker.DocumentViewPicker(context);
-      
-      // 设置选择选项 - 只允许选择JSON文件
       const selectOptions: picker.DocumentSelectOptions = {
-        maxSelectNumber: 1, // 一次只能选择一个图源文件
-        fileSuffixFilters: ['.json'], // 只允许选择JSON文件
+        maxSelectNumber: 50,
+        fileSuffixFilters: ['.json'],
       };
 
-      logger.info(TAG, '打开文件选择器，选择图源JSON文件');
-      
-      // 打开文件选择器
+      logger.info(TAG, '打开文件选择器，选择一个或多个图源JSON文件');
       const selectResult = await documentPicker.select(selectOptions);
-      
       if (!selectResult || !selectResult.length || selectResult.length === 0) {
         logger.info(TAG, '用户取消了文件选择');
         return;
       }
 
-      const fileUri = selectResult[0];
-      logger.info(TAG, `用户选择了文件: ${fileUri}`);
-      
-      this.showToast('开始导入图源...');
-      
-      // 读取文件内容
-      const file = SafeFileUtils.openSync(fileUri, fs.OpenMode.READ_ONLY);
-      const buffer = new ArrayBuffer(1024 * 1024); // 1MB缓冲区
-      const readLen = SafeFileUtils.readSync(file.fd, buffer);
-      SafeFileUtils.closeSync(file);
-      
-      // 使用TextDecoder正确解码UTF-8
-      const uint8Array = new Uint8Array(buffer, 0, readLen);
-      const decoder = new util.TextDecoder('utf-8', { ignoreBOM: true });
-      const jsonContent = decoder.decodeToString(uint8Array);
-      
-      logger.debug(TAG, `读取到JSON内容，长度: ${jsonContent.length}`);
-      
-      // 导入图源
-      const result = await this.sourceManager.importFromJSON(jsonContent);
-      
-      if (result.success) {
-        this.showToast('图源导入成功！');
-        logger.info(TAG, '图源导入成功');
-        await this.loadSources();
-      } else {
-        this.showToast(`导入失败: ${result.error || '未知错误'}`);
-        logger.error(TAG, `图源导入失败: ${result.error}`);
+      this.isParsingLocalSourceImports = true;
+      this.localSourceImportSummary = '正在解析本地图源...';
+      this.localSourceImportProgress = 0;
+      this.localSourceImportActiveIndex = -1;
+      this.localSourceImportCompleted = false;
+      this.localSourceImportCompletedSuccessfully = false;
+      this.clearLocalSourceImportAutoCloseTimer();
+      const parsedItems: PendingLocalSourceImport[] = [];
+      const installedSources: SourceInfo[] = await this.sourceManager.getAllSources();
+      for (let index = 0; index < selectResult.length; index += 1) {
+        const fileUri: string = selectResult[index];
+        logger.info(TAG, `解析本地图源文件: ${fileUri}`);
+        parsedItems.push(this.parseLocalSourceImportFile(fileUri, installedSources));
       }
+      const validCount: number = this.countValidPendingLocalSourceImports(parsedItems);
+      const updateCount: number = this.countPendingLocalSourceUpdates(parsedItems);
+      const invalidCount: number = parsedItems.length - validCount;
+      this.getUIContext().animateTo({ duration: 240, curve: Curve.EaseOut }, () => {
+        this.pendingLocalSourceImports = parsedItems;
+        this.localSourceImportProgress = 0;
+        this.localSourceImportSummary =
+          `已解析 ${parsedItems.length} 个文件，待安装 ${validCount - updateCount} 个，待更新 ${updateCount} 个${invalidCount > 0 ? `，${invalidCount} 个不可用` : ''}`;
+      });
+      logger.info(TAG, `本地图源预解析完成: total=${parsedItems.length}, valid=${validCount}, update=${updateCount}`);
     } catch (error) {
-      logger.error(TAG, '导入图源失败', String(error));
-      this.showToast('导入图源失败，请检查文件格式');
+      logger.error(TAG, '解析本地图源失败', String(error));
+      this.showToast('解析本地图源失败，请检查文件格式');
+      this.localSourceImportSummary = `解析失败: ${String(error)}`;
+    } finally {
+      this.isParsingLocalSourceImports = false;
+    }
+  }
+
+  private parseLocalSourceImportFile(fileUri: string, installedSources: SourceInfo[]): PendingLocalSourceImport {
+    const fileName: string = this.resolveFileNameFromUri(fileUri);
+    try {
+      const jsonContent: string = this.readPickedJsonFile(fileUri);
+      const config: LocalSourceImportConfig = SafeUtils.parseObj<LocalSourceImportConfig>(jsonContent);
+      const metadata: LocalSourceImportMetadata | undefined = config.metadata;
+      if (metadata === undefined) {
+        return this.createInvalidPendingLocalSourceImport(fileUri, fileName, jsonContent, '缺少 metadata 配置');
+      }
+      const pkg: string = metadata.id !== undefined ? metadata.id.trim() : '';
+      const name: string = metadata.name !== undefined ? metadata.name.trim() : '';
+      const version: string = metadata.version !== undefined && metadata.version.trim().length > 0 ?
+        metadata.version.trim() : '1.0.0';
+      const description: string = metadata.description !== undefined ? metadata.description.trim() : '';
+      const baseUrl: string = metadata.baseUrl !== undefined ? metadata.baseUrl.trim() : '';
+      const language: string = metadata.language !== undefined && metadata.language.trim().length > 0 ?
+        metadata.language.trim() : 'zh-CN';
+      const type: string = metadata.type !== undefined && metadata.type.trim().length > 0 ?
+        metadata.type.trim() : 'manga';
+
+      if (pkg.length <= 0) {
+        return this.createInvalidPendingLocalSourceImport(fileUri, fileName, jsonContent, '缺少 metadata.id');
+      }
+      if (name.length <= 0) {
+        return this.createInvalidPendingLocalSourceImport(fileUri, fileName, jsonContent, '缺少 metadata.name');
+      }
+      if (config.workflows !== undefined && baseUrl.length <= 0) {
+        return this.createInvalidPendingLocalSourceImport(fileUri, fileName, jsonContent, 'WebView 图源缺少 metadata.baseUrl');
+      }
+
+      const existingSource: SourceInfo | null = this.findInstalledSourceForLocalImport(pkg, name, installedSources);
+      const versionChange: LocalSourceVersionChange = this.resolveLocalSourceVersionChange(existingSource, version);
+      const pendingItem: PendingLocalSourceImport = {
+        fileUri: fileUri,
+        fileName: fileName,
+        jsonContent: jsonContent,
+        pkg: pkg,
+        name: name,
+        version: version,
+        description: description,
+        baseUrl: baseUrl,
+        language: language,
+        type: type,
+        isUpdate: existingSource !== null && existingSource.pkg === pkg,
+        existingVersion: existingSource !== null ? existingSource.version : '',
+        versionChange: versionChange,
+        iconPath: existingSource !== null && existingSource.iconPath !== undefined ? existingSource.iconPath : '',
+        valid: existingSource === null || existingSource.pkg === pkg,
+        error: existingSource !== null && existingSource.pkg !== pkg ? '存在同名图源，但 pkg 不一致' : '',
+        installState: 'pending',
+        installError: ''
+      };
+      return pendingItem;
+    } catch (error) {
+      logger.warn(TAG, `解析本地图源文件失败: ${fileName}, error=${String(error)}`);
+      return this.createInvalidPendingLocalSourceImport(fileUri, fileName, '', String(error));
+    }
+  }
+
+  private createInvalidPendingLocalSourceImport(
+    fileUri: string,
+    fileName: string,
+    jsonContent: string,
+    error: string
+  ): PendingLocalSourceImport {
+    const item: PendingLocalSourceImport = {
+      fileUri: fileUri,
+      fileName: fileName,
+      jsonContent: jsonContent,
+      pkg: '',
+      name: fileName,
+      version: '',
+      description: '',
+      baseUrl: '',
+      language: '',
+      type: '',
+      isUpdate: false,
+      existingVersion: '',
+      versionChange: 'unknown',
+      iconPath: '',
+      valid: false,
+      error: error,
+      installState: 'failed',
+      installError: error
+    };
+    return item;
+  }
+
+  private resolveLocalSourceVersionChange(existingSource: SourceInfo | null, nextVersion: string): LocalSourceVersionChange {
+    if (existingSource === null) {
+      return 'new';
+    }
+    if (existingSource.pkg === undefined || existingSource.pkg.length <= 0) {
+      return 'unknown';
+    }
+    const oldVersion: string = existingSource.version;
+    const compareResult: number = this.compareLocalSourceVersions(nextVersion, oldVersion);
+    if (compareResult > 0) {
+      return 'upgrade';
+    }
+    if (compareResult < 0) {
+      return 'downgrade';
+    }
+    return 'same';
+  }
+
+  private compareLocalSourceVersions(nextVersion: string, oldVersion: string): number {
+    const nextParts: string[] = nextVersion.split('.');
+    const oldParts: string[] = oldVersion.split('.');
+    const maxLength: number = nextParts.length > oldParts.length ? nextParts.length : oldParts.length;
+    for (let index = 0; index < maxLength; index += 1) {
+      const nextValue: number = index < nextParts.length ? this.parseLocalSourceVersionSegment(nextParts[index]) : 0;
+      const oldValue: number = index < oldParts.length ? this.parseLocalSourceVersionSegment(oldParts[index]) : 0;
+      if (nextValue > oldValue) {
+        return 1;
+      }
+      if (nextValue < oldValue) {
+        return -1;
+      }
+    }
+    return 0;
+  }
+
+  private parseLocalSourceVersionSegment(segment: string): number {
+    let value: number = 0;
+    let hasDigit: boolean = false;
+    for (let index = 0; index < segment.length; index += 1) {
+      const code: number = segment.charCodeAt(index);
+      if (code < 48 || code > 57) {
+        break;
+      }
+      hasDigit = true;
+      value = value * 10 + code - 48;
+    }
+    return hasDigit ? value : 0;
+  }
+
+  private readPickedJsonFile(fileUri: string): string {
+    const file = SafeFileUtils.openSync(fileUri, fs.OpenMode.READ_ONLY);
+    if (file.fd === undefined || file.fd < 0) {
+      throw new Error('无法打开文件');
+    }
+    const stat = SafeFileUtils.statSync(file.fd);
+    if (stat.size <= 0) {
+      SafeFileUtils.closeSync(file);
+      throw new Error('文件为空');
+    }
+    const buffer = new ArrayBuffer(stat.size);
+    const readLen: number = SafeFileUtils.readSync(file.fd, buffer);
+    SafeFileUtils.closeSync(file);
+    if (readLen <= 0) {
+      throw new Error('读取文件失败');
+    }
+    const uint8Array = new Uint8Array(buffer, 0, readLen);
+    const decoder = new util.TextDecoder('utf-8', { ignoreBOM: true });
+    return decoder.decodeToString(uint8Array);
+  }
+
+  private resolveFileNameFromUri(fileUri: string): string {
+    const queryIndex: number = fileUri.indexOf('?');
+    const uriWithoutQuery: string = queryIndex >= 0 ? fileUri.substring(0, queryIndex) : fileUri;
+    const slashIndex: number = uriWithoutQuery.lastIndexOf('/');
+    if (slashIndex >= 0 && slashIndex < uriWithoutQuery.length - 1) {
+      return decodeURIComponent(uriWithoutQuery.substring(slashIndex + 1));
+    }
+    return uriWithoutQuery;
+  }
+
+  private findInstalledSourceForLocalImport(pkg: string, name: string, installedSources: SourceInfo[]): SourceInfo | null {
+    for (let index = 0; index < installedSources.length; index += 1) {
+      const source: SourceInfo = installedSources[index];
+      if (source.pkg !== undefined && source.pkg === pkg) {
+        return source;
+      }
+    }
+    for (let index = 0; index < installedSources.length; index += 1) {
+      const source: SourceInfo = installedSources[index];
+      if (source.name === name) {
+        return source;
+      }
+    }
+    return null;
+  }
+
+  private getValidPendingLocalSourceImportCount(): number {
+    return this.countValidPendingLocalSourceImports(this.pendingLocalSourceImports);
+  }
+
+  private countValidPendingLocalSourceImports(items: PendingLocalSourceImport[]): number {
+    let count: number = 0;
+    for (let index = 0; index < items.length; index += 1) {
+      if (items[index].valid) {
+        count += 1;
+      }
+    }
+    return count;
+  }
+
+  private getPendingLocalSourceUpdateCount(): number {
+    return this.countPendingLocalSourceUpdates(this.pendingLocalSourceImports);
+  }
+
+  private countPendingLocalSourceUpdates(items: PendingLocalSourceImport[]): number {
+    let count: number = 0;
+    for (let index = 0; index < items.length; index += 1) {
+      const item: PendingLocalSourceImport = items[index];
+      if (item.valid && item.isUpdate) {
+        count += 1;
+      }
+    }
+    return count;
+  }
+
+  private hasLocalSourceImportPreview(): boolean {
+    return this.pendingLocalSourceImports.length > 0 ||
+      this.isParsingLocalSourceImports ||
+      this.isInstallingLocalSourceImports ||
+      this.localSourceImportCompleted;
+  }
+
+  private getLocalSourceImportPreviewItemEstimatedHeight(item: PendingLocalSourceImport): number {
+    let estimatedHeight: number = 96;
+    if (item.installState === 'failed' && item.installError.length > 0) {
+      estimatedHeight += 18;
+    }
+    return estimatedHeight;
+  }
+
+  private getLocalSourceImportPreviewContentHeight(): number {
+    let contentHeight: number = 0;
+    for (let index = 0; index < this.pendingLocalSourceImports.length; index += 1) {
+      contentHeight += this.getLocalSourceImportPreviewItemEstimatedHeight(this.pendingLocalSourceImports[index]);
+      if (index > 0) {
+        contentHeight += 8;
+      }
+    }
+    return contentHeight;
+  }
+
+  private getLocalSourceImportPreviewMaxHeight(): number {
+    const viewportHeight: number = this.getMainMenuViewportHeight();
+    const reservedDialogHeight: number = 300 + this.statusBarHeight + this.navigationBarHeight;
+    const availableHeight: number = viewportHeight - reservedDialogHeight;
+    return Math.max(168, Math.min(420, availableHeight));
+  }
+
+  private shouldScrollLocalSourceImportPreviewList(): boolean {
+    return this.getLocalSourceImportPreviewContentHeight() > this.getLocalSourceImportPreviewMaxHeight();
+  }
+
+  private getLocalSourceImportPreviewListHeight(): number {
+    return Math.min(this.getLocalSourceImportPreviewContentHeight(), this.getLocalSourceImportPreviewMaxHeight());
+  }
+
+  private clearLocalSourceImportAutoCloseTimer(): void {
+    if (this.localSourceImportAutoCloseTimerId >= 0) {
+      clearTimeout(this.localSourceImportAutoCloseTimerId);
+      this.localSourceImportAutoCloseTimerId = -1;
+    }
+  }
+
+  private closeLocalSourceImportDialog(): void {
+    this.clearLocalSourceImportAutoCloseTimer();
+    this.pendingLocalSourceImports = [];
+    this.localSourceImportSummary = '';
+    this.localSourceImportProgress = 0;
+    this.localSourceImportActiveIndex = -1;
+    this.localSourceImportCompleted = false;
+    this.localSourceImportCompletedSuccessfully = false;
+    this.sourceRepoDialogController?.close();
+    this.showSourceRepoDialog = false;
+  }
+
+  private scheduleLocalSourceImportAutoClose(): void {
+    this.clearLocalSourceImportAutoCloseTimer();
+    this.localSourceImportAutoCloseTimerId = setTimeout((): void => {
+      if (this.localSourceImportCompleted && this.localSourceImportCompletedSuccessfully && !this.isInstallingLocalSourceImports) {
+        this.closeLocalSourceImportDialog();
+      }
+    }, 3000);
+  }
+
+  private clonePendingLocalSourceImport(item: PendingLocalSourceImport): PendingLocalSourceImport {
+    const cloned: PendingLocalSourceImport = {
+      fileUri: item.fileUri,
+      fileName: item.fileName,
+      jsonContent: item.jsonContent,
+      pkg: item.pkg,
+      name: item.name,
+      version: item.version,
+      description: item.description,
+      baseUrl: item.baseUrl,
+      language: item.language,
+      type: item.type,
+      isUpdate: item.isUpdate,
+      existingVersion: item.existingVersion,
+      versionChange: item.versionChange,
+      iconPath: item.iconPath,
+      valid: item.valid,
+      error: item.error,
+      installState: item.installState,
+      installError: item.installError
+    };
+    return cloned;
+  }
+
+  private updatePendingLocalSourceInstallState(index: number, state: LocalSourceInstallState, installError: string): void {
+    const nextItems: PendingLocalSourceImport[] = [];
+    for (let itemIndex = 0; itemIndex < this.pendingLocalSourceImports.length; itemIndex += 1) {
+      const item: PendingLocalSourceImport = this.clonePendingLocalSourceImport(this.pendingLocalSourceImports[itemIndex]);
+      if (itemIndex === index) {
+        item.installState = state;
+        item.installError = installError;
+      }
+      nextItems.push(item);
+    }
+    this.pendingLocalSourceImports = nextItems;
+  }
+
+  private getLocalSourceVersionChangeText(item: PendingLocalSourceImport): string {
+    if (!item.valid) {
+      return item.error;
+    }
+    if (!item.isUpdate) {
+      return `版本 ${item.version}`;
+    }
+    if (item.versionChange === 'upgrade') {
+      return '升级';
+    }
+    if (item.versionChange === 'downgrade') {
+      return '降级';
+    }
+    if (item.versionChange === 'same') {
+      return '同版本';
+    }
+    return '版本变化未知';
+  }
+
+  private getLocalSourceVersionChangeColor(item: PendingLocalSourceImport): ResourceColor {
+    if (!item.valid) {
+      return AppColors.error;
+    }
+    if (item.versionChange === 'upgrade' || item.versionChange === 'new') {
+      return AppColors.success;
+    }
+    if (item.versionChange === 'downgrade') {
+      return AppColors.warning;
+    }
+    if (item.versionChange === 'same') {
+      return ThemeAwareHelper.getTestManagementThemedColor('accent_blue', this.themeState.currentTheme);
+    }
+    return ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme);
+  }
+
+  private getLocalSourceImportStateText(item: PendingLocalSourceImport): string {
+    if (!item.valid) {
+      return '不可用';
+    }
+    if (item.installState === 'installing') {
+      return item.isUpdate ? '更新中' : '导入中';
+    }
+    if (item.installState === 'success') {
+      return item.isUpdate ? '已更新' : '已导入';
+    }
+    if (item.installState === 'failed') {
+      return '失败';
+    }
+    return item.isUpdate ? '更新' : '安装';
+  }
+
+  private getLocalSourceImportStateColor(item: PendingLocalSourceImport): ResourceColor {
+    if (!item.valid || item.installState === 'failed') {
+      return AppColors.error;
+    }
+    if (item.installState === 'success') {
+      return AppColors.success;
+    }
+    if (item.installState === 'installing') {
+      return ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme);
+    }
+    if (item.isUpdate) {
+      return this.getLocalSourceVersionChangeColor(item);
+    }
+    return ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme);
+  }
+
+  private async confirmPendingLocalSourceImports(): Promise<void> {
+    if (this.isInstallingLocalSourceImports) {
+      return;
+    }
+    const validItems: PendingLocalSourceImport[] = [];
+    const validOriginalIndexes: number[] = [];
+    for (let index = 0; index < this.pendingLocalSourceImports.length; index += 1) {
+      const item: PendingLocalSourceImport = this.pendingLocalSourceImports[index];
+      if (item.valid) {
+        validItems.push(item);
+        validOriginalIndexes.push(index);
+      }
+    }
+    if (validItems.length <= 0) {
+      this.showToast('没有可导入的图源');
+      return;
+    }
+
+    this.getUIContext().animateTo({ duration: 220, curve: Curve.EaseOut }, () => {
+      this.isInstallingLocalSourceImports = true;
+      this.localSourceImportCompleted = false;
+      this.localSourceImportCompletedSuccessfully = false;
+      this.localSourceImportProgress = 0;
+      this.localSourceImportActiveIndex = -1;
+    });
+    let importedCount: number = 0;
+    let updatedCount: number = 0;
+    let failedCount: number = 0;
+    for (let index = 0; index < validItems.length; index += 1) {
+      const item: PendingLocalSourceImport = validItems[index];
+      const originalIndex: number = validOriginalIndexes[index];
+      this.getUIContext().animateTo({ duration: 180, curve: Curve.EaseOut }, () => {
+        this.localSourceImportActiveIndex = originalIndex;
+        this.localSourceImportSummary = `正在${item.isUpdate ? '更新' : '导入'} ${item.name} (${index + 1}/${validItems.length})`;
+        this.updatePendingLocalSourceInstallState(originalIndex, 'installing', '');
+      });
+      const result = await this.sourceManager.importFromJSON(item.jsonContent);
+      if (result.success) {
+        if (item.isUpdate) {
+          updatedCount += 1;
+        } else {
+          importedCount += 1;
+        }
+        this.getUIContext().animateTo({ duration: 240, curve: Curve.EaseOut }, () => {
+          this.localSourceImportProgress = Math.round(((index + 1) / validItems.length) * 100);
+          this.updatePendingLocalSourceInstallState(originalIndex, 'success', '');
+        });
+        logger.info(TAG, `本地图源${item.isUpdate ? '更新' : '导入'}成功: ${item.name}`);
+      } else {
+        failedCount += 1;
+        this.getUIContext().animateTo({ duration: 240, curve: Curve.EaseOut }, () => {
+          this.localSourceImportProgress = Math.round(((index + 1) / validItems.length) * 100);
+          this.updatePendingLocalSourceInstallState(originalIndex, 'failed', result.error || '导入失败');
+        });
+        logger.warn(TAG, `本地图源${item.isUpdate ? '更新' : '导入'}失败: ${item.name}, error=${result.error}`);
+      }
+    }
+
+    await this.loadSources();
+    this.getUIContext().animateTo({ duration: 320, curve: Curve.EaseOut }, () => {
+      this.isInstallingLocalSourceImports = false;
+      this.localSourceImportCompleted = true;
+      this.localSourceImportCompletedSuccessfully = failedCount <= 0;
+      this.localSourceImportActiveIndex = -1;
+      this.localSourceImportProgress = 100;
+      this.localSourceImportSummary = `完成：导入 ${importedCount} 个，更新 ${updatedCount} 个，失败 ${failedCount} 个`;
+    });
+    this.showToast(this.localSourceImportSummary);
+    if (failedCount <= 0) {
+      this.scheduleLocalSourceImportAutoClose();
     }
   }
 
@@ -5133,6 +5743,15 @@ struct MainMenuPage {
       this.sourceRepoUrl = '';
       this.selectedRepositoryId = '';
       this.showRepositorySelector = false;
+      this.pendingLocalSourceImports = [];
+      this.isParsingLocalSourceImports = false;
+      this.isInstallingLocalSourceImports = false;
+      this.localSourceImportSummary = '';
+      this.localSourceImportProgress = 0;
+      this.localSourceImportActiveIndex = -1;
+      this.localSourceImportCompleted = false;
+      this.localSourceImportCompletedSuccessfully = false;
+      this.clearLocalSourceImportAutoCloseTimer();
       await this.loadSavedRepositories();
       
       // 创建弹窗控制器
@@ -5742,6 +6361,24 @@ struct MainMenuPage {
     } catch (err) {
       logger.error(TAG, '编辑图源配置失败', String(err));
       this.showToast('打开编辑器失败');
+    }
+  }
+
+  private openSourceAutoCheck(source: SourceInfo): void {
+    try {
+      const params: SourceInteractiveEditorPageParams = {
+        sourceId: source.id,
+        sourceName: source.name,
+        sourcePkg: source.pkg !== undefined && source.pkg.length > 0 ? source.pkg : '',
+        initialUrl: source.baseUrl,
+        createNew: false,
+        autoRunDiagnostics: true
+      };
+      logger.info(TAG, `打开图源自动检查: ${source.name} (ID: ${source.id})`);
+      this.pathStack.pushPathByName('SourceInteractiveEditorPage', params);
+    } catch (error) {
+      logger.error(TAG, '打开图源自动检查失败', String(error));
+      this.showToast('打开自动检查失败');
     }
   }
 
@@ -8440,6 +9077,11 @@ struct MainMenuPage {
   onExternalImportNavigationTriggerChanged(): void {
     logger.info(TAG, '📣 收到外部导入完成跳转通知');
     this.handlePendingExternalImportNavigation('navigation_trigger');
+  }
+
+  private onSourceAutoCheckNavigationTriggerChanged(): void {
+    logger.info(TAG, '📣 收到图源巡检通知跳转');
+    void this.handleWidgetNavigationIfPresent(false);
   }
 
   /**
@@ -28677,6 +29319,245 @@ struct MainMenuPage {
     .height('100%')
   }
 
+  @Builder
+  private buildLocalSourceImportVersionRow(item: PendingLocalSourceImport) {
+    Row({ space: 6 }) {
+      if (item.valid && item.isUpdate && item.existingVersion.length > 0) {
+        Text(item.existingVersion)
+          .fontSize(12)
+          .fontFamily(this.appFontFamily)
+          .fontWeight(FontWeight.Medium)
+          .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
+          .maxLines(1)
+        if (item.versionChange === 'upgrade') {
+          SymbolGlyph($r('sys.symbol.arrow_up'))
+            .fontSize(13)
+            .fontColor([AppColors.success])
+        } else if (item.versionChange === 'downgrade') {
+          SymbolGlyph($r('sys.symbol.arrow_down'))
+            .fontSize(13)
+            .fontColor([AppColors.warning])
+        } else {
+          SymbolGlyph($r('sys.symbol.arrow_right'))
+            .fontSize(13)
+            .fontColor([this.getLocalSourceVersionChangeColor(item)])
+        }
+        Text(item.version)
+          .fontSize(12)
+          .fontFamily(this.appFontFamily)
+          .fontWeight(FontWeight.Medium)
+          .fontColor(this.getLocalSourceVersionChangeColor(item))
+          .maxLines(1)
+        Text(this.getLocalSourceVersionChangeText(item))
+          .fontSize(12)
+          .fontFamily(this.appFontFamily)
+          .fontColor(this.getLocalSourceVersionChangeColor(item))
+          .maxLines(1)
+      } else {
+        Text(this.getLocalSourceVersionChangeText(item))
+          .fontSize(12)
+          .fontFamily(this.appFontFamily)
+          .fontWeight(FontWeight.Medium)
+          .fontColor(this.getLocalSourceVersionChangeColor(item))
+          .maxLines(1)
+          .textOverflow({ overflow: TextOverflow.Ellipsis })
+      }
+    }
+    .width('100%')
+  }
+
+  @Builder
+  private buildLocalSourceImportPreviewItem(item: PendingLocalSourceImport, index: number) {
+    Row({ space: 12 }) {
+      Stack() {
+        if (item.iconPath.length > 0) {
+          Image('file://' + item.iconPath)
+            .width(44)
+            .height(44)
+            .borderRadius(10)
+            .objectFit(ImageFit.Cover)
+        } else {
+          Image($r('app.media.ic_source_normal'))
+            .width(28)
+            .height(28)
+            .fillColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
+        }
+      }
+      .width(48)
+      .height(48)
+      .borderRadius(12)
+      .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('button_background', this.themeState.currentTheme))
+
+      Column({ space: 4 }) {
+        Row({ space: 8 }) {
+          Text(item.name.length > 0 ? item.name : item.fileName)
+            .fontSize(14)
+            .fontWeight(FontWeight.Medium)
+            .fontFamily(this.appFontFamily)
+            .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
+            .layoutWeight(1)
+            .maxLines(1)
+            .textOverflow({ overflow: TextOverflow.Ellipsis })
+
+          Text(this.getLocalSourceImportStateText(item))
+            .fontSize(11)
+            .fontFamily(this.appFontFamily)
+            .fontColor(Color.White)
+            .padding({ left: 8, right: 8, top: 3, bottom: 3 })
+            .borderRadius(8)
+            .backgroundColor(this.getLocalSourceImportStateColor(item))
+            .animation({ duration: 180, curve: Curve.EaseOut })
+        }
+        .width('100%')
+
+        this.buildLocalSourceImportVersionRow(item)
+
+        Text(item.description.length > 0 ? item.description : item.fileName)
+          .fontSize(12)
+          .fontFamily(this.appFontFamily)
+          .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_muted', this.themeState.currentTheme))
+          .width('100%')
+          .maxLines(2)
+          .textOverflow({ overflow: TextOverflow.Ellipsis })
+
+        if (item.installState === 'failed' && item.installError.length > 0) {
+          Text(item.installError)
+            .fontSize(11)
+            .fontFamily(this.appFontFamily)
+            .fontColor(AppColors.error)
+            .width('100%')
+            .maxLines(1)
+            .textOverflow({ overflow: TextOverflow.Ellipsis })
+        }
+      }
+      .layoutWeight(1)
+      .alignItems(HorizontalAlign.Start)
+
+      if (item.installState === 'installing') {
+        LoadingProgress()
+          .width(18)
+          .height(18)
+          .color(this.getLocalSourceImportStateColor(item))
+      } else if (item.installState === 'success') {
+        SymbolGlyph($r('sys.symbol.checkmark_circle_fill'))
+          .fontSize(18)
+          .fontColor([AppColors.success])
+          .transition(TransitionEffect.OPACITY.animation({ duration: 180, curve: Curve.EaseOut })
+            .combine(TransitionEffect.scale({ x: 0.84, y: 0.84 })))
+      } else if (item.installState === 'failed') {
+        SymbolGlyph($r('sys.symbol.xmark_circle_fill'))
+          .fontSize(18)
+          .fontColor([AppColors.error])
+      }
+    }
+    .width('100%')
+    .padding(12)
+    .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('button_background', this.themeState.currentTheme))
+    .borderRadius(12)
+    .border({
+      width: (!item.valid || item.installState !== 'pending' || this.localSourceImportActiveIndex === index) ? 1 : 0,
+      color: this.localSourceImportActiveIndex === index ? this.getLocalSourceImportStateColor(item) :
+        (!item.valid || item.installState === 'failed' ? AppColors.error :
+          (item.installState === 'success' ? AppColors.success : Color.Transparent))
+    })
+    .scale({
+      x: this.localSourceImportActiveIndex === index ? 1.01 : 1,
+      y: this.localSourceImportActiveIndex === index ? 1.01 : 1
+    })
+    .animation({ duration: 220, curve: Curve.EaseOut })
+    .transition(TransitionEffect.OPACITY.animation({ duration: 220, curve: Curve.EaseOut })
+      .combine(TransitionEffect.translate({ y: 8 })))
+  }
+
+  @Builder
+  private buildLocalSourceImportPreviewListContent() {
+    Column({ space: 8 }) {
+      ForEach(this.pendingLocalSourceImports, (item: PendingLocalSourceImport, index: number) => {
+        this.buildLocalSourceImportPreviewItem(item, index)
+      }, (item: PendingLocalSourceImport, index: number) =>
+        `${index}_${item.fileName}_${item.pkg}_${item.valid ? 1 : 0}_${item.installState}_${item.versionChange}`)
+    }
+    .width('100%')
+  }
+
+  @Builder
+  private buildLocalSourceImportPreview() {
+    Column({ space: 12 }) {
+      Column({ space: 10 }) {
+        Row({ space: 10 }) {
+          if (this.isParsingLocalSourceImports || this.isInstallingLocalSourceImports) {
+            LoadingProgress()
+              .width(20)
+              .height(20)
+              .color(ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme))
+          } else if (this.localSourceImportCompleted) {
+            SymbolGlyph($r('sys.symbol.checkmark_circle_fill'))
+              .fontSize(22)
+              .fontColor([AppColors.success])
+              .transition(TransitionEffect.OPACITY.animation({ duration: 260, curve: Curve.EaseOut })
+                .combine(TransitionEffect.scale({ x: 0.82, y: 0.82 })))
+          } else {
+            SymbolGlyph($r('sys.symbol.doc_text'))
+              .fontSize(20)
+              .fontColor([ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme)])
+          }
+          Text(this.localSourceImportSummary.length > 0 ? this.localSourceImportSummary : '请选择要导入的本地图源')
+            .fontSize(14)
+            .fontWeight(FontWeight.Medium)
+            .fontFamily(this.appFontFamily)
+            .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
+            .layoutWeight(1)
+            .maxLines(2)
+            .textOverflow({ overflow: TextOverflow.Ellipsis })
+        }
+        .width('100%')
+
+        if (this.isInstallingLocalSourceImports || this.localSourceImportCompleted) {
+          Row({ space: 8 }) {
+            Progress({
+              value: this.localSourceImportProgress,
+              total: 100,
+              type: ProgressType.Linear
+            })
+              .layoutWeight(1)
+              .height(8)
+              .color(this.localSourceImportCompleted ? AppColors.success :
+                ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme))
+            Text(`${this.localSourceImportProgress}%`)
+              .fontSize(12)
+              .fontFamily(this.appFontFamily)
+              .fontColor(this.localSourceImportCompleted ? AppColors.success :
+                ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme))
+              .width(44)
+              .textAlign(TextAlign.End)
+          }
+          .width('100%')
+          .animation({ duration: 240, curve: Curve.EaseOut })
+        }
+      }
+      .width('100%')
+      .padding(12)
+      .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('button_background', this.themeState.currentTheme))
+      .borderRadius(12)
+      .transition(TransitionEffect.OPACITY.animation({ duration: 220, curve: Curve.EaseOut })
+        .combine(TransitionEffect.scale({ x: 0.98, y: 0.98 })))
+
+      if (this.pendingLocalSourceImports.length > 0) {
+        if (this.shouldScrollLocalSourceImportPreviewList()) {
+          Scroll() {
+            this.buildLocalSourceImportPreviewListContent()
+          }
+          .width('100%')
+          .height(this.getLocalSourceImportPreviewListHeight())
+          .scrollBar(BarState.Auto)
+        } else {
+          this.buildLocalSourceImportPreviewListContent()
+        }
+      }
+    }
+    .width('100%')
+  }
+
   /**
    * 构建图源管理弹窗
    */
@@ -28688,16 +29569,19 @@ struct MainMenuPage {
         .fontWeight(FontWeight.Medium)
         .fontFamily(this.appFontFamily)
         .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
+
+      if (this.hasLocalSourceImportPreview()) {
+        this.buildLocalSourceImportPreview()
+      }
       
       // 本地导入按钮
-      if (!this.isSyncingRepo) {
+      if (!this.isSyncingRepo && !this.hasLocalSourceImportPreview()) {
         Button('导入本地图源文件')
           .width('100%')
           .fontSize(14)
           .fontFamily(this.appFontFamily)
           .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('button_primary', this.themeState.currentTheme))
           .onClick(async () => {
-            this.sourceRepoDialogController?.close();
             await this.importSource();
           })
         
@@ -28713,7 +29597,7 @@ struct MainMenuPage {
       }
       
       // 已保存仓库选择器
-      if (this.savedRepositories.length > 0) {
+      if (this.savedRepositories.length > 0 && !this.hasLocalSourceImportPreview()) {
         Column({ space: 0 }) {
           Row({ space: 8 }) {
             Text('已保存的仓库')
@@ -28804,7 +29688,7 @@ struct MainMenuPage {
       }
       
       // 自定义URL输入（同步时隐藏）
-      if (!this.isSyncingRepo) {
+      if (!this.isSyncingRepo && !this.hasLocalSourceImportPreview()) {
         TextInput({ placeholder: '请输入仓库地址 (如: https://example.com/index.min.json)', text: this.sourceRepoUrl })
           .width('100%')
           .onChange((value: string) => {
@@ -28815,7 +29699,7 @@ struct MainMenuPage {
       }
       
       // 同步进度和日志窗口（同步时显示）
-      if (this.isSyncingRepo) {
+      if (this.isSyncingRepo && !this.hasLocalSourceImportPreview()) {
         Column({ space: 12 }) {
           // 进度条
           Row({ space: 8 }) {
@@ -28873,20 +29757,83 @@ struct MainMenuPage {
         }
         .width('100%')
       }
+
+      if (this.hasLocalSourceImportPreview() && !this.isSyncingRepo) {
+        Column({ space: 6 }) {
+          Row({ space: 8 }) {
+            Text(this.localSourceImportCompletedSuccessfully ? '即将关闭' : '安装进度')
+              .fontSize(12)
+              .fontFamily(this.appFontFamily)
+              .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
+              .layoutWeight(1)
+            Text(`${this.localSourceImportProgress}%`)
+              .fontSize(12)
+              .fontFamily(this.appFontFamily)
+              .fontColor(this.localSourceImportCompletedSuccessfully ? AppColors.success :
+                ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme))
+          }
+          .width('100%')
+
+          Progress({
+            value: this.localSourceImportProgress,
+            total: 100,
+            type: ProgressType.Linear
+          })
+            .width('100%')
+            .height(8)
+            .color(this.localSourceImportCompletedSuccessfully ? AppColors.success :
+              ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme))
+            .animation({ duration: 240, curve: Curve.EaseOut })
+        }
+        .width('100%')
+        .transition(TransitionEffect.OPACITY.animation({ duration: 220, curve: Curve.EaseOut }))
+      }
       
       Row({ space: 12 }) {
-        Button(this.isSyncingRepo ? '关闭' : '取消')
+        Button(this.isSyncingRepo ? '关闭' :
+          (this.hasLocalSourceImportPreview() ? (this.localSourceImportCompleted ? '继续导入' : '重新选择') : '取消'))
           .layoutWeight(1)
           .fontFamily(this.appFontFamily)
           .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('button_background', this.themeState.currentTheme))
           .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
-          .onClick(() => {
+          .enabled(!this.isInstallingLocalSourceImports)
+          .onClick(async () => {
+            if (this.hasLocalSourceImportPreview() && !this.isSyncingRepo) {
+              this.clearLocalSourceImportAutoCloseTimer();
+              this.getUIContext().animateTo({ duration: 200, curve: Curve.EaseOut }, () => {
+                this.pendingLocalSourceImports = [];
+                this.localSourceImportSummary = '';
+                this.localSourceImportProgress = 0;
+                this.localSourceImportActiveIndex = -1;
+                this.localSourceImportCompleted = false;
+                this.localSourceImportCompletedSuccessfully = false;
+              });
+              await this.importSource();
+              return;
+            }
             this.sourceRepoDialogController?.close();
             this.showSourceRepoDialog = false;
             this.isSyncingRepo = false;
           })
         
-        if (!this.isSyncingRepo) {
+        if (this.hasLocalSourceImportPreview() && !this.isSyncingRepo) {
+          Button(this.localSourceImportCompleted ? '完成' : (this.isInstallingLocalSourceImports ? '正在导入' : '确认导入'))
+            .layoutWeight(1)
+            .fontFamily(this.appFontFamily)
+            .backgroundColor(this.localSourceImportCompleted ? AppColors.success : (this.getValidPendingLocalSourceImportCount() > 0 ?
+              ThemeAwareHelper.getTestManagementThemedColor('accent_blue', this.themeState.currentTheme) :
+              ThemeAwareHelper.getTestManagementThemedColor('button_background', this.themeState.currentTheme)))
+            .fontColor(Color.White)
+            .enabled((this.localSourceImportCompleted || this.getValidPendingLocalSourceImportCount() > 0) &&
+              !this.isInstallingLocalSourceImports && !this.isParsingLocalSourceImports)
+            .onClick(async () => {
+              if (this.localSourceImportCompleted) {
+                this.closeLocalSourceImportDialog();
+                return;
+              }
+              await this.confirmPendingLocalSourceImports();
+            })
+        } else if (!this.isSyncingRepo) {
           Button('确认同步')
             .layoutWeight(1)
             .fontFamily(this.appFontFamily)
@@ -30742,6 +31689,51 @@ struct MainMenuPage {
             void this.openSourceDetailWithSearch(sourceToSearch);
           }
         })
+
+        if (this.isLegadoMangaBookStyleSource(source)) {
+          Divider()
+            .color(ThemeAwareHelper.getTestManagementThemedColor('divider', this.themeState.currentTheme))
+
+          Button({ type: ButtonType.Normal }) {
+            Row({ space: 8 }) {
+              SymbolGlyph($r('sys.symbol.link'))
+                .fontSize(18)
+                .fontColor([ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme)])
+              Text('复制基础URL')
+                .fontSize(15)
+                .fontFamily(this.appFontFamily)
+                .fontColor(ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme))
+            }
+            .width('100%')
+            .justifyContent(FlexAlign.Start)
+          }
+          .width('100%')
+          .height(44)
+          .padding({ left: 16, right: 16 })
+          .backgroundColor(this.getSettingsAnalyticsCardBackground())
+          .backgroundBlurStyle(this.getSettingsAnalyticsCardBlurStyle(), this.getSettingsAnalyticsCardBlurOptions())
+          .backgroundEffect(this.getSettingsAnalyticsCardBackgroundEffect())
+          .border({
+            width: this.getSettingsAnalyticsCardBorderWidth(),
+            color: this.getSettingsAnalyticsCardBorderColor()
+          })
+          .borderRadius(10)
+          .shadow({
+            radius: this.getSettingsAnalyticsCardRadius(),
+            color: this.getSettingsAnalyticsCardShadowColor(),
+            offsetX: 0,
+            offsetY: 2
+          })
+          .clip(true)
+          .onClick(() => {
+            logger.info(TAG, '点击复制Legado漫画书源基础URL按钮');
+            const sourceToCopy = this.sourceContextMenu.item;
+            this.hideSourceContextMenu();
+            if (sourceToCopy) {
+              void this.copyLegadoMangaBaseUrlFromSource(sourceToCopy);
+            }
+          })
+        }
       } else {
         // 编辑按钮
         Button({ type: ButtonType.Normal }) {
@@ -30781,6 +31773,49 @@ struct MainMenuPage {
           this.hideSourceContextMenu();
           if (sourceToEdit) {
             this.editSourceConfig(sourceToEdit);
+          }
+        })
+
+        Divider()
+          .color(ThemeAwareHelper.getTestManagementThemedColor('divider', this.themeState.currentTheme))
+
+        Button({ type: ButtonType.Normal }) {
+          Row({ space: 8 }) {
+            SymbolGlyph($r('sys.symbol.waveform_path_ecg_magnifyingglass'))
+              .fontSize(18)
+              .fontColor([ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme)])
+            Text('自动检查')
+              .fontSize(15)
+              .fontFamily(this.appFontFamily)
+              .fontColor(ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme))
+          }
+          .width('100%')
+          .justifyContent(FlexAlign.Start)
+        }
+        .width('100%')
+        .height(44)
+        .padding({ left: 16, right: 16 })
+        .backgroundColor(this.getSettingsAnalyticsCardBackground())
+        .backgroundBlurStyle(this.getSettingsAnalyticsCardBlurStyle(), this.getSettingsAnalyticsCardBlurOptions())
+        .backgroundEffect(this.getSettingsAnalyticsCardBackgroundEffect())
+        .border({
+          width: this.getSettingsAnalyticsCardBorderWidth(),
+          color: this.getSettingsAnalyticsCardBorderColor()
+        })
+        .borderRadius(10)
+        .shadow({
+          radius: this.getSettingsAnalyticsCardRadius(),
+          color: this.getSettingsAnalyticsCardShadowColor(),
+          offsetX: 0,
+          offsetY: 2
+        })
+        .clip(true)
+        .onClick(() => {
+          logger.info(TAG, '点击自动检查按钮');
+          const sourceToCheck = this.sourceContextMenu.item;
+          this.hideSourceContextMenu();
+          if (sourceToCheck) {
+            this.openSourceAutoCheck(sourceToCheck);
           }
         })
 
@@ -30829,7 +31864,7 @@ struct MainMenuPage {
         })
       }
     }
-    .width(120)
+    .width(176)
     .borderRadius(8)
   }
 

@@ -43,6 +43,7 @@ import { BusinessError } from '@kit.BasicServicesKit';
 import { common } from '@kit.AbilityKit';
 import { image } from '@kit.ImageKit';
 import { TimeUtils } from '../Utils/TimeUtils';
+import { SourceIdentity, SourceIdentityFactory } from '../Source/SourceIdentity';
 import fs from '@ohos.file.fs';
 
 const TAG = 'DataManager';
@@ -975,6 +976,74 @@ export class DataManager {
       return null;
     } catch (error) {
       logger.error(TAG, `获取在线漫画失败: externalId=${externalId}`, String(error));
+      return null;
+    }
+  }
+
+  public async getOnlineComicByIdentity(
+    identity: SourceIdentity,
+    externalId: string
+  ): Promise<OnlineComicInfo | null> {
+    return this.getOnlineComicByStableIdentity(identity.pkg, identity.sourceId, identity.name, externalId);
+  }
+
+  public async getOnlineComicByStableIdentity(
+    sourcePkg: string,
+    sourceId: number,
+    sourceName: string,
+    externalId: string
+  ): Promise<OnlineComicInfo | null> {
+    try {
+      const normalizedExternalId = externalId.trim();
+      if (normalizedExternalId.length <= 0) {
+        return null;
+      }
+
+      const normalizedPkg = sourcePkg.trim();
+      if (normalizedPkg.length > 0) {
+        const byPkg = await this.databaseManager.querySql(
+          `SELECT * FROM online_comic_info
+           WHERE sourcePkg = ? AND externalId = ?
+           ORDER BY updateTime DESC LIMIT 1`,
+          [normalizedPkg, normalizedExternalId]
+        );
+        if (byPkg && byPkg.length > 0) {
+          return this.convertRecordToOnlineComicInfo(byPkg[0] as DatabaseRecord);
+        }
+      }
+
+      if (sourceId > 0) {
+        const byId = await this.databaseManager.querySql(
+          `SELECT * FROM online_comic_info
+           WHERE sourceId = ? AND externalId = ?
+           ORDER BY updateTime DESC LIMIT 1`,
+          [String(sourceId), normalizedExternalId]
+        );
+        if (byId && byId.length > 0) {
+          return this.convertRecordToOnlineComicInfo(byId[0] as DatabaseRecord);
+        }
+      }
+
+      const normalizedName = sourceName.trim();
+      if (normalizedName.length > 0) {
+        const byName = await this.databaseManager.querySql(
+          `SELECT * FROM online_comic_info
+           WHERE sourceName = ? AND externalId = ? AND (sourcePkg IS NULL OR sourcePkg = '')
+           ORDER BY updateTime DESC LIMIT 1`,
+          [normalizedName, normalizedExternalId]
+        );
+        if (byName && byName.length > 0) {
+          return this.convertRecordToOnlineComicInfo(byName[0] as DatabaseRecord);
+        }
+      }
+
+      return null;
+    } catch (error) {
+      logger.error(
+        TAG,
+        `按稳定身份获取在线漫画失败: pkg=${sourcePkg}, sourceId=${sourceId}, externalId=${externalId}`,
+        String(error)
+      );
       return null;
     }
   }
@@ -4996,6 +5065,39 @@ export class DataManager {
       throw new Error(`更新图源baseUrl失败: ${String(error)}`);
     }
   }
+
+  async getSourceIdentityByPkg(pkg: string): Promise<SourceIdentity | null> {
+    const record = await this.getComicSourceByPkg(pkg);
+    return this.buildSourceIdentityFromRecord(record);
+  }
+
+  async getSourceIdentityById(sourceId: number): Promise<SourceIdentity | null> {
+    const record = await this.getComicSourceById(sourceId);
+    return this.buildSourceIdentityFromRecord(record);
+  }
+
+  async getSourceIdentityByName(sourceName: string): Promise<SourceIdentity | null> {
+    const record = await this.getComicSourceByName(sourceName);
+    return this.buildSourceIdentityFromRecord(record);
+  }
+
+  private buildSourceIdentityFromRecord(record: ComicSourceDatabaseRecord | null): SourceIdentity | null {
+    if (!record) {
+      return null;
+    }
+    const sourceId = Number(record.id);
+    if (Number.isNaN(sourceId) || sourceId <= 0) {
+      return null;
+    }
+    const pkg = record.pkg ? String(record.pkg) : '';
+    const name = record.name ? String(record.name) : '';
+    const versionValue = (record as GenericQueryRecord).version;
+    const typeValue = (record as GenericQueryRecord).type;
+    const version = versionValue === undefined || versionValue === null ? '' : String(versionValue);
+    const type = typeValue === undefined || typeValue === null ? 'manga' : String(typeValue);
+    const configJson = record.configJson ? String(record.configJson) : '';
+    return SourceIdentityFactory.create(sourceId, pkg, name, version, configJson, type);
+  }
   
   /**
    * 更新图源的NSFW状态
@@ -5046,26 +5148,7 @@ export class DataManager {
       const finalExternalId = explicitExternalId || comicDataExternalId || this.generateId();
       
       logger.info(TAG, `📝 [SQL] 开始保存在线漫画: title="${comicData.title}", sourceId=${sourceId}, externalId="${finalExternalId}"`);
-      
-      // 先查询是否已存在相同的 sourceId + externalId 组合
-      const checkSql = 'SELECT id, coverUrl FROM online_comic_info WHERE sourceId = ? AND externalId = ?';
-      const existing = await this.databaseManager.querySql(checkSql, [String(sourceId), finalExternalId]);
-      
-      let comicId: string;
-      let existingCoverUrl = '';
-      if (existing && existing.length > 0) {
-        // 已存在，使用现有ID进行更新
-        const existingRecord = existing[0] as OnlineComicInfoDatabaseRecord;
-        comicId = existingRecord.id;
-        existingCoverUrl = existingRecord.coverUrl || '';
-        logger.info(TAG, `📝 [SQL] 找到现有记录，将更新: id="${comicId}"`);
-      } else {
-        // 不存在时只沿用内部数据库ID，外部URL/站点ID必须保存在externalId字段，不能作为主键。
-        const requestedInternalId: string = externalId && this.validateId(externalId) ? externalId : '';
-        comicId = requestedInternalId.length > 0 ? requestedInternalId : this.generateId();
-        logger.info(TAG, `📝 [SQL] 创建新记录: id="${comicId}"`);
-      }
-      
+
       // [修复] 解析sourceName和sourcePkg，优先级：comicData > comic_source表 > 默认值
       // sourcePkg 是图源的唯一包名标识符，用于在图源删除后重新导入时正确识别图源
       let sourceNameVal: string = '';
@@ -5098,6 +5181,47 @@ export class DataManager {
       if (!sourceNameVal) {
         sourceNameVal = 'WEBVIEW';
         logger.warn(TAG, `📝 [SQL] 未找到sourceId=${sourceId}的图源记录，使用默认名称: "${sourceNameVal}"`);
+      }
+
+      // 稳定身份优先：同 pkg + externalId 的在线漫画必须复用旧内部ID。
+      // sourceId 仅作为当前数据库行ID兼容旧记录。
+      let existing: DatabaseRecord[] = [];
+      if (sourcePkgVal.length > 0) {
+        existing = await this.databaseManager.querySql(
+          `SELECT id, coverUrl FROM online_comic_info
+           WHERE sourcePkg = ? AND externalId = ?
+           ORDER BY updateTime DESC LIMIT 1`,
+          [sourcePkgVal, finalExternalId]
+        );
+      }
+      if (!existing || existing.length <= 0) {
+        existing = await this.databaseManager.querySql(
+          `SELECT id, coverUrl FROM online_comic_info
+           WHERE sourceId = ? AND externalId = ?
+           ORDER BY updateTime DESC LIMIT 1`,
+          [String(sourceId), finalExternalId]
+        );
+      }
+      if ((!existing || existing.length <= 0) && sourceNameVal.length > 0) {
+        existing = await this.databaseManager.querySql(
+          `SELECT id, coverUrl FROM online_comic_info
+           WHERE sourceName = ? AND externalId = ? AND (sourcePkg IS NULL OR sourcePkg = '')
+           ORDER BY updateTime DESC LIMIT 1`,
+          [sourceNameVal, finalExternalId]
+        );
+      }
+
+      let comicId: string;
+      let existingCoverUrl = '';
+      if (existing && existing.length > 0) {
+        const existingRecord = existing[0] as OnlineComicInfoDatabaseRecord;
+        comicId = existingRecord.id;
+        existingCoverUrl = existingRecord.coverUrl || '';
+        logger.info(TAG, `📝 [SQL] 按稳定身份找到现有记录，将更新: id="${comicId}", pkg="${sourcePkgVal}"`);
+      } else {
+        const requestedInternalId: string = externalId && this.validateId(externalId) ? externalId : '';
+        comicId = requestedInternalId.length > 0 ? requestedInternalId : this.generateId();
+        logger.info(TAG, `📝 [SQL] 创建新记录: id="${comicId}"`);
       }
       
       // 使用INSERT OR REPLACE，基于主键id

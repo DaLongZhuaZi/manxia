@@ -37,6 +37,8 @@ export class MangaIdentityResolveResult {
   public externalMangaId: string = '';
   public externalChapterId: string = '';
   public sourceId: number = -1;
+  public sourceName: string = '';
+  public sourcePkg: string = '';
   public contentHint: MangaIdentityContentHint = MangaIdentityContentHint.UNKNOWN;
   public reason: string = '';
   public detail: string = '';
@@ -95,6 +97,8 @@ export class MangaIdentityResolver {
     result.inputMangaId = this.normalizeId(input.mangaId);
     result.inputChapterId = this.normalizeId(input.chapterId);
     result.sourceId = input.sourceId;
+    result.sourceName = input.sourceName;
+    result.sourcePkg = input.sourcePkg;
     result.contentHint = this.resolveContentHint(input);
 
     try {
@@ -252,10 +256,13 @@ export class MangaIdentityResolver {
       return true;
     }
 
-    let externalOnline: OnlineComicInfo | null = result.sourceId > 0
-      ? await this.queryOnlineComicByExternalId(mangaId, result.sourceId)
-      : null;
-    if (!externalOnline) {
+    let externalOnline: OnlineComicInfo | null = await this.queryOnlineComicByExternalId(
+      mangaId,
+      result.sourceId,
+      result.sourcePkg,
+      result.sourceName
+    );
+    if (!externalOnline && !this.hasSourceIdentityHint(result)) {
       externalOnline = await this.dataManager.getOnlineComicByExternalId(mangaId);
     }
     if (externalOnline) {
@@ -263,6 +270,10 @@ export class MangaIdentityResolver {
       return true;
     }
     return false;
+  }
+
+  private hasSourceIdentityHint(result: MangaIdentityResolveResult): boolean {
+    return result.sourceId > 0 || result.sourcePkg.length > 0 || result.sourceName.length > 0;
   }
 
   private async tryResolveLocalChapter(result: MangaIdentityResolveResult, chapterId: string): Promise<boolean> {
@@ -307,7 +318,12 @@ export class MangaIdentityResolver {
       }
     }
 
-    const externalChapter = await this.queryOnlineChapterByExternalId(chapterId, result.sourceId);
+    const externalChapter = await this.queryOnlineChapterByExternalId(
+      chapterId,
+      result.sourceId,
+      result.sourcePkg,
+      result.sourceName
+    );
     if (externalChapter) {
       this.applyOnlineChapter(result, externalChapter, 'online_chapter_by_external_global');
       const comic = await this.dataManager.getOnlineComicInfoById(externalChapter.comicId);
@@ -347,8 +363,25 @@ export class MangaIdentityResolver {
     return chapter;
   }
 
-  private async queryOnlineComicByExternalId(externalMangaId: string, sourceId: number): Promise<OnlineComicInfo | null> {
-    if (externalMangaId.length <= 0 || sourceId <= 0) {
+  private async queryOnlineComicByExternalId(
+    externalMangaId: string,
+    sourceId: number,
+    sourcePkg: string,
+    sourceName: string
+  ): Promise<OnlineComicInfo | null> {
+    if (externalMangaId.length <= 0) {
+      return null;
+    }
+    const byIdentity = await this.dataManager.getOnlineComicByStableIdentity(
+      sourcePkg,
+      sourceId,
+      sourceName,
+      externalMangaId
+    );
+    if (byIdentity) {
+      return byIdentity;
+    }
+    if (sourceId <= 0) {
       return null;
     }
     const sql = `SELECT id FROM online_comic_info
@@ -366,7 +399,12 @@ export class MangaIdentityResolver {
     return await this.dataManager.getOnlineComicInfoById(comicId);
   }
 
-  private async queryOnlineChapterByExternalId(externalChapterId: string, sourceId: number): Promise<OnlineChapterInfo | null> {
+  private async queryOnlineChapterByExternalId(
+    externalChapterId: string,
+    sourceId: number,
+    sourcePkg: string,
+    sourceName: string
+  ): Promise<OnlineChapterInfo | null> {
     if (externalChapterId.length <= 0) {
       return null;
     }
@@ -375,11 +413,21 @@ export class MangaIdentityResolver {
                               oc.isDownloaded, oc.downloadPath
                        FROM online_chapter oc`;
     const args: string[] = [];
-    if (sourceId > 0) {
+    if (sourcePkg.length > 0) {
+      sql = `${sql} INNER JOIN online_comic_info oci ON oci.id = oc.comicId
+             WHERE oc.externalId = ? AND oci.sourcePkg = ?`;
+      args.push(externalChapterId);
+      args.push(sourcePkg);
+    } else if (sourceId > 0) {
       sql = `${sql} INNER JOIN online_comic_info oci ON oci.id = oc.comicId
              WHERE oc.externalId = ? AND oci.sourceId = ?`;
       args.push(externalChapterId);
       args.push(String(sourceId));
+    } else if (sourceName.length > 0) {
+      sql = `${sql} INNER JOIN online_comic_info oci ON oci.id = oc.comicId
+             WHERE oc.externalId = ? AND oci.sourceName = ? AND (oci.sourcePkg IS NULL OR oci.sourcePkg = '')`;
+      args.push(externalChapterId);
+      args.push(sourceName);
     } else {
       sql = `${sql} WHERE oc.externalId = ?`;
       args.push(externalChapterId);
@@ -436,6 +484,8 @@ export class MangaIdentityResolver {
     if (!Number.isNaN(parsedSourceId) && parsedSourceId > 0) {
       result.sourceId = parsedSourceId;
     }
+    result.sourceName = comic.sourceName;
+    result.sourcePkg = comic.sourcePkg;
     this.appendReason(result, reason);
   }
 

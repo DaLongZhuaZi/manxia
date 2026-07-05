@@ -1040,7 +1040,8 @@ export class MangaSourceConfigParser {
           description: scriptAction.description,
           optional: scriptAction.optional,
           waitAfter: scriptAction.waitAfter,
-          code: scriptAction.code
+          code: scriptAction.code,
+          timeout: scriptAction.timeout
         };
         return clonedScript;
 
