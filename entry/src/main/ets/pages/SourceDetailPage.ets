@@ -679,13 +679,14 @@ export struct SourceDetailPage {
     this.pathStack.pushPathByName('SourceDiagnosticPage', params);
   }
 
-  private openSourceInteractiveEditorPage(): void {
+  private openSourceInteractiveEditorPage(autoRunDiagnostics: boolean = false): void {
     const params: SourceInteractiveEditorPageParams = {
       sourceId: this.sourceId,
       sourceName: this.sourceInfo?.name || this.sourceName || '',
       sourcePkg: this.sourceInfo?.pkg || '',
       initialUrl: this.sourceInfo?.baseUrl || '',
-      createNew: false
+      createNew: false,
+      autoRunDiagnostics: autoRunDiagnostics
     };
     this.pathStack.pushPathByName('SourceInteractiveEditorPage', params);
   }
@@ -4316,7 +4317,7 @@ export struct SourceDetailPage {
       },
       {
         id: 'source_diagnostic',
-        symbol: $r('sys.symbol.magnifyingglass'),
+        symbol: $r('sys.symbol.stethoscope'),
         label: '诊断',
         onClick: () => {
           this.openSourceDiagnosticPage();
@@ -6934,15 +6935,27 @@ export struct SourceDetailPage {
         .fontFamily(this.appFontFamily)
         .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
       
-      // 重试按钮
-      Button('重试')
-        .fontSize(14)
-        .padding({ left: 24, right: 24, top: 8, bottom: 8 })
-        .fontFamily(this.appFontFamily)
-        .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('button_primary', this.themeState.currentTheme))
-        .onClick(() => {
-          this.retryLoadContent();
-        })
+      Row({ space: 10 }) {
+        Button('重试')
+          .fontSize(14)
+          .padding({ left: 24, right: 24, top: 8, bottom: 8 })
+          .fontFamily(this.appFontFamily)
+          .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('button_primary', this.themeState.currentTheme))
+          .onClick(() => {
+            this.retryLoadContent();
+          })
+
+        Button('自动检查图源')
+          .fontSize(14)
+          .padding({ left: 18, right: 18, top: 8, bottom: 8 })
+          .fontFamily(this.appFontFamily)
+          .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('background_secondary', this.themeState.currentTheme))
+          .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
+          .onClick(() => {
+            this.openSourceInteractiveEditorPage(true);
+          })
+      }
+      .justifyContent(FlexAlign.Center)
     }
     .width('100%')
     .layoutWeight(1)
@@ -6974,14 +6987,27 @@ export struct SourceDetailPage {
           .textAlign(TextAlign.Center)
       }
 
-      Button('重试')
-        .fontSize(14)
-        .padding({ left: 24, right: 24, top: 8, bottom: 8 })
-        .fontFamily(this.appFontFamily)
-        .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('button_primary', this.themeState.currentTheme))
-        .onClick(() => {
-          this.retryLoadContent();
-        })
+      Row({ space: 10 }) {
+        Button('重试')
+          .fontSize(14)
+          .padding({ left: 24, right: 24, top: 8, bottom: 8 })
+          .fontFamily(this.appFontFamily)
+          .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('button_primary', this.themeState.currentTheme))
+          .onClick(() => {
+            this.retryLoadContent();
+          })
+
+        Button('自动检查图源')
+          .fontSize(14)
+          .padding({ left: 18, right: 18, top: 8, bottom: 8 })
+          .fontFamily(this.appFontFamily)
+          .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('background_secondary', this.themeState.currentTheme))
+          .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
+          .onClick(() => {
+            this.openSourceInteractiveEditorPage(true);
+          })
+      }
+      .justifyContent(FlexAlign.Center)
     }
     .width('100%')
     .layoutWeight(1)

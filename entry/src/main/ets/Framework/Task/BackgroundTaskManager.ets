@@ -9,6 +9,7 @@ import { AppNotificationManager } from '../Managers/NotificationManager';
 import { logger } from '../../Utils/Logger';
 import { generateUUID } from '../Utils/UUIDGenerator';
 import { BackgroundTaskHelper } from './BackgroundTaskHelper';
+import { TaskNavigationTarget } from './TaskNavigationTypes';
 
 const TAG = 'BackgroundTaskManager';
 
@@ -30,6 +31,7 @@ export enum TaskType {
   PDF_IMPORT = 'PDF_IMPORT',
   MANGA_IMPORT = 'MANGA_IMPORT',
   DOWNLOAD = 'DOWNLOAD',
+  SOURCE_AUTO_CHECK = 'SOURCE_AUTO_CHECK',
   EXPORT = 'EXPORT',
   OTHER = 'OTHER'
 }
@@ -39,7 +41,8 @@ export enum TaskType {
  */
 export enum TaskNotificationScene {
   PDF_IMPORT = 'PDF_IMPORT',
-  NETWORK_CACHE = 'NETWORK_CACHE'
+  NETWORK_CACHE = 'NETWORK_CACHE',
+  SOURCE_AUTO_CHECK = 'SOURCE_AUTO_CHECK'
 }
 
 /**
@@ -67,6 +70,7 @@ export interface BackgroundTaskOptions {
   context?: common.UIAbilityContext;
   enableBackgroundRunning?: boolean;
   notification?: TaskNotificationOptions;
+  navigation?: TaskNavigationTarget;
 }
 
 /**
@@ -83,6 +87,7 @@ export interface BackgroundTask {
   endTime?: number;
   errorMessage?: string;
   result?: Object;
+  navigation?: TaskNavigationTarget;
 }
 
 /**
@@ -120,6 +125,11 @@ interface TaskProgressNotificationSnapshot {
   total: number;
   percentage: number;
   message: string;
+  navigation?: TaskNavigationTarget;
+}
+
+interface TaskResultWithSummary {
+  summary?: string;
 }
 
 /**
@@ -186,6 +196,7 @@ export class BackgroundTaskManager {
       executor: executor,
       cancelSignal: { isCancelled: false },
       options: options,
+      navigation: options?.navigation,
       lastProgressNotificationPercentage: -1,
       lastProgressNotificationMessage: '',
       isSendingProgressNotification: false,
@@ -334,9 +345,39 @@ export class BackgroundTaskManager {
       return;
     }
 
+    if (task.status === TaskStatus.PENDING) {
+      task.cancelSignal.isCancelled = true;
+      task.status = TaskStatus.CANCELLED;
+      task.endTime = Date.now();
+      task.errorMessage = '任务已取消';
+      task.progress = {
+        current: task.progress.current,
+        total: task.progress.total,
+        percentage: task.progress.percentage,
+        message: '正在取消...'
+      };
+      logger.info(TAG, `已取消等待中的后台任务：${taskId}`);
+      this.notifyListeners(task);
+      this.updateFloatingBall();
+      void this.cancelTaskNotification(task);
+      setTimeout(() => {
+        this.removeTask(taskId);
+      }, 1500);
+      return;
+    }
+
     if (task.status === TaskStatus.RUNNING) {
       task.cancelSignal.isCancelled = true;
+      task.progress = {
+        current: task.progress.current,
+        total: task.progress.total,
+        percentage: task.progress.percentage,
+        message: '正在取消...'
+      };
       logger.info(TAG, `已请求取消后台任务：${taskId}`);
+      this.notifyListeners(task);
+      this.updateFloatingBall();
+      void this.sendTaskProgressNotification(task, true);
     }
   }
 
@@ -354,6 +395,16 @@ export class BackgroundTaskManager {
    */
   public getTask(taskId: string): BackgroundTask | undefined {
     return this.tasks.get(taskId);
+  }
+
+  public updateTaskNavigation(taskId: string, navigation: TaskNavigationTarget): void {
+    const task = this.tasks.get(taskId);
+    if (!task) {
+      logger.warn(TAG, `更新任务导航目标失败，任务不存在：${taskId}`);
+      return;
+    }
+    task.navigation = navigation;
+    logger.debug(TAG, `后台任务导航目标已更新：id=${taskId}, route=${navigation.routeName}`);
   }
 
   /**
@@ -534,6 +585,16 @@ export class BackgroundTaskManager {
           task.options.notification.targetName
         );
         break;
+      case TaskNotificationScene.SOURCE_AUTO_CHECK:
+        logger.info(TAG, `发送图源巡检完成通知：id=${task.id}，目标=${task.options.notification.targetName}`);
+        await this.notificationManager.sendSourceAutoCheckCompleteNotification(
+          task.id,
+          task.options.notification.targetName,
+          this.resolveResultSummary(task.result, '巡检已完成'),
+          task.navigation,
+          task.options.context
+        );
+        break;
       default:
         break;
     }
@@ -568,6 +629,16 @@ export class BackgroundTaskManager {
           errorMessage
         );
         break;
+      case TaskNotificationScene.SOURCE_AUTO_CHECK:
+        logger.warn(TAG, `发送图源巡检失败通知：id=${task.id}，目标=${task.options.notification.targetName}，原因=${errorMessage}`);
+        await this.notificationManager.sendSourceAutoCheckFailedNotification(
+          task.id,
+          task.options.notification.targetName,
+          errorMessage,
+          task.navigation,
+          task.options.context
+        );
+        break;
       default:
         break;
     }
@@ -592,6 +663,17 @@ export class BackgroundTaskManager {
     return `background_task_${taskId}`;
   }
 
+  private resolveResultSummary(result: Object | undefined, fallback: string): string {
+    if (result === undefined) {
+      return fallback;
+    }
+    const summaryResult: TaskResultWithSummary = result as TaskResultWithSummary;
+    if (summaryResult.summary !== undefined && summaryResult.summary.length > 0) {
+      return summaryResult.summary;
+    }
+    return fallback;
+  }
+
   /**
    * 构建当前任务的进度通知快照，避免异步发送时读取到被后续覆盖的对象
    */
@@ -602,7 +684,8 @@ export class BackgroundTaskManager {
       current: task.progress.current,
       total: task.progress.total,
       percentage: task.progress.percentage,
-      message: task.progress.message
+      message: task.progress.message,
+      navigation: task.navigation
     };
   }
 
@@ -645,6 +728,18 @@ export class BackgroundTaskManager {
               snapshot.targetName,
               snapshot.current,
               snapshot.total
+            );
+            break;
+          case TaskNotificationScene.SOURCE_AUTO_CHECK:
+            logger.info(TAG, `发送图源巡检进度通知：id=${task.id}，目标=${snapshot.targetName}，百分比=${snapshot.percentage}%`);
+            await this.notificationManager.sendSourceAutoCheckProgressNotification(
+              task.id,
+              snapshot.targetName,
+              snapshot.current,
+              snapshot.total,
+              snapshot.message,
+              snapshot.navigation,
+              task.options?.context
             );
             break;
           default:

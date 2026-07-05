@@ -10896,13 +10896,13 @@ private onlineDownloadedLocalFastPathActive: boolean = false;
 
       // 正常显示漫画内容
         Row() {
-          Button('返回')
+          Button('重试')
             .fontSize(16)
             .fontFamily(this.appFontFamily)
             .fontColor($r('app.color.text_white'))
             .backgroundColor($r('app.color.accent_primary'))
             .onClick(() => {
-              logger.info(TAG, '🔙 用户点击返回按钮（章节数据为空）');
+              logger.info(TAG, '用户点击重试按钮（章节数据为空）');
               if (this.pageParams) {
       // 正常显示漫画内容
                 this.readerState.errorMessage = '';
@@ -10959,7 +10959,7 @@ private onlineDownloadedLocalFastPathActive: boolean = false;
 
               // 页面变更后保存阅读进度（限流）
         Row() {
-          Button('返回')
+          Button('重试')
             .fontSize(16)
             .fontFamily(this.appFontFamily)
             .fontColor($r('app.color.text_white'))

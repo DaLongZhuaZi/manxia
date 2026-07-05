@@ -22,9 +22,11 @@ import { GlobalWebViewContainer, WebViewEventCallbacks } from './WebViewContaine
 import { MangaSourceEngine, EngineConfig } from './MangaSourceEngine';
 import { AntiCrawlerConfig } from './MangaSourceTypes';
 import { DataManager } from '../Data/DataManager';
+import { WebViewDataCacheManager } from '../Cache/WebViewDataCacheManager';
 import { WebViewAuthManager } from './WebViewAuthManager';
 import { UserAgentManager } from '../Managers/UserAgentManager';
 import { LegadoMangaSourceBridge } from '../Novel/LegadoMangaSourceBridge';
+import { SourceIdentity } from '../Source/SourceIdentity';
 
 const TAG = 'WebViewSourceManager';
 
@@ -86,8 +88,11 @@ export class WebViewSourceManager implements IWebViewSourceManager {
   
   // MangaSourceEngine缓存（key: sourceName，确保图源管理的稳定性）
   private mangaEngines: Map<string, MangaSourceEngine> = new Map();
+  private mangaEngineSignatures: Map<string, string> = new Map();
   // sourceId到sourceName的映射（用于兼容旧代码）
   private sourceIdToName: Map<number, string> = new Map();
+  private sourceIdToPkg: Map<number, string> = new Map();
+  private sourceNameToPkg: Map<string, string> = new Map();
   private globalWebViewController: webview.WebviewController | null = null;
 
   /**
@@ -248,19 +253,24 @@ export class WebViewSourceManager implements IWebViewSourceManager {
    * 用于图源被删除或更新时清理旧缓存
    */
   removeEngineByName(sourceName: string): void {
-    if (this.mangaEngines.has(sourceName)) {
-      logger.info(TAG, `移除MangaSourceEngine缓存: "${sourceName}"`);
-      this.mangaEngines.delete(sourceName);
-      
-      // 同时清理sourceIdToName映射
-      const entries = Array.from(this.sourceIdToName.entries());
-      for (const entry of entries) {
-        if (entry[1] === sourceName) {
-          this.sourceIdToName.delete(entry[0]);
-          logger.debug(TAG, `清理sourceIdToName映射: ${entry[0]} -> "${sourceName}"`);
-        }
+    const mappedPkg = this.sourceNameToPkg.get(sourceName);
+    const cacheKey = mappedPkg && mappedPkg.length > 0 ? mappedPkg : sourceName;
+    if (this.mangaEngines.has(cacheKey)) {
+      logger.info(TAG, `移除MangaSourceEngine缓存: "${cacheKey}"`);
+      this.mangaEngines.delete(cacheKey);
+      this.mangaEngineSignatures.delete(cacheKey);
+    }
+
+    // 同时清理sourceId/sourceName映射
+    const entries = Array.from(this.sourceIdToName.entries());
+    for (const entry of entries) {
+      if (entry[1] === sourceName) {
+        this.sourceIdToName.delete(entry[0]);
+        this.sourceIdToPkg.delete(entry[0]);
+        logger.debug(TAG, `清理sourceId映射: ${entry[0]} -> "${sourceName}"`);
       }
     }
+    this.sourceNameToPkg.delete(sourceName);
   }
 
   /**
@@ -329,51 +339,44 @@ export class WebViewSourceManager implements IWebViewSourceManager {
   
   /**
    * 获取或创建MangaSourceEngine实例
-   * 【关键重构】优先使用sourceName作为主键，确保图源管理的稳定性
+   * 【关键重构】优先使用pkg作为主键，确保图源更新/重导后的稳定性
    * @param sourceId 图源ID（数字类型，可能不稳定）
-   * @param sourceName 图源名称（推荐使用，稳定的标识符）
+   * @param sourceName 图源名称（展示名，仅作为兼容回退）
+   * @param sourcePkg 图源包名（稳定身份）
    * @returns MangaSourceEngine实例
    */
-  async getMangaEngine(sourceId: number, sourceName?: string): Promise<MangaSourceEngine> {
+  async getMangaEngine(sourceId: number, sourceName?: string, sourcePkg?: string): Promise<MangaSourceEngine> {
     try {
-      let cacheKey: string = '';
-      
-      // 【关键】优先使用sourceName作为缓存key
-      if (sourceName) {
-        cacheKey = sourceName;
-        logger.debug(TAG, `使用sourceName作为缓存key: "${sourceName}"`);
-      } else if (this.sourceIdToName.has(sourceId)) {
-        // 如果没有提供sourceName，尝试从映射表获取
-        cacheKey = this.sourceIdToName.get(sourceId)!;
-        logger.debug(TAG, `从映射表获取sourceName: sourceId=${sourceId} -> "${cacheKey}"`);
-      } else {
-        // 最后降级：从数据库查询sourceName
-        logger.warn(TAG, `未提供sourceName，从数据库查询: sourceId=${sourceId}`);
-        const sourceRecord = await this.dataManager.getComicSourceById(sourceId);
-        if (sourceRecord && sourceRecord.name) {
-          cacheKey = sourceRecord.name;
-          this.sourceIdToName.set(sourceId, cacheKey);
-          logger.info(TAG, `从数据库获取sourceName: "${cacheKey}"`);
-        } else {
-          throw new Error(`无法获取图源名称: sourceId=${sourceId}`);
-        }
-      }
+      const identity = await this.resolveSourceIdentity(sourceId, sourceName, sourcePkg);
+      const cacheKey = identity.pkg.length > 0 ? identity.pkg : identity.name;
+      const signature = identity.signature();
       
       // 检查缓存
       if (this.mangaEngines.has(cacheKey)) {
-        logger.debug(TAG, `✅ 使用缓存的MangaSourceEngine: "${cacheKey}"`);
-        return this.mangaEngines.get(cacheKey)!;
+        const cachedSignature = this.mangaEngineSignatures.get(cacheKey) || '';
+        if (cachedSignature === signature) {
+          logger.debug(TAG, `✅ 使用缓存的MangaSourceEngine: "${cacheKey}"`);
+          return this.mangaEngines.get(cacheKey)!;
+        }
+        logger.info(TAG, `MangaSourceEngine配置代际变化，重建: "${cacheKey}", ${cachedSignature} -> ${signature}`);
+        this.mangaEngines.delete(cacheKey);
+        this.mangaEngineSignatures.delete(cacheKey);
       }
       
       // 创建新引擎
-      logger.info(TAG, `🔄 创建新的MangaSourceEngine: "${cacheKey}" (sourceId=${sourceId})`);
-      const result = await this.createMangaEngine(sourceId, cacheKey);
+      logger.info(TAG, `🔄 创建新的MangaSourceEngine: "${cacheKey}" (sourceId=${identity.sourceId}, pkg=${identity.pkg})`);
+      const result = await this.createMangaEngine(identity);
       this.mangaEngines.set(cacheKey, result.engine);
-      this.sourceIdToName.set(result.actualSourceId, cacheKey);
+      this.mangaEngineSignatures.set(cacheKey, signature);
+      this.sourceIdToName.set(result.actualSourceId, result.actualSourceName);
+      if (identity.pkg.length > 0) {
+        this.sourceIdToPkg.set(result.actualSourceId, identity.pkg);
+        this.sourceNameToPkg.set(result.actualSourceName, identity.pkg);
+      }
       
       return result.engine;
     } catch (error) {
-      logger.error(TAG, `❌ 获取MangaSourceEngine失败: sourceId=${sourceId}, sourceName="${sourceName}", 错误: ${error instanceof Error ? error.message : String(error)}`);
+      logger.error(TAG, `❌ 获取MangaSourceEngine失败: sourceId=${sourceId}, sourceName="${sourceName}", sourcePkg="${sourcePkg}", 错误: ${error instanceof Error ? error.message : String(error)}`);
       throw error as Error;
     }
   }
@@ -441,42 +444,61 @@ export class WebViewSourceManager implements IWebViewSourceManager {
     }
     return this.globalWebViewController;
   }
+
+  private async resolveSourceIdentity(sourceId: number, sourceName?: string, sourcePkg?: string): Promise<SourceIdentity> {
+    let identity: SourceIdentity | null = null;
+    const normalizedPkg = sourcePkg ? sourcePkg.trim() : '';
+    if (normalizedPkg.length > 0) {
+      identity = await this.dataManager.getSourceIdentityByPkg(normalizedPkg);
+    }
+    if (!identity && sourceId > 0) {
+      identity = await this.dataManager.getSourceIdentityById(sourceId);
+    }
+    if (!identity && sourceName && sourceName.trim().length > 0) {
+      identity = await this.dataManager.getSourceIdentityByName(sourceName.trim());
+    }
+    if (!identity && sourceId > 0 && this.sourceIdToPkg.has(sourceId)) {
+      const mappedPkg = this.sourceIdToPkg.get(sourceId) || '';
+      if (mappedPkg.length > 0) {
+        identity = await this.dataManager.getSourceIdentityByPkg(mappedPkg);
+      }
+    }
+    if (!identity || !identity.isValid()) {
+      throw new Error(`无法解析图源稳定身份: sourceId=${sourceId}, sourceName=${sourceName || ''}, sourcePkg=${sourcePkg || ''}`);
+    }
+    return identity;
+  }
   
   /**
    * 创建MangaSourceEngine实例
-   * 【关键重构】优先使用sourceName查找，确保图源管理的稳定性
+   * 【关键重构】优先使用pkg查找，确保图源管理的稳定性
    */
-  private async createMangaEngine(sourceId: number, sourceName: string): Promise<EngineCreationResult> {
+  private async createMangaEngine(identity: SourceIdentity): Promise<EngineCreationResult> {
     try {
       let config: Object | null = null;
-      let actualSourceId: number = sourceId;
-      let actualSourceName: string = sourceName;
-      
-      // 【关键】优先按名称查找（稳定的标识符）
-      logger.info(TAG, `📋 优先按名称查找图源: "${sourceName}"`);
-      const nameResult = await this.dataManager.getSourceConfigByName(sourceName);
-      if (nameResult) {
-        config = nameResult.config;
-        actualSourceId = nameResult.id;
-        actualSourceName = sourceName;
-        logger.info(TAG, `✅ 按名称找到图源: "${sourceName}", ID=${actualSourceId}`);
+      let actualSourceId: number = identity.sourceId;
+      let actualSourceName: string = identity.name;
+
+      // 【关键】优先按pkg查找（稳定的标识符）
+      logger.info(TAG, `📋 优先按pkg查找图源: "${identity.pkg}"`);
+      config = await this.dataManager.getSourceConfigByPkg(identity.pkg);
+      if (config) {
+        logger.info(TAG, `✅ 按pkg找到图源: "${identity.pkg}", ID=${actualSourceId}`);
       } else {
-        // 降级：按 ID 查找
-        logger.warn(TAG, `⚠️ 按名称未找到图源 "${sourceName}"，尝试按ID查找: ${sourceId}`);
-        config = await this.dataManager.getSourceConfig(sourceId);
+        logger.warn(TAG, `⚠️ 按pkg未找到图源 "${identity.pkg}"，尝试按ID查找: ${identity.sourceId}`);
+        config = await this.dataManager.getSourceConfig(identity.sourceId);
         if (config) {
-          actualSourceId = sourceId;
-          // 从数据库获取实际的sourceName
-          const sourceRecord = await this.dataManager.getComicSourceById(sourceId);
+          actualSourceId = identity.sourceId;
+          const sourceRecord = await this.dataManager.getComicSourceById(identity.sourceId);
           if (sourceRecord && sourceRecord.name) {
             actualSourceName = sourceRecord.name;
-            logger.info(TAG, `✅ 按ID找到图源: ${sourceId}, 实际名称="${actualSourceName}"`);
+            logger.info(TAG, `✅ 按ID找到图源: ${identity.sourceId}, 实际名称="${actualSourceName}"`);
           }
         }
       }
       
       if (!config) {
-        throw new Error(`图源配置不存在: ID=${sourceId}, 名称="${sourceName}"`);
+        throw new Error(`图源配置不存在: ID=${identity.sourceId}, pkg="${identity.pkg}", 名称="${identity.name}"`);
       }
 
       const actualSourceRecord: ComicSourceDatabaseRecord | null = await this.dataManager.getComicSourceById(actualSourceId);
@@ -528,35 +550,40 @@ export class WebViewSourceManager implements IWebViewSourceManager {
       const configJson = JSON.stringify(config);
       await engine.loadConfig(configJson);
       
-      logger.info(TAG, `✅ MangaSourceEngine创建成功: "${actualSourceName}" (ID=${actualSourceId}${actualSourceId !== sourceId ? `, 原ID=${sourceId}` : ''})`);
+      logger.info(TAG, `✅ MangaSourceEngine创建成功: "${actualSourceName}" (ID=${actualSourceId}, pkg=${identity.pkg})`);
       const result: EngineCreationResult = {engine, actualSourceId, actualSourceName};
       return result;
       
     } catch (error) {
-      logger.error(TAG, `创建MangaSourceEngine失败: ${sourceId}, 错误: ${error instanceof Error ? error.message : String(error)}`);
+      logger.error(TAG, `创建MangaSourceEngine失败: ${identity.sourceId}, pkg=${identity.pkg}, 错误: ${error instanceof Error ? error.message : String(error)}`);
       throw error as Error;
     }
   }
   
   /**
    * 释放MangaSourceEngine实例
-   * 【重构】支持按sourceName或sourceId释放
+   * 【重构】支持按pkg、sourceName或sourceId释放
    */
   releaseMangaEngine(sourceIdOrName: number | string): void {
     if (typeof sourceIdOrName === 'string') {
-      // 按sourceName释放
-      if (this.mangaEngines.has(sourceIdOrName)) {
-        logger.info(TAG, `释放MangaSourceEngine: "${sourceIdOrName}"`);
-        this.mangaEngines.delete(sourceIdOrName);
+      const mappedPkg = this.sourceNameToPkg.get(sourceIdOrName);
+      const cacheKey = mappedPkg && mappedPkg.length > 0 ? mappedPkg : sourceIdOrName;
+      if (this.mangaEngines.has(cacheKey)) {
+        logger.info(TAG, `释放MangaSourceEngine: "${cacheKey}"`);
+        this.mangaEngines.delete(cacheKey);
+        this.mangaEngineSignatures.delete(cacheKey);
       }
     } else {
-      // 按sourceId释放（需要先查找对应的sourceName）
+      const sourcePkg = this.sourceIdToPkg.get(sourceIdOrName);
       const sourceName = this.sourceIdToName.get(sourceIdOrName);
-      if (sourceName && this.mangaEngines.has(sourceName)) {
-        logger.info(TAG, `释放MangaSourceEngine: ${sourceIdOrName} -> "${sourceName}"`);
-        this.mangaEngines.delete(sourceName);
-        this.sourceIdToName.delete(sourceIdOrName);
+      const cacheKey = sourcePkg && sourcePkg.length > 0 ? sourcePkg : (sourceName || '');
+      if (cacheKey.length > 0 && this.mangaEngines.has(cacheKey)) {
+        logger.info(TAG, `释放MangaSourceEngine: ${sourceIdOrName} -> "${cacheKey}"`);
+        this.mangaEngines.delete(cacheKey);
+        this.mangaEngineSignatures.delete(cacheKey);
       }
+      this.sourceIdToName.delete(sourceIdOrName);
+      this.sourceIdToPkg.delete(sourceIdOrName);
     }
   }
 
@@ -564,24 +591,43 @@ export class WebViewSourceManager implements IWebViewSourceManager {
    * 图源运行配置已变化时清理内存状态。
    * 用于镜像站点、domain/apiDomain 等会影响工作流变量的设置变更。
    */
-  invalidateSourceRuntime(sourceId: number, sourceName?: string): void {
+  invalidateSourceRuntime(sourceId: number, sourceName?: string, sourcePkg?: string): void {
     try {
       const sourceIdText: string = String(sourceId);
       this.destroyWebViewInstance(sourceIdText);
       this.sourceConfigs.delete(sourceIdText);
+      WebViewDataCacheManager.getInstance().clearSource(sourceId);
 
       const mappedName: string | undefined = this.sourceIdToName.get(sourceId);
-      if (mappedName && this.mangaEngines.has(mappedName)) {
-        this.mangaEngines.delete(mappedName);
-        logger.info(TAG, `已清理图源运行缓存: ${sourceId} -> "${mappedName}"`);
+      const mappedPkg: string | undefined = this.sourceIdToPkg.get(sourceId);
+      const cacheKeys: string[] = [];
+      if (sourcePkg && sourcePkg.length > 0) {
+        cacheKeys.push(sourcePkg);
       }
-      if (sourceName && this.mangaEngines.has(sourceName)) {
-        this.mangaEngines.delete(sourceName);
-        logger.info(TAG, `已清理图源运行缓存: "${sourceName}"`);
+      if (mappedPkg && mappedPkg.length > 0) {
+        cacheKeys.push(mappedPkg);
+      }
+      if (mappedName && mappedName.length > 0) {
+        cacheKeys.push(mappedName);
+      }
+      if (sourceName && sourceName.length > 0) {
+        cacheKeys.push(sourceName);
+      }
+      for (let index = 0; index < cacheKeys.length; index++) {
+        const cacheKey = cacheKeys[index];
+        if (this.mangaEngines.has(cacheKey)) {
+          this.mangaEngines.delete(cacheKey);
+          this.mangaEngineSignatures.delete(cacheKey);
+          logger.info(TAG, `已清理图源运行缓存: "${cacheKey}"`);
+        }
       }
       this.sourceIdToName.delete(sourceId);
+      this.sourceIdToPkg.delete(sourceId);
+      if (sourceName) {
+        this.sourceNameToPkg.delete(sourceName);
+      }
     } catch (error) {
-      logger.warn(TAG, `清理图源运行缓存失败: sourceId=${sourceId}, sourceName=${sourceName || ''}, error=${String(error)}`);
+      logger.warn(TAG, `清理图源运行缓存失败: sourceId=${sourceId}, sourceName=${sourceName || ''}, sourcePkg=${sourcePkg || ''}, error=${String(error)}`);
     }
   }
 

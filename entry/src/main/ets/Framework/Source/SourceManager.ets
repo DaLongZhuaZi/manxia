@@ -15,6 +15,8 @@ import { SourceRepositoryManager } from './SourceRepositoryManager';
 import { WebViewSourceManager } from '../WebView/WebViewSourceManager';
 import { CoverCacheManager } from '../Cache/CoverCacheManager';
 import { ngfSourceRegistryFacade } from '../NGF';
+import { SourceCompatibilityService } from './SourceCompatibilityService';
+import { SourceIdentity } from './SourceIdentity';
 
 const TAG = 'SourceManager';
 
@@ -230,6 +232,12 @@ export class SourceManager {
 
       const sourceName: string = metadata.name as string;
       const pkg: string = metadata.id as string;
+      if (!pkg || pkg.trim().length <= 0) {
+        return {
+          success: false,
+          error: '自有图源缺少 metadata.id，无法建立稳定 pkg 身份'
+        };
+      }
 
       // 检查是否已存在（通过pkg匹配）
       const existingByPkg = await this.dataManager.getComicSourceByPkg(pkg);
@@ -258,6 +266,7 @@ export class SourceManager {
 
       logger.info(TAG, `图源导入成功: ${sourceName} (ID: ${sourceId}, pkg: ${pkg}, 类型: ${configType})`);
       this.syncNgfSourceRegistry(sourceId, pkg);
+      await this.reconcileSourceAfterUpsert(sourceId, pkg, sourceName);
 
       // [修复] 图源导入成功后，尝试恢复使用该 pkg 的在线漫画的图源关联
       // 这解决了图源删除后重新导入时，在线漫画无法识别图源的问题
@@ -295,6 +304,12 @@ export class SourceManager {
       const metadata: ESObject = config.metadata as ESObject;
       const sourceName: string = metadata.name as string;
       const pkg: string = metadata.id as string || '';  // [修复] 获取 pkg 字段
+      if (!pkg || pkg.trim().length <= 0) {
+        return {
+          success: false,
+          error: '自有图源缺少 metadata.id，无法建立稳定 pkg 身份'
+        };
+      }
       const baseUrl: string = metadata.baseUrl as string || '';
       const version: string = metadata.version as string || '1.0.0';
       const description: string = metadata.description as string || '';
@@ -315,7 +330,10 @@ export class SourceManager {
       });
 
       logger.info(TAG, `图源更新成功: ${sourceName} (ID: ${sourceId})`);
+      this.executor.clearCache(sourceId);
+      this.releaseWebViewEngineCache(sourceId, sourceName, pkg);
       this.syncNgfSourceRegistry(sourceId, pkg);
+      await this.reconcileSourceAfterUpsert(sourceId, pkg, sourceName);
 
       return {
         success: true,
@@ -328,6 +346,33 @@ export class SourceManager {
         success: false,
         error: String(error)
       };
+    }
+  }
+
+  private releaseWebViewEngineCache(sourceId: number, sourceName: string, sourcePkg?: string): void {
+    try {
+      const webViewManager = WebViewSourceManager.getInstance();
+      webViewManager.releaseMangaEngine(sourceId);
+      webViewManager.removeEngineByName(sourceName);
+      if (sourcePkg && sourcePkg.length > 0) {
+        webViewManager.releaseMangaEngine(sourcePkg);
+      }
+      logger.info(TAG, `WebView图源引擎缓存已清理: ${sourceId} (${sourceName}, pkg=${sourcePkg || ''})`);
+    } catch (error) {
+      logger.warn(TAG, `清理WebView图源引擎缓存失败: ${String(error)}`);
+    }
+  }
+
+  private async reconcileSourceAfterUpsert(sourceId: number, pkg: string, sourceName: string): Promise<void> {
+    try {
+      const identity: SourceIdentity | null = await this.dataManager.getSourceIdentityByPkg(pkg);
+      if (identity && identity.isValid()) {
+        await SourceCompatibilityService.getInstance().reconcileAfterSourceUpsert(identity);
+        return;
+      }
+      logger.warn(TAG, `图源兼容修复跳过：无法解析identity, sourceId=${sourceId}, pkg=${pkg}, name=${sourceName}`);
+    } catch (error) {
+      logger.warn(TAG, `图源兼容修复失败但不阻断导入: pkg=${pkg}, error=${String(error)}`);
     }
   }
 

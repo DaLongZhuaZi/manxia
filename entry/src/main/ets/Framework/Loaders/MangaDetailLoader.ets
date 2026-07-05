@@ -210,6 +210,12 @@ export class MangaDetailLoader {
           params.sourceId = resolvedIdentity.sourceId;
           this.currentSourceId = resolvedIdentity.sourceId;
         }
+        if (resolvedIdentity.sourceName.length > 0) {
+          this.currentSourceName = resolvedIdentity.sourceName;
+        }
+        if (resolvedIdentity.sourcePkg.length > 0) {
+          this.currentSourcePkg = resolvedIdentity.sourcePkg;
+        }
         if (resolvedIdentity.onlineComicInfo) {
           if (resolvedIdentity.onlineComicInfo.sourceName.length > 0) {
             this.currentSourceName = resolvedIdentity.onlineComicInfo.sourceName;
@@ -699,7 +705,11 @@ export class MangaDetailLoader {
       
       // 初始化MangaEngine
       logger.info(TAG, `[网络加载] 初始化MangaEngine: sourceName="${this.currentSourceName}", sourceId=${this.currentSourceId}`);
-      this.mangaEngine = await this.webViewManager.getMangaEngine(this.currentSourceId, this.currentSourceName);
+      this.mangaEngine = await this.webViewManager.getMangaEngine(
+        this.currentSourceId,
+        this.currentSourceName,
+        this.currentSourcePkg
+      );
       
       if (!this.mangaEngine) {
         result.errorMessage = '无法初始化漫画引擎';
@@ -1027,6 +1037,12 @@ export class MangaDetailLoader {
           params.sourceId = resolvedIdentity.sourceId;
           this.currentSourceId = resolvedIdentity.sourceId;
         }
+        if (resolvedIdentity.sourceName.length > 0) {
+          this.currentSourceName = resolvedIdentity.sourceName;
+        }
+        if (resolvedIdentity.sourcePkg.length > 0) {
+          this.currentSourcePkg = resolvedIdentity.sourcePkg;
+        }
       } else {
         logger.warn(TAG, `漫画身份未解析，继续原始加载: ${resolvedIdentity.detail}`);
       }
@@ -1232,6 +1248,7 @@ export class MangaDetailLoader {
     try {
       // 设置图源信息
       this.currentSourceId = result.sourceId;
+      this.currentSourcePkg = onlineComic.sourcePkg || this.currentSourcePkg;
       if (!result.sourceName) {
         await this.loadSourceName(result.sourceId);
         result.sourceName = this.currentSourceName;
@@ -1296,7 +1313,11 @@ export class MangaDetailLoader {
       }
       
       logger.info(TAG, `初始化MangaEngine: sourceName="${this.currentSourceName}", sourceId=${this.currentSourceId}`);
-      this.mangaEngine = await this.webViewManager.getMangaEngine(this.currentSourceId, this.currentSourceName);
+      this.mangaEngine = await this.webViewManager.getMangaEngine(
+        this.currentSourceId,
+        this.currentSourceName,
+        this.currentSourcePkg
+      );
       
       if (!this.mangaEngine) {
         result.errorMessage = '无法初始化漫画引擎';
@@ -1378,7 +1399,11 @@ export class MangaDetailLoader {
       }
       
       // 初始化MangaEngine
-      this.mangaEngine = await this.webViewManager.getMangaEngine(this.currentSourceId, this.currentSourceName);
+      this.mangaEngine = await this.webViewManager.getMangaEngine(
+        this.currentSourceId,
+        this.currentSourceName,
+        this.currentSourcePkg
+      );
       if (!this.mangaEngine) {
         logger.warn(TAG, '无法初始化漫画引擎');
         return;
@@ -1414,6 +1439,7 @@ export class MangaDetailLoader {
   private async loadSourceName(sourceId: number): Promise<void> {
     if (sourceId <= 0) {
       this.currentSourceName = '';
+      this.currentSourcePkg = '';
       return;
     }
     
@@ -1425,6 +1451,7 @@ export class MangaDetailLoader {
           // 优先使用name，如果为空则使用pkg
           const name = String(s.name || '');
           const pkg = String(s.pkg || '');
+          this.currentSourcePkg = pkg;
           if (name && name.trim() !== '') {
             this.currentSourceName = name;
           } else if (pkg && pkg.trim() !== '') {
@@ -1438,9 +1465,11 @@ export class MangaDetailLoader {
       }
       logger.warn(TAG, `未找到sourceId=${sourceId}对应的图源记录`);
       this.currentSourceName = `WebView Source ${sourceId}`;
+      this.currentSourcePkg = '';
     } catch (error) {
       logger.warn(TAG, `获取图源名称失败: ${String(error)}`);
       this.currentSourceName = `WebView Source ${sourceId}`;
+      this.currentSourcePkg = '';
     }
   }
   

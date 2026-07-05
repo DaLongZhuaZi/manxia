@@ -28,12 +28,6 @@ import { DeviceAdaptationManager, DeviceInfo, DeviceChangeListener, Breakpoint }
 import { ResponsiveLayoutHelper } from '../Framework/Utils/ResponsiveLayout';
 import { ContentFilterManager } from '../Framework/Managers/ContentFilterManager';
 import { SettingsManager, SettingKeys } from '../Framework/Managers/SettingsManager';
-import {
-  getHoldingAwarenessManager,
-  HoldingAwarenessFeature,
-  HoldingAwarenessManager,
-  HoldingUiAnchor
-} from '../Framework/Managers/HoldingAwarenessManager';
 import CookieManager from '../Framework/Managers/CookieManager';
 import {
   ContentTrackingCardCallbacks,
@@ -373,17 +367,14 @@ export struct UnifiedDetailPage {
   // 沉浸式显示状态
   @StorageProp('statusBarHeight') statusBarHeight: number = 0;
   @StorageProp('navigationBarHeight') navigationBarHeight: number = 0;
-  @StorageProp('holding_awareness_preferred_anchor') holdingAwarenessPreferredAnchor: HoldingUiAnchor = HoldingUiAnchor.RIGHT;
-  @StorageProp('holding_awareness_enabled') holdingAwarenessEnabled: boolean = true;
-  @StorageProp('holding_awareness_detail_landscape_read_actions_enabled') holdingAwarenessDetailLandscapeReadActionsEnabled: boolean = true;
 
   // 响应式布局
   private deviceManager: DeviceAdaptationManager = DeviceAdaptationManager.getInstance();
-  private holdingAwarenessManager: HoldingAwarenessManager = getHoldingAwarenessManager();
   private deviceChangeListener: DeviceChangeListener | null = null;
   @State responsive_contentPadding: number = 16;
   @State responsive_maxContentWidth: number = 1200;
   @State responsive_isLandscape: boolean = false;
+  @State responsive_screenHeight: number = 640;
 
   // 页面参数
   private pageParams: UnifiedDetailPageParams | null = null;
@@ -2369,6 +2360,7 @@ export struct UnifiedDetailPage {
     const deviceInfo = this.deviceManager.getDeviceInfo();
     this.responsive_contentPadding = layoutParams.contentPadding;
     this.responsive_isLandscape = deviceInfo.isLandscape;
+    this.responsive_screenHeight = deviceInfo.screenHeight;
     switch (deviceInfo.breakpoint) {
       case Breakpoint.XS:
         this.responsive_maxContentWidth = 600;
@@ -9196,13 +9188,16 @@ export struct UnifiedDetailPage {
               }
             }
             .width('100%')
+            .layoutWeight(1)
             .transition(this.getReadAloudCacheFadeSlideTransition(8))
           }
         }
         .width('100%')
+        .height(this.responsive_isLandscape && this.isChapterListExpanded ? '100%' : undefined)
         .padding(18)
       }
       .width('100%')
+      .height(this.responsive_isLandscape && this.isChapterListExpanded ? '100%' : undefined)
       .backgroundColor(this.getSectionBackgroundColor())
       .backgroundBlurStyle(this.getSectionBlurStyle(), this.getSectionBlurOptions())
       .backgroundEffect(this.getSectionBackgroundEffect())
@@ -10992,124 +10987,183 @@ export struct UnifiedDetailPage {
     }
   }
 
-  private shouldAnchorLandscapeReadActionsToLeft(): boolean {
-    if (!this.holdingAwarenessEnabled || !this.holdingAwarenessDetailLandscapeReadActionsEnabled) {
-      return false;
+  private getLandscapeAvailableHeight(): number {
+    const measuredHeight: number = this.responsive_screenHeight > 0 ? this.responsive_screenHeight : 640;
+    return Math.max(360, measuredHeight - this.statusBarHeight - this.navigationBarHeight);
+  }
+
+  private getLandscapeMinChapterPanelHeight(): number {
+    const preferredRows: number = this.getLandscapeAvailableHeight() >= 620 ? 5 : 4;
+    const chapterHeaderHeight: number = 80;
+    const chapterRowHeight: number = 56;
+    return chapterHeaderHeight + (preferredRows * chapterRowHeight);
+  }
+
+  private getLandscapeTopPanelMaxHeight(): number {
+    const availableHeight: number = this.getLandscapeAvailableHeight();
+    if (!this.isChapterListExpanded) {
+      return Math.max(160, Math.min(360, availableHeight * 0.72));
     }
-    if (!this.holdingAwarenessManager.isFeatureEnabled(HoldingAwarenessFeature.DETAIL_LANDSCAPE_READ_ACTIONS)) {
-      return false;
+
+    const rightPanelVerticalPadding: number = 32;
+    const panelGap: number = 12;
+    const maxHeightByChapterRows: number = availableHeight - rightPanelVerticalPadding - panelGap - this.getLandscapeMinChapterPanelHeight();
+    const percentageCap: number = availableHeight * 0.32;
+    return Math.max(104, Math.min(percentageCap, maxHeightByChapterRows));
+  }
+
+  private getLandscapeReadButtonWidth(): number {
+    return this.canShowReadAloudButton() ? 188 : 260;
+  }
+
+  @Builder
+  private buildLandscapeReadActions() {
+    Row({ space: 10 }) {
+      Button() {
+        Row({ space: 6 }) {
+          if (this.isReadActionBusy()) {
+            LoadingProgress()
+              .width(14)
+              .height(14)
+              .color(Color.White)
+          } else {
+            SymbolGlyph($r('sys.symbol.book_open_fill'))
+              .fontSize(14)
+              .fontColor([Color.White])
+          }
+          Text(this.getReadButtonLabel())
+            .fontSize(14)
+            .fontFamily(this.appFontFamily)
+            .fontColor(Color.White)
+            .maxLines(1)
+            .textOverflow({ overflow: TextOverflow.Ellipsis })
+        }
+        .width('100%')
+        .justifyContent(FlexAlign.Center)
+      }
+      .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme))
+      .height(44)
+      .width(this.getLandscapeReadButtonWidth())
+      .borderRadius(22)
+      .shadow({
+        radius: 10,
+        color: 'rgba(0,0,0,0.14)',
+        offsetX: 0,
+        offsetY: 3
+      })
+      .enabled(!this.isReadActionBusy())
+      .onClick(() => this.continueReading())
+
+      if (this.canShowReadAloudButton()) {
+        Button() {
+          Row({ space: 6 }) {
+            SymbolGlyph($r('sys.symbol.speaker'))
+              .fontSize(13)
+              .fontColor([Color.White])
+            Text(this.getReadAloudButtonLabel())
+              .fontSize(13)
+              .fontFamily(this.appFontFamily)
+              .fontColor(Color.White)
+              .maxLines(1)
+              .textOverflow({ overflow: TextOverflow.Ellipsis })
+          }
+          .width('100%')
+          .justifyContent(FlexAlign.Center)
+        }
+        .linearGradient({
+          angle: 135,
+          colors: [
+            ['#00C2FF', 0],
+            ['#4B7BFF', 0.55],
+            ['#7A5CFF', 1]
+          ]
+        })
+        .height(44)
+        .width(164)
+        .borderRadius(22)
+        .shadow({
+          radius: 10,
+          color: 'rgba(0,0,0,0.14)',
+          offsetX: 0,
+          offsetY: 3
+        })
+        .onClick(() => this.continueReadAloud())
+      }
     }
-    return this.holdingAwarenessPreferredAnchor === HoldingUiAnchor.LEFT;
+    .padding(8)
+    .backgroundColor(this.getFloatingBackgroundColor())
+    .backgroundBlurStyle(this.getFloatingBlurStyle(), this.getFloatingBlurOptions())
+    .borderRadius(30)
+    .border({ width: this.getFloatingBorderWidth(), color: this.getFloatingBorderColor() })
+    .shadow({ radius: this.getFloatingRadius() + 6, color: this.getFloatingShadowColor(), offsetX: 0, offsetY: 8 })
+    .align(Alignment.BottomEnd)
+    .margin({
+      left: 24,
+      right: 24,
+      bottom: this.navigationBarHeight + 18
+    })
+    .zIndex(20)
   }
 
   /**
    * 横屏布局 - 右侧面板
-   * 包含：工具栏、缓存状态卡片、章节列表，底部浮动阅读按钮
+   * 包含：工具栏、缓存状态卡片、章节列表
    */
   @Builder
   buildLandscapeRightPanel() {
-    Stack() {
-      // 主内容区
-      Column({ space: 12 }) {
-        // 工具栏
-        this.buildActionBar()
+    Column({ space: 12 }) {
+      // 顶部信息区在横屏高度不足时独立滚动，避免挤压章节列表。
+      Scroll() {
+        Column({ space: 12 }) {
+          // 工具栏
+          this.buildActionBar()
 
-        // 内容跟踪
-        this.buildTrackingStatusSection()
+          // 内容跟踪
+          this.buildTrackingStatusSection()
 
-        // 听书缓存
-        ReadAloudCacheDialogComponent({
-          content: this.content,
-          supportsReadAloudCache: this.supportsReadAloudCacheSection(),
-          isCurrentNovelAudioSource: this.isCurrentNovelAudioSource(),
-          isLocalTxtNovelEBook: this.isLocalTxtNovelEBookContent(),
-          loadSignal: this.readAloudCacheLoadSignal,
-          onOpenCacheDialog: (trigger: string) => {
-            this.openCacheDialogFromDetail(trigger);
-          },
-          onSummaryChanged: (summary: RemoteReadAloudCacheBookSummary | null) => {
-            this.readAloudCacheSummary = summary;
-          }
-        })
+          // 听书缓存
+          ReadAloudCacheDialogComponent({
+            content: this.content,
+            supportsReadAloudCache: this.supportsReadAloudCacheSection(),
+            isCurrentNovelAudioSource: this.isCurrentNovelAudioSource(),
+            isLocalTxtNovelEBook: this.isLocalTxtNovelEBookContent(),
+            loadSignal: this.readAloudCacheLoadSignal,
+            onOpenCacheDialog: (trigger: string) => {
+              this.openCacheDialogFromDetail(trigger);
+            },
+            onSummaryChanged: (summary: RemoteReadAloudCacheBookSummary | null) => {
+              this.readAloudCacheSummary = summary;
+            }
+          })
 
-        // 缓存状态卡片
-        this.buildCacheStatusCard()
-
-        // 章节列表（占满剩余空间）
-        Column() {
-          this.buildChapterList()
+          // 缓存状态卡片
+          this.buildCacheStatusCard()
         }
-        .layoutWeight(this.isChapterListExpanded ? 1 : 0)
-        .animation({ duration: 300, curve: Curve.EaseInOut })
+        .width('100%')
       }
       .width('100%')
-      .height('100%')
-      .padding({ left: 8, right: 16, top: 16, bottom: 16 })
+      .constraintSize({ maxHeight: this.getLandscapeTopPanelMaxHeight() })
+      .scrollBar(BarState.Auto)
+      .edgeEffect(EdgeEffect.Spring)
 
-      // 底部浮动阅读按钮组
-      Column({ space: 10 }) {
-        Button() {
-          Row({ space: 6 }) {
-            if (this.isReadActionBusy()) {
-              LoadingProgress()
-                .width(14)
-                .height(14)
-                .color(Color.White)
-            } else {
-              SymbolGlyph($r('sys.symbol.book_open_fill'))
-                .fontSize(14)
-                .fontColor([Color.White])
-            }
-            Text(this.getReadButtonLabel())
-              .fontSize(14)
-              .fontFamily(this.appFontFamily)
-              .fontColor(Color.White)
-          }
-        }
-          .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme))
-          .height(44)
-          .padding({ left: 24, right: 24 })
-          .borderRadius(22)
-          .shadow({
-            radius: 12,
-            color: 'rgba(0,0,0,0.15)',
-            offsetX: 0,
-            offsetY: 4
-          })
-          .enabled(!this.isReadActionBusy())
-          .onClick(() => this.continueReading())
-
-        if (this.canShowReadAloudButton()) {
-          Button() {
-            Row({ space: 6 }) {
-              SymbolGlyph($r('sys.symbol.speaker'))
-                .fontSize(13)
-                .fontColor([Color.White])
-              Text(this.getReadAloudButtonLabel())
-                .fontSize(13)
-                .fontFamily(this.appFontFamily)
-                .fontColor(Color.White)
-            }
-          }
-            .linearGradient({
-              angle: 135,
-              colors: [
-                ['#00C2FF', 0],
-                ['#4B7BFF', 0.55],
-                ['#7A5CFF', 1]
-              ]
-            })
-            .height(40)
-            .padding({ left: 20, right: 20 })
-            .borderRadius(20)
-            .onClick(() => this.continueReadAloud())
-        }
+      // 章节列表（占满剩余空间）
+      Column({ space: 12 }) {
+        this.buildChapterList()
       }
-      .align(this.shouldAnchorLandscapeReadActionsToLeft() ? Alignment.BottomStart : Alignment.BottomEnd)
-      .margin({ left: 24, right: 24, bottom: 24 })
+      .width('100%')
+      .constraintSize({ minHeight: this.isChapterListExpanded ? this.getLandscapeMinChapterPanelHeight() : 0 })
+      .layoutWeight(this.isChapterListExpanded ? 1 : 0)
+      .animation({ duration: 300, curve: Curve.EaseInOut })
+
+      if (!this.isChapterListExpanded) {
+        Blank()
+          .layoutWeight(1)
+      }
+
     }
     .width('100%')
     .height('100%')
+    .padding({ left: 8, right: 16, top: 16, bottom: 16 })
   }
 
   /**
@@ -11118,22 +11172,29 @@ export struct UnifiedDetailPage {
    */
   @Builder
   buildLandscapeLayout() {
-    Row() {
-      // 左侧面板（封面、标签、简介、书架按钮）
-      Column() {
-        this.buildLandscapeLeftPanel()
-      }
-      .width('38%')
-      .height('100%')
-      .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('panel_background', this.themeState.currentTheme) + '80')
-      .borderRadius({ topRight: 16, bottomRight: 16 })
+    Stack() {
+      Row() {
+        // 左侧面板（封面、标签、简介、书架按钮）
+        Column() {
+          this.buildLandscapeLeftPanel()
+        }
+        .width('38%')
+        .height('100%')
+        .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('panel_background', this.themeState.currentTheme) + '80')
+        .borderRadius({ topRight: 16, bottomRight: 16 })
 
-      // 右侧面板（工具栏、章节列表、阅读按钮）
-      Column() {
-        this.buildLandscapeRightPanel()
+        // 右侧面板（工具栏、章节列表）
+        Column() {
+          this.buildLandscapeRightPanel()
+        }
+        .layoutWeight(1)
+        .height('100%')
       }
-      .layoutWeight(1)
+      .width('100%')
       .height('100%')
+
+      // 横屏阅读动作悬浮在屏幕角落，避免占用章节列表高度。
+      this.buildLandscapeReadActions()
     }
     .width('100%')
     .height('100%')
