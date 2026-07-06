@@ -3826,7 +3826,7 @@ export struct GlobalSearchPage {
   @Builder
   buildMangaSourceChip(source: SourceInfo) {
     Row({ space: 4 }) {
-      // 网络访问标识（requireProxy 表示需要 Internet）
+      // 网络代理标识
       if (source.requireProxy) {
         SymbolGlyph($r('sys.symbol.globe_and_keyboard'))
           .fontSize(11)

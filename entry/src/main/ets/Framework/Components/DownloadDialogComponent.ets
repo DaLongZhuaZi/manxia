@@ -1,15 +1,9 @@
 ﻿// 文件路径: entry/src/main/ets/Framework/Components/DownloadDialogComponent.ets
 // 职责: 下载/缓存章节选择对话框组件，从UnifiedDetailPage提取的独立组件
 
-import { promptAction, curves } from '@kit.ArkUI';
-import { logger } from '../../Utils/Logger';
 import { ThemeAwareState, ThemeAwareHelper } from './ThemeAware';
-import { ThemeType } from '../Managers/ThemeManager';
 import { SourceDialogScaffold } from './SourceDialogScaffold';
-import { DialogSurfaceStyleHelper } from './DialogSurfaceStyleHelper';
 import { UnifiedContent, UnifiedChapter, UnifiedContentType } from '../../Models/UnifiedContentModels';
-
-const TAG = 'DownloadDialogComponent';
 
 @Component
 export struct DownloadDialogComponent {
@@ -38,9 +32,6 @@ export struct DownloadDialogComponent {
 
   // 对话框内部状态
   @State showDownloadDialog: boolean = false;
-  @State downloadDialogOpacity: number = 0;
-  @State downloadDialogScale: number = 0.8;
-  @State downloadDialogTranslateY: number = 50;
   @State downloadSelectionMode: 'range' | 'individual' = 'range';
   @State downloadRangeStart: number = 0;
   @State downloadRangeEnd: number = 0;
@@ -76,14 +67,11 @@ export struct DownloadDialogComponent {
     this.downloadRangeStart = firstUncachedIndex;
     this.downloadRangeEnd = lastUncachedIndex >= firstUncachedIndex ? lastUncachedIndex : firstUncachedIndex;
     this.downloadSelectedChapters = new Set<number>();
-    this.showDownloadDialog = true;
     this.getUIContext().animateTo({
-      duration: 260,
+      duration: 220,
       curve: Curve.EaseOut
     }, () => {
-      this.downloadDialogOpacity = 1;
-      this.downloadDialogScale = 1;
-      this.downloadDialogTranslateY = 0;
+      this.showDownloadDialog = true;
     });
   }
 
@@ -92,13 +80,8 @@ export struct DownloadDialogComponent {
       duration: 180,
       curve: Curve.EaseIn
     }, () => {
-      this.downloadDialogOpacity = 0;
-      this.downloadDialogScale = 0.96;
-      this.downloadDialogTranslateY = 12;
-    });
-    setTimeout(() => {
       this.showDownloadDialog = false;
-    }, 200);
+    });
   }
 
   // ==================== 选择逻辑 ====================
@@ -318,31 +301,6 @@ export struct DownloadDialogComponent {
     .width('100%')
   }
 
-  private getDialogChromeTopEdgeColor(): ResourceColor {
-    return this.themeState.currentTheme === ThemeType.DARK
-      ? 'rgba(255, 255, 255, 0.18)'
-      : 'rgba(255, 255, 255, 0.58)';
-  }
-
-  private getDialogChromeBottomEdgeColor(): ResourceColor {
-    return this.themeState.currentTheme === ThemeType.DARK
-      ? 'rgba(154, 196, 255, 0.08)'
-      : 'rgba(126, 166, 220, 0.10)';
-  }
-
-  @Builder
-  private buildDialogChrome(radius?: number) {
-    Column()
-      .width('100%')
-      .height(1)
-      .backgroundColor(this.getDialogChromeTopEdgeColor())
-    Column()
-      .width('100%')
-      .height(1)
-      .align(Alignment.Bottom)
-      .backgroundColor(this.getDialogChromeBottomEdgeColor())
-  }
-
   @Builder
   buildDownloadDialog() {
     if (this.showDownloadDialog && this.content) {
@@ -351,23 +309,17 @@ export struct DownloadDialogComponent {
         onMaskTap: () => this.closeDownloadDialog(),
         dialogWidth: '90%',
         maxWidth: 400,
-        contentPadding: 0,
-        dialogRadius: 26,
-        zIndexValue: 120,
-        useMaskBlur: true,
-        maskBlurStyle: DialogSurfaceStyleHelper.getPopupMaskBlurStyle(),
-        maskColor: DialogSurfaceStyleHelper.getPopupMaskColor()
+        contentPadding: 24,
+        useMaskBlur: true
       }) {
-        Stack({ alignContent: Alignment.TopStart }) {
-          this.buildDialogChrome(26)
-          Column({ space: 16 }) {
+        Column({ space: 20 }) {
             // 标题栏
             Row() {
               Text(this.content.contentType === UnifiedContentType.NOVEL
                 ? (this.getNovelCacheActionTitle?.() || '缓存章节')
                 : '缓存章节')
-                .fontSize(18)
-                .fontWeight(FontWeight.Bold)
+                .fontSize(20)
+                .fontWeight(FontWeight.Medium)
                 .fontFamily(this.appFontFamily)
                 .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
 
@@ -795,15 +747,6 @@ export struct DownloadDialogComponent {
             .width('100%')
           }
           .width('100%')
-          .padding(20)
-          .scale({ x: this.downloadDialogScale, y: this.downloadDialogScale })
-          .translate({ y: this.downloadDialogTranslateY })
-          .opacity(this.downloadDialogOpacity)
-          .borderRadius(26)
-          .clip(true)
-          .onClick(() => {
-          })
-        }
       }
     }
   }

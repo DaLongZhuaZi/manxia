@@ -617,6 +617,11 @@ export class CoverCacheManager {
           finalHeaders['Origin'] = 'https://www.pixiv.net';
         }
       }
+
+      if (coverUrl.includes('dogemanga.com/images/')) {
+        finalHeaders['Referer'] = 'https://dogemanga.com/';
+        finalHeaders['Origin'] = 'https://dogemanga.com';
+      }
       
       // 尝试下载，如果SSL错误则降级为HTTP
       // result: [success, sslError]

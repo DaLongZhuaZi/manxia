@@ -4,9 +4,7 @@
 import { promptAction } from '@kit.ArkUI';
 import { logger } from '../../Utils/Logger';
 import { ThemeAwareState, ThemeAwareHelper } from './ThemeAware';
-import { ThemeType } from '../Managers/ThemeManager';
 import { SourceDialogScaffold } from './SourceDialogScaffold';
-import { DialogSurfaceStyleHelper } from './DialogSurfaceStyleHelper';
 import { UnifiedContent, UnifiedContentType } from '../../Models/UnifiedContentModels';
 import { getNovelSourceSearchService, SourceSearchResult, SearchTaskHandle } from '../Novel/NovelSourceSearchService';
 import { NovelSearchResult } from '../../Models/NovelModels';
@@ -27,9 +25,6 @@ export struct ChangeSourceDialogComponent {
 
   // 对话框内部状态
   @State showChangeSourceDialog: boolean = false;
-  @State changeSourceDialogOpacity: number = 0;
-  @State changeSourceDialogScale: number = 0.8;
-  @State changeSourceDialogTranslateY: number = 30;
   @State isSearchingSource: boolean = false;
   @State searchSourceProgress: number = 0;
   @State searchSourceTotal: number = 0;
@@ -55,14 +50,11 @@ export struct ChangeSourceDialogComponent {
 
     this.changeSourceKeyword = this.content.title;
 
-    this.showChangeSourceDialog = true;
     this.getUIContext().animateTo({
-      duration: 260,
+      duration: 220,
       curve: Curve.EaseOut
     }, () => {
-      this.changeSourceDialogOpacity = 1;
-      this.changeSourceDialogScale = 1;
-      this.changeSourceDialogTranslateY = 0;
+      this.showChangeSourceDialog = true;
     });
 
     this.startChangeSourceSearch(false);
@@ -79,14 +71,8 @@ export struct ChangeSourceDialogComponent {
       duration: 180,
       curve: Curve.EaseIn
     }, () => {
-      this.changeSourceDialogOpacity = 0;
-      this.changeSourceDialogScale = 0.96;
-      this.changeSourceDialogTranslateY = 12;
-    });
-
-    setTimeout(() => {
       this.showChangeSourceDialog = false;
-    }, 200);
+    });
   }
 
   // ==================== 搜索逻辑 ====================
@@ -168,50 +154,19 @@ export struct ChangeSourceDialogComponent {
 
   // ==================== Builder 方法 ====================
 
-  private getDialogChromeTopEdgeColor(): ResourceColor {
-    return this.themeState.currentTheme === ThemeType.DARK
-      ? 'rgba(255, 255, 255, 0.18)'
-      : 'rgba(255, 255, 255, 0.58)';
-  }
-
-  private getDialogChromeBottomEdgeColor(): ResourceColor {
-    return this.themeState.currentTheme === ThemeType.DARK
-      ? 'rgba(154, 196, 255, 0.08)'
-      : 'rgba(126, 166, 220, 0.10)';
-  }
-
-  @Builder
-  private buildDialogChrome(radius?: number) {
-    Column()
-      .width('100%')
-      .height(1)
-      .backgroundColor(this.getDialogChromeTopEdgeColor())
-    Column()
-      .width('100%')
-      .height(1)
-      .align(Alignment.Bottom)
-      .backgroundColor(this.getDialogChromeBottomEdgeColor())
-  }
-
   @Builder
   buildChangeSourceDialog() {
     if (this.showChangeSourceDialog) {
       SourceDialogScaffold({
         themeState: this.themeState,
         onMaskTap: () => this.closeChangeSourceDialog(),
-        dialogWidth: '92%',
+        dialogWidth: '90%',
         maxWidth: 420,
         maxHeight: '80%',
-        contentPadding: 0,
-        dialogRadius: 26,
-        zIndexValue: 120,
-        useMaskBlur: true,
-        maskBlurStyle: DialogSurfaceStyleHelper.getPopupMaskBlurStyle(),
-        maskColor: DialogSurfaceStyleHelper.getPopupMaskColor()
+        contentPadding: 24,
+        useMaskBlur: true
       }) {
-        Stack({ alignContent: Alignment.TopStart }) {
-          this.buildDialogChrome(26)
-          Column({ space: 0 }) {
+        Column({ space: 20 }) {
 
             // 标题栏
             Row() {
@@ -223,8 +178,8 @@ export struct ChangeSourceDialogComponent {
                       this.themeState.currentTheme)])
 
                   Text('换源')
-                    .fontSize(18)
-                    .fontWeight(FontWeight.Bold)
+                    .fontSize(20)
+                    .fontWeight(FontWeight.Medium)
                     .fontFamily(this.appFontFamily)
                     .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary',
                       this.themeState.currentTheme))
@@ -235,7 +190,6 @@ export struct ChangeSourceDialogComponent {
                       .fontFamily(this.appFontFamily)
                       .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_tertiary',
                         this.themeState.currentTheme))
-                      .opacity(this.changeSourceDialogOpacity)
                       .animation({ duration: 200, curve: Curve.EaseOut })
                   }
                 }
@@ -281,9 +235,6 @@ export struct ChangeSourceDialogComponent {
               }
             }
             .width('100%')
-            .padding({ left: 20, right: 16, top: 16, bottom: 12 })
-            .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('panel_background',
-              this.themeState.currentTheme))
 
             // 搜索关键词输入框
             Row({ space: 8 }) {
@@ -542,14 +493,6 @@ export struct ChangeSourceDialogComponent {
             }
           }
           .width('100%')
-          .scale({ x: this.changeSourceDialogScale, y: this.changeSourceDialogScale })
-          .translate({ y: this.changeSourceDialogTranslateY })
-          .opacity(this.changeSourceDialogOpacity)
-          .borderRadius(26)
-          .clip(true)
-          .onClick(() => {
-          })
-        }
       }
     }
   }

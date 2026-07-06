@@ -42,7 +42,7 @@ export interface SourceInfo {
   createTime: number;
   lastUpdateTime: number;
   iconPath?: string;  // 图源图标路径
-  requireProxy?: boolean;  // 是否需要代理访问（对应 metadata.Internet）
+  requireProxy?: boolean;  // 是否需要网络代理访问
   isPinned?: boolean;  // 是否置顶
   isNSFW?: boolean;    // 是否为NSFW图源
   supportsPopular: boolean;  // 是否支持热门工作流
@@ -671,6 +671,20 @@ export class SourceManager {
     }
   }
 
+  private parseDatabaseBoolean(value: string | number | boolean | null | undefined): boolean {
+    if (value === true) {
+      return true;
+    }
+    if (value === false || value === null || value === undefined) {
+      return false;
+    }
+    if (typeof value === 'number') {
+      return value !== 0;
+    }
+    const normalized: string = value.trim().toLowerCase();
+    return normalized === 'true' || normalized === '1' || normalized === 'yes';
+  }
+
   /**
    * 映射到SourceInfo
    */
@@ -708,13 +722,13 @@ export class SourceManager {
       version: source.version as string,
       description: source.description as string || '',
       language: source.language as string || 'zh-CN',
-      isEnabled: Boolean(source.isEnabled),
+      isEnabled: this.parseDatabaseBoolean(source.isEnabled as string | number | boolean | null | undefined),
       priority: source.priority as number || 0,
       createTime: source.createTime as number,
       lastUpdateTime: source.lastUpdateTime as number,
       iconPath: iconPath,
-      requireProxy: Boolean(source.requireProxy),
-      isNSFW: Boolean(source.isNSFW),
+      requireProxy: this.parseDatabaseBoolean(source.requireProxy as string | number | boolean | null | undefined),
+      isNSFW: this.parseDatabaseBoolean(source.isNSFW as string | number | boolean | null | undefined),
       supportsPopular: featureSupport.supportsPopular,
       supportsLatest: featureSupport.supportsLatest,
       supportsFilter: featureSupport.supportsFilter

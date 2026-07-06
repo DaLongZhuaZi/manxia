@@ -3655,8 +3655,13 @@ private onlineDownloadedLocalFastPathActive: boolean = false;
 
     logger.info(TAG, `隐藏WebView预热图源上下文: ${normalizedBaseUrl}`);
     this.webviewController.loadUrl(normalizedBaseUrl);
-    await this.waitForHiddenWebViewUrl(normalizedBaseUrl);
-    logger.info(TAG, `隐藏WebView图源上下文已就绪: ${normalizedBaseUrl}`);
+    try {
+      await this.waitForHiddenWebViewUrl(normalizedBaseUrl);
+      logger.info(TAG, `隐藏WebView图源上下文已就绪: ${normalizedBaseUrl}`);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      logger.warn(TAG, `隐藏WebView图源上下文无法确认，继续由图源工作流导航: ${message}`);
+    }
   }
 
   /**

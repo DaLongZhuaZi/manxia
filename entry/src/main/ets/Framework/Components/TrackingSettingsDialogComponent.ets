@@ -6,9 +6,7 @@ import { promptAction } from '@kit.ArkUI';
 import { logger } from '../../Utils/Logger';
 import { common } from '@kit.AbilityKit';
 import { ThemeAwareState, ThemeAwareHelper } from './ThemeAware';
-import { ThemeType } from '../Managers/ThemeManager';
 import { SourceDialogScaffold } from './SourceDialogScaffold';
-import { DialogSurfaceStyleHelper } from './DialogSurfaceStyleHelper';
 import { SettingsPageSurfaceManager, SettingsPageSurfaceStyle } from '../../pages/settings/SettingsPageSurfaceManager';
 import {
   ContentTrackingCardCallbacks,
@@ -92,9 +90,6 @@ export struct TrackingSettingsDialogComponent {
   @State trackingSupported: boolean = false;
   @State trackingUnsupportedReason: string = '';
   @State showTrackingSettingsDialog: boolean = false;
-  @State trackingDialogOpacity: number = 0;
-  @State trackingDialogScale: number = 0.8;
-  @State trackingDialogTranslateY: number = 36;
   @State trackingSettingsActiveTab: number = 0;
   @State trackingCheckIntervalText: string = '3';
   @State trackingCheckIntervalUnit: SubscriptionIntervalUnit = SubscriptionIntervalUnit.HOUR;
@@ -154,26 +149,6 @@ export struct TrackingSettingsDialogComponent {
     return this.getSectionSurfaceStyle().shadowColor;
   }
 
-  private getDialogChromeTopEdgeColor(): ResourceColor {
-    return this.themeState.currentTheme === ThemeType.DARK
-      ? 'rgba(255, 255, 255, 0.18)'
-      : 'rgba(255, 255, 255, 0.58)';
-  }
-
-  private getDialogChromeBottomEdgeColor(): ResourceColor {
-    return this.themeState.currentTheme === ThemeType.DARK
-      ? 'rgba(154, 196, 255, 0.08)'
-      : 'rgba(126, 166, 220, 0.10)';
-  }
-
-  private getDialogMaskColor(): ResourceColor {
-    return DialogSurfaceStyleHelper.getPopupMaskColor();
-  }
-
-  private getDialogMaskBlurStyle(): BlurStyle {
-    return DialogSurfaceStyleHelper.getPopupMaskBlurStyle();
-  }
-
   private normalizeTrackingText(value: string | undefined | null): string {
     if (value === undefined || value === null || typeof value !== 'string') {
       return '';
@@ -183,19 +158,6 @@ export struct TrackingSettingsDialogComponent {
 
   private getSectionBackgroundEffect(): BackgroundEffectOptions {
     return this.getSectionSurfaceStyle().backgroundEffect as BackgroundEffectOptions;
-  }
-
-  @Builder
-  private buildDialogChrome(radius?: number) {
-    Column()
-      .width('100%')
-      .height(1)
-      .backgroundColor(this.getDialogChromeTopEdgeColor())
-    Column()
-      .width('100%')
-      .height(1)
-      .align(Alignment.Bottom)
-      .backgroundColor(this.getDialogChromeBottomEdgeColor())
   }
 
   @Builder
@@ -1094,14 +1056,11 @@ export struct TrackingSettingsDialogComponent {
 
     this.fillTrackingDialogFromRule(this.trackingRule);
     this.trackingSettingsActiveTab = 0;
-    this.showTrackingSettingsDialog = true;
     this.getUIContext().animateTo({
-      duration: 260,
+      duration: 220,
       curve: Curve.EaseOut
     }, () => {
-      this.trackingDialogOpacity = 1;
-      this.trackingDialogScale = 1;
-      this.trackingDialogTranslateY = 0;
+      this.showTrackingSettingsDialog = true;
     });
   }
 
@@ -1111,13 +1070,8 @@ export struct TrackingSettingsDialogComponent {
       duration: 180,
       curve: Curve.EaseIn
     }, () => {
-      this.trackingDialogOpacity = 0;
-      this.trackingDialogScale = 0.96;
-      this.trackingDialogTranslateY = 12;
-    });
-    setTimeout(() => {
       this.showTrackingSettingsDialog = false;
-    }, 200);
+    });
   }
 
 
@@ -1946,81 +1900,67 @@ export struct TrackingSettingsDialogComponent {
         },
         dialogWidth: '90%',
         maxWidth: 620,
-        contentPadding: 0,
-        dialogRadius: 26,
+        contentPadding: 24,
         zIndexValue: 121,
-        useMaskBlur: true,
-        maskBlurStyle: this.getDialogMaskBlurStyle(),
-        maskColor: this.getDialogMaskColor()
+        useMaskBlur: true
       }) {
-        Stack({ alignContent: Alignment.TopStart }) {
-          this.buildDialogChrome(26)
-          Column({ space: 16 }) {
-            Row() {
-              Text(this.trackingRule !== null ? '调整更新提醒' : '开启更新提醒')
+        Column({ space: 20 }) {
+          Row() {
+            Text(this.trackingRule !== null ? '调整更新提醒' : '开启更新提醒')
+              .fontSize(20)
+              .fontWeight(FontWeight.Medium)
+              .fontFamily(this.appFontFamily)
+              .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
+            Blank()
+            Button() {
+              SymbolGlyph($r('sys.symbol.xmark'))
                 .fontSize(18)
-                .fontWeight(FontWeight.Bold)
-                .fontFamily(this.appFontFamily)
-                .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
-              Blank()
-              Button() {
-                SymbolGlyph($r('sys.symbol.xmark'))
-                  .fontSize(18)
-                  .fontColor([ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme)])
-              }
-              .width(32)
-              .height(32)
-              .backgroundColor(Color.Transparent)
-              .enabled(!this.isTrackingBusy)
-              .onClick(() => {
-                this.closeTrackingSettingsDialog();
-              })
+                .fontColor([ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme)])
             }
-            .width('100%')
-
-            this.buildTrackingSettingsOverviewCard()
-
-            Row({ space: 8 }) {
-              this.buildTrackingSettingsTabButton('基础', $r('sys.symbol.bell'), 0)
-              this.buildTrackingSettingsTabButton('筛选', $r('sys.symbol.funnel'), 1)
-              this.buildTrackingSettingsTabButton('操作', $r('sys.symbol.gearshape'), 2)
-            }
-            .width('100%')
-            .padding(4)
-            .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('comp_background_tertiary', this.themeState.currentTheme))
-            .borderRadius(18)
-
-            Scroll() {
-              Column({ space: 12 }) {
-                if (this.trackingSettingsActiveTab === 0) {
-                  this.buildTrackingBasicSettingsTab()
-                } else if (this.trackingSettingsActiveTab === 1) {
-                  this.buildTrackingFilterSettingsTab()
-                } else {
-                  this.buildTrackingActionSettingsTab()
-                }
-              }
-              .width('100%')
-              .alignItems(HorizontalAlign.Start)
-              .animation({ duration: 220, curve: Curve.EaseOut })
-            }
-            .width('100%')
-            .constraintSize({ maxHeight: 420 })
-            .scrollBar(BarState.Auto)
-            .edgeEffect(EdgeEffect.Spring)
-
-            this.buildTrackingSettingsDialogFooter()
+            .width(32)
+            .height(32)
+            .backgroundColor(Color.Transparent)
+            .enabled(!this.isTrackingBusy)
+            .onClick(() => {
+              this.closeTrackingSettingsDialog();
+            })
           }
           .width('100%')
-          .padding(20)
-          .scale({ x: this.trackingDialogScale, y: this.trackingDialogScale })
-          .translate({ y: this.trackingDialogTranslateY })
-          .opacity(this.trackingDialogOpacity)
-          .borderRadius(26)
-          .clip(true)
-          .onClick(() => {
-          })
+
+          this.buildTrackingSettingsOverviewCard()
+
+          Row({ space: 8 }) {
+            this.buildTrackingSettingsTabButton('基础', $r('sys.symbol.bell'), 0)
+            this.buildTrackingSettingsTabButton('筛选', $r('sys.symbol.funnel'), 1)
+            this.buildTrackingSettingsTabButton('操作', $r('sys.symbol.gearshape'), 2)
+          }
+          .width('100%')
+          .padding(4)
+          .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('comp_background_tertiary', this.themeState.currentTheme))
+          .borderRadius(18)
+
+          Scroll() {
+            Column({ space: 12 }) {
+              if (this.trackingSettingsActiveTab === 0) {
+                this.buildTrackingBasicSettingsTab()
+              } else if (this.trackingSettingsActiveTab === 1) {
+                this.buildTrackingFilterSettingsTab()
+              } else {
+                this.buildTrackingActionSettingsTab()
+              }
+            }
+            .width('100%')
+            .alignItems(HorizontalAlign.Start)
+            .animation({ duration: 220, curve: Curve.EaseOut })
+          }
+          .width('100%')
+          .constraintSize({ maxHeight: 420 })
+          .scrollBar(BarState.Auto)
+          .edgeEffect(EdgeEffect.Spring)
+
+          this.buildTrackingSettingsDialogFooter()
         }
+        .width('100%')
       }
     }
   }

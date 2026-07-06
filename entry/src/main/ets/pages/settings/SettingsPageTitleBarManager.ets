@@ -13,6 +13,7 @@ export class SettingsPageTitleBarManager {
   static readonly TITLE_BAR_ROW_HEIGHT: number = 56;
   static readonly TITLE_BAR_EXTRA_HEIGHT: number = 10;
   static readonly TITLE_BAR_TOP_OFFSET: number = 4;
+  static readonly TITLE_BAR_EDGE_FADE_HEIGHT: number = 48;
   static readonly DEFAULT_STATUS_BAR_INSET: number = 24;
   static readonly TITLE_FONT_SIZE: number = 26;
   static readonly BUTTON_SIZE: number = 40;
@@ -36,6 +37,15 @@ export class SettingsPageTitleBarManager {
 
   static getContentTopPadding(statusBarHeight: number): number {
     return SettingsPageTitleBarManager.getTitleBarHeight(statusBarHeight) - 8;
+  }
+
+  static getEdgeFadeStartOffset(statusBarHeight: number): number {
+    return SettingsPageTitleBarManager.getTitleBarHeight(statusBarHeight) -
+      SettingsPageTitleBarManager.TITLE_BAR_EDGE_FADE_HEIGHT;
+  }
+
+  static getEdgeFadeLayerHeight(): number {
+    return SettingsPageTitleBarManager.TITLE_BAR_EDGE_FADE_HEIGHT;
   }
 
   static getBackdropColor(theme: ThemeType): ResourceColor {
@@ -66,6 +76,29 @@ export class SettingsPageTitleBarManager {
         ['rgba(255, 255, 255, 0.040)', 0],
         ['rgba(240, 246, 255, 0.016)', 0.26],
         ['rgba(255, 255, 255, 0.005)', 0.62],
+        ['rgba(255, 255, 255, 0)', 1]
+      ]
+    };
+  }
+
+  static getEdgeFadeGradient(theme: ThemeType): LinearGradient {
+    if (theme === ThemeType.DARK) {
+      return {
+        angle: 180,
+        colors: [
+          ['rgba(8, 14, 24, 0)', 0],
+          ['rgba(8, 14, 24, 0.055)', 0.36],
+          ['rgba(8, 14, 24, 0.030)', 0.68],
+          ['rgba(8, 14, 24, 0)', 1]
+        ]
+      };
+    }
+    return {
+      angle: 180,
+      colors: [
+        ['rgba(255, 255, 255, 0)', 0],
+        ['rgba(255, 255, 255, 0.070)', 0.36],
+        ['rgba(255, 255, 255, 0.035)', 0.68],
         ['rgba(255, 255, 255, 0)', 1]
       ]
     };

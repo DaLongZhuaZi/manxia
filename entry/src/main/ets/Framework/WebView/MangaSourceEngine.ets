@@ -3715,15 +3715,36 @@ export class MangaSourceEngine {
       pageInfo.height = heightValue;
     }
 
+    const requestHeaders: PageRequestHeader[] = [];
+    const rawRequestHeaders: Object | undefined = item.requestHeaders;
+    if (rawRequestHeaders && Array.isArray(rawRequestHeaders)) {
+      const headerItems: Object[] = rawRequestHeaders as Object[];
+      let headerIndex: number = 0;
+      while (headerIndex < headerItems.length) {
+        const headerRecord: Record<string, Object> = headerItems[headerIndex] as Record<string, Object>;
+        const headerName: string = headerRecord.name ? String(headerRecord.name) : '';
+        const headerValue: string = headerRecord.value ? String(headerRecord.value) : '';
+        if (headerName.length > 0 && headerValue.length > 0) {
+          requestHeaders.push({
+            name: headerName,
+            value: headerValue
+          } as PageRequestHeader);
+        }
+        headerIndex = headerIndex + 1;
+      }
+    }
+
     const imageTicket: string = item.ticket ? String(item.ticket) : '';
     if (imageTicket.length > 0) {
-      const headers: PageRequestHeader[] = [];
-      headers.push({
+      requestHeaders.push({
         name: 'X-Image-Ticket',
         value: imageTicket
       } as PageRequestHeader);
-      pageInfo.requestHeaders = headers;
       logger.debug(TAG, `页面 ${index} 添加 X-Image-Ticket 请求头`);
+    }
+
+    if (requestHeaders.length > 0) {
+      pageInfo.requestHeaders = requestHeaders;
     }
 
     return pageInfo;

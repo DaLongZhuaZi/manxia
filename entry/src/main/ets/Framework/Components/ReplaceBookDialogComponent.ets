@@ -5,9 +5,6 @@
 
 import { ThemeAwareState, ThemeAwareHelper } from './ThemeAware';
 import { SourceDialogScaffold } from './SourceDialogScaffold';
-import { DialogSurfaceStyleHelper } from './DialogSurfaceStyleHelper';
-import { DialogAnimationState } from '../../Utils/DialogAnimationState';
-import { ThemeType } from '../Managers/ThemeManager';
 import { OriginalBookInfo } from '../../Models/UnifiedContentModels';
 
 @Component
@@ -23,20 +20,20 @@ export struct ReplaceBookDialogComponent {
 
   @StorageLink('appFontFamily') appFontFamily: string = 'HarmonyOS Sans';
   @State isVisible: boolean = false;
-  @State anim: DialogAnimationState = new DialogAnimationState({ initialScale: 0.8, initialTranslateY: 30 });
 
   private lastSignal: number = 0;
 
   onLoadSignalChanged(): void {
     if (this.loadSignal > this.lastSignal) {
       this.lastSignal = this.loadSignal;
-      this.isVisible = true;
-      this.anim.animateIn(this.getUIContext());
+      this.getUIContext().animateTo({ duration: 220, curve: Curve.EaseOut }, () => {
+        this.isVisible = true;
+      });
     }
   }
 
   private hideDialog(): void {
-    this.anim.animateOut(this.getUIContext(), () => {
+    this.getUIContext().animateTo({ duration: 180, curve: Curve.EaseIn }, () => {
       this.isVisible = false;
     });
   }
@@ -51,30 +48,10 @@ export struct ReplaceBookDialogComponent {
         },
         dialogWidth: '90%',
         maxWidth: 380,
-        contentPadding: 0,
-        dialogRadius: 26,
-        zIndexValue: 120,
-        useMaskBlur: true,
-        maskBlurStyle: DialogSurfaceStyleHelper.getPopupMaskBlurStyle(),
-        maskColor: DialogSurfaceStyleHelper.getPopupMaskColor()
+        contentPadding: 24,
+        useMaskBlur: true
       }) {
-        Stack({ alignContent: Alignment.TopStart }) {
-          // dialog chrome
-          Column()
-            .width('100%')
-            .height(1)
-            .backgroundColor(this.themeState.currentTheme === ThemeType.DARK
-              ? 'rgba(255, 255, 255, 0.18)'
-              : 'rgba(255, 255, 255, 0.58)')
-          Column()
-            .width('100%')
-            .height(1)
-            .align(Alignment.Bottom)
-            .backgroundColor(this.themeState.currentTheme === ThemeType.DARK
-              ? 'rgba(154, 196, 255, 0.08)'
-              : 'rgba(126, 166, 220, 0.10)')
-
-          Column({ space: 16 }) {
+        Column({ space: 20 }) {
             // 标题栏
             Row() {
               Row({ space: 8 }) {
@@ -83,8 +60,8 @@ export struct ReplaceBookDialogComponent {
                   .fontColor([ThemeAwareHelper.getTestManagementThemedColor('accent_orange', this.themeState.currentTheme)])
 
                 Text('替换小说')
-                  .fontSize(18)
-                  .fontWeight(FontWeight.Bold)
+                  .fontSize(20)
+                  .fontWeight(FontWeight.Medium)
                   .fontFamily(this.appFontFamily)
                   .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
               }
@@ -316,14 +293,6 @@ export struct ReplaceBookDialogComponent {
             .width('100%')
           }
           .width('100%')
-          .padding(20)
-          .scale({ x: this.anim.scale, y: this.anim.scale })
-          .translate({ y: this.anim.translateY })
-          .opacity(this.anim.opacity)
-          .borderRadius(26)
-          .clip(true)
-          .onClick(() => {})
-        }
       }
     }
   }

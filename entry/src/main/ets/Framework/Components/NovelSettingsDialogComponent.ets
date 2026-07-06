@@ -8,9 +8,7 @@ import { logger } from '../../Utils/Logger';
 import { common } from '@kit.AbilityKit';
 import preferences from '@ohos.data.preferences';
 import { ThemeAwareState, ThemeAwareHelper } from './ThemeAware';
-import { ThemeType } from '../Managers/ThemeManager';
 import { SourceDialogScaffold } from './SourceDialogScaffold';
-import { DialogSurfaceStyleHelper } from './DialogSurfaceStyleHelper';
 import { SettingsPageSurfaceManager, SettingsPageSurfaceStyle } from '../../pages/settings/SettingsPageSurfaceManager';
 import { eventBus, GameEvent, CoverChangedPayload, BasePayload } from '../EventBus';
 import {
@@ -70,9 +68,6 @@ export struct NovelSettingsDialogComponent {
 
   // 小说设置状态
   @State showNovelSettingsDialog: boolean = false;
-  @State novelSettingsDialogOpacity: number = 0;
-  @State novelSettingsDialogScale: number = 0.8;
-  @State novelSettingsDialogTranslateY: number = 50;
   @State novelEnableReadWhileDownload: boolean = true;
   @State novelDefaultLoadChapters: number = 50;
   @State novelEnableDirectoryParsing: boolean = true;
@@ -107,9 +102,6 @@ export struct NovelSettingsDialogComponent {
 
   // 关闭确认对话框状态
   @State isNovelSettingsCloseConfirmDialogVisible: boolean = false;
-  @State novelSettingsCloseConfirmOpacity: number = 0;
-  @State novelSettingsCloseConfirmScale: number = 0.8;
-  @State novelSettingsCloseConfirmTranslateY: number = 28;
   private novelSettingsCloseAfterClose: (() => void) | undefined = undefined;
 
   // 内容跟踪状态
@@ -144,39 +136,6 @@ export struct NovelSettingsDialogComponent {
     return this.getSectionSurfaceStyle().blurOptions;
   }
 
-  private getDialogMaskColor(): ResourceColor {
-    return DialogSurfaceStyleHelper.getPopupMaskColor();
-  }
-
-  private getDialogMaskBlurStyle(): BlurStyle {
-    return DialogSurfaceStyleHelper.getPopupMaskBlurStyle();
-  }
-
-  private getDialogChromeTopEdgeColor(): ResourceColor {
-    return this.themeState.currentTheme === ThemeType.DARK
-      ? 'rgba(255, 255, 255, 0.18)'
-      : 'rgba(255, 255, 255, 0.58)';
-  }
-
-  private getDialogChromeBottomEdgeColor(): ResourceColor {
-    return this.themeState.currentTheme === ThemeType.DARK
-      ? 'rgba(154, 196, 255, 0.08)'
-      : 'rgba(126, 166, 220, 0.10)';
-  }
-
-  @Builder
-  private buildDialogChrome(radius?: number) {
-    Column()
-      .width('100%')
-      .height(1)
-      .backgroundColor(this.getDialogChromeTopEdgeColor())
-    Column()
-      .width('100%')
-      .height(1)
-      .align(Alignment.Bottom)
-      .backgroundColor(this.getDialogChromeBottomEdgeColor())
-  }
-
   // ==================== Handler 方法 ====================
 
   private isNovelSettingsDialogForLocalEBook(): boolean {
@@ -209,14 +168,11 @@ export struct NovelSettingsDialogComponent {
       `打开小说设置: contentType=${this.content.contentType}, online=${this.isOnlineNovelContent()}, prefetchEnabled=${this.novelEnableReadWhileDownload}, prefetchCount=${this.novelDefaultLoadChapters}`
     );
     this.novelSettingsActiveTab = 0;
-    this.showNovelSettingsDialog = true;
     this.getUIContext().animateTo({
-      duration: 260,
+      duration: 220,
       curve: Curve.EaseOut
     }, () => {
-      this.novelSettingsDialogOpacity = 1;
-      this.novelSettingsDialogScale = 1;
-      this.novelSettingsDialogTranslateY = 0;
+      this.showNovelSettingsDialog = true;
     });
   }
 
@@ -226,13 +182,8 @@ export struct NovelSettingsDialogComponent {
       duration: 180,
       curve: Curve.EaseIn
     }, () => {
-      this.novelSettingsDialogOpacity = 0;
-      this.novelSettingsDialogScale = 0.96;
-      this.novelSettingsDialogTranslateY = 12;
-    });
-    setTimeout(() => {
       this.showNovelSettingsDialog = false;
-    }, 200);
+    });
   }
 
 
@@ -302,11 +253,8 @@ export struct NovelSettingsDialogComponent {
       return;
     }
     this.novelSettingsCloseAfterClose = afterClose;
-    this.isNovelSettingsCloseConfirmDialogVisible = true;
-    this.getUIContext().animateTo({ duration: 240, curve: curves.springMotion(0.65, 0.92) }, () => {
-      this.novelSettingsCloseConfirmOpacity = 1;
-      this.novelSettingsCloseConfirmScale = 1;
-      this.novelSettingsCloseConfirmTranslateY = 0;
+    this.getUIContext().animateTo({ duration: 220, curve: curves.springMotion(0.65, 0.92) }, () => {
+      this.isNovelSettingsCloseConfirmDialogVisible = true;
     });
   }
 
@@ -1236,16 +1184,13 @@ export struct NovelSettingsDialogComponent {
   }
 
 
-  private hideNovelSettingsCloseConfirmDialog(): void {
+  private hideNovelSettingsCloseConfirmDialog(shouldClearAfterClose: boolean = true): void {
     this.getUIContext().animateTo({ duration: 180, curve: Curve.EaseIn }, () => {
-      this.novelSettingsCloseConfirmOpacity = 0;
-      this.novelSettingsCloseConfirmScale = 0.96;
-      this.novelSettingsCloseConfirmTranslateY = 12;
-    });
-    setTimeout(() => {
       this.isNovelSettingsCloseConfirmDialogVisible = false;
+    });
+    if (shouldClearAfterClose) {
       this.novelSettingsCloseAfterClose = undefined;
-    }, 200);
+    }
   }
 
 
@@ -1738,93 +1683,79 @@ export struct NovelSettingsDialogComponent {
       SourceDialogScaffold({
         themeState: this.themeState,
         onMaskTap: () => this.hideNovelSettingsCloseConfirmDialog(),
-        dialogWidth: '92%',
+        dialogWidth: '90%',
         maxWidth: 520,
-        contentPadding: 0,
-        dialogRadius: 26,
+        contentPadding: 24,
         zIndexValue: 120,
-        useMaskBlur: true,
-        maskBlurStyle: this.getDialogMaskBlurStyle(),
-        maskColor: this.getDialogMaskColor()
+        useMaskBlur: true
       }) {
-        Stack({ alignContent: Alignment.TopStart }) {
-          this.buildDialogChrome(26)
-          Column({ space: 14 }) {
-            Text('存在未应用修改')
-              .fontSize(18)
-              .fontWeight(FontWeight.Bold)
-              .fontFamily(this.appFontFamily)
-              .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
+        Column({ space: 20 }) {
+          Text('存在未应用修改')
+            .fontSize(20)
+            .fontWeight(FontWeight.Medium)
+            .fontFamily(this.appFontFamily)
+            .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
 
-            Text(this.isLocalImportedEBookContent?.()
-              ? '净化规则或信息修改还有未保存内容。你可以先应用再退出，也可以直接退出。'
-              : '目录规则或净化规则还有未应用的修改。你可以先应用再退出，也可以直接退出。')
-              .fontSize(13)
-              .lineHeight(22)
-              .fontFamily(this.appFontFamily)
-              .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
-              .width('100%')
-
-            Row({ space: 10 }) {
-              Button('继续编辑')
-                .layoutWeight(1)
-                .height(40)
-                .fontSize(14)
-                .fontFamily(this.appFontFamily)
-                .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('comp_background_secondary', this.themeState.currentTheme))
-                .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
-                .borderRadius(20)
-                .onClick(() => this.hideNovelSettingsCloseConfirmDialog())
-
-              Button('直接退出')
-                .layoutWeight(1)
-                .height(40)
-                .fontSize(14)
-                .fontFamily(this.appFontFamily)
-                .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('comp_background_secondary', this.themeState.currentTheme))
-                .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
-                .borderRadius(20)
-                .onClick(() => {
-                  this.hideNovelSettingsCloseConfirmDialog();
-                  this.closeNovelSettingsDialogImmediately();
-                })
-
-              Button('应用后退出')
-                .layoutWeight(1)
-                .height(40)
-                .fontSize(14)
-                .fontFamily(this.appFontFamily)
-                .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme))
-                .fontColor(Color.White)
-                .borderRadius(20)
-                .enabled(!this.isApplyingNovelDirectoryParsing && !this.isApplyingNovelReplaceRules && !this.isSavingEBookInfo)
-                .onClick(() => {
-                  void (async () => {
-                    await this.applyPendingNovelSettingsChanges();
-                    if (!this.hasPendingNovelSettingChanges()) {
-                      this.hideNovelSettingsCloseConfirmDialog();
-                      this.closeNovelSettingsDialog();
-                      const afterClose = this.novelSettingsCloseAfterClose;
-                      this.novelSettingsCloseAfterClose = undefined;
-                      if (afterClose) {
-                        afterClose();
-                      }
-                    }
-                  })();
-                })
-            }
+          Text(this.isLocalImportedEBookContent?.()
+            ? '净化规则或信息修改还有未保存内容。你可以先应用再退出，也可以直接退出。'
+            : '目录规则或净化规则还有未应用的修改。你可以先应用再退出，也可以直接退出。')
+            .fontSize(13)
+            .lineHeight(22)
+            .fontFamily(this.appFontFamily)
+            .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
             .width('100%')
+
+          Row({ space: 10 }) {
+            Button('继续编辑')
+              .layoutWeight(1)
+              .height(40)
+              .fontSize(14)
+              .fontFamily(this.appFontFamily)
+              .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('comp_background_secondary', this.themeState.currentTheme))
+              .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
+              .borderRadius(20)
+              .onClick(() => this.hideNovelSettingsCloseConfirmDialog())
+
+            Button('直接退出')
+              .layoutWeight(1)
+              .height(40)
+              .fontSize(14)
+              .fontFamily(this.appFontFamily)
+              .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('comp_background_secondary', this.themeState.currentTheme))
+              .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
+              .borderRadius(20)
+              .onClick(() => {
+                this.hideNovelSettingsCloseConfirmDialog(false);
+                this.closeNovelSettingsDialogImmediately();
+              })
+
+            Button('应用后退出')
+              .layoutWeight(1)
+              .height(40)
+              .fontSize(14)
+              .fontFamily(this.appFontFamily)
+              .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme))
+              .fontColor(Color.White)
+              .borderRadius(20)
+              .enabled(!this.isApplyingNovelDirectoryParsing && !this.isApplyingNovelReplaceRules && !this.isSavingEBookInfo)
+              .onClick(() => {
+                void (async () => {
+                  await this.applyPendingNovelSettingsChanges();
+                  if (!this.hasPendingNovelSettingChanges()) {
+                    this.hideNovelSettingsCloseConfirmDialog(false);
+                    this.closeNovelSettingsDialog();
+                    const afterClose = this.novelSettingsCloseAfterClose;
+                    this.novelSettingsCloseAfterClose = undefined;
+                    if (afterClose) {
+                      afterClose();
+                    }
+                  }
+                })();
+              })
           }
           .width('100%')
-          .padding(20)
         }
         .width('100%')
-        .scale({ x: this.novelSettingsCloseConfirmScale, y: this.novelSettingsCloseConfirmScale })
-        .translate({ y: this.novelSettingsCloseConfirmTranslateY })
-        .opacity(this.novelSettingsCloseConfirmOpacity)
-        .borderRadius(26)
-        .clip(true)
-        .onClick(() => {})
       }
     }
   }
@@ -1839,102 +1770,88 @@ export struct NovelSettingsDialogComponent {
         },
         dialogWidth: '90%',
         maxWidth: 400,
-        contentPadding: 0,
-        dialogRadius: 26,
+        contentPadding: 24,
         zIndexValue: 120,
-        useMaskBlur: true,
-        maskBlurStyle: this.getDialogMaskBlurStyle(),
-        maskColor: this.getDialogMaskColor()
+        useMaskBlur: true
       }) {
-        Stack({ alignContent: Alignment.TopStart }) {
-          this.buildDialogChrome(26)
-          Column({ space: 16 }) {
+        Column({ space: 20 }) {
 
-            Row() {
-              Text(this.isNovelSettingsDialogForLocalEBook() ? '电子书设置' : '小说设置')
+          Row() {
+            Text(this.isNovelSettingsDialogForLocalEBook() ? '电子书设置' : '小说设置')
+              .fontSize(20)
+              .fontWeight(FontWeight.Medium)
+              .fontFamily(this.appFontFamily)
+              .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
+
+            Blank()
+
+            Button() {
+              SymbolGlyph($r('sys.symbol.xmark'))
                 .fontSize(18)
-                .fontWeight(FontWeight.Bold)
-                .fontFamily(this.appFontFamily)
-                .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
-
-              Blank()
-
-              Button() {
-                SymbolGlyph($r('sys.symbol.xmark'))
-                  .fontSize(18)
-                  .fontColor([ThemeAwareHelper.getTestManagementThemedColor('text_secondary',
-                    this.themeState.currentTheme)])
-              }
-              .width(32)
-              .height(32)
-              .backgroundColor(Color.Transparent)
-              .onClick(() => {
-                void this.requestCloseNovelSettingsDialog();
-              })
+                .fontColor([ThemeAwareHelper.getTestManagementThemedColor('text_secondary',
+                  this.themeState.currentTheme)])
             }
-            .width('100%')
-
-            Row({ space: 8 }) {
-              if (this.isNovelSettingsDialogForLocalEBook()) {
-                this.buildNovelSettingsTabButton('净化规则', 0)
-                this.buildNovelSettingsTabButton('信息修改', 1)
-              } else {
-                this.buildNovelSettingsTabButton('预下载', 0)
-                this.buildNovelSettingsTabButton('目录解析', 1)
-                this.buildNovelSettingsTabButton('净化规则', 2)
-              }
-            }
-            .width('100%')
-            .padding(4)
-            .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('comp_background_tertiary',
-              this.themeState.currentTheme))
-            .borderRadius(18)
-
-            Scroll() {
-              Column({ space: 12 }) {
-                if (this.isNovelSettingsDialogForLocalEBook()) {
-                  if (this.novelSettingsActiveTab === 0) {
-                    this.buildNovelReplaceRuleSettingsTab()
-                  } else {
-                    this.buildEBookInfoEditTab()
-                  }
-                } else {
-                  if (this.novelSettingsActiveTab === 0) {
-                    this.buildNovelPrefetchSettingsTab()
-                  } else if (this.novelSettingsActiveTab === 1) {
-                    this.buildNovelDirectorySettingsTab()
-                  } else {
-                    this.buildNovelReplaceRuleSettingsTab()
-                  }
-                }
-              }
-              .width('100%')
-              .alignItems(HorizontalAlign.Start)
-            }
-            .width('100%')
-            .constraintSize({ maxHeight: 420 })
-            .scrollBar(BarState.Auto)
+            .width(32)
+            .height(32)
+            .backgroundColor(Color.Transparent)
+            .onClick(() => {
+              void this.requestCloseNovelSettingsDialog();
+            })
           }
           .width('100%')
-          .padding(20)
-          .scale({ x: this.novelSettingsDialogScale, y: this.novelSettingsDialogScale })
-          .translate({ y: this.novelSettingsDialogTranslateY })
-          .opacity(this.novelSettingsDialogOpacity)
-          .borderRadius(26)
-          .clip(true)
-          .onClick(() => {
-          })
+
+          Row({ space: 8 }) {
+            if (this.isNovelSettingsDialogForLocalEBook()) {
+              this.buildNovelSettingsTabButton('净化规则', 0)
+              this.buildNovelSettingsTabButton('信息修改', 1)
+            } else {
+              this.buildNovelSettingsTabButton('预下载', 0)
+              this.buildNovelSettingsTabButton('目录解析', 1)
+              this.buildNovelSettingsTabButton('净化规则', 2)
+            }
+          }
+          .width('100%')
+          .padding(4)
+          .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('comp_background_tertiary',
+            this.themeState.currentTheme))
+          .borderRadius(18)
+
+          Scroll() {
+            Column({ space: 12 }) {
+              if (this.isNovelSettingsDialogForLocalEBook()) {
+                if (this.novelSettingsActiveTab === 0) {
+                  this.buildNovelReplaceRuleSettingsTab()
+                } else {
+                  this.buildEBookInfoEditTab()
+                }
+              } else {
+                if (this.novelSettingsActiveTab === 0) {
+                  this.buildNovelPrefetchSettingsTab()
+                } else if (this.novelSettingsActiveTab === 1) {
+                  this.buildNovelDirectorySettingsTab()
+                } else {
+                  this.buildNovelReplaceRuleSettingsTab()
+                }
+              }
+            }
+            .width('100%')
+            .alignItems(HorizontalAlign.Start)
+          }
+          .width('100%')
+          .constraintSize({ maxHeight: 420 })
+          .scrollBar(BarState.Auto)
         }
+        .width('100%')
       }
     }
   }
 
 
   build() {
-    if (this.showNovelSettingsDialog && this.content && this.canUseNovelStyleSettingsDialog()) {
-      this.buildNovelSettingsDialog()
-    } else if (this.isNovelSettingsCloseConfirmDialogVisible) {
+    if (this.isNovelSettingsCloseConfirmDialogVisible) {
       this.buildNovelSettingsCloseConfirmDialog()
+    } else if (this.showNovelSettingsDialog && this.content && this.canUseNovelStyleSettingsDialog()) {
+      this.buildNovelSettingsDialog()
     } else if (this.trackingLoadSignal > 0) {
       TrackingSettingsDialogComponent({
         content: this.content,

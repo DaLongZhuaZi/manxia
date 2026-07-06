@@ -234,7 +234,7 @@ import { isOnlineManga, isLocalManga, MangaSourceType } from '../Framework/Types
 // 导入图源相关
 import { SourceManager, SourceInfo } from '../Framework/Source/SourceManager';
 import { SearchTypeOption, SearchConfig } from '../Framework/WebView/MangaSourceTypes';
-import { SourceRepositoryManager, SavedRepository, SourceRepositoryEntry, SyncResult, SyncProgressCallback } from '../Framework/Source/SourceRepositoryManager';
+import { SourceRepositoryManager, SavedRepository, SourceRepositoryEntry, SyncResult, SyncProgressCallback, SyncSourceChangeDetail } from '../Framework/Source/SourceRepositoryManager';
 
 // 导入数据管理器
 import { DataManager, ComicInfo, ReadHistory, ChapterInfo, DeleteComicsResult,
@@ -825,6 +825,7 @@ struct MainMenuPage {
   @State typeShelves: TypeShelf[] = []; // 所有书架列表
   @State selectedShelf: TypeShelf | null = null; // 当前选中的书架
   @State showAddShelfDialog: boolean = false; // 是否显示新增书架对话框
+  private addShelfDialogController: CustomDialogController | undefined = undefined;
   @State showDeleteShelfDialog: boolean = false; // 是否显示删除书架对话框
   @State shelfToDelete: TypeShelf | null = null; // 待删除的书架
   @State newShelfName: string = ''; // 新书架名称
@@ -931,6 +932,12 @@ struct MainMenuPage {
   @State syncLogMessages: string[] = []; // 同步日志消息
   @State syncProgress: number = 0; // 同步进度 (0-100)
   @State syncProgressMessage: string = ''; // 同步进度消息
+  @State syncUpdatedSources: SyncSourceChangeDetail[] = [];
+  @State syncAddedSources: SyncSourceChangeDetail[] = [];
+  @State syncDeprecatedSources: SyncSourceChangeDetail[] = [];
+  @State syncCompleted: boolean = false;
+  @State syncSummaryExpanded: boolean = false;
+  @State syncLogExpanded: boolean = false;
   @State pendingLocalSourceImports: PendingLocalSourceImport[] = [];
   @State isParsingLocalSourceImports: boolean = false;
   @State isInstallingLocalSourceImports: boolean = false;
@@ -939,7 +946,6 @@ struct MainMenuPage {
   @State localSourceImportActiveIndex: number = -1;
   @State localSourceImportCompleted: boolean = false;
   @State localSourceImportCompletedSuccessfully: boolean = false;
-  private readonly SOURCE_REPO_SELECTOR_EXPANDED_HEIGHT: number = 200;
   private readonly SOURCE_REPO_SELECTOR_ANIMATION_DURATION: number = 220;
   private sourceRepoDialogController: CustomDialogController | undefined = undefined;
   private localSourceImportAutoCloseTimerId: number = -1;
@@ -5586,16 +5592,26 @@ struct MainMenuPage {
       });
       const result = await this.sourceManager.importFromJSON(item.jsonContent);
       if (result.success) {
-        if (item.isUpdate) {
-          updatedCount += 1;
+        const fileSaved: boolean = await this.repositoryManager.saveImportedSourceFile(item.pkg, item.jsonContent);
+        if (fileSaved) {
+          if (item.isUpdate) {
+            updatedCount += 1;
+          } else {
+            importedCount += 1;
+          }
+          this.getUIContext().animateTo({ duration: 240, curve: Curve.EaseOut }, () => {
+            this.localSourceImportProgress = Math.round(((index + 1) / validItems.length) * 100);
+            this.updatePendingLocalSourceInstallState(originalIndex, 'success', '');
+          });
+          logger.info(TAG, `本地图源${item.isUpdate ? '更新' : '导入'}成功并已覆盖本地文件: ${item.name}`);
         } else {
-          importedCount += 1;
+          failedCount += 1;
+          this.getUIContext().animateTo({ duration: 240, curve: Curve.EaseOut }, () => {
+            this.localSourceImportProgress = Math.round(((index + 1) / validItems.length) * 100);
+            this.updatePendingLocalSourceInstallState(originalIndex, 'failed', '图源已导入，但本地文件覆盖保存失败');
+          });
+          logger.warn(TAG, `本地图源${item.isUpdate ? '更新' : '导入'}后覆盖本地文件失败: ${item.name}`);
         }
-        this.getUIContext().animateTo({ duration: 240, curve: Curve.EaseOut }, () => {
-          this.localSourceImportProgress = Math.round(((index + 1) / validItems.length) * 100);
-          this.updatePendingLocalSourceInstallState(originalIndex, 'success', '');
-        });
-        logger.info(TAG, `本地图源${item.isUpdate ? '更新' : '导入'}成功: ${item.name}`);
       } else {
         failedCount += 1;
         this.getUIContext().animateTo({ duration: 240, curve: Curve.EaseOut }, () => {
@@ -5830,6 +5846,71 @@ struct MainMenuPage {
     }
   }
 
+  private clearSyncSummary(): void {
+    this.syncUpdatedSources = [];
+    this.syncAddedSources = [];
+    this.syncDeprecatedSources = [];
+  }
+
+  private applySyncSummary(result: SyncResult): void {
+    this.syncUpdatedSources = result.updatedSources ? result.updatedSources : [];
+    this.syncAddedSources = result.addedSources ? result.addedSources : [];
+    this.syncDeprecatedSources = result.deprecatedSources ? result.deprecatedSources : [];
+  }
+
+  private hasSyncSummary(): boolean {
+    return this.syncUpdatedSources.length > 0 ||
+      this.syncAddedSources.length > 0 ||
+      this.syncDeprecatedSources.length > 0;
+  }
+
+  private shouldShowSyncSummary(): boolean {
+    return this.syncCompleted || this.hasSyncSummary();
+  }
+
+  private getSourceRepoSelectorMaxHeight(): number {
+    const viewportHeight: number = this.getMainMenuViewportHeight();
+    const availableHeight: number = viewportHeight - this.statusBarHeight - this.navigationBarHeight - 360;
+    return Math.max(96, Math.min(260, availableHeight));
+  }
+
+  private getSourceRepoSyncSummaryMaxHeight(): number {
+    const viewportHeight: number = this.getMainMenuViewportHeight();
+    const availableHeight: number = viewportHeight - this.statusBarHeight - this.navigationBarHeight - 380;
+    return Math.max(140, Math.min(420, availableHeight));
+  }
+
+  private getSourceRepoSyncLogMaxHeight(): number {
+    const viewportHeight: number = this.getMainMenuViewportHeight();
+    const availableHeight: number = viewportHeight - this.statusBarHeight - this.navigationBarHeight - 460;
+    return Math.max(96, Math.min(280, availableHeight));
+  }
+
+  private toggleSyncSummaryExpanded(): void {
+    if (!this.shouldShowSyncSummary()) {
+      return;
+    }
+    const nextExpanded: boolean = !this.syncSummaryExpanded;
+    this.getUIContext().animateTo({ duration: 220, curve: Curve.EaseInOut }, () => {
+      this.syncSummaryExpanded = nextExpanded;
+      if (nextExpanded && this.syncCompleted) {
+        this.syncLogExpanded = false;
+      }
+    });
+  }
+
+  private toggleSyncLogExpanded(): void {
+    const nextExpanded: boolean = !this.syncLogExpanded;
+    this.getUIContext().animateTo({ duration: 220, curve: Curve.EaseInOut }, () => {
+      this.syncLogExpanded = nextExpanded;
+      if (nextExpanded && this.syncCompleted) {
+        this.syncSummaryExpanded = false;
+      } else if (!nextExpanded && this.syncCompleted) {
+        this.syncSummaryExpanded = true;
+      }
+    });
+  }
+
   /**
    * 同步图源仓库
    */
@@ -5852,6 +5933,10 @@ struct MainMenuPage {
     try {
       this.isSyncingRepo = true;
       this.syncLogMessages = []; // 清空日志
+      this.clearSyncSummary();
+      this.syncCompleted = false;
+      this.syncSummaryExpanded = false;
+      this.syncLogExpanded = true;
       this.syncProgress = 0;
       this.syncProgressMessage = '正在连接仓库...';
       
@@ -5877,17 +5962,16 @@ struct MainMenuPage {
       );
       
       if (result.success) {
-        this.addSyncLog('info', result.message);
-        this.syncProgress = 100;
-        this.syncProgressMessage = '同步完成！';
+        this.getUIContext().animateTo({ duration: 260, curve: Curve.EaseInOut }, () => {
+          this.applySyncSummary(result);
+          this.addSyncLog('info', result.message);
+          this.syncProgress = 100;
+          this.syncProgressMessage = '同步完成！';
+          this.syncCompleted = true;
+          this.syncSummaryExpanded = true;
+          this.syncLogExpanded = false;
+        });
         logger.info(TAG, `图源仓库同步成功: ${result.message}`);
-        
-        // 延迟2秒后关闭弹窗，让用户看到完成状态
-        setTimeout(() => {
-          this.sourceRepoDialogController?.close();
-          this.showSourceRepoDialog = false;
-          this.isSyncingRepo = false;
-        }, 2000);
         
         // 刷新图源列表和已保存仓库
         await this.loadSources();
@@ -5895,8 +5979,13 @@ struct MainMenuPage {
         await this.markRepositoryCommitVersion(urlToSync);
       } else {
         this.addSyncLog('error', result.message);
-        this.syncProgress = 0;
-        this.syncProgressMessage = '同步失败 - 请查看上方日志了解详情';
+        this.getUIContext().animateTo({ duration: 220, curve: Curve.EaseInOut }, () => {
+          this.syncProgress = 0;
+          this.syncProgressMessage = '同步失败 - 请查看上方日志了解详情';
+          this.syncCompleted = false;
+          this.syncSummaryExpanded = false;
+          this.syncLogExpanded = true;
+        });
         logger.error(TAG, `图源仓库同步失败: ${result.message}`);
         // 不关闭窗口，让用户能看到错误信息
         // isSyncingRepo 保持 true 以显示日志窗口
@@ -5925,8 +6014,13 @@ struct MainMenuPage {
       }
       
       this.addSyncLog('error', `同步异常: ${errMsg}`);
-      this.syncProgress = 0;
-      this.syncProgressMessage = '同步失败 - 请查看上方日志了解详情';
+      this.getUIContext().animateTo({ duration: 220, curve: Curve.EaseInOut }, () => {
+        this.syncProgress = 0;
+        this.syncProgressMessage = '同步失败 - 请查看上方日志了解详情';
+        this.syncCompleted = false;
+        this.syncSummaryExpanded = false;
+        this.syncLogExpanded = true;
+      });
       logger.error(TAG, '同步图源仓库失败', errMsg);
       // 不关闭窗口，让用户能看到错误信息
       // isSyncingRepo 保持 true 以显示日志窗口
@@ -15352,9 +15446,7 @@ struct MainMenuPage {
     .accessibilityText('新建书架')
     .accessibilityDescription('打开新建书架对话框')
     .onClick(() => {
-      this.getUIContext().animateTo({ duration: 300, curve: Curve.EaseOut }, () => {
-        this.showAddShelfDialog = true;
-      });
+      this.openAddShelfDialog();
     })
   }
 
@@ -20260,74 +20352,61 @@ struct MainMenuPage {
   }
 
   /**
-   * 构建新增书架对话框（带动画效果）
+   * 构建新增书架对话框（样式与图源导入对话框保持一致）
    */
   @Builder
   buildAddShelfDialog() {
-    Column() {
-      Column({ space: 16 }) {
-        // 标题
-        Row() {
-          Text(this.addShelfDialogStep === 1 ? '新建书架' : this.addShelfDialogStep === 2 ? '选择内容类型' : '设置筛选条件')
+    Column({ space: 20 }) {
+      // 标题
+      Row() {
+        Text(this.addShelfDialogStep === 1 ? '新建书架' : this.addShelfDialogStep === 2 ? '选择内容类型' : '设置筛选条件')
+          .fontSize(20)
+          .fontWeight(FontWeight.Medium)
+          .fontFamily(this.appFontFamily)
+          .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
+        Blank()
+        Button() {
+          SymbolGlyph($r('sys.symbol.xmark'))
             .fontSize(20)
-            .fontWeight(FontWeight.Bold)
-            .fontFamily(this.appFontFamily)
-            .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
-          Blank()
-          Button() {
-            SymbolGlyph($r('sys.symbol.xmark'))
-              .fontSize(20)
-              .fontColor([ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme)])
-          }
-          .width(32)
-          .height(32)
-          .backgroundColor(Color.Transparent)
-          .onClick(() => {
-            this.getUIContext().animateTo({ duration: 300, curve: Curve.EaseOut }, () => {
-              this.showAddShelfDialog = false;
-              this.resetAddShelfDialog();
-            });
-          })
+            .fontColor([ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme)])
         }
-        .width('100%')
-
-        if (this.addShelfDialogStep === 1) {
-          // 步骤1：基本信息
-          this.buildAddShelfStep1()
-        } else if (this.addShelfDialogStep === 2) {
-          // 步骤2：选择内容类型
-          this.buildAddShelfStep2()
-        } else {
-          // 步骤3：动态书架筛选条件
-          this.buildAddShelfStep3_DynamicFilter()
-        }
+        .width(32)
+        .height(32)
+        .backgroundColor(Color.Transparent)
+        .onClick(() => {
+          this.closeAddShelfDialog();
+        })
       }
-      .width(this.addShelfDialogStep === 3 ? '95%' : '90%')
-      .constraintSize({ maxHeight: this.addShelfDialogStep === 3 ? '85%' : '90%' })
-      .padding(24)
-      .backgroundColor(this.getSettingsAnalyticsCardBackground())
-      .backgroundBlurStyle(this.getSettingsAnalyticsCardBlurStyle(), this.getSettingsAnalyticsCardBlurOptions())
-      .backgroundEffect(this.getSettingsAnalyticsCardBackgroundEffect())
-      .borderRadius(this.getSettingsAnalyticsCardRadius())
-      .clip(true)
-      .border({
-        width: this.getSettingsAnalyticsCardBorderWidth(),
-        color: this.getSettingsAnalyticsCardBorderColor()
-      })
-      .shadow({
-        radius: this.getSettingsAnalyticsCardRadius() + 6,
-        color: this.getSettingsAnalyticsCardShadowColor(),
-        offsetX: 0,
-        offsetY: 10
-      })
-      .scale({ x: this.showAddShelfDialog ? 1 : 0.8, y: this.showAddShelfDialog ? 1 : 0.8 })
-      .opacity(this.showAddShelfDialog ? 1 : 0)
-      .animation({ duration: 300, curve: Curve.EaseOut })
+      .width('100%')
+
+      if (this.addShelfDialogStep === 1) {
+        // 步骤1：基本信息
+        this.buildAddShelfStep1()
+      } else if (this.addShelfDialogStep === 2) {
+        // 步骤2：选择内容类型
+        this.buildAddShelfStep2()
+      } else {
+        // 步骤3：动态书架筛选条件
+        this.buildAddShelfStep3_DynamicFilter()
+      }
     }
-    .width('100%')
-    .height('100%')
-    .justifyContent(FlexAlign.Center)
-    .backgroundColor(Color.Transparent)
+    .width('90%')
+    .padding(24)
+    .backgroundColor(this.getSettingsAnalyticsCardBackground())
+    .backgroundBlurStyle(this.getSettingsAnalyticsCardBlurStyle(), this.getSettingsAnalyticsCardBlurOptions())
+    .backgroundEffect(this.getSettingsAnalyticsCardBackgroundEffect())
+    .borderRadius(this.getSettingsAnalyticsCardRadius())
+    .clip(true)
+    .border({
+      width: this.getSettingsAnalyticsCardBorderWidth(),
+      color: this.getSettingsAnalyticsCardBorderColor()
+    })
+    .shadow({
+      radius: this.getSettingsAnalyticsCardRadius() + 4,
+      color: this.getSettingsAnalyticsCardShadowColor(),
+      offsetX: 0,
+      offsetY: 8
+    })
   }
 
   /**
@@ -20847,7 +20926,7 @@ struct MainMenuPage {
         }
       }
       .width('100%')
-      .layoutWeight(1)
+      .constraintSize({ maxHeight: this.getAddShelfDynamicFilterContentMaxHeight() })
       .transition(TransitionEffect.OPACITY.animation({ duration: 200 }))
 
       // 按钮组
@@ -20883,7 +20962,6 @@ struct MainMenuPage {
       .width('100%')
     }
     .width('100%')
-    .layoutWeight(1)
   }
 
   /**
@@ -20930,7 +21008,7 @@ struct MainMenuPage {
         .padding({ bottom: 8 })
       }
       .width('100%')
-      .layoutWeight(1)
+      .constraintSize({ maxHeight: this.getAddShelfDynamicFilterContentMaxHeight() })
       .scrollBar(BarState.Auto)
       .edgeEffect(EdgeEffect.Spring)
     }
@@ -20995,7 +21073,7 @@ struct MainMenuPage {
           }
           .width('100%')
         }
-        .layoutWeight(1)
+        .constraintSize({ maxHeight: this.getAddShelfDynamicFilterContentMaxHeight() })
         .scrollBar(BarState.Off)
         .edgeEffect(EdgeEffect.Spring)
       } else {
@@ -21007,12 +21085,10 @@ struct MainMenuPage {
             .textAlign(TextAlign.Center)
         }
         .width('100%')
-        .layoutWeight(1)
         .justifyContent(FlexAlign.Center)
       }
     }
     .width('100%')
-    .layoutWeight(1)
     .alignItems(HorizontalAlign.Start)
   }
 
@@ -21119,7 +21195,6 @@ struct MainMenuPage {
       .padding({ top: 8 })
     }
     .width('100%')
-    .layoutWeight(1)
     .justifyContent(FlexAlign.Start)
     .padding({ top: 8 })
   }
@@ -21241,6 +21316,55 @@ struct MainMenuPage {
     this.dynamicFilterCustomInput = '';
   }
 
+  private openAddShelfDialog(): void {
+    try {
+      if (this.addShelfDialogController) {
+        this.addShelfDialogController.close();
+      }
+
+      this.resetAddShelfDialog();
+      this.showAddShelfDialog = true;
+      this.addShelfDialogController = new CustomDialogController({
+        builder: () => {
+          this.buildAddShelfDialog();
+        },
+        alignment: DialogAlignment.Center,
+        autoCancel: true,
+        cornerRadius: this.getSettingsAnalyticsCardRadius(),
+        customStyle: true,
+        cancel: () => {
+          this.resetAddShelfDialog();
+          this.showAddShelfDialog = false;
+          this.addShelfDialogController = undefined;
+        }
+      });
+      this.addShelfDialogController.open();
+    } catch (error) {
+      logger.error(TAG, '打开新建书架弹窗失败', String(error));
+      this.showAddShelfDialog = false;
+      this.addShelfDialogController = undefined;
+      this.showToast('打开弹窗失败，请重试');
+    }
+  }
+
+  private closeAddShelfDialog(): void {
+    try {
+      this.addShelfDialogController?.close();
+    } catch (error) {
+      logger.warn(TAG, '关闭新建书架弹窗失败', String(error));
+    }
+    this.addShelfDialogController = undefined;
+    this.showAddShelfDialog = false;
+    this.resetAddShelfDialog();
+  }
+
+  private getAddShelfDynamicFilterContentMaxHeight(): number {
+    const viewportHeight: number = this.getMainMenuViewportHeight();
+    const reservedDialogHeight: number = this.statusBarHeight + this.navigationBarHeight + 360;
+    const availableHeight: number = viewportHeight - reservedDialogHeight;
+    return Math.max(160, Math.min(360, availableHeight));
+  }
+
   /**
    * 重置新增书架对话框状态
    */
@@ -21296,11 +21420,7 @@ struct MainMenuPage {
     await this.typeShelfManager.createShelf(params);
     this.typeShelves = this.typeShelfManager.getShelves();
 
-    this.getUIContext().animateTo({ duration: 300, curve: Curve.EaseOut }, () => {
-      this.showAddShelfDialog = false;
-      this.resetAddShelfDialog();
-    });
-
+    this.closeAddShelfDialog();
     this.showToast('书架创建成功');
   }
 
@@ -21606,9 +21726,7 @@ struct MainMenuPage {
                   this.showMoveToShelfDialog = false;
                 });
                 setTimeout(() => {
-                  this.getUIContext().animateTo({ duration: 300, curve: Curve.EaseOut }, () => {
-                    this.showAddShelfDialog = true;
-                  });
+                  this.openAddShelfDialog();
                 }, 250);
               })
           }
@@ -21946,6 +22064,7 @@ struct MainMenuPage {
         .bindPopup(this.showCustomShelfTagPopup, {
           builder: this.buildCustomShelfTagPopup(),
           placement: Placement.Bottom,
+          popupColor: Color.Transparent,
           onStateChange: (e: PopupStateChangeParam) => {
             if (!e.isVisible) {
               this.showCustomShelfTagPopup = false;
@@ -21997,6 +22116,7 @@ struct MainMenuPage {
         .bindPopup(this.showCustomShelfAuthorPopup, {
           builder: this.buildCustomShelfAuthorPopup(),
           placement: Placement.Bottom,
+          popupColor: Color.Transparent,
           onStateChange: (e: PopupStateChangeParam) => {
             if (!e.isVisible) {
               this.showCustomShelfAuthorPopup = false;
@@ -22109,9 +22229,7 @@ struct MainMenuPage {
                 .fontFamily(this.appFontFamily)
                 .backgroundColor(this.customShelfSelectedTags.has(tag)
                   ? ThemeAwareHelper.getTestManagementThemedColor('accent_primary_dimmed', this.themeState.currentTheme)
-                  : this.getSettingsAnalyticsCardBackground())
-                .backgroundBlurStyle(this.getSettingsAnalyticsCardBlurStyle(), this.getSettingsAnalyticsCardBlurOptions())
-                .backgroundEffect(this.getSettingsAnalyticsCardBackgroundEffect())
+                  : ThemeAwareHelper.getTestManagementThemedColor('comp_background_secondary', this.themeState.currentTheme))
                 .fontColor(this.customShelfSelectedTags.has(tag)
                   ? ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme)
                   : ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
@@ -22122,12 +22240,6 @@ struct MainMenuPage {
                     : this.getSettingsAnalyticsCardBorderColor()
                 })
                 .borderRadius(14)
-                .shadow({
-                  radius: this.getSettingsAnalyticsCardRadius(),
-                  color: this.getSettingsAnalyticsCardShadowColor(),
-                  offsetX: 0,
-                  offsetY: 2
-                })
                 .clip(true)
                 .onClick(() => {
                   if (this.customShelfSelectedTags.has(tag)) {
@@ -22151,9 +22263,22 @@ struct MainMenuPage {
       }
     }
     .width(280)
-    .padding(12)
-    .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('panel_background', this.themeState.currentTheme))
-    .borderRadius(12)
+    .padding(20)
+    .backgroundColor(this.getSettingsAnalyticsCardBackground())
+    .backgroundBlurStyle(this.getSettingsAnalyticsCardBlurStyle(), this.getSettingsAnalyticsCardBlurOptions())
+    .backgroundEffect(this.getSettingsAnalyticsCardBackgroundEffect())
+    .border({
+      width: this.getSettingsAnalyticsCardBorderWidth(),
+      color: this.getSettingsAnalyticsCardBorderColor()
+    })
+    .borderRadius(this.getSettingsAnalyticsCardRadius())
+    .shadow({
+      radius: this.getSettingsAnalyticsCardRadius() + 4,
+      color: this.getSettingsAnalyticsCardShadowColor(),
+      offsetX: 0,
+      offsetY: 8
+    })
+    .clip(true)
   }
 
   /**
@@ -22179,9 +22304,7 @@ struct MainMenuPage {
                 .fontFamily(this.appFontFamily)
                 .backgroundColor(this.customShelfSelectedAuthors.has(author)
                   ? ThemeAwareHelper.getTestManagementThemedColor('accent_primary_dimmed', this.themeState.currentTheme)
-                  : this.getSettingsAnalyticsCardBackground())
-                .backgroundBlurStyle(this.getSettingsAnalyticsCardBlurStyle(), this.getSettingsAnalyticsCardBlurOptions())
-                .backgroundEffect(this.getSettingsAnalyticsCardBackgroundEffect())
+                  : ThemeAwareHelper.getTestManagementThemedColor('comp_background_secondary', this.themeState.currentTheme))
                 .fontColor(this.customShelfSelectedAuthors.has(author)
                   ? ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme)
                   : ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
@@ -22192,12 +22315,6 @@ struct MainMenuPage {
                     : this.getSettingsAnalyticsCardBorderColor()
                 })
                 .borderRadius(14)
-                .shadow({
-                  radius: this.getSettingsAnalyticsCardRadius(),
-                  color: this.getSettingsAnalyticsCardShadowColor(),
-                  offsetX: 0,
-                  offsetY: 2
-                })
                 .clip(true)
                 .onClick(() => {
                   if (this.customShelfSelectedAuthors.has(author)) {
@@ -22221,9 +22338,22 @@ struct MainMenuPage {
       }
     }
     .width(280)
-    .padding(12)
-    .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('panel_background', this.themeState.currentTheme))
-    .borderRadius(12)
+    .padding(20)
+    .backgroundColor(this.getSettingsAnalyticsCardBackground())
+    .backgroundBlurStyle(this.getSettingsAnalyticsCardBlurStyle(), this.getSettingsAnalyticsCardBlurOptions())
+    .backgroundEffect(this.getSettingsAnalyticsCardBackgroundEffect())
+    .border({
+      width: this.getSettingsAnalyticsCardBorderWidth(),
+      color: this.getSettingsAnalyticsCardBorderColor()
+    })
+    .borderRadius(this.getSettingsAnalyticsCardRadius())
+    .shadow({
+      radius: this.getSettingsAnalyticsCardRadius() + 4,
+      color: this.getSettingsAnalyticsCardShadowColor(),
+      offsetX: 0,
+      offsetY: 8
+    })
+    .clip(true)
   }
 
   /**
@@ -28754,7 +28884,7 @@ struct MainMenuPage {
    */
   @Builder
   buildTagPopup() {
-    Column({ space: 0 }) {
+    Column({ space: 12 }) {
       // 标题栏
       Row() {
         Text(`选择标签 (${this.allTags.length})`)
@@ -28776,7 +28906,6 @@ struct MainMenuPage {
         }
       }
       .width('100%')
-      .padding({ left: 16, right: 16, top: 12, bottom: 8 })
 
       // 标签列表
       Scroll() {
@@ -28788,26 +28917,46 @@ struct MainMenuPage {
               .padding({ left: 12, right: 12, top: 6, bottom: 6 })
               .margin({ right: 8, bottom: 8 })
               .backgroundColor(this.selectedTags.has(tag)
-                ? ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme)
-                : ThemeAwareHelper.getTestManagementThemedColor('background_secondary', this.themeState.currentTheme))
+                ? ThemeAwareHelper.getTestManagementThemedColor('accent_primary_dimmed', this.themeState.currentTheme)
+                : ThemeAwareHelper.getTestManagementThemedColor('comp_background_secondary', this.themeState.currentTheme))
               .fontColor(this.selectedTags.has(tag)
-                ? ThemeAwareHelper.getTestManagementThemedColor('text_white', this.themeState.currentTheme)
-                : ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
+                ? ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme)
+                : ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
+              .border({
+                width: this.getSettingsAnalyticsCardBorderWidth(),
+                color: this.selectedTags.has(tag)
+                  ? ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme)
+                  : this.getSettingsAnalyticsCardBorderColor()
+              })
               .borderRadius(16)
+              .clip(true)
               .onClick(() => {
                 this.toggleTagSelection(tag);
               })
           }, (tag: string) => tag)
         }
         .width('100%')
-        .padding({ left: 16, right: 16, bottom: 12 })
       }
       .constraintSize({ maxHeight: 300 })
       .scrollBar(BarState.Auto)
     }
     .width(320)
-    .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('panel_background', this.themeState.currentTheme))
-    .borderRadius(12)
+    .padding(20)
+    .backgroundColor(this.getSettingsAnalyticsCardBackground())
+    .backgroundBlurStyle(this.getSettingsAnalyticsCardBlurStyle(), this.getSettingsAnalyticsCardBlurOptions())
+    .backgroundEffect(this.getSettingsAnalyticsCardBackgroundEffect())
+    .border({
+      width: this.getSettingsAnalyticsCardBorderWidth(),
+      color: this.getSettingsAnalyticsCardBorderColor()
+    })
+    .borderRadius(this.getSettingsAnalyticsCardRadius())
+    .shadow({
+      radius: this.getSettingsAnalyticsCardRadius() + 4,
+      color: this.getSettingsAnalyticsCardShadowColor(),
+      offsetX: 0,
+      offsetY: 8
+    })
+    .clip(true)
   }
 
   /**
@@ -28815,7 +28964,7 @@ struct MainMenuPage {
    */
   @Builder
   buildAuthorPopup() {
-    Column({ space: 0 }) {
+    Column({ space: 12 }) {
       // 标题栏
       Row() {
         Text(`选择作者 (${this.allAuthors.length})`)
@@ -28837,7 +28986,6 @@ struct MainMenuPage {
         }
       }
       .width('100%')
-      .padding({ left: 16, right: 16, top: 12, bottom: 8 })
 
       // 作者列表
       Scroll() {
@@ -28849,26 +28997,46 @@ struct MainMenuPage {
               .padding({ left: 12, right: 12, top: 6, bottom: 6 })
               .margin({ right: 8, bottom: 8 })
               .backgroundColor(this.selectedAuthors.has(author)
-                ? ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme)
-                : ThemeAwareHelper.getTestManagementThemedColor('background_secondary', this.themeState.currentTheme))
+                ? ThemeAwareHelper.getTestManagementThemedColor('accent_primary_dimmed', this.themeState.currentTheme)
+                : ThemeAwareHelper.getTestManagementThemedColor('comp_background_secondary', this.themeState.currentTheme))
               .fontColor(this.selectedAuthors.has(author)
-                ? ThemeAwareHelper.getTestManagementThemedColor('text_white', this.themeState.currentTheme)
-                : ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
+                ? ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme)
+                : ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
+              .border({
+                width: this.getSettingsAnalyticsCardBorderWidth(),
+                color: this.selectedAuthors.has(author)
+                  ? ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme)
+                  : this.getSettingsAnalyticsCardBorderColor()
+              })
               .borderRadius(16)
+              .clip(true)
               .onClick(() => {
                 this.toggleAuthorSelection(author);
               })
           }, (author: string) => author)
         }
         .width('100%')
-        .padding({ left: 16, right: 16, bottom: 12 })
       }
       .constraintSize({ maxHeight: 300 })
       .scrollBar(BarState.Auto)
     }
     .width(320)
-    .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('panel_background', this.themeState.currentTheme))
-    .borderRadius(12)
+    .padding(20)
+    .backgroundColor(this.getSettingsAnalyticsCardBackground())
+    .backgroundBlurStyle(this.getSettingsAnalyticsCardBlurStyle(), this.getSettingsAnalyticsCardBlurOptions())
+    .backgroundEffect(this.getSettingsAnalyticsCardBackgroundEffect())
+    .border({
+      width: this.getSettingsAnalyticsCardBorderWidth(),
+      color: this.getSettingsAnalyticsCardBorderColor()
+    })
+    .borderRadius(this.getSettingsAnalyticsCardRadius())
+    .shadow({
+      radius: this.getSettingsAnalyticsCardRadius() + 4,
+      color: this.getSettingsAnalyticsCardShadowColor(),
+      offsetX: 0,
+      offsetY: 8
+    })
+    .clip(true)
   }
 
   /**
@@ -28957,9 +29125,8 @@ struct MainMenuPage {
         .bindPopup(this.showTagPopup, {
           builder: this.buildTagPopup(),
           placement: Placement.Bottom,
-          popupColor: ThemeAwareHelper.getTestManagementThemedColor('panel_background', this.themeState.currentTheme),
-          enableArrow: true,
-          onStateChange: (e) => {
+          popupColor: Color.Transparent,
+          onStateChange: (e: PopupStateChangeParam) => {
             if (!e.isVisible) {
               this.showTagPopup = false;
             }
@@ -29013,9 +29180,8 @@ struct MainMenuPage {
         .bindPopup(this.showAuthorPopup, {
           builder: this.buildAuthorPopup(),
           placement: Placement.Bottom,
-          popupColor: ThemeAwareHelper.getTestManagementThemedColor('panel_background', this.themeState.currentTheme),
-          enableArrow: true,
-          onStateChange: (e) => {
+          popupColor: Color.Transparent,
+          onStateChange: (e: PopupStateChangeParam) => {
             if (!e.isVisible) {
               this.showAuthorPopup = false;
             }
@@ -29562,6 +29728,238 @@ struct MainMenuPage {
    * 构建图源管理弹窗
    */
   @Builder
+  private buildSourceRepoSyncSummary() {
+    Column({ space: 10 }) {
+      Row({ space: 8 }) {
+        SymbolGlyph($r('sys.symbol.doc_text'))
+          .fontSize(16)
+          .fontColor([ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme)])
+
+        Text('本次同步摘要')
+          .fontSize(14)
+          .fontWeight(FontWeight.Medium)
+          .fontFamily(this.appFontFamily)
+          .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
+          .layoutWeight(1)
+
+        Text(`${this.syncUpdatedSources.length + this.syncAddedSources.length + this.syncDeprecatedSources.length}`)
+          .fontSize(12)
+          .fontFamily(this.appFontFamily)
+          .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
+
+        SymbolGlyph(this.syncSummaryExpanded ? $r('sys.symbol.chevron_down') : $r('sys.symbol.chevron_right'))
+          .fontSize(14)
+          .fontColor([ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme)])
+      }
+      .width('100%')
+      .onClick(() => {
+        this.toggleSyncSummaryExpanded();
+      })
+
+      if (this.syncSummaryExpanded) {
+        Scroll() {
+          Column({ space: 10 }) {
+            this.buildSourceRepoSyncSummarySection(
+              '更新',
+              this.syncUpdatedSources,
+              $r('sys.symbol.arrow_2_circlepath'),
+              ThemeAwareHelper.getTestManagementThemedColor('accent_blue', this.themeState.currentTheme),
+              '没有更新已有图源'
+            )
+            this.buildSourceRepoSyncSummarySection(
+              '新导入',
+              this.syncAddedSources,
+              $r('sys.symbol.checkmark_circle_fill'),
+              AppColors.success,
+              '没有新导入图源'
+            )
+            this.buildSourceRepoSyncSummarySection(
+              '废弃',
+              this.syncDeprecatedSources,
+              $r('sys.symbol.exclamationmark_triangle'),
+              AppColors.warning,
+              '没有废弃图源'
+            )
+          }
+          .width('100%')
+        }
+        .width('100%')
+        .constraintSize({ maxHeight: this.getSourceRepoSyncSummaryMaxHeight() })
+        .scrollBar(BarState.Auto)
+        .transition(TransitionEffect.OPACITY.animation({ duration: 220, curve: Curve.EaseOut })
+          .combine(TransitionEffect.translate({ y: -8 })))
+      }
+    }
+    .width('100%')
+    .padding(12)
+    .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('background_secondary', this.themeState.currentTheme))
+    .borderRadius(10)
+  }
+
+  @Builder
+  private buildSourceRepoSyncSummarySection(
+    title: string,
+    items: SyncSourceChangeDetail[],
+    icon: Resource,
+    color: ResourceColor,
+    emptyText: string
+  ) {
+    Column({ space: 6 }) {
+      Row({ space: 6 }) {
+        SymbolGlyph(icon)
+          .fontSize(14)
+          .fontColor([color])
+
+        Text(`${title} ${items.length}`)
+          .fontSize(12)
+          .fontWeight(FontWeight.Medium)
+          .fontFamily(this.appFontFamily)
+          .fontColor(color)
+      }
+      .width('100%')
+
+      if (items.length > 0) {
+        ForEach(items, (item: SyncSourceChangeDetail) => {
+          this.buildSourceRepoSyncSummaryItem(item, color)
+        }, (item: SyncSourceChangeDetail) => `${title}_${item.pkg}_${item.version}_${item.previousVersion}`)
+      } else {
+        Text(emptyText)
+          .fontSize(11)
+          .fontFamily(this.appFontFamily)
+          .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_muted', this.themeState.currentTheme))
+          .padding({ left: 20 })
+      }
+    }
+    .width('100%')
+  }
+
+  @Builder
+  private buildSourceRepoSyncSummaryItem(item: SyncSourceChangeDetail, color: ResourceColor) {
+    Column({ space: 4 }) {
+      Row({ space: 6 }) {
+        Text(item.name)
+          .fontSize(12)
+          .fontWeight(FontWeight.Medium)
+          .fontFamily(this.appFontFamily)
+          .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
+          .layoutWeight(1)
+          .maxLines(1)
+          .textOverflow({ overflow: TextOverflow.Ellipsis })
+
+        Text(this.getSourceRepoSyncVersionText(item))
+          .fontSize(10)
+          .fontFamily(this.appFontFamily)
+          .fontColor(color)
+          .padding({ left: 6, right: 6, top: 2, bottom: 2 })
+          .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('button_background', this.themeState.currentTheme))
+          .borderRadius(4)
+      }
+      .width('100%')
+
+      Text(item.pkg)
+        .fontSize(10)
+        .fontFamily(this.appFontFamily)
+        .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_muted', this.themeState.currentTheme))
+        .maxLines(1)
+        .textOverflow({ overflow: TextOverflow.Ellipsis })
+
+      if (item.changeNotes.length > 0) {
+        ForEach(item.changeNotes, (note: string, index: number) => {
+          Row({ space: 4 }) {
+            SymbolGlyph($r('sys.symbol.circle'))
+              .fontSize(5)
+              .fontColor([color])
+
+            Text(note)
+              .fontSize(10)
+              .fontFamily(this.appFontFamily)
+              .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
+              .layoutWeight(1)
+              .maxLines(2)
+              .textOverflow({ overflow: TextOverflow.Ellipsis })
+          }
+          .width('100%')
+        }, (note: string, index: number) => `${item.pkg}_note_${index}_${note.substring(0, 12)}`)
+      }
+    }
+    .width('100%')
+    .padding(8)
+    .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('button_background', this.themeState.currentTheme))
+    .borderRadius(8)
+    .border({ width: 1, color: color })
+  }
+
+  @Builder
+  private buildSourceRepoSyncLogPanel() {
+    Column({ space: 8 }) {
+      Row({ space: 8 }) {
+        SymbolGlyph($r('sys.symbol.doc_text'))
+          .fontSize(15)
+          .fontColor([this.syncLogExpanded ? AppColors.success :
+            ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme)])
+
+        Text('同步日志')
+          .fontSize(13)
+          .fontWeight(FontWeight.Medium)
+          .fontFamily(this.appFontFamily)
+          .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
+          .layoutWeight(1)
+
+        Text(`${this.syncLogMessages.length} 行`)
+          .fontSize(11)
+          .fontFamily(this.appFontFamily)
+          .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_muted', this.themeState.currentTheme))
+
+        SymbolGlyph(this.syncLogExpanded ? $r('sys.symbol.chevron_down') : $r('sys.symbol.chevron_right'))
+          .fontSize(14)
+          .fontColor([ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme)])
+      }
+      .width('100%')
+      .onClick(() => {
+        this.toggleSyncLogExpanded();
+      })
+
+      if (this.syncLogExpanded) {
+        Scroll() {
+          Column({ space: 2 }) {
+            ForEach(this.syncLogMessages, (logLine: string, index: number) => {
+              Text(logLine)
+                .fontSize(12)
+                .fontFamily('monospace')
+                .fontColor(logLine.includes('✗') ? '#FF6B6B' :
+                  (logLine.includes('⚠') ? '#FFB347' : '#98FB98'))
+                .width('100%')
+                .textAlign(TextAlign.Start)
+            }, (logLine: string, index: number) => `log_${index}_${logLine.substring(0, 20)}`)
+          }
+          .width('100%')
+          .padding(8)
+        }
+        .width('100%')
+        .constraintSize({ maxHeight: this.getSourceRepoSyncLogMaxHeight() })
+        .scrollBar(BarState.Auto)
+        .transition(TransitionEffect.OPACITY.animation({ duration: 220, curve: Curve.EaseOut })
+          .combine(TransitionEffect.translate({ y: -8 })))
+      }
+    }
+    .width('100%')
+    .padding(10)
+    .backgroundColor('#1A1A2E')
+    .borderRadius(8)
+    .border({ width: 1, color: this.syncLogExpanded ? '#333' : ThemeAwareHelper.getTestManagementThemedColor('divider', this.themeState.currentTheme) })
+  }
+
+  private getSourceRepoSyncVersionText(item: SyncSourceChangeDetail): string {
+    if (item.previousVersion.length > 0 && item.previousVersion !== item.version) {
+      return `${item.previousVersion} -> ${item.version}`;
+    }
+    if (item.version.length > 0) {
+      return `v${item.version}`;
+    }
+    return '无版本';
+  }
+
+  @Builder
   buildSourceRepoDialog() {
     Column({ space: 20 }) {
       Text('导入')
@@ -29607,7 +30005,6 @@ struct MainMenuPage {
             
             Button(this.showRepositorySelector ? '收起' : '展开')
               .fontSize(12)
-              .height(24)
               .fontFamily(this.appFontFamily)
               .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
               .padding({ left: 8, right: 8 })
@@ -29618,71 +30015,74 @@ struct MainMenuPage {
           }
           .width('100%')
           .justifyContent(FlexAlign.SpaceBetween)
-          
-          List({ space: 8 }) {
-            ForEach(this.savedRepositories, (repo: SavedRepository) => {
-              ListItem() {
-                Row({ space: 12 }) {
-                  Radio({ value: repo.id, group: 'repoGroup' })
-                    .checked(this.selectedRepositoryId === repo.id)
-                    .onChange((isChecked: boolean) => {
-                      if (isChecked) {
-                        this.applySelectedRepository(repo);
-                      }
-                    })
 
-                  Column({ space: 4 }) {
-                    Text(repo.name)
-                      .fontSize(14)
-                      .fontFamily(this.appFontFamily)
-                      .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
-                      .maxLines(1)
-                      .textOverflow({ overflow: TextOverflow.Ellipsis })
+          if (this.showRepositorySelector) {
+            List({ space: 8 }) {
+              ForEach(this.savedRepositories, (repo: SavedRepository) => {
+                ListItem() {
+                  Row({ space: 12 }) {
+                    Radio({ value: repo.id, group: 'repoGroup' })
+                      .checked(this.selectedRepositoryId === repo.id)
+                      .onChange((isChecked: boolean) => {
+                        if (isChecked) {
+                          this.applySelectedRepository(repo);
+                        }
+                      })
 
-                    Text(`${repo.sourceCount} 个图源 · ${new Date(repo.lastSync).toLocaleDateString()}`)
-                      .fontSize(12)
-                      .fontFamily(this.appFontFamily)
-                      .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_muted', this.themeState.currentTheme))
-                  }
-                  .layoutWeight(1)
-                  .alignItems(HorizontalAlign.Start)
-                }
-                .width('100%')
-                .padding(12)
-                .backgroundColor(this.selectedRepositoryId === repo.id
-                  ? ThemeAwareHelper.getTestManagementThemedColor('accent_blue', this.themeState.currentTheme)
-                  : ThemeAwareHelper.getTestManagementThemedColor('button_background', this.themeState.currentTheme))
-                .borderRadius(8)
-                .onClick(() => {
-                  this.applySelectedRepository(repo);
-                })
-                .gesture(
-                  LongPressGesture({ repeat: false, duration: 500 })
-                    .onAction(() => {
-                      this.repositoryToDelete = repo;
-                      this.showDeleteRepoPopup = true;
-                    })
-                )
-                .bindPopup(this.showDeleteRepoPopup && this.repositoryToDelete?.id === repo.id, {
-                  builder: this.buildDeleteRepoPopup,
-                  placement: Placement.Top,
-                  popupColor: ThemeAwareHelper.getTestManagementThemedColor('panel_background', this.themeState.currentTheme),
-                  onStateChange: (e) => {
-                    if (!e.isVisible) {
-                      this.showDeleteRepoPopup = false;
-                      this.repositoryToDelete = null;
+                    Column({ space: 4 }) {
+                      Text(repo.name)
+                        .fontSize(14)
+                        .fontFamily(this.appFontFamily)
+                        .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
+                        .maxLines(1)
+                        .textOverflow({ overflow: TextOverflow.Ellipsis })
+
+                      Text(`${repo.sourceCount} 个图源 · ${new Date(repo.lastSync).toLocaleDateString()}`)
+                        .fontSize(12)
+                        .fontFamily(this.appFontFamily)
+                        .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_muted', this.themeState.currentTheme))
                     }
+                    .layoutWeight(1)
+                    .alignItems(HorizontalAlign.Start)
                   }
-                })
-              }
-            }, (repo: SavedRepository) => repo.id)
+                  .width('100%')
+                  .padding(12)
+                  .backgroundColor(this.selectedRepositoryId === repo.id
+                    ? ThemeAwareHelper.getTestManagementThemedColor('accent_blue', this.themeState.currentTheme)
+                    : ThemeAwareHelper.getTestManagementThemedColor('button_background', this.themeState.currentTheme))
+                  .borderRadius(8)
+                  .onClick(() => {
+                    this.applySelectedRepository(repo);
+                  })
+                  .gesture(
+                    LongPressGesture({ repeat: false, duration: 500 })
+                      .onAction(() => {
+                        this.repositoryToDelete = repo;
+                        this.showDeleteRepoPopup = true;
+                      })
+                  )
+                  .bindPopup(this.showDeleteRepoPopup && this.repositoryToDelete?.id === repo.id, {
+                    builder: this.buildDeleteRepoPopup,
+                    placement: Placement.Top,
+                    popupColor: ThemeAwareHelper.getTestManagementThemedColor('panel_background', this.themeState.currentTheme),
+                    onStateChange: (e) => {
+                      if (!e.isVisible) {
+                        this.showDeleteRepoPopup = false;
+                        this.repositoryToDelete = null;
+                      }
+                    }
+                  })
+                }
+              }, (repo: SavedRepository) => repo.id)
+            }
+            .constraintSize({ maxHeight: this.getSourceRepoSelectorMaxHeight() })
+            .scrollBar(BarState.Auto)
+            .margin({ top: 8 })
+            .clip(true)
+            .width('100%')
+            .transition(TransitionEffect.OPACITY.animation({ duration: this.SOURCE_REPO_SELECTOR_ANIMATION_DURATION, curve: Curve.EaseOut })
+              .combine(TransitionEffect.translate({ y: -8 })))
           }
-          .height(this.showRepositorySelector ? this.SOURCE_REPO_SELECTOR_EXPANDED_HEIGHT : 0)
-          .opacity(this.showRepositorySelector ? 1 : 0)
-          .translate({ y: this.showRepositorySelector ? 0 : -8 })
-          .margin({ top: this.showRepositorySelector ? 8 : 0 })
-          .clip(true)
-          .width('100%')
         }
         .width('100%')
       }
@@ -29728,32 +30128,12 @@ struct MainMenuPage {
             .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
             .width('100%')
             .textAlign(TextAlign.Start)
-          
-          // 命令行风格日志窗口
-          Column() {
-            Scroll() {
-              Column({ space: 2 }) {
-                ForEach(this.syncLogMessages, (logLine: string, index: number) => {
-                  Text(logLine)
-                    .fontSize(12)
-                    .fontFamily('monospace')
-                    .fontColor(logLine.includes('✗') ? '#FF6B6B' : 
-                              (logLine.includes('⚠') ? '#FFB347' : '#98FB98'))
-                    .width('100%')
-                    .textAlign(TextAlign.Start)
-                }, (logLine: string, index: number) => `log_${index}_${logLine.substring(0, 20)}`)
-              }
-              .width('100%')
-              .padding(8)
-            }
-            .width('100%')
-            .height(200)
-            .scrollBar(BarState.Auto)
+
+          if (this.shouldShowSyncSummary()) {
+            this.buildSourceRepoSyncSummary()
           }
-          .width('100%')
-          .backgroundColor('#1A1A2E')
-          .borderRadius(8)
-          .border({ width: 1, color: '#333' })
+
+          this.buildSourceRepoSyncLogPanel()
         }
         .width('100%')
       }
@@ -34371,11 +34751,6 @@ struct MainMenuPage {
         // 编辑分类对话框
         if (this.showEditCategoryDialog) {
           this.buildEditCategoryDialog()
-        }
-
-        // 新增书架对话框
-        if (this.showAddShelfDialog) {
-          this.buildAddShelfDialog()
         }
 
         // 删除书架确认对话框
