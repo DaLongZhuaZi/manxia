@@ -1,6 +1,4 @@
-import { curves } from '@kit.ArkUI';
 import { logger } from '../../Utils/Logger';
-import { DialogAnimationState } from '../../Utils/DialogAnimationState';
 import {
   ChapterOrderPersistResult,
   UnifiedChapter,
@@ -12,7 +10,6 @@ import {
   ChapterRuleSortResult,
   getChapterOrderRuleSorter
 } from '../Services/ChapterOrderRuleSorter';
-import { DialogSurfaceStyleHelper } from './DialogSurfaceStyleHelper';
 import { SourceDialogScaffold } from './SourceDialogScaffold';
 import { ThemeAwareHelper, ThemeAwareState } from './ThemeAware';
 
@@ -42,14 +39,6 @@ export struct ChapterOrderDialogComponent {
   @State draggingChapterTitle: string = '';
   @State dragSourceIndex: number = -1;
   @State dragTargetIndex: number = -1;
-  @State anim: DialogAnimationState = new DialogAnimationState({
-    initialScale: 0.84,
-    initialTranslateY: 28,
-    inCurve: curves.springMotion(0.62, 0.88),
-    closeScale: 0.92,
-    closeTranslateY: 28
-  });
-
   private lastSignal: number = 0;
   private sorter: ChapterOrderRuleSorter = getChapterOrderRuleSorter();
 
@@ -72,9 +61,10 @@ export struct ChapterOrderDialogComponent {
     this.statusText = this.buildDraftSummaryText();
     this.showRulePicker = false;
     this.clearDragState();
-    this.isVisible = true;
+    this.getUIContext().animateTo({ duration: 220, curve: Curve.EaseOut }, () => {
+      this.isVisible = true;
+    });
     logger.info(TAG, `打开章节排序对话框: ${this.buildContentLogText()}, chapters=${this.draftChapters.length}`);
-    this.anim.animateIn(this.getUIContext());
     void this.loadRules();
   }
 
@@ -82,7 +72,7 @@ export struct ChapterOrderDialogComponent {
     if (this.isSaving || this.isApplyingRule || this.isLoadingSourceOrder) {
       return;
     }
-    this.anim.animateOut(this.getUIContext(), () => {
+    this.getUIContext().animateTo({ duration: 180, curve: Curve.EaseIn }, () => {
       this.isVisible = false;
       this.draftChapters = [];
       this.statusText = '';
@@ -218,7 +208,7 @@ export struct ChapterOrderDialogComponent {
   }
 
   private closeAfterSuccess(): void {
-    this.anim.animateOut(this.getUIContext(), () => {
+    this.getUIContext().animateTo({ duration: 180, curve: Curve.EaseIn }, () => {
       this.isVisible = false;
       this.draftChapters = [];
       this.statusText = '';
@@ -471,8 +461,8 @@ export struct ChapterOrderDialogComponent {
     Row({ space: 10 }) {
       Column({ space: 4 }) {
         Text('章节排序')
-          .fontSize(18)
-          .fontWeight(FontWeight.Bold)
+          .fontSize(20)
+          .fontWeight(FontWeight.Medium)
           .fontFamily(this.appFontFamily)
           .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
         Text(`${this.draftChapters.length} 章`)
@@ -488,10 +478,9 @@ export struct ChapterOrderDialogComponent {
           .fontSize(18)
           .fontColor([ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme)])
       }
-      .width(36)
-      .height(36)
-      .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('comp_background_tertiary', this.themeState.currentTheme))
-      .borderRadius(18)
+      .width(32)
+      .height(32)
+      .backgroundColor(Color.Transparent)
       .enabled(!this.getActionDisabled())
       .onClick(() => this.closeDialog())
     }
@@ -804,36 +793,26 @@ export struct ChapterOrderDialogComponent {
 
   build() {
     if (this.isVisible) {
-      Stack() {
-        SourceDialogScaffold({
-          themeState: this.themeState,
-          closeOnMaskTap: !this.getActionDisabled(),
-          onMaskTap: () => this.closeDialog(),
-          dialogWidth: '92%',
-          maxWidth: 620,
-          maxHeight: '88%',
-          contentPadding: 0,
-          contentScrollable: true,
-          dialogRadius: 26,
-          zIndexValue: 140,
-          useMaskBlur: true,
-          maskBlurStyle: DialogSurfaceStyleHelper.getPopupMaskBlurStyle(),
-          maskColor: DialogSurfaceStyleHelper.getPopupMaskColor()
-        }) {
-          Column({ space: 14 }) {
-            this.buildHeader()
-            this.buildRuleTools()
-            this.buildDragHint()
-            this.buildDraftList()
-            this.buildFooter()
-          }
-          .width('100%')
-          .padding(18)
+      SourceDialogScaffold({
+        themeState: this.themeState,
+        closeOnMaskTap: !this.getActionDisabled(),
+        onMaskTap: () => this.closeDialog(),
+        dialogWidth: '90%',
+        maxWidth: 620,
+        maxHeight: '88%',
+        contentPadding: 24,
+        contentScrollable: true,
+        useMaskBlur: true
+      }) {
+        Column({ space: 20 }) {
+          this.buildHeader()
+          this.buildRuleTools()
+          this.buildDragHint()
+          this.buildDraftList()
+          this.buildFooter()
         }
+        .width('100%')
       }
-      .opacity(this.anim.opacity)
-      .scale({ x: this.anim.scale, y: this.anim.scale })
-      .translate({ y: this.anim.translateY })
     }
   }
 }

@@ -5,9 +5,6 @@
 
 import { ThemeAwareState, ThemeAwareHelper } from './ThemeAware';
 import { SourceDialogScaffold } from './SourceDialogScaffold';
-import { DialogSurfaceStyleHelper } from './DialogSurfaceStyleHelper';
-import { DialogAnimationState } from '../../Utils/DialogAnimationState';
-import { ThemeType } from '../Managers/ThemeManager';
 
 @Component
 export struct GenerateCoverDialogComponent {
@@ -19,7 +16,6 @@ export struct GenerateCoverDialogComponent {
 
   @StorageLink('appFontFamily') appFontFamily: string = 'HarmonyOS Sans';
   @State isVisible: boolean = false;
-  @State anim: DialogAnimationState = new DialogAnimationState({ initialScale: 0.8, initialTranslateY: 30 });
   @State coverTitleInput: string = '';
   @State coverFontScale: number = 1.0;
 
@@ -30,13 +26,14 @@ export struct GenerateCoverDialogComponent {
       this.lastSignal = this.loadSignal;
       this.coverTitleInput = this.defaultTitle;
       this.coverFontScale = 1.0;
-      this.isVisible = true;
-      this.anim.animateIn(this.getUIContext());
+      this.getUIContext().animateTo({ duration: 220, curve: Curve.EaseOut }, () => {
+        this.isVisible = true;
+      });
     }
   }
 
   private hideDialog(): void {
-    this.anim.animateOut(this.getUIContext(), () => {
+    this.getUIContext().animateTo({ duration: 180, curve: Curve.EaseIn }, () => {
       this.isVisible = false;
     });
   }
@@ -49,35 +46,15 @@ export struct GenerateCoverDialogComponent {
           this.hideDialog();
           this.onCancel?.();
         },
-        dialogWidth: '80%',
+        dialogWidth: '90%',
         maxWidth: 400,
-        contentPadding: 0,
-        dialogRadius: 26,
-        zIndexValue: 120,
-        useMaskBlur: true,
-        maskBlurStyle: DialogSurfaceStyleHelper.getPopupMaskBlurStyle(),
-        maskColor: DialogSurfaceStyleHelper.getPopupMaskColor()
+        contentPadding: 24,
+        useMaskBlur: true
       }) {
-        Stack({ alignContent: Alignment.TopStart }) {
-          // dialog chrome
-          Column()
-            .width('100%')
-            .height(1)
-            .backgroundColor(this.themeState.currentTheme === ThemeType.DARK
-              ? 'rgba(255, 255, 255, 0.18)'
-              : 'rgba(255, 255, 255, 0.58)')
-          Column()
-            .width('100%')
-            .height(1)
-            .align(Alignment.Bottom)
-            .backgroundColor(this.themeState.currentTheme === ThemeType.DARK
-              ? 'rgba(154, 196, 255, 0.08)'
-              : 'rgba(126, 166, 220, 0.10)')
-
-          Column({ space: 20 }) {
+        Column({ space: 20 }) {
             Text('生成封面')
-              .fontSize(18)
-              .fontWeight(FontWeight.Bold)
+              .fontSize(20)
+              .fontWeight(FontWeight.Medium)
               .fontFamily(this.appFontFamily)
               .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
 
@@ -161,14 +138,6 @@ export struct GenerateCoverDialogComponent {
             .width('100%')
           }
           .width('100%')
-          .padding(24)
-          .scale({ x: this.anim.scale, y: this.anim.scale })
-          .translate({ y: this.anim.translateY })
-          .opacity(this.anim.opacity)
-          .borderRadius(26)
-          .clip(true)
-          .onClick(() => {})
-        }
       }
     }
   }

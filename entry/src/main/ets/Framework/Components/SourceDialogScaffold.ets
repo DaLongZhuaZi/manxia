@@ -25,15 +25,15 @@ export struct SourceDialogScaffold {
   @Prop layoutMode: SourceDialogLayoutMode = SourceDialogLayoutMode.CENTER;
   @Prop topOffset: number = 72;
   @Prop bottomOffset: number = 24;
-  @Prop contentPadding: number = 16;
+  @Prop contentPadding: number = 24;
   @Prop contentScrollable: boolean = false;
   @Prop useMaskBlur: boolean = true;
   @Prop maskBlurStyle: BlurStyle = DialogSurfaceStyleHelper.getPopupMaskBlurStyle();
   @Prop maskBlurOptions: BackgroundBlurStyleOptions = DialogSurfaceStyleHelper.getPopupMaskBlurOptions();
   @Prop maskColor: ResourceColor = DialogSurfaceStyleHelper.getPopupMaskColor();
   @Prop maskBackgroundEffect: BackgroundEffectOptions | undefined = DialogSurfaceStyleHelper.getPopupMaskBackgroundEffect();
-  @Prop dialogRadius: number = 26;
-  @Prop shadowOffsetY: number = 10;
+  @Prop dialogRadius: number = DialogSurfaceStyleHelper.getPopupCardRadius();
+  @Prop shadowOffsetY: number = 8;
   onMaskTap: () => void = () => {};
   @BuilderParam content: () => void = this.emptyContentBuilder;
   @State private maskTapEnabled: boolean = false;
@@ -69,15 +69,18 @@ export struct SourceDialogScaffold {
     .width(this.dialogWidth)
     .constraintSize({ minWidth: this.minWidth, maxWidth: this.maxWidth, maxHeight: this.maxHeight })
     .padding(this.contentPadding)
+    .backgroundColor(DialogSurfaceStyleHelper.getPopupCardBackground(this.themeState))
     .backgroundBlurStyle(
       DialogSurfaceStyleHelper.getPopupCardBlurStyle(),
       DialogSurfaceStyleHelper.getPopupCardBlurOptions()
     )
-    .backgroundColor(DialogSurfaceStyleHelper.getPopupCardBackground(this.themeState))
     .backgroundEffect(DialogSurfaceStyleHelper.getPopupCardBackgroundEffect())
     .borderRadius(this.dialogRadius)
     .clip(true)
-    .border({ width: 1, color: DialogSurfaceStyleHelper.getPopupCardBorderColor(this.themeState) })
+    .border({
+      width: DialogSurfaceStyleHelper.getPopupCardBorderWidth(this.themeState),
+      color: DialogSurfaceStyleHelper.getPopupCardBorderColor(this.themeState)
+    })
     .shadow({
       radius: this.dialogRadius + 4,
       color: DialogSurfaceStyleHelper.getPopupCardShadowColor(this.themeState),

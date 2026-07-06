@@ -9,9 +9,7 @@ import { systemShare } from '@kit.ShareKit';
 import { uniformTypeDescriptor as utd } from '@kit.ArkData';
 import { logger } from '../../Utils/Logger';
 import { ThemeAwareState, ThemeAwareHelper } from './ThemeAware';
-import { ThemeType } from '../Managers/ThemeManager';
 import { SourceDialogScaffold } from './SourceDialogScaffold';
-import { DialogSurfaceStyleHelper } from './DialogSurfaceStyleHelper';
 import { UnifiedContent, UnifiedContentType } from '../../Models/UnifiedContentModels';
 
 const TAG = 'ShareLinkDialogComponent';
@@ -33,9 +31,6 @@ export struct ShareLinkDialogComponent {
   @Prop @Watch('onLoadSignalChanged') loadSignal: number = 0;
 
   @State showShareDialog: boolean = false;
-  @State shareDialogOpacity: number = 0;
-  @State shareDialogScale: number = 0.8;
-  @State shareDialogTranslateY: number = 50;
   @State shareLinkText: string = '';
   @State selectedLinkType: 'app' | 'web' = 'app';
 
@@ -68,14 +63,11 @@ export struct ShareLinkDialogComponent {
     this.selectedLinkType = this.appLink ? 'app' : 'web';
     this.shareLinkText = this.selectedLinkType === 'app' ? this.appLink : this.webLink;
 
-    this.showShareDialog = true;
     this.getUIContext().animateTo({
-      duration: 260,
+      duration: 220,
       curve: Curve.EaseOut
     }, () => {
-      this.shareDialogOpacity = 1;
-      this.shareDialogScale = 1;
-      this.shareDialogTranslateY = 0;
+      this.showShareDialog = true;
     });
   }
 
@@ -84,13 +76,8 @@ export struct ShareLinkDialogComponent {
       duration: 180,
       curve: Curve.EaseIn
     }, () => {
-      this.shareDialogOpacity = 0;
-      this.shareDialogScale = 0.96;
-      this.shareDialogTranslateY = 12;
-    });
-    setTimeout(() => {
       this.showShareDialog = false;
-    }, 200);
+    });
   }
 
   private switchLinkType(type: 'app' | 'web'): void {
@@ -343,33 +330,6 @@ export struct ShareLinkDialogComponent {
     }
   }
 
-  // ── 样式辅助 ──
-
-  private getDialogChromeTopEdgeColor(): ResourceColor {
-    return this.themeState.currentTheme === ThemeType.DARK
-      ? 'rgba(255, 255, 255, 0.18)'
-      : 'rgba(255, 255, 255, 0.58)';
-  }
-
-  private getDialogChromeBottomEdgeColor(): ResourceColor {
-    return this.themeState.currentTheme === ThemeType.DARK
-      ? 'rgba(154, 196, 255, 0.08)'
-      : 'rgba(126, 166, 220, 0.10)';
-  }
-
-  @Builder
-  private buildDialogChrome() {
-    Column()
-      .width('100%')
-      .height(1)
-      .backgroundColor(this.getDialogChromeTopEdgeColor())
-    Column()
-      .width('100%')
-      .height(1)
-      .align(Alignment.Bottom)
-      .backgroundColor(this.getDialogChromeBottomEdgeColor())
-  }
-
   private getContentTypeLabel(): string {
     if (!this.content) return '内容';
     switch (this.content.contentType) {
@@ -394,21 +354,15 @@ export struct ShareLinkDialogComponent {
         onMaskTap: () => this.closeShareDialog(),
         dialogWidth: '90%',
         maxWidth: 400,
-        contentPadding: 0,
-        dialogRadius: 26,
-        zIndexValue: 120,
-        useMaskBlur: true,
-        maskBlurStyle: DialogSurfaceStyleHelper.getPopupMaskBlurStyle(),
-        maskColor: DialogSurfaceStyleHelper.getPopupMaskColor()
+        contentPadding: 24,
+        useMaskBlur: true
       }) {
-        Stack({ alignContent: Alignment.TopStart }) {
-          this.buildDialogChrome()
-          Column({ space: 16 }) {
+        Column({ space: 20 }) {
             // 标题栏
             Row() {
               Text('分享链接')
-                .fontSize(18)
-                .fontWeight(FontWeight.Bold)
+                .fontSize(20)
+                .fontWeight(FontWeight.Medium)
                 .fontFamily(this.appFontFamily)
                 .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
 
@@ -594,15 +548,6 @@ export struct ShareLinkDialogComponent {
             .width('100%')
           }
           .width('100%')
-          .padding(20)
-          .scale({ x: this.shareDialogScale, y: this.shareDialogScale })
-          .translate({ y: this.shareDialogTranslateY })
-          .opacity(this.shareDialogOpacity)
-          .borderRadius(26)
-          .clip(true)
-          .onClick(() => {
-          })
-        }
       }
     }
   }

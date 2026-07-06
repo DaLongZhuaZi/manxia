@@ -1443,6 +1443,10 @@ export class OnlineImageLoader {
     return url.includes('rmcdn');
   }
 
+  private isDogeMangaImageRequest(url: string): boolean {
+    return url.includes('dogemanga.com/images/');
+  }
+
   private isHttp403Error(message: string): boolean {
     return message.includes('403');
   }
@@ -2077,14 +2081,20 @@ export class OnlineImageLoader {
     await this.getDiskCacheForRequest(options);
 
     const defaultUa = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/142.0.0.0 Safari/537.36';
+    const dogeMangaUa = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36';
     const defaultAccept = 'image/avif,image/webp,image/png,image/jpeg;q=0.9,*/*;q=0.5';
     const defaultLang = 'zh-CN,zh;q=0.9,en-US;q=0.8,en;q=0.7';
+    const isDogeMangaImage = this.isDogeMangaImageRequest(url);
     
     // 优先使用传入的UA，否则通过UserAgentManager获取（支持图源级别和全局设置）
     let ua = options.headers?.userAgent || '';
     if (!ua && options.sourceId) {
       ua = await UserAgentManager.getInstance().getUserAgent(options.sourceId);
       logger.info(TAG, `通过UserAgentManager获取UA: sourceId=${options.sourceId}, ua=${ua.substring(0, 50)}...`);
+    }
+    if (isDogeMangaImage && (!ua || ua.includes('Chrome/142.0.0.0'))) {
+      ua = dogeMangaUa;
+      logger.debug(TAG, '为漫画狗图片使用站点兼容UA');
     }
     if (!ua) {
       ua = defaultUa;
@@ -2107,6 +2117,15 @@ export class OnlineImageLoader {
       }
       if (!origin) {
         origin = 'https://www.pixiv.net';
+      }
+    }
+
+    if (isDogeMangaImage) {
+      if (!referer) {
+        referer = 'https://dogemanga.com/';
+      }
+      if (!origin) {
+        origin = 'https://dogemanga.com';
       }
     }
     const normalizedOrigin = this.normalizeOriginValue(origin, referer);

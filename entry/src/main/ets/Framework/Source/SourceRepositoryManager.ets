@@ -80,6 +80,17 @@ export interface SyncResult {
   success: boolean;
   message: string;
   sourceCount?: number;
+  addedSources?: SyncSourceChangeDetail[];
+  updatedSources?: SyncSourceChangeDetail[];
+  deprecatedSources?: SyncSourceChangeDetail[];
+}
+
+export interface SyncSourceChangeDetail {
+  name: string;
+  pkg: string;
+  version: string;
+  previousVersion: string;
+  changeNotes: string[];
 }
 
 /**
@@ -96,6 +107,22 @@ export interface SyncProgressCallback {
 interface SourceIconInfo {
   data: ArrayBuffer;
   ext: string;
+}
+
+interface SourceConfigMetadataSummary {
+  name?: string;
+  version?: string;
+}
+
+interface SourceConfigChangelogEntry {
+  version?: string;
+  date?: string;
+  changes?: string[];
+}
+
+interface SourceConfigSummary {
+  metadata?: SourceConfigMetadataSummary;
+  changelog?: SourceConfigChangelogEntry[];
 }
 
 type RepositoryCandidateKind = 'origin' | 'ghProxy' | 'hkGhProxy';
@@ -180,6 +207,72 @@ export class SourceRepositoryManager {
 
   private constructor() {
     this.sourceManager = SourceManager.getInstance();
+  }
+
+  private buildSyncChangeDetail(
+    entry: SourceRepositoryEntry,
+    previousEntry: SourceRepositoryEntry | null,
+    sourceJson: string
+  ): SyncSourceChangeDetail {
+    const detail: SyncSourceChangeDetail = {
+      name: entry.name,
+      pkg: entry.pkg,
+      version: entry.version,
+      previousVersion: previousEntry ? previousEntry.version : '',
+      changeNotes: this.extractChangeNotes(sourceJson, entry.version)
+    };
+    return detail;
+  }
+
+  private buildDeprecatedSyncChangeDetail(entry: SourceRepositoryEntry): SyncSourceChangeDetail {
+    const detail: SyncSourceChangeDetail = {
+      name: entry.name,
+      pkg: entry.pkg,
+      version: entry.version,
+      previousVersion: '',
+      changeNotes: []
+    };
+    return detail;
+  }
+
+  private extractChangeNotes(sourceJson: string, version: string): string[] {
+    if (!sourceJson || sourceJson.trim().length <= 0) {
+      return [];
+    }
+    try {
+      const parsed: SourceConfigSummary = SafeUtils.parseObj(sourceJson) as SourceConfigSummary;
+      if (!parsed.changelog || !Array.isArray(parsed.changelog) || parsed.changelog.length <= 0) {
+        return [];
+      }
+
+      let selectedEntry: SourceConfigChangelogEntry | null = null;
+      for (let i = 0; i < parsed.changelog.length; i++) {
+        const entry = parsed.changelog[i];
+        if (entry.version === version) {
+          selectedEntry = entry;
+          break;
+        }
+      }
+      if (!selectedEntry) {
+        selectedEntry = parsed.changelog[0];
+      }
+      if (!selectedEntry || !selectedEntry.changes || !Array.isArray(selectedEntry.changes)) {
+        return [];
+      }
+
+      const notes: string[] = [];
+      const maxNotes = Math.min(selectedEntry.changes.length, 4);
+      for (let i = 0; i < maxNotes; i++) {
+        const note = selectedEntry.changes[i];
+        if (note && note.trim().length > 0) {
+          notes.push(note.trim());
+        }
+      }
+      return notes;
+    } catch (error) {
+      logger.warn(TAG, `解析图源更新内容失败: ${String(error)}`);
+      return [];
+    }
   }
 
   private async ensureSavedRepositoriesFileExists(): Promise<void> {
@@ -502,8 +595,23 @@ export class SourceRepositoryManager {
 
       // 合并图源（去重）
       const existingIds = new Set(currentIndex.sources.map(s => s.pkg));
+      const remoteIds = new Set(repositoryData.map(s => s.pkg));
       let addedCount = 0;
       let updatedCount = 0;
+
+      const addedSources: SyncSourceChangeDetail[] = [];
+      const updatedSources: SyncSourceChangeDetail[] = [];
+      const deprecatedSources: SyncSourceChangeDetail[] = [];
+      const retainedSources: SourceRepositoryEntry[] = [];
+
+      for (const oldSource of currentIndex.sources) {
+        if (!remoteIds.has(oldSource.pkg)) {
+          deprecatedSources.push(this.buildDeprecatedSyncChangeDetail(oldSource));
+        } else {
+          retainedSources.push(oldSource);
+        }
+      }
+      currentIndex.sources = retainedSources;
 
       const sourcesToImport: SourceRepositoryEntry[] = [];
       for (const newSource of repositoryData) {
@@ -511,14 +619,17 @@ export class SourceRepositoryManager {
           // 更新现有图源
           const index = currentIndex.sources.findIndex(s => s.pkg === newSource.pkg);
           if (index !== -1) {
+            const previousSource = currentIndex.sources[index];
             currentIndex.sources[index] = newSource;
             updatedCount++;
+            updatedSources.push(this.buildSyncChangeDetail(newSource, previousSource, sourceConfigs[newSource.pkg] || ''));
           }
         } else {
           // 添加新图源
           currentIndex.sources.push(newSource);
           addedCount++;
           sourcesToImport.push(newSource);
+          addedSources.push(this.buildSyncChangeDetail(newSource, null, sourceConfigs[newSource.pkg] || ''));
         }
       }
 
@@ -573,12 +684,15 @@ export class SourceRepositoryManager {
       }
 
       progressCallback?.onProgress(100, 100, '同步完成！');
-      log('info', `仓库同步成功: 新增${addedCount}个, 更新${updatedCount}个图源`);
+      log('info', `仓库同步成功: 新增${addedCount}个, 更新${updatedCount}个, 废弃${deprecatedSources.length}个图源`);
 
       return {
         success: true,
-        message: `同步成功！新增${addedCount}个图源，更新${updatedCount}个图源`,
-        sourceCount: repositoryData.length
+        message: `同步成功！新增${addedCount}个图源，更新${updatedCount}个图源，废弃${deprecatedSources.length}个图源`,
+        sourceCount: repositoryData.length,
+        addedSources: addedSources,
+        updatedSources: updatedSources,
+        deprecatedSources: deprecatedSources
       };
     } catch (error) {
       // 提取有意义的错误信息
@@ -628,12 +742,40 @@ export class SourceRepositoryManager {
           filePath,
           fileIo.OpenMode.READ_WRITE | fileIo.OpenMode.CREATE | fileIo.OpenMode.TRUNC
         );
-        SafeFileUtils.writeSync(file.fd, config);
+        SafeFileUtils.writeStringExactSync(file.fd, config);
         SafeFileUtils.closeSync(file);
         logger.info(TAG, `图源文件保存成功: ${fileName}`);
       } catch (error) {
         logger.warn(TAG, `保存图源文件失败: ${pkg}`, String(error));
       }
+    }
+  }
+
+  async saveImportedSourceFile(pkg: string, jsonContent: string): Promise<boolean> {
+    if (!pkg || pkg.trim().length <= 0 || !jsonContent || jsonContent.trim().length <= 0) {
+      logger.warn(TAG, '保存导入图源文件失败: pkg 或内容为空');
+      return false;
+    }
+    if (!this.repositoryDir || this.repositoryDir.length <= 0) {
+      logger.warn(TAG, '保存导入图源文件失败: 仓库目录尚未初始化');
+      return false;
+    }
+
+    try {
+      await this.ensureDirectoryExists(this.repositoryDir);
+      const fileName = `${pkg}.json`;
+      const filePath = `${this.repositoryDir}/${fileName}`;
+      const file = SafeFileUtils.openSync(
+        filePath,
+        fileIo.OpenMode.READ_WRITE | fileIo.OpenMode.CREATE | fileIo.OpenMode.TRUNC
+      );
+      SafeFileUtils.writeStringExactSync(file.fd, jsonContent);
+      SafeFileUtils.closeSync(file);
+      logger.info(TAG, `本地图源文件已覆盖保存: ${fileName}`);
+      return true;
+    } catch (error) {
+      logger.warn(TAG, `保存导入图源文件失败: ${pkg}`, String(error));
+      return false;
     }
   }
 

@@ -174,6 +174,14 @@ export struct SettingsImmersiveTitleBar {
     return SettingsPageTitleBarManager.getTitleBarTopPadding(this.statusBarHeight);
   }
 
+  private getEdgeFadeStartOffset(): number {
+    return SettingsPageTitleBarManager.getEdgeFadeStartOffset(this.statusBarHeight);
+  }
+
+  private getEdgeFadeLayerHeight(): number {
+    return SettingsPageTitleBarManager.getEdgeFadeLayerHeight();
+  }
+
   private getVisibleActions(): SettingsImmersiveTitleActionItem[] {
     return this.actions.filter((action: SettingsImmersiveTitleActionItem) => action.visible !== false);
   }
@@ -360,23 +368,38 @@ export struct SettingsImmersiveTitleBar {
 
   build() {
     Stack({ alignContent: Alignment.TopStart }) {
-      Column()
-        .width('100%')
-        .height('100%')
-        .backgroundColor(SettingsPageTitleBarManager.getBackdropColor(this.getCurrentTheme()))
-        .backdropBlur(SettingsPageTitleBarManager.getBackdropBlurRadius(this.getCurrentTheme()))
+      Stack({ alignContent: Alignment.TopStart }) {
+        Column()
+          .width('100%')
+          .height('100%')
+          .backgroundColor(SettingsPageTitleBarManager.getBackdropColor(this.getCurrentTheme()))
+          .backdropBlur(SettingsPageTitleBarManager.getBackdropBlurRadius(this.getCurrentTheme()))
+          .hitTestBehavior(HitTestMode.Transparent)
+
+        Column()
+          .width('100%')
+          .height('100%')
+          .linearGradient(SettingsPageTitleBarManager.getSurfaceGradient(this.getCurrentTheme()))
+          .hitTestBehavior(HitTestMode.Transparent)
+
+        Column()
+          .width('24%')
+          .height('62%')
+          .position({ x: 0, y: 0 })
+          .linearGradient(SettingsPageTitleBarManager.getReflectionGradient(this.getCurrentTheme()))
+          .opacity(SettingsPageTitleBarManager.getReflectionOpacity(this.getCurrentTheme()))
+          .hitTestBehavior(HitTestMode.Transparent)
+      }
+      .width('100%')
+      .height(this.getBarHeight())
+      .hitTestBehavior(HitTestMode.Transparent)
 
       Column()
         .width('100%')
-        .height('100%')
-        .linearGradient(SettingsPageTitleBarManager.getSurfaceGradient(this.getCurrentTheme()))
-
-      Column()
-        .width('24%')
-        .height('62%')
-        .position({ x: 0, y: 0 })
-        .linearGradient(SettingsPageTitleBarManager.getReflectionGradient(this.getCurrentTheme()))
-        .opacity(SettingsPageTitleBarManager.getReflectionOpacity(this.getCurrentTheme()))
+        .height(this.getEdgeFadeLayerHeight())
+        .position({ x: 0, y: this.getEdgeFadeStartOffset() })
+        .linearGradient(SettingsPageTitleBarManager.getEdgeFadeGradient(this.getCurrentTheme()))
+        .hitTestBehavior(HitTestMode.Transparent)
 
       Column() {
         Row({ space: 12 }) {
@@ -446,7 +469,7 @@ export struct SettingsImmersiveTitleBar {
         })
       }
       .width('100%')
-      .height('100%')
+      .height(this.getBarHeight())
       .padding({ top: this.getTopPadding() })
       .alignItems(HorizontalAlign.Center)
     }

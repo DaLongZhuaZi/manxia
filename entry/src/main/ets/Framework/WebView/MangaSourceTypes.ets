@@ -366,6 +366,7 @@ export interface ScriptAction extends BaseAction {
   type: ActionType.SCRIPT;
   code: string;
   timeout?: number;
+  saveAs?: string;
 }
 
 /**

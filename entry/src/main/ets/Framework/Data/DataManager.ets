@@ -4789,6 +4789,20 @@ export class DataManager {
     }
   }
 
+  private parseSourceBooleanFlag(value: boolean | number | string | undefined): boolean {
+    if (value === true) {
+      return true;
+    }
+    if (value === false || value === undefined) {
+      return false;
+    }
+    if (typeof value === 'number') {
+      return value !== 0;
+    }
+    const normalized: string = value.trim().toLowerCase();
+    return normalized === 'true' || normalized === '1' || normalized === 'yes';
+  }
+
   /**
    * 添加图源
    */
@@ -4844,6 +4858,7 @@ export class DataManager {
       if (!metadata || !metadata['id'] || !metadata['name'] || !metadata['baseUrl']) {
         throw new Error('图源配置缺少必需字段（id、name或baseUrl）');
       }
+      const metadataConfig: ConfigObject = metadata as ConfigObject;
 
       const pkg = metadata['id'] as string;
       const metadataType = metadata['type'] as string;
@@ -4852,8 +4867,8 @@ export class DataManager {
       // 检查图源是否已存在
       const existingSource: Record<string, Object> | null = await this.getSourceConfigByPkg(pkg);
       
-      // 读取是否需要代理（metadata.Internet）
-      const requireProxy = metadata['Internet'] === true ? 1 : 0;
+      // metadata.Internet 表示是否需要网络代理；未声明时默认不需要代理。
+      const requireProxy = this.parseSourceBooleanFlag(metadataConfig.Internet) ? 1 : 0;
       
       if (existingSource) {
         // 更新现有图源（保留 Cookie）

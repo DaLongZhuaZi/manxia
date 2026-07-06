@@ -5,9 +5,7 @@
 import { promptAction } from '@kit.ArkUI';
 import { logger } from '../../Utils/Logger';
 import { ThemeAwareState, ThemeAwareHelper } from './ThemeAware';
-import { ThemeType } from '../Managers/ThemeManager';
 import { SourceDialogScaffold } from './SourceDialogScaffold';
-import { DialogSurfaceStyleHelper } from './DialogSurfaceStyleHelper';
 import { SettingsPageSurfaceManager, SettingsPageSurfaceStyle } from '../../pages/settings/SettingsPageSurfaceManager';
 import { SettingsGlassStyleHelper } from '../../pages/settings/SettingsGlassStyleHelper';
 import { eventBus, GameEvent, IEventPayload, ReadAloudCacheUpdatedPayload } from '../EventBus';
@@ -83,9 +81,6 @@ export struct ReadAloudCacheDialogComponent {
   @State isReadAloudCacheLoading: boolean = false;
   @State isReadAloudCacheExpanded: boolean = true;
   @State showReadAloudCacheDialog: boolean = false;
-  @State readAloudCacheDialogOpacity: number = 0;
-  @State readAloudCacheDialogScale: number = 0.8;
-  @State readAloudCacheDialogTranslateY: number = 50;
   @State readAloudCacheDialogActiveTab: number = 0;
   @State readAloudCacheSelectionMode: 'range' | 'individual' = 'range';
   @State readAloudCacheRangeStart: number = 0;
@@ -200,26 +195,6 @@ export struct ReadAloudCacheDialogComponent {
     return this.getSectionSurfaceStyle().shadowColor;
   }
 
-  private getDialogChromeTopEdgeColor(): ResourceColor {
-    return this.themeState.currentTheme === ThemeType.DARK
-      ? 'rgba(255, 255, 255, 0.18)'
-      : 'rgba(255, 255, 255, 0.58)';
-  }
-
-  private getDialogChromeBottomEdgeColor(): ResourceColor {
-    return this.themeState.currentTheme === ThemeType.DARK
-      ? 'rgba(154, 196, 255, 0.08)'
-      : 'rgba(126, 166, 220, 0.10)';
-  }
-
-  private getDialogMaskColor(): ResourceColor {
-    return DialogSurfaceStyleHelper.getPopupMaskColor();
-  }
-
-  private getDialogMaskBlurStyle(): BlurStyle {
-    return DialogSurfaceStyleHelper.getPopupMaskBlurStyle();
-  }
-
   @Builder
   private buildGlassSectionChrome() {
     Column()
@@ -231,19 +206,6 @@ export struct ReadAloudCacheDialogComponent {
       .height(1)
       .align(Alignment.Bottom)
       .backgroundColor(this.getSectionSurfaceStyle().bottomEdgeColor)
-  }
-
-  @Builder
-  private buildDialogChrome(radius?: number) {
-    Column()
-      .width('100%')
-      .height(1)
-      .backgroundColor(this.getDialogChromeTopEdgeColor())
-    Column()
-      .width('100%')
-      .height(1)
-      .align(Alignment.Bottom)
-      .backgroundColor(this.getDialogChromeBottomEdgeColor())
   }
 
   // ==================== Handler 方法 ====================
@@ -386,14 +348,11 @@ export struct ReadAloudCacheDialogComponent {
     });
     this.syncReadAloudCachePresetDraftName();
     this.readAloudCachePresetStatusMessage = '';
-    this.showReadAloudCacheDialog = true;
     this.getUIContext().animateTo({
-      duration: 260,
+      duration: 220,
       curve: Curve.EaseOut
     }, () => {
-      this.readAloudCacheDialogOpacity = 1;
-      this.readAloudCacheDialogScale = 1;
-      this.readAloudCacheDialogTranslateY = 0;
+      this.showReadAloudCacheDialog = true;
     });
   }
 
@@ -420,13 +379,8 @@ export struct ReadAloudCacheDialogComponent {
       duration: 180,
       curve: Curve.EaseIn
     }, () => {
-      this.readAloudCacheDialogOpacity = 0;
-      this.readAloudCacheDialogScale = 0.96;
-      this.readAloudCacheDialogTranslateY = 12;
-    });
-    setTimeout(() => {
       this.showReadAloudCacheDialog = false;
-    }, 200);
+    });
   }
 
   private async loadReadAloudCacheManageDetail(showToastOnError: boolean = false): Promise<void> {
@@ -1637,135 +1591,121 @@ export struct ReadAloudCacheDialogComponent {
         },
         dialogWidth: '90%',
         maxWidth: 640,
-        contentPadding: 0,
-        dialogRadius: 26,
+        contentPadding: 24,
         zIndexValue: 120,
-        useMaskBlur: true,
-        maskBlurStyle: this.getDialogMaskBlurStyle(),
-        maskColor: this.getDialogMaskColor()
+        useMaskBlur: true
       }) {
-        Stack({ alignContent: Alignment.TopStart }) {
-          this.buildDialogChrome(26)
-          Column({ space: 16 }) {
+        Column({ space: 20 }) {
 
-            Row() {
-              Text('听书缓存')
+          Row() {
+            Text('听书缓存')
+              .fontSize(20)
+              .fontWeight(FontWeight.Medium)
+              .fontFamily(this.appFontFamily)
+              .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
+
+            Blank()
+
+            Button() {
+              SymbolGlyph($r('sys.symbol.xmark'))
                 .fontSize(18)
-                .fontWeight(FontWeight.Bold)
-                .fontFamily(this.appFontFamily)
-                .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
-
-              Blank()
-
-              Button() {
-                SymbolGlyph($r('sys.symbol.xmark'))
-                  .fontSize(18)
-                  .fontColor([ThemeAwareHelper.getTestManagementThemedColor('text_secondary',
-                    this.themeState.currentTheme)])
-              }
-              .width(32)
-              .height(32)
-              .backgroundColor(Color.Transparent)
-              .onClick(() => {
-                this.closeReadAloudCacheDialog();
-              })
+                .fontColor([ThemeAwareHelper.getTestManagementThemedColor('text_secondary',
+                  this.themeState.currentTheme)])
             }
-            .width('100%')
-
-            Row({ space: 8 }) {
-              this.buildReadAloudCacheDialogTabButton('缓存', $r('sys.symbol.arrow_down_circle'), 0)
-              this.buildReadAloudCacheDialogTabButton('管理', $r('sys.symbol.list_bullet'), 1)
-              this.buildReadAloudCacheDialogTabButton('设置', $r('sys.symbol.gearshape'), 2)
-            }
-            .width('100%')
-            .padding(4)
-            .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('comp_background_tertiary',
-              this.themeState.currentTheme))
-            .borderRadius(18)
-
-            if (this.isReadAloudPrecaching) {
-              Column({ space: 8 }) {
-                Row({ space: 8 }) {
-                  LoadingProgress()
-                    .width(14)
-                    .height(14)
-                    .color(ThemeAwareHelper.getTestManagementThemedColor('accent_green', this.themeState.currentTheme))
-                  Text(this.readAloudPrecachingStatusText || '正在缓存听书音频')
-                    .fontSize(12)
-                    .fontWeight(FontWeight.Medium)
-                    .fontFamily(this.appFontFamily)
-                    .fontColor(ThemeAwareHelper.getTestManagementThemedColor('accent_green',
-                      this.themeState.currentTheme))
-                  Blank()
-                  Text(this.formatReadAloudCacheSize(this.readAloudPrecachingBytes))
-                    .fontSize(11)
-                    .fontFamily(this.appFontFamily)
-                    .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary',
-                      this.themeState.currentTheme))
-                }
-                .width('100%')
-
-                if (this.readAloudPrecachingDetailText) {
-                  Text(this.readAloudPrecachingDetailText)
-                    .fontSize(11)
-                    .fontFamily(this.appFontFamily)
-                    .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_muted',
-                      this.themeState.currentTheme))
-                    .width('100%')
-                }
-
-                Progress({
-                  value: this.readAloudPrecachingSegmentTotal > 0
-                    ? Math.round((this.readAloudPrecachingSegmentDone / this.readAloudPrecachingSegmentTotal) * 100)
-                    : 0,
-                  total: 100,
-                  type: ProgressType.Linear
-                })
-                  .width('100%')
-                  .height(6)
-                  .color(ThemeAwareHelper.getTestManagementThemedColor('accent_green', this.themeState.currentTheme))
-                  .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('comp_background_secondary',
-                    this.themeState.currentTheme))
-                  .borderRadius(3)
-              }
-              .width('100%')
-              .padding(12)
-              .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('comp_background_tertiary',
-                this.themeState.currentTheme))
-              .borderRadius(12)
-              .transition(this.getReadAloudCacheFadeSlideTransition(8))
-            }
-
-            Scroll() {
-              Column({ space: 12 }) {
-                if (this.readAloudCacheDialogActiveTab === 0) {
-                  this.buildReadAloudCacheChapterSelectionTab()
-                } else if (this.readAloudCacheDialogActiveTab === 1) {
-                  this.buildReadAloudCacheManagementTab()
-                } else {
-                  this.buildReadAloudCacheSettingsTab()
-                }
-              }
-              .width('100%')
-              .alignItems(HorizontalAlign.Start)
-              .animation({ duration: 220, curve: Curve.EaseOut })
-            }
-            .width('100%')
-            .constraintSize({ maxHeight: 500 })
-            .scrollBar(BarState.Auto)
-
-            this.buildReadAloudCacheDialogFooter()
+            .width(32)
+            .height(32)
+            .backgroundColor(Color.Transparent)
+            .onClick(() => {
+              this.closeReadAloudCacheDialog();
+            })
           }
           .width('100%')
-          .padding(20)
-          .scale({ x: this.readAloudCacheDialogScale, y: this.readAloudCacheDialogScale })
-          .translate({ y: this.readAloudCacheDialogTranslateY })
-          .opacity(this.readAloudCacheDialogOpacity)
-          .borderRadius(26)
-          .clip(true)
-          .onClick(() => {
-          })
+
+          Row({ space: 8 }) {
+            this.buildReadAloudCacheDialogTabButton('缓存', $r('sys.symbol.arrow_down_circle'), 0)
+            this.buildReadAloudCacheDialogTabButton('管理', $r('sys.symbol.list_bullet'), 1)
+            this.buildReadAloudCacheDialogTabButton('设置', $r('sys.symbol.gearshape'), 2)
+          }
+          .width('100%')
+          .padding(4)
+          .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('comp_background_tertiary',
+            this.themeState.currentTheme))
+          .borderRadius(18)
+
+          if (this.isReadAloudPrecaching) {
+            Column({ space: 8 }) {
+              Row({ space: 8 }) {
+                LoadingProgress()
+                  .width(14)
+                  .height(14)
+                  .color(ThemeAwareHelper.getTestManagementThemedColor('accent_green', this.themeState.currentTheme))
+                Text(this.readAloudPrecachingStatusText || '正在缓存听书音频')
+                  .fontSize(12)
+                  .fontWeight(FontWeight.Medium)
+                  .fontFamily(this.appFontFamily)
+                  .fontColor(ThemeAwareHelper.getTestManagementThemedColor('accent_green',
+                    this.themeState.currentTheme))
+                Blank()
+                Text(this.formatReadAloudCacheSize(this.readAloudPrecachingBytes))
+                  .fontSize(11)
+                  .fontFamily(this.appFontFamily)
+                  .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary',
+                    this.themeState.currentTheme))
+              }
+              .width('100%')
+
+              if (this.readAloudPrecachingDetailText) {
+                Text(this.readAloudPrecachingDetailText)
+                  .fontSize(11)
+                  .fontFamily(this.appFontFamily)
+                  .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_muted',
+                    this.themeState.currentTheme))
+                  .width('100%')
+              }
+
+              Progress({
+                value: this.readAloudPrecachingSegmentTotal > 0
+                  ? Math.round((this.readAloudPrecachingSegmentDone / this.readAloudPrecachingSegmentTotal) * 100)
+                  : 0,
+                total: 100,
+                type: ProgressType.Linear
+              })
+                .width('100%')
+                .height(6)
+                .color(ThemeAwareHelper.getTestManagementThemedColor('accent_green', this.themeState.currentTheme))
+                .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('comp_background_secondary',
+                  this.themeState.currentTheme))
+                .borderRadius(3)
+            }
+            .width('100%')
+            .padding(12)
+            .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('comp_background_tertiary',
+              this.themeState.currentTheme))
+            .borderRadius(12)
+            .transition(this.getReadAloudCacheFadeSlideTransition(8))
+          }
+
+          Scroll() {
+            Column({ space: 12 }) {
+              if (this.readAloudCacheDialogActiveTab === 0) {
+                this.buildReadAloudCacheChapterSelectionTab()
+              } else if (this.readAloudCacheDialogActiveTab === 1) {
+                this.buildReadAloudCacheManagementTab()
+              } else {
+                this.buildReadAloudCacheSettingsTab()
+              }
+            }
+            .width('100%')
+            .alignItems(HorizontalAlign.Start)
+            .animation({ duration: 220, curve: Curve.EaseOut })
+          }
+          .width('100%')
+          .constraintSize({ maxHeight: 500 })
+          .scrollBar(BarState.Auto)
+
+          this.buildReadAloudCacheDialogFooter()
         }
+        .width('100%')
       }
     }
   }
