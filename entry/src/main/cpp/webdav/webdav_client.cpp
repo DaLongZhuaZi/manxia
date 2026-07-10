@@ -245,13 +245,15 @@ public:
 
     void setupCurl(const std::string& url) {
         if (!curl) { return; }
+        // Enforce HTTPS to protect Basic Auth credentials from plaintext exposure
+        if (url.size() < 8 || url.substr(0, 8) != "https://") { return; }
         curl_easy_reset(curl);
         curl_easy_setopt(curl, CURLOPT_URL, url.c_str());
         curl_easy_setopt(curl, CURLOPT_TIMEOUT_MS, config.timeoutMs);
         curl_easy_setopt(curl, CURLOPT_CONNECTTIMEOUT_MS, config.timeoutMs);
         curl_easy_setopt(curl, CURLOPT_NOSIGNAL, 1L);
+        // Always verify peer certificate; only allow skipping hostname check when verifySSL is false
         if (!config.verifySSL) {
-            curl_easy_setopt(curl, CURLOPT_SSL_VERIFYPEER, 0L);
             curl_easy_setopt(curl, CURLOPT_SSL_VERIFYHOST, 0L);
         }
         curl_easy_setopt(curl, CURLOPT_FOLLOWLOCATION, 1L);
