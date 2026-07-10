@@ -86,6 +86,7 @@ export class PageWindowRegistry {
     'SourceDiagnosticPage',
     'SourceInteractiveEditorPage',
     'SourceLoginPage',
+    'SourceMaintenancePage',
     'SourceManagementPage',
     'SourceSettingsPage',
     'StorageManagementPage',
