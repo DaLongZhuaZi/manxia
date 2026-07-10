@@ -14,6 +14,13 @@ import { FontAwareHelper, FontAwareState } from '../Framework/Components/FontAwa
 import { WebViewSourceManager } from '../Framework/WebView/WebViewSourceManager';
 import { DataManager } from '../Framework/Data/DataManager';
 import { SourceRepositoryManager } from '../Framework/Source/SourceRepositoryManager';
+import {
+  sourceMaintenanceManager,
+  SourceMaintenanceBadge,
+  SourceMaintenanceMode,
+  SourceMaintenancePageParams,
+  SourceMaintenanceSyncState
+} from '../Framework/Source/SourceMaintenanceManager';
 import { ProxyManager, ProxyConfig, DEFAULT_PROXY_CONFIG } from '../Framework/Network/ProxyManager';
 import { ProxyConfigDialog } from '../components/source/ProxyConfigDialog';
 import { SourceManager, getSourceManager } from '../Framework/Source/SourceManager';
@@ -28,6 +35,7 @@ import {
   SourceDiagnosticPageParams,
   SourceInteractiveEditorPageParams
 } from '../Framework/SourceEditor/SourceEditorTypes';
+import { LegadoMangaSourceBridge } from '../Framework/Novel/LegadoMangaSourceBridge';
 
 const TAG = 'SourceManagementPage';
 
@@ -55,6 +63,13 @@ interface SourceInfo {
   isPinned?: boolean;  // 是否置顶
   isNSFW?: boolean;    // 是否为NSFW图源
   requireProxy?: boolean; // 是否需要代理
+  maintenanceMode?: SourceMaintenanceMode;
+  maintenanceSyncState?: SourceMaintenanceSyncState;
+  maintenanceLabel?: string;
+  maintenanceSyncLabel?: string;
+  maintenanceDescription?: string;
+  maintenanceNeedsAttention?: boolean;
+  supportsIndependentMaintenance?: boolean;
 }
 
 /**
@@ -150,9 +165,15 @@ export struct SourceManagementPage {
       // 使用 SourceManager 加载图源（包含置顶状态）
       const sources = await this.sourceManager.getAllSourcesSortedByPinned();
       const repoManager = SourceRepositoryManager.getInstance();
-
-      const mappedSources: SourceInfo[] = sources.map((source) => {
+      const mappedSources: SourceInfo[] = [];
+      for (let index = 0; index < sources.length; index++) {
+        const source = sources[index];
         const pkg = source.pkg || '';
+        const supportsIndependentMaintenance: boolean = this.supportsSourceIndependentMaintenance(pkg);
+        let maintenanceBadge: SourceMaintenanceBadge | null = null;
+        if (supportsIndependentMaintenance) {
+          maintenanceBadge = await sourceMaintenanceManager.getBadgeForSource(pkg);
+        }
         // 尝试获取图源图标路径
         let iconPath: string | undefined = source.iconPath;
         if (!iconPath && pkg) {
@@ -178,10 +199,17 @@ export struct SourceManagementPage {
           isDebugMode: false,
           isPinned: source.isPinned || false,
           isNSFW: source.isNSFW || false,
-          requireProxy: source.requireProxy || false
+          requireProxy: source.requireProxy || false,
+          maintenanceMode: maintenanceBadge ? maintenanceBadge.mode : undefined,
+          maintenanceSyncState: maintenanceBadge ? maintenanceBadge.syncState : undefined,
+          maintenanceLabel: maintenanceBadge ? maintenanceBadge.modeLabel : '',
+          maintenanceSyncLabel: maintenanceBadge ? maintenanceBadge.syncLabel : '',
+          maintenanceDescription: maintenanceBadge ? maintenanceBadge.description : '',
+          maintenanceNeedsAttention: maintenanceBadge ? maintenanceBadge.needsAttention : false,
+          supportsIndependentMaintenance: supportsIndependentMaintenance
         };
-        return info;
-      });
+        mappedSources.push(info);
+      }
       await this.loadSourceDebugModes(mappedSources);
       this.allSources = mappedSources;
 
@@ -440,6 +468,27 @@ export struct SourceManagementPage {
     this.pathStack.pushPathByName('SourceInteractiveEditorPage', params);
   }
 
+  private openSourceMaintenance(source: SourceInfo): void {
+    if (source.supportsIndependentMaintenance === false) {
+      this.showToast('Legado 图源不支持独立维护');
+      return;
+    }
+    const params: SourceMaintenancePageParams = {
+      sourceId: source.id,
+      sourcePkg: source.pkg,
+      sourceName: source.name
+    };
+    this.pathStack.pushPathByName('SourceMaintenancePage', params);
+  }
+
+  private supportsSourceIndependentMaintenance(pkg: string): boolean {
+    const normalizedPkg: string = pkg.trim();
+    if (normalizedPkg.length <= 0) {
+      return false;
+    }
+    return !LegadoMangaSourceBridge.isLegadoMangaPkg(normalizedPkg);
+  }
+
   private sortSourcesByPinned(sources: SourceInfo[]): SourceInfo[] {
     const pinned = sources.filter(s => s.isPinned);
     const unpinned = sources.filter(s => !s.isPinned);
@@ -548,6 +597,55 @@ export struct SourceManagementPage {
       message: message,
       duration: 2000
     });
+  }
+
+  private getMaintenanceAccentColor(source: SourceInfo): ResourceColor {
+    if (source.maintenanceNeedsAttention === true) {
+      return ThemeAwareHelper.getTestManagementThemedColor('color_error', this.themeState.currentTheme);
+    }
+    if (source.maintenanceMode === 'userRepository') {
+      return ThemeAwareHelper.getTestManagementThemedColor('accent_green', this.themeState.currentTheme);
+    }
+    if (source.maintenanceMode === 'officialPullRequest') {
+      return ThemeAwareHelper.getTestManagementThemedColor('accent_blue', this.themeState.currentTheme);
+    }
+    if (source.maintenanceMode === 'localFork') {
+      return ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme);
+    }
+    return ThemeAwareHelper.getTestManagementThemedColor('text_muted', this.themeState.currentTheme);
+  }
+
+  private getMaintenanceModeLabel(source: SourceInfo): string {
+    return source.maintenanceLabel || '官方同步';
+  }
+
+  private getMaintenanceSyncLabel(source: SourceInfo): string {
+    return source.maintenanceSyncLabel || '干净';
+  }
+
+  private isDarkLikeTheme(): boolean {
+    return this.themeState.currentTheme === ThemeType.DARK || this.themeState.currentTheme === ThemeType.PRIVACY;
+  }
+
+  private getSourceActionButtonBackground(): ResourceColor {
+    if (this.isDarkLikeTheme()) {
+      return 'rgba(238, 246, 255, 0.12)';
+    }
+    return ThemeAwareHelper.getTestManagementThemedColor('button_background', this.themeState.currentTheme);
+  }
+
+  private getSourceActionButtonBorderColor(): ResourceColor {
+    if (this.isDarkLikeTheme()) {
+      return 'rgba(238, 246, 255, 0.24)';
+    }
+    return ThemeAwareHelper.getTestManagementThemedColor('divider', this.themeState.currentTheme);
+  }
+
+  private getSourceActionInactiveIconColor(accent: ResourceColor): ResourceColor {
+    if (this.isDarkLikeTheme()) {
+      return 'rgba(238, 246, 255, 0.74)';
+    }
+    return accent + 'B8';
   }
 
   build() {
@@ -717,6 +815,7 @@ export struct SourceManagementPage {
       offsetX: 0,
       offsetY: 8
     })
+    .margin({ bottom: 10 })
   }
 
   /**
@@ -924,7 +1023,7 @@ export struct SourceManagementPage {
     .expandSafeArea([SafeAreaType.SYSTEM], [SafeAreaEdge.TOP, SafeAreaEdge.BOTTOM])
     .width('100%')
     .layoutWeight(1)
-    .padding({ left: 16, right: 16, bottom: 8 })
+    .padding({ left: 16, right: 16, top: 6, bottom: 8 })
     .opacity(this.filterListOpacity)
     .translate({ y: this.filterListOffsetY })
     .animation({ duration: 220, curve: Curve.EaseOut })
@@ -1067,6 +1166,35 @@ export struct SourceManagementPage {
       }
       .width('100%')
 
+      if (source.supportsIndependentMaintenance !== false) {
+        Row({ space: 8 }) {
+          Text(this.getMaintenanceModeLabel(source))
+            .fontSize(11)
+            .fontFamily(this.appFontFamily)
+            .fontColor(this.getMaintenanceAccentColor(source))
+            .padding({ left: 6, right: 6, top: 2, bottom: 2 })
+            .borderRadius(5)
+            .backgroundColor(this.getMaintenanceAccentColor(source) + '20')
+
+          Text(this.getMaintenanceSyncLabel(source))
+            .fontSize(11)
+            .fontFamily(this.appFontFamily)
+            .fontColor(this.getMaintenanceAccentColor(source))
+            .padding({ left: 6, right: 6, top: 2, bottom: 2 })
+            .borderRadius(5)
+            .backgroundColor(this.getMaintenanceAccentColor(source) + '16')
+
+          Text(source.maintenanceDescription || '')
+            .fontSize(12)
+            .fontFamily(this.appFontFamily)
+            .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_muted', this.themeState.currentTheme))
+            .maxLines(1)
+            .textOverflow({ overflow: TextOverflow.Ellipsis })
+            .layoutWeight(1)
+        }
+        .width('100%')
+      }
+
       // 操作按钮
       Row({ space: 8 }) {
         Button() {
@@ -1074,31 +1202,31 @@ export struct SourceManagementPage {
             .fontSize(16)
             .fontColor([source.isPinned ?
               ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme) :
-              ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme) + 'B8'])
+              this.getSourceActionInactiveIconColor(ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme))])
         }
         .layoutWeight(1)
         .height(34)
         .borderRadius(8)
-        .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('button_background', this.themeState.currentTheme))
+        .backgroundColor(this.getSourceActionButtonBackground())
         .linearGradient(source.isPinned ? {
           angle: 130,
           colors: [
             [ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme) + '30', 0],
-            [ThemeAwareHelper.getTestManagementThemedColor('button_background', this.themeState.currentTheme), 0.5],
+            [this.getSourceActionButtonBackground(), 0.5],
             [ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme) + '3B', 1]
           ]
         } : {
           angle: 130,
           colors: [
-            [ThemeAwareHelper.getTestManagementThemedColor('button_background', this.themeState.currentTheme), 0],
-            [ThemeAwareHelper.getTestManagementThemedColor('button_background', this.themeState.currentTheme), 1]
+            [this.getSourceActionButtonBackground(), 0],
+            [this.getSourceActionButtonBackground(), 1]
           ]
         })
         .border({
           width: source.isPinned ? 1.4 : 1,
           color: source.isPinned ?
             ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme) + 'C2' :
-            ThemeAwareHelper.getTestManagementThemedColor('divider', this.themeState.currentTheme)
+            this.getSourceActionButtonBorderColor()
         })
         .shadow({
           radius: source.isPinned ? 8 : 0,
@@ -1117,31 +1245,31 @@ export struct SourceManagementPage {
             .fontSize(16)
             .fontColor([source.isNSFW ?
               ThemeAwareHelper.getTestManagementThemedColor('color_error', this.themeState.currentTheme) :
-              ThemeAwareHelper.getTestManagementThemedColor('color_error', this.themeState.currentTheme) + 'B8'])
+              this.getSourceActionInactiveIconColor(ThemeAwareHelper.getTestManagementThemedColor('color_error', this.themeState.currentTheme))])
         }
         .layoutWeight(1)
         .height(34)
         .borderRadius(8)
-        .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('button_background', this.themeState.currentTheme))
+        .backgroundColor(this.getSourceActionButtonBackground())
         .linearGradient(source.isNSFW ? {
           angle: 130,
           colors: [
             [ThemeAwareHelper.getTestManagementThemedColor('color_error', this.themeState.currentTheme) + '30', 0],
-            [ThemeAwareHelper.getTestManagementThemedColor('button_background', this.themeState.currentTheme), 0.5],
+            [this.getSourceActionButtonBackground(), 0.5],
             [ThemeAwareHelper.getTestManagementThemedColor('color_error', this.themeState.currentTheme) + '3B', 1]
           ]
         } : {
           angle: 130,
           colors: [
-            [ThemeAwareHelper.getTestManagementThemedColor('button_background', this.themeState.currentTheme), 0],
-            [ThemeAwareHelper.getTestManagementThemedColor('button_background', this.themeState.currentTheme), 1]
+            [this.getSourceActionButtonBackground(), 0],
+            [this.getSourceActionButtonBackground(), 1]
           ]
         })
         .border({
           width: source.isNSFW ? 1.4 : 1,
           color: source.isNSFW ?
             ThemeAwareHelper.getTestManagementThemedColor('color_error', this.themeState.currentTheme) + 'C2' :
-            ThemeAwareHelper.getTestManagementThemedColor('divider', this.themeState.currentTheme)
+            this.getSourceActionButtonBorderColor()
         })
         .shadow({
           radius: source.isNSFW ? 8 : 0,
@@ -1160,31 +1288,31 @@ export struct SourceManagementPage {
             .fontSize(16)
             .fontColor([source.isDebugMode ?
               ThemeAwareHelper.getTestManagementThemedColor('accent_blue', this.themeState.currentTheme) :
-              ThemeAwareHelper.getTestManagementThemedColor('accent_blue', this.themeState.currentTheme) + 'B8'])
+              this.getSourceActionInactiveIconColor(ThemeAwareHelper.getTestManagementThemedColor('accent_blue', this.themeState.currentTheme))])
         }
         .layoutWeight(1)
         .height(34)
         .borderRadius(8)
-        .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('button_background', this.themeState.currentTheme))
+        .backgroundColor(this.getSourceActionButtonBackground())
         .linearGradient(source.isDebugMode ? {
           angle: 130,
           colors: [
             [ThemeAwareHelper.getTestManagementThemedColor('accent_blue', this.themeState.currentTheme) + '30', 0],
-            [ThemeAwareHelper.getTestManagementThemedColor('button_background', this.themeState.currentTheme), 0.5],
+            [this.getSourceActionButtonBackground(), 0.5],
             [ThemeAwareHelper.getTestManagementThemedColor('accent_blue', this.themeState.currentTheme) + '3B', 1]
           ]
         } : {
           angle: 130,
           colors: [
-            [ThemeAwareHelper.getTestManagementThemedColor('button_background', this.themeState.currentTheme), 0],
-            [ThemeAwareHelper.getTestManagementThemedColor('button_background', this.themeState.currentTheme), 1]
+            [this.getSourceActionButtonBackground(), 0],
+            [this.getSourceActionButtonBackground(), 1]
           ]
         })
         .border({
           width: source.isDebugMode ? 1.4 : 1,
           color: source.isDebugMode ?
             ThemeAwareHelper.getTestManagementThemedColor('accent_blue', this.themeState.currentTheme) + 'C2' :
-            ThemeAwareHelper.getTestManagementThemedColor('divider', this.themeState.currentTheme)
+            this.getSourceActionButtonBorderColor()
         })
         .shadow({
           radius: source.isDebugMode ? 8 : 0,
@@ -1198,6 +1326,47 @@ export struct SourceManagementPage {
           void this.toggleSourceDebugMode(source);
         })
 
+        if (source.supportsIndependentMaintenance !== false) {
+          Button() {
+            SymbolGlyph($r('sys.symbol.externaldrive'))
+              .fontSize(16)
+              .fontColor([this.getMaintenanceAccentColor(source)])
+          }
+          .layoutWeight(1)
+          .height(34)
+          .borderRadius(8)
+          .backgroundColor(this.getSourceActionButtonBackground())
+          .linearGradient(source.maintenanceNeedsAttention === true ? {
+            angle: 130,
+            colors: [
+              [this.getMaintenanceAccentColor(source) + '30', 0],
+              [this.getSourceActionButtonBackground(), 0.5],
+              [this.getMaintenanceAccentColor(source) + '3B', 1]
+            ]
+          } : {
+            angle: 130,
+            colors: [
+              [this.getSourceActionButtonBackground(), 0],
+              [this.getSourceActionButtonBackground(), 1]
+            ]
+          })
+          .border({
+            width: source.maintenanceNeedsAttention === true ? 1.4 : 1,
+            color: source.maintenanceNeedsAttention === true ?
+              this.getMaintenanceAccentColor(source) + 'C2' :
+              this.getSourceActionButtonBorderColor()
+          })
+          .shadow({
+            radius: source.maintenanceNeedsAttention === true ? 8 : 0,
+            color: source.maintenanceNeedsAttention === true ? this.getMaintenanceAccentColor(source) + '2E' : Color.Transparent,
+            offsetX: 0,
+            offsetY: 0
+          })
+          .onClick(() => {
+            this.openSourceMaintenance(source);
+          })
+        }
+
         Button() {
           SymbolGlyph($r('sys.symbol.magnifyingglass'))
             .fontSize(16)
@@ -1206,10 +1375,10 @@ export struct SourceManagementPage {
         .layoutWeight(1)
         .height(34)
         .borderRadius(8)
-        .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('button_background', this.themeState.currentTheme))
+        .backgroundColor(this.getSourceActionButtonBackground())
         .border({
           width: 1,
-          color: ThemeAwareHelper.getTestManagementThemedColor('divider', this.themeState.currentTheme)
+          color: this.getSourceActionButtonBorderColor()
         })
         .onClick(() => {
           this.openSourceDiagnostic(source);
@@ -1223,10 +1392,10 @@ export struct SourceManagementPage {
         .layoutWeight(1)
         .height(34)
         .borderRadius(8)
-        .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('button_background', this.themeState.currentTheme))
+        .backgroundColor(this.getSourceActionButtonBackground())
         .border({
           width: 1,
-          color: ThemeAwareHelper.getTestManagementThemedColor('divider', this.themeState.currentTheme)
+          color: this.getSourceActionButtonBorderColor()
         })
         .onClick(() => {
           this.openSourceEditor(source);
@@ -1240,12 +1409,12 @@ export struct SourceManagementPage {
         .layoutWeight(1)
         .height(34)
         .borderRadius(8)
-        .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('button_background', this.themeState.currentTheme))
+        .backgroundColor(this.getSourceActionButtonBackground())
         .linearGradient({
           angle: 130,
           colors: [
             [ThemeAwareHelper.getTestManagementThemedColor('color_error', this.themeState.currentTheme) + '26', 0],
-            [ThemeAwareHelper.getTestManagementThemedColor('button_background', this.themeState.currentTheme), 0.5],
+            [this.getSourceActionButtonBackground(), 0.5],
             [ThemeAwareHelper.getTestManagementThemedColor('color_error', this.themeState.currentTheme) + '33', 1]
           ]
         })

@@ -10,6 +10,7 @@ import { Action, MangaSourceSettings } from '../WebView/MangaSourceTypes';
 import { WebViewSourceManager } from '../WebView/WebViewSourceManager';
 import { SourceConfigValidator } from './SourceConfigValidator';
 import { sourceDraftStore } from './SourceDraftStore';
+import { sourceMaintenanceManager } from '../Source/SourceMaintenanceManager';
 import {
   DomSelectionSnapshot,
   RuleFieldMapping,
@@ -199,6 +200,14 @@ export class InteractiveSourceEditorService {
     }
     const pkg: string = this.resolveConfigPkg(forkConfigJson, draft.sourcePkg);
     const sourceName: string = result.sourceName || this.resolveConfigName(forkConfigJson, draft.sourceName);
+    await this.markSourceMaintenance(
+      result.sourceId || 0,
+      pkg,
+      sourceName,
+      this.resolveConfigVersion(forkConfigJson, '1.0.0'),
+      forkConfigJson,
+      '由交互式图源编辑器保存为本地派生副本'
+    );
     return {
       success: true,
       message: '已保存为本地派生图源',
@@ -218,12 +227,22 @@ export class InteractiveSourceEditorService {
       return this.buildSaveFailure(result.error || '覆盖原图源失败', draft);
     }
     this.webViewSourceManager.invalidateSourceRuntime(draft.sourceId, draft.sourceName);
+    const pkg: string = this.resolveConfigPkg(draft.configJson, draft.sourcePkg);
+    const sourceName: string = result.sourceName || draft.sourceName;
+    await this.markSourceMaintenance(
+      draft.sourceId,
+      pkg,
+      sourceName,
+      this.resolveConfigVersion(draft.configJson, '1.0.0'),
+      draft.configJson,
+      '由交互式图源编辑器覆盖安装'
+    );
     return {
       success: true,
       message: '已覆盖原图源并清理运行缓存',
       sourceId: draft.sourceId,
-      sourceName: result.sourceName || draft.sourceName,
-      sourcePkg: this.resolveConfigPkg(draft.configJson, draft.sourcePkg),
+      sourceName: sourceName,
+      sourcePkg: pkg,
       exportPath: ''
     };
   }
@@ -372,6 +391,33 @@ export class InteractiveSourceEditorService {
       return config.metadata.name || fallback;
     } catch (_error) {
       return fallback;
+    }
+  }
+
+  private resolveConfigVersion(configJson: string, fallback: string): string {
+    try {
+      const config: SourceEditorRawConfig = this.parseRawConfig(configJson);
+      return config.metadata.version || fallback;
+    } catch (_error) {
+      return fallback;
+    }
+  }
+
+  private async markSourceMaintenance(
+    sourceId: number,
+    pkg: string,
+    sourceName: string,
+    sourceVersion: string,
+    configJson: string,
+    notes: string
+  ): Promise<void> {
+    if (pkg.length <= 0) {
+      return;
+    }
+    try {
+      await sourceMaintenanceManager.markLocalFork(sourceId, pkg, sourceName, sourceVersion, configJson, notes);
+    } catch (error) {
+      logger.warn(TAG, `图源维护状态标记失败: pkg=${pkg}, error=${String(error)}`);
     }
   }
 

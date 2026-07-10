@@ -145,6 +145,7 @@ import { BookSourceManagementPage } from './BookSourceManagementPage';
 import { SourceManagementPage } from './SourceManagementPage';
 import { SourceDiagnosticPage } from './SourceDiagnosticPage';
 import { SourceInteractiveEditorPage } from './SourceInteractiveEditorPage';
+import { SourceMaintenancePage } from './SourceMaintenancePage';
 import { SourceInteractiveEditorPageParams } from '../Framework/SourceEditor/SourceEditorTypes';
 import { BackupPage } from './BackupPage';
 
@@ -32804,6 +32805,8 @@ struct MainMenuPage {
         SourceDiagnosticPage()
       } else if (name === 'SourceInteractiveEditorPage') {
         SourceInteractiveEditorPage()
+      } else if (name === 'SourceMaintenancePage') {
+        SourceMaintenancePage()
       } else if (name === 'SourceSettingsPage') {
         SourceSettingsPage()
       } else if (name === 'SourceLoginPage') {

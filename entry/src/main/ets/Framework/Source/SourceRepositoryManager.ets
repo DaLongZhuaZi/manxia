@@ -1023,6 +1023,46 @@ export class SourceRepositoryManager {
     }
   }
 
+  async readSourceJsonFromRepository(pkg: string): Promise<string> {
+    try {
+      const sourceJsonFromNgf = ngfSourceLoaderFacade.loadSourceJson(pkg);
+      if (sourceJsonFromNgf.trim().length > 0) {
+        return sourceJsonFromNgf;
+      }
+
+      const filePath = `${this.repositoryDir}/${pkg}.json`;
+      const exists = SafeFileUtils.accessSync(filePath);
+      if (!exists) {
+        return '';
+      }
+
+      const file = SafeFileUtils.openSync(filePath, fileIo.OpenMode.READ_ONLY);
+      const buffer = new ArrayBuffer(1024 * 1024);
+      const readLen = SafeFileUtils.readSync(file.fd, buffer);
+      SafeFileUtils.closeSync(file);
+      return this.decodeToString(buffer, readLen);
+    } catch (error) {
+      logger.warn(TAG, `读取仓库图源文件失败: ${pkg}`, String(error));
+      return '';
+    }
+  }
+
+  async findRepositoryEntry(pkg: string): Promise<SourceRepositoryEntry | null> {
+    try {
+      const index = await this.readIndexFile();
+      for (let indexPosition = 0; indexPosition < index.sources.length; indexPosition++) {
+        const entry = index.sources[indexPosition];
+        if (entry.pkg === pkg) {
+          return entry;
+        }
+      }
+      return null;
+    } catch (error) {
+      logger.warn(TAG, `查找仓库索引图源失败: ${pkg}`, String(error));
+      return null;
+    }
+  }
+
   /**
    * 获取仓库中的所有图源
    */
