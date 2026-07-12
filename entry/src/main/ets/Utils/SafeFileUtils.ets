@@ -71,6 +71,10 @@ export class SafeFileUtils {
     return fileIo.statSync(file);
   }
 
+  static lstatSyncStrict(path: string): fileIo.Stat {
+    return fileIo.lstatSync(path);
+  }
+
   static unlinkSyncStrict(path: string): void {
     fileIo.unlinkSync(path);
   }

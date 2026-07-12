@@ -11316,6 +11316,15 @@ struct MainMenuPage {
     const mangaList: Manga[] = [];
 
     try {
+      try {
+        const cleanupResult = await this.dataManager.cleanupIncompleteLocalImports();
+        if (cleanupResult.deletedCount > 0) {
+          logger.warn(TAG, `书架加载前已清理 ${cleanupResult.deletedCount} 条不完整漫画导入记录`);
+        }
+      } catch (cleanupError) {
+        logger.error(TAG, `书架加载前清理不完整漫画失败: ${String(cleanupError)}`);
+      }
+
       // 根据隐私模式选择查询方法
       let localComics: ComicInfo[] = [];
       let onlineComics: OnlineComicInfo[] = [];
@@ -12125,7 +12134,6 @@ struct MainMenuPage {
       let failedCount = 0;
 
       const mangaIds = Array.from(this.mangaMultiSelect.selectedIds);
-      const localMangaIds: string[] = [];
       for (let index = 0; index < mangaIds.length; index++) {
         const mangaId = mangaIds[index];
         let manga = this.findLibraryMangaById(mangaId);
@@ -12150,13 +12158,22 @@ struct MainMenuPage {
           continue;
         }
 
-        localMangaIds.push(mangaId);
-      }
-
-      if (localMangaIds.length > 0) {
-        const result = await this.dataManager.deleteComics(localMangaIds);
-        successCount += result.successCount;
-        failedCount += result.failedCount;
+        try {
+          if (manga !== null) {
+            await this.dataManager.deleteComicByLibraryIdentity(
+              manga.id,
+              manga.sourceInfo?.sourceId || '',
+              manga.title,
+              manga.addedToLibraryAt || 0
+            );
+          } else {
+            await this.dataManager.deleteComic(mangaId);
+          }
+          successCount++;
+        } catch (error) {
+          failedCount++;
+          logger.error(TAG, `批量删除本地漫画失败: ${mangaId}, ${String(error)}`);
+        }
       }
 
       for (const ebookId of Array.from(this.ebookMultiSelect.selectedIds)) {
@@ -12217,7 +12234,6 @@ struct MainMenuPage {
       const mangaIds = Array.from(this.mangaMultiSelect.selectedIds);
       logger.info(TAG, `开始批量删除漫画: ${mangaIds.length}个`);
 
-      const localMangaIds: string[] = [];
       let successCount = 0;
       let failedCount = 0;
       for (let index = 0; index < mangaIds.length; index++) {
@@ -12244,13 +12260,22 @@ struct MainMenuPage {
           continue;
         }
 
-        localMangaIds.push(mangaId);
-      }
-
-      if (localMangaIds.length > 0) {
-        const result = await this.dataManager.deleteComics(localMangaIds);
-        successCount += result.successCount;
-        failedCount += result.failedCount;
+        try {
+          if (manga !== null) {
+            await this.dataManager.deleteComicByLibraryIdentity(
+              manga.id,
+              manga.sourceInfo?.sourceId || '',
+              manga.title,
+              manga.addedToLibraryAt || 0
+            );
+          } else {
+            await this.dataManager.deleteComic(mangaId);
+          }
+          successCount++;
+        } catch (error) {
+          failedCount++;
+          logger.error(TAG, `批量删除本地漫画失败: ${mangaId}, ${String(error)}`);
+        }
       }
 
       logger.info(TAG, `批量删除完成: 成功=${successCount}, 失败=${failedCount}`);
@@ -12901,7 +12926,6 @@ struct MainMenuPage {
   private async deleteSelectedDiscoverMangaItems(): Promise<DeleteComicsResult> {
     const result: DeleteComicsResult = this.createEmptyDeleteComicsResult();
     const mangaIds = Array.from(this.discoverMangaMultiSelect.selectedIds);
-    const localMangaIds: string[] = [];
 
     for (let index = 0; index < mangaIds.length; index++) {
       const mangaId = mangaIds[index];
@@ -12931,12 +12955,24 @@ struct MainMenuPage {
         continue;
       }
 
-      localMangaIds.push(mangaId);
-    }
-
-    if (localMangaIds.length > 0) {
-      const localResult: DeleteComicsResult = await this.dataManager.deleteComics(localMangaIds);
-      this.mergeDeleteComicsResult(result, localResult);
+      try {
+        if (manga !== null) {
+          await this.dataManager.deleteComicByLibraryIdentity(
+            manga.id,
+            manga.sourceInfo?.sourceId || '',
+            manga.title,
+            manga.addedToLibraryAt || 0
+          );
+        } else {
+          await this.dataManager.deleteComic(mangaId);
+        }
+        result.successCount++;
+      } catch (error) {
+        result.failedCount++;
+        const message = `批量删除本地漫画失败: ${mangaId}, ${String(error)}`;
+        result.errors.push(message);
+        logger.error(TAG, message);
+      }
     }
     return result;
   }
@@ -17644,7 +17680,7 @@ struct MainMenuPage {
               this.updateSwipeOffset(manga.id, event);
             })
             .onActionEnd(() => {
-              this.endSwipe(manga.id);
+              this.endSwipe(manga.id, manga);
             })
         )
       )
@@ -24797,7 +24833,7 @@ struct MainMenuPage {
         const mangaToDelete = this.mangaContextMenu.item;
         this.hideMangaContextMenu();
         if (mangaToDelete) {
-          this.showDeleteMangaDialog(mangaToDelete.id);
+          this.showDeleteMangaDialog(mangaToDelete.id, mangaToDelete);
         }
       })
     }
@@ -24835,7 +24871,7 @@ struct MainMenuPage {
         })
       MenuItem({ content: '删除' })
         .onClick(() => {
-          this.showDeleteMangaDialog(manga.id);
+          this.showDeleteMangaDialog(manga.id, manga);
         })
     }
   }
@@ -26958,14 +26994,14 @@ struct MainMenuPage {
     this.mangaSwipe = this.mangaSwipe;
   }
 
-  private endSwipe(mangaId: string): void {
+  private endSwipe(mangaId: string, fallbackManga?: Manga): void {
     if (!this.mangaSwipe.isActive || this.mangaSwipe.activeId !== mangaId) { return; }
     const reached: boolean = this.mangaSwipe.offset >= this.mangaSwipe.threshold;
     this.mangaSwipe.isActive = false;
     this.mangaSwipe = this.mangaSwipe;
     if (reached) {
       logger.info(TAG, `达到删除阈值，显示删除确认对话框: ${mangaId}`);
-      this.showDeleteMangaDialog(mangaId);
+      this.showDeleteMangaDialog(mangaId, fallbackManga);
     } else {
       this.resetSwipeState();
       logger.debug(TAG, `未达到删除阈值，复位: ${mangaId}`);
@@ -27022,8 +27058,8 @@ struct MainMenuPage {
   /**
    * 显示删除漫画确认对话框
    */
-  private showDeleteMangaDialog(mangaId: string): void {
-    const manga = this.findLibraryMangaById(mangaId);
+  private showDeleteMangaDialog(mangaId: string, fallbackManga?: Manga): void {
+    const manga = fallbackManga || this.findLibraryMangaById(mangaId);
     if (!manga) {
       logger.error(TAG, `未找到漫画ID为 ${mangaId} 的漫画`);
       this.resetSwipeState();
@@ -27083,11 +27119,18 @@ struct MainMenuPage {
         action: async () => {
           try {
             logger.info(TAG, `开始删除漫画: ${mangaId}`);
-            await this.dataManager.deleteComic(mangaId);
+            const deletedComicId: string = await this.dataManager.deleteComicByLibraryIdentity(
+              mangaId,
+              manga.sourceInfo?.sourceId || '',
+              manga.title,
+              manga.addedToLibraryAt || 0
+            );
 
             this.animateLibraryCollectionLayout(() => {
               for (let i: number = 0; i < this.mangaList.length; i++) {
-                if (this.mangaList[i].id === mangaId) {
+                if (this.mangaList[i] === manga ||
+                  (deletedComicId.length > 0 && this.mangaList[i].id === deletedComicId) ||
+                  (mangaId.length > 0 && this.mangaList[i].id === mangaId)) {
                   this.mangaList.splice(i, 1);
                   break;
                 }
@@ -27098,10 +27141,13 @@ struct MainMenuPage {
               this.applyEBookFilter();
             });
 
-            eventBus.publish(GameEvent.MANGA_DELETED, new MangaDeletedPayload(mangaId));
+            const eventComicId: string = deletedComicId.length > 0 ? deletedComicId : mangaId;
+            if (eventComicId.length > 0) {
+              eventBus.publish(GameEvent.MANGA_DELETED, new MangaDeletedPayload(eventComicId));
+            }
 
             this.showToast('漫画已删除');
-            logger.info(TAG, `漫画删除成功: ${mangaId}`);
+            logger.info(TAG, `漫画删除成功: requestId=${mangaId}, resolvedId=${deletedComicId}`);
             this.resetSwipeState();
           } catch (error) {
             logger.error(TAG, '删除漫画失败', String(error));
@@ -28178,7 +28224,7 @@ struct MainMenuPage {
               this.updateSwipeOffset(manga.id, event);
             })
             .onActionEnd(() => {
-              this.endSwipe(manga.id);
+              this.endSwipe(manga.id, manga);
             })
         )
       )

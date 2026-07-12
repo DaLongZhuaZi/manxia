@@ -52,7 +52,9 @@ export interface BatchFileInfo {
 export enum MangaStatus {
   UNKNOWN = 'unknown',
   ONGOING = 'ongoing',
-  COMPLETED = 'completed'
+  COMPLETED = 'completed',
+  HIATUS = 'hiatus',
+  CANCELLED = 'cancelled'
 }
 
 /**
@@ -117,6 +119,10 @@ export interface BatchChapterInfo {
   file: BatchFileInfo;
   /** 页面数量 */
   pageCount: number;
+  /** 本章节实际图片所在目录；多章节容器必须指向对应的检测目录 */
+  sourcePath: string;
+  /** true 表示来源是用户选择的外部目录，导入时只能复制，不能移动或删除 */
+  preserveSource: boolean;
   /** 是否可能已存在（根据章节编号判断） */
   mayExist?: boolean;
 }
@@ -151,6 +157,14 @@ export interface MangaGroupResult {
   targetMangaId: string | undefined;
   /** 选中的封面路径 */
   selectedCoverPath: string;
+  /** ComicInfo发布状态（可由用户在弹窗中调整） */
+  status: MangaStatus;
+  /** 是否为NSFW内容 */
+  isNSFW: boolean;
+  /** ComicInfo网页地址 */
+  webUrl: string;
+  /** 原始图源名称，仅用于保留元数据 */
+  metadataSource: string;
 }
 
 /**
@@ -165,6 +179,14 @@ export interface BatchChapterResult {
   fileUri: string;
   /** 解析后的结构 */
   parsedStructure: ParsedArchiveStructure | null;
+  /** 本章节页面数量（不是整个容器的总数） */
+  pageCount: number;
+  /** 本章节实际图片所在目录 */
+  sourcePath: string;
+  /** 是否必须保留源目录 */
+  preserveSource: boolean;
+  /** ComicInfo中记录的章节发布日期；没有时为当前时间 */
+  publishTime: number;
 }
 
 /**
@@ -184,6 +206,9 @@ export struct BatchMangaImportDialog {
   onFlowEvent: (event: ImportFlowEvent) => void = () => {};
   // 解析文件结构的回调
   parseFileStructure: (fileUri: string) => Promise<ParsedArchiveStructure | null> = async () => null;
+  onReleaseParsedStructure: (fileUri: string, structure: ParsedArchiveStructure) => void = () => {};
+  onAnalysisSettled: () => void = () => {};
+  onAnalysisGenerationInvalidated: () => void = () => {};
   // 解析ComicInfo.xml的回调
   parseComicInfoXml: (xmlContent: string) => PrefilledComicInfo | null = () => null;
 
@@ -194,6 +219,8 @@ export struct BatchMangaImportDialog {
   @State analyzeProgress: number = 0;
   @State analyzeMessage: string = '正在分析文件...';
   @State currentTab: number = 0; // 0: 分组视图, 1: 文件列表视图
+  @State private groupPageIndex: number = 0;
+  @State private filePageIndex: number = 0;
   // 分组视图刷新计数器：每次切换回分组 tab 时递增，强制 ForEach 重建所有卡片
   @State groupViewRefreshTick: number = 0;
   // 数据版本号：每次文件状态变化时递增，驱动文件列表 & 分组视图 ForEach key 全量失效
@@ -214,15 +241,28 @@ export struct BatchMangaImportDialog {
   private scraperDialogController: CustomDialogController | null = null;
   // 当前正在刮削的分组索引
   private currentScrapingGroupIndex: number = -1;
+  private static readonly VIEW_PAGE_SIZE: number = 20;
+  private isDisposed: boolean = false;
+  private hasNotifiedAnalysisSettled: boolean = false;
+  private hasNotifiedGenerationInvalidated: boolean = false;
+  @State private isActionLocked: boolean = false;
 
   aboutToAppear(): void {
+    this.isDisposed = false;
+    this.isActionLocked = false;
     // 获取UI上下文，用于入场动画
     this.uiContext = this.getUIContext();
     const ctx = this.uiContext;
     if (ctx) {
       setTimeout(() => {
+        if (this.isDisposed || this.uiContext !== ctx) {
+          return;
+        }
         const animateOptions = { duration: 300, curve: Curve.EaseOut } as AnimateParam;
         ctx.animateTo(animateOptions, () => {
+          if (this.isDisposed || this.uiContext !== ctx) {
+            return;
+          }
           this.animOpacity = 1.0;
           this.animTranslateY = 0;
         });
@@ -232,7 +272,15 @@ export struct BatchMangaImportDialog {
       this.animTranslateY = 0;
     }
     this.initializeFiles();
-    this.startAnalysis();
+    void this.startAnalysis();
+  }
+
+  aboutToDisappear(): void {
+    this.isDisposed = true;
+    this.notifyGenerationInvalidatedOnce();
+    this.uiContext = null;
+    this.scraperDialogController?.close();
+    this.scraperDialogController = null;
   }
 
   /**
@@ -262,6 +310,47 @@ export struct BatchMangaImportDialog {
    * 开始分析所有文件
    */
   private async startAnalysis(): Promise<void> {
+    try {
+      await this.runAnalysis();
+    } catch (error) {
+      const analysisError: Error = error instanceof Error ? error : new Error(String(error));
+      logger.error(TAG, '批量漫画分析失败', analysisError.message);
+      if (!this.isDisposed) {
+        this.isAnalyzing = false;
+        this.analyzeMessage = '分析失败';
+      }
+    } finally {
+      this.notifyAnalysisSettledOnce();
+    }
+  }
+
+  private notifyAnalysisSettledOnce(): void {
+    if (this.hasNotifiedAnalysisSettled) {
+      return;
+    }
+    this.hasNotifiedAnalysisSettled = true;
+    try {
+      this.onAnalysisSettled();
+    } catch (error) {
+      const settledError: Error = error instanceof Error ? error : new Error(String(error));
+      logger.error(TAG, '通知批量漫画分析结束失败', settledError.message);
+    }
+  }
+
+  private notifyGenerationInvalidatedOnce(): void {
+    if (this.hasNotifiedGenerationInvalidated) {
+      return;
+    }
+    this.hasNotifiedGenerationInvalidated = true;
+    try {
+      this.onAnalysisGenerationInvalidated();
+    } catch (error) {
+      const invalidatedError: Error = error instanceof Error ? error : new Error(String(error));
+      logger.error(TAG, '通知批量漫画分析代次失效失败', invalidatedError.message);
+    }
+  }
+
+  private async runAnalysis(): Promise<void> {
     this.isAnalyzing = true;
     this.analyzeProgress = 0;
     
@@ -269,6 +358,9 @@ export struct BatchMangaImportDialog {
     this.emitFlowEvent(ImportFlowEventType.ARCHIVE_PARSE_STARTED, 'batch_analysis_started', true, '', '', 0, totalFiles, 0);
     
     for (let i = 0; i < this.files.length; i++) {
+      if (this.isDisposed) {
+        return;
+      }
       const file = this.files[i];
       this.analyzeMessage = `正在解析 (${i + 1}/${totalFiles}): ${file.fileName}`;
       this.analyzeProgress = ((i + 1) / totalFiles) * 80;
@@ -277,12 +369,27 @@ export struct BatchMangaImportDialog {
       try {
         // 解析文件结构
         const structure = await this.parseFileStructure(file.fileUri);
+        if (this.isDisposed) {
+          if (structure !== null) {
+            this.onReleaseParsedStructure(file.fileUri, structure);
+          }
+          return;
+        }
         file.parsedStructure = structure;
         file.isParsing = false;
+        if (structure === null) {
+          file.parseError = '未能识别文件结构';
+          file.enabled = false;
+        } else if (structure.totalImageCount <= 0 || structure.extractedPath.length <= 0) {
+          file.parseError = '未找到可导入的漫画图片';
+          file.enabled = false;
+        } else {
+          file.parseError = null;
+        }
         this.emitFlowEvent(
           ImportFlowEventType.ARCHIVE_PARSE_COMPLETED,
           'batch_file_parsed',
-          true,
+          file.parseError === null,
           file.fileName,
           structure ? `chapters=${structure.detectedChapters.length}, pages=${structure.totalImageCount}` : 'empty_structure',
           i + 1,
@@ -290,8 +397,8 @@ export struct BatchMangaImportDialog {
           Date.now() - startedAt
         );
         
-        if (!structure) {
-          logger.warn(TAG, `文件结构解析返回空: ${file.fileName}`);
+        if (file.parseError !== null) {
+          logger.warn(TAG, `文件不可导入: ${file.fileName}, ${file.parseError}`);
         }
         
         // 如果有ComicInfo.xml，解析预填充信息
@@ -327,6 +434,9 @@ export struct BatchMangaImportDialog {
         this.files = this.files.slice();
         
       } catch (error) {
+        if (this.isDisposed) {
+          return;
+        }
         file.isParsing = false;
         file.parseError = String(error);
         logger.error(TAG, `解析文件失败: ${file.fileName}`, String(error));
@@ -344,6 +454,10 @@ export struct BatchMangaImportDialog {
         this.files = this.files.slice();
       }
       await this.yieldToUi();
+    }
+
+    if (this.isDisposed) {
+      return;
     }
     
     // 智能分组
@@ -396,6 +510,87 @@ export struct BatchMangaImportDialog {
    * - CHAPTER 文件：按规范化标题聚合，排序按卷号→章节号
    * - VOLUME / MULTI_CHAPTER 文件：每个文件独占一个分组
    */
+  private shouldPreserveChapterSource(file: BatchFileInfo): boolean {
+    const structure: ParsedArchiveStructure | null = file.parsedStructure;
+    return structure !== null && structure.tempDirectories.length <= 0;
+  }
+
+  private getMangaStatusFromPrefilledInfo(prefilledInfo: PrefilledComicInfo | null): MangaStatus {
+    const status: string = prefilledInfo?.publishingStatus?.trim().toLowerCase() || '';
+    if (status === 'ongoing' || status === 'continuing') {
+      return MangaStatus.ONGOING;
+    }
+    if (status === 'completed' || status === 'finished') {
+      return MangaStatus.COMPLETED;
+    }
+    if (status === 'hiatus' || status === 'paused' || status === 'on hiatus') {
+      return MangaStatus.HIATUS;
+    }
+    if (status === 'cancelled' || status === 'canceled') {
+      return MangaStatus.CANCELLED;
+    }
+    return MangaStatus.UNKNOWN;
+  }
+
+  /**
+   * 返回文件中第一个可用的 ComicInfo。章节文件并不保证都携带 XML，
+   * 因此不能只读取排序后的第一项。
+   */
+  private getFirstPrefilledInfo(files: BatchFileInfo[]): PrefilledComicInfo | null {
+    for (const file of files) {
+      if (file.prefilledInfo !== null) {
+        return file.prefilledInfo;
+      }
+    }
+    return null;
+  }
+
+  /**
+   * 生成不会把空标题文件误合并的分组键。
+   */
+  private getGroupingKey(file: BatchFileInfo): string {
+    const normalizedTitle = this.normalizeTitle(file.inferredTitle);
+    if (normalizedTitle.length > 0) {
+      return normalizedTitle;
+    }
+    const fallback = file.fileUri.trim().toLowerCase() || file.fileName.trim().toLowerCase();
+    return `__untitled_${fallback}`;
+  }
+
+  private getDefaultChapterSourcePath(file: BatchFileInfo): string {
+    const structure: ParsedArchiveStructure | null = file.parsedStructure;
+    if (structure === null) {
+      return '';
+    }
+    if (structure.detectedChapters.length === 1) {
+      return structure.detectedChapters[0].path;
+    }
+    return structure.extractedPath;
+  }
+
+  private getDefaultChapterPageCount(file: BatchFileInfo): number {
+    const structure: ParsedArchiveStructure | null = file.parsedStructure;
+    if (structure === null) {
+      return 0;
+    }
+    if (structure.detectedChapters.length === 1) {
+      return structure.detectedChapters[0].pageCount;
+    }
+    return structure.totalImageCount;
+  }
+
+  private createDetectedChapterInfo(file: BatchFileInfo, chapter: ChapterInfo): BatchChapterInfo {
+    const chapterInfo: BatchChapterInfo = {
+      number: chapter.number,
+      title: chapter.title,
+      file: file,
+      pageCount: chapter.pageCount,
+      sourcePath: chapter.path,
+      preserveSource: this.shouldPreserveChapterSource(file)
+    };
+    return chapterInfo;
+  }
+
   private async performSmartGrouping(): Promise<void> {
     this.groups = [];
     let groupIndex = 0;
@@ -408,7 +603,7 @@ export struct BatchMangaImportDialog {
     for (const file of this.files) {
       if (file.parseError) continue;
       if (file.contentType === FileContentType.CHAPTER) {
-        const key = this.normalizeTitle(file.inferredTitle);
+        const key = this.getGroupingKey(file);
         if (!chapterMap.has(key)) {
           chapterMap.set(key, []);
         }
@@ -427,15 +622,16 @@ export struct BatchMangaImportDialog {
         return a.inferredChapterNumber - b.inferredChapterNumber;
       });
 
-      const firstFile = files[0];
-      const prefilledInfo = firstFile.prefilledInfo;
+      const prefilledInfo = this.getFirstPrefilledInfo(files);
 
       const chapters: BatchChapterInfo[] = files.map((file: BatchFileInfo, index: number) => {
         const chapterInfo: BatchChapterInfo = {
           number: file.inferredChapterNumber || (index + 1),
           title: file.prefilledInfo?.title || `第${file.inferredChapterNumber || (index + 1)}话`,
           file: file,
-          pageCount: file.parsedStructure?.totalImageCount || 0
+          pageCount: this.getDefaultChapterPageCount(file),
+          sourcePath: this.getDefaultChapterSourcePath(file),
+          preserveSource: this.shouldPreserveChapterSource(file)
         };
         return chapterInfo;
       });
@@ -452,15 +648,15 @@ export struct BatchMangaImportDialog {
         tags: prefilledInfo?.tags || [],
         files: files,
         chapters: chapters,
-        isExpanded: true,
+        isExpanded: files.length <= 12,
         importMode: importMode,
         mergeToExisting: matchedManga !== null,
         targetMangaId: matchedManga?.id || '',
         selectedCoverFileIndex: 0,
         coverCandidates: this.initCoverCandidatesForGroup(files),
         selectedCoverIndex: 0,
-        status: MangaStatus.UNKNOWN,
-        isNSFW: false
+        status: this.getMangaStatusFromPrefilledInfo(prefilledInfo),
+        isNSFW: prefilledInfo?.isNSFW || false
       };
 
       if (matchedManga) {
@@ -477,22 +673,18 @@ export struct BatchMangaImportDialog {
 
       if (file.contentType === FileContentType.MULTI_CHAPTER) {
         importMode = MangaImportMode.MULTI_CHAPTER;
-        if (file.parsedStructure?.detectedChapters && file.parsedStructure.detectedChapters.length > 1) {
+        if (file.parsedStructure?.detectedChapters && file.parsedStructure.detectedChapters.length >= 1) {
           chapters = file.parsedStructure.detectedChapters.map((ch: ChapterInfo) => {
-            const ci: BatchChapterInfo = {
-              number: ch.number,
-              title: ch.title,
-              file: file,
-              pageCount: ch.pageCount
-            };
-            return ci;
+            return this.createDetectedChapterInfo(file, ch);
           });
         } else {
           chapters = [{
             number: file.inferredChapterNumber || 1,
             title: prefilledInfo?.title || `第${file.inferredChapterNumber || 1}话`,
             file: file,
-            pageCount: file.parsedStructure?.totalImageCount || 0
+            pageCount: this.getDefaultChapterPageCount(file),
+            sourcePath: this.getDefaultChapterSourcePath(file),
+            preserveSource: this.shouldPreserveChapterSource(file)
           }];
         }
       } else {
@@ -503,7 +695,9 @@ export struct BatchMangaImportDialog {
           title: prefilledInfo?.title ||
             (file.inferredVolumeNumber > 0 ? `第${file.inferredVolumeNumber}卷` : file.inferredTitle),
           file: file,
-          pageCount: file.parsedStructure?.totalImageCount || 0
+          pageCount: this.getDefaultChapterPageCount(file),
+          sourcePath: this.getDefaultChapterSourcePath(file),
+          preserveSource: this.shouldPreserveChapterSource(file)
         }];
       }
 
@@ -525,8 +719,8 @@ export struct BatchMangaImportDialog {
         selectedCoverFileIndex: 0,
         coverCandidates: this.initCoverCandidatesForGroup([file]),
         selectedCoverIndex: 0,
-        status: MangaStatus.UNKNOWN,
-        isNSFW: false
+        status: this.getMangaStatusFromPrefilledInfo(prefilledInfo),
+        isNSFW: prefilledInfo?.isNSFW || false
       };
       this.groups.push(group);
       logger.info(TAG, `独立分组 (${file.contentType}): ${groupTitle}`);
@@ -544,10 +738,14 @@ export struct BatchMangaImportDialog {
     }
     
     const normalizedTitle = this.normalizeTitle(title);
+    if (normalizedTitle.length === 0) {
+      return null;
+    }
     
     // 精确匹配
     for (const manga of this.existingMangaCandidates) {
-      if (this.normalizeTitle(manga.title) === normalizedTitle) {
+      const normalizedMangaTitle = this.normalizeTitle(manga.title);
+      if (normalizedMangaTitle.length > 0 && normalizedMangaTitle === normalizedTitle) {
         return manga;
       }
     }
@@ -555,6 +753,9 @@ export struct BatchMangaImportDialog {
     // 模糊匹配（包含关系）
     for (const manga of this.existingMangaCandidates) {
       const normalizedMangaTitle = this.normalizeTitle(manga.title);
+      if (normalizedMangaTitle.length === 0) {
+        continue;
+      }
       if (normalizedMangaTitle.includes(normalizedTitle) || normalizedTitle.includes(normalizedMangaTitle)) {
         // 只有当长度差异不大时才认为匹配
         const lengthRatio = Math.min(normalizedTitle.length, normalizedMangaTitle.length) / 
@@ -604,24 +805,23 @@ export struct BatchMangaImportDialog {
       for (const file of fileList) {
         const lowerFile = file.toLowerCase();
         const fullPath = `${dirPath}/${file}`;
-        let isImage = false;
+        try {
+          const stat = SafeFileUtils.lstatSyncStrict(fullPath);
+          if (stat.isSymbolicLink()) {
+            continue;
+          }
+          if (stat.isDirectory()) {
+            subDirs.push(fullPath);
+            continue;
+          }
+        } catch (_statError) {
+          continue;
+        }
         
         for (const ext of imageExtensions) {
           if (lowerFile.endsWith(ext)) {
             imageFiles.push(fullPath);
-            isImage = true;
             break;
-          }
-        }
-        
-        if (!isImage) {
-          try {
-            const stat = SafeFileUtils.statSync(fullPath);
-            if (stat.isDirectory()) {
-              subDirs.push(fullPath);
-            }
-          } catch (_e) {
-            // 忽略
           }
         }
         
@@ -822,9 +1022,13 @@ export struct BatchMangaImportDialog {
    * 标准化标题（用于分组比较）
    */
   private normalizeTitle(title: string): string {
-    return title.toLowerCase()
+    const rawTitle = title.trim().toLowerCase();
+    // \w 只覆盖 ASCII，显式保留其余 Unicode 字符，避免日文假名、韩文
+    // 或其他非 ASCII 标题被清空。ASCII 标点仍会被移除以便做稳定的比较。
+    const normalizedTitle = rawTitle
       .replace(/[\s_\-]+/g, '')
-      .replace(/[^\w\u4e00-\u9fa5]/g, '');
+      .replace(/[^\w\u0080-\uFFFF]/g, '');
+    return normalizedTitle.length > 0 ? normalizedTitle : rawTitle;
   }
 
   /**
@@ -833,9 +1037,13 @@ export struct BatchMangaImportDialog {
   private denormalizeTitle(normalizedTitle: string): string {
     // 尝试从文件中找到原始标题
     for (const file of this.files) {
-      if (this.normalizeTitle(file.inferredTitle) === normalizedTitle) {
+      if (this.getGroupingKey(file) === normalizedTitle) {
         return file.inferredTitle;
       }
+    }
+    // 仅用于无标题文件的 URI 隔离键不应直接显示给用户。
+    if (normalizedTitle.startsWith('__untitled_')) {
+      return '未命名漫画';
     }
     return normalizedTitle;
   }
@@ -858,10 +1066,20 @@ export struct BatchMangaImportDialog {
    * 验证表单（跳过全部文件均已禁用的分组）
    */
   private validateForm(): boolean {
+    let hasImportableChapter: boolean = false;
     for (const group of this.groups) {
       // 全部禁用的分组不参与导入，跳过验证
-      const hasEnabledFile = group.files.some((f: BatchFileInfo) => f.enabled);
+      const hasEnabledFile = group.files.some((f: BatchFileInfo) => f.enabled && !f.parseError);
       if (!hasEnabledFile) continue;
+
+      const hasValidChapter = group.chapters.some((chapter: BatchChapterInfo) =>
+        chapter.file.enabled && !chapter.file.parseError && chapter.sourcePath.trim().length > 0 && chapter.pageCount > 0
+      );
+      if (!hasValidChapter) {
+        this.showToast(`"${group.title || '未命名漫画'}"没有可导入的图片`);
+        return false;
+      }
+      hasImportableChapter = true;
 
       if (!group.title || group.title.trim().length === 0) {
         this.showToast('请为所有漫画输入标题');
@@ -872,6 +1090,10 @@ export struct BatchMangaImportDialog {
         this.showToast(`请为"${group.title}"选择要合并的目标漫画`);
         return false;
       }
+    }
+    if (!hasImportableChapter) {
+      this.showToast('没有可导入的漫画文件');
+      return false;
     }
     return true;
   }
@@ -889,25 +1111,37 @@ export struct BatchMangaImportDialog {
   private buildResult(): BatchMangaImportDialogResult {
     const groupResults: MangaGroupResult[] = [];
     for (const group of this.groups) {
-      const hasEnabledFile = group.files.some((f: BatchFileInfo) => f.enabled);
+      const hasEnabledFile = group.files.some((f: BatchFileInfo) => f.enabled && !f.parseError);
       if (!hasEnabledFile) continue;
 
       const chapterResults: BatchChapterResult[] = group.chapters
-        .filter((chapter: BatchChapterInfo) => chapter.file.enabled)
+        .filter((chapter: BatchChapterInfo) =>
+          chapter.file.enabled && !chapter.file.parseError && chapter.sourcePath.trim().length > 0 && chapter.pageCount > 0
+        )
         .map((chapter: BatchChapterInfo) => {
           const result: BatchChapterResult = {
             number: chapter.number,
             title: chapter.title,
             fileUri: chapter.file.fileUri,
-            parsedStructure: chapter.file.parsedStructure
+            parsedStructure: chapter.file.parsedStructure,
+            pageCount: chapter.pageCount,
+            sourcePath: chapter.sourcePath,
+            preserveSource: chapter.preserveSource,
+            publishTime: chapter.file.prefilledInfo?.publishTime ?? Date.now()
           };
           return result;
         });
+      if (chapterResults.length <= 0) {
+        continue;
+      }
 
       let selectedCoverPath = '';
       if (group.coverCandidates.length > 0 && group.selectedCoverIndex < group.coverCandidates.length) {
         selectedCoverPath = group.coverCandidates[group.selectedCoverIndex];
       }
+      const metadataFile: BatchFileInfo | undefined = group.files.find(
+        (file: BatchFileInfo): boolean => file.enabled && file.prefilledInfo !== null
+      );
 
       groupResults.push({
         title: group.title.trim(),
@@ -918,7 +1152,11 @@ export struct BatchMangaImportDialog {
         chapters: chapterResults,
         mergeToExisting: group.mergeToExisting,
         targetMangaId: group.mergeToExisting ? group.targetMangaId : undefined,
-        selectedCoverPath: selectedCoverPath
+        selectedCoverPath: selectedCoverPath,
+        status: group.status,
+        isNSFW: group.isNSFW,
+        webUrl: metadataFile?.prefilledInfo?.webUrl || '',
+        metadataSource: metadataFile?.prefilledInfo?.source || ''
       } as MangaGroupResult);
     }
     return { groups: groupResults };
@@ -1027,6 +1265,10 @@ export struct BatchMangaImportDialog {
         .height(24)
         .fillColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
         .onClick(() => {
+          if (this.isActionLocked) {
+            return;
+          }
+          this.isActionLocked = true;
           this.emitFlowEvent(ImportFlowEventType.DIALOG_CANCELLED, 'batch_dialog_close_icon', true, '', '', 0, this.files.length, 0);
           this.onCancel();
           this.controller.close();
@@ -1152,24 +1394,154 @@ export struct BatchMangaImportDialog {
     }
     return -1;
   }
+
+  private getPageCount(itemCount: number): number {
+    return Math.max(1, Math.ceil(itemCount / BatchMangaImportDialog.VIEW_PAGE_SIZE));
+  }
+
+  private getEffectivePageIndex(pageIndex: number, itemCount: number): number {
+    const pageCount: number = this.getPageCount(itemCount);
+    return Math.max(0, Math.min(pageIndex, pageCount - 1));
+  }
+
+  private getEnabledGroupsForDisplay(): MangaGroup[] {
+    return this.groups.filter((group: MangaGroup) => this.hasEnabledFiles(group));
+  }
+
+  private getVisibleGroups(): MangaGroup[] {
+    const enabledGroups: MangaGroup[] = this.getEnabledGroupsForDisplay();
+    const pageIndex: number = this.getEffectivePageIndex(this.groupPageIndex, enabledGroups.length);
+    const startIndex: number = pageIndex * BatchMangaImportDialog.VIEW_PAGE_SIZE;
+    return enabledGroups.slice(startIndex, startIndex + BatchMangaImportDialog.VIEW_PAGE_SIZE);
+  }
+
+  private getGroupPageCount(): number {
+    return this.getPageCount(this.getEnabledGroupsForDisplay().length);
+  }
+
+  private getEffectiveGroupPageIndex(): number {
+    return this.getEffectivePageIndex(this.groupPageIndex, this.getEnabledGroupsForDisplay().length);
+  }
+
+  private getVisibleFiles(): BatchFileInfo[] {
+    const pageIndex: number = this.getEffectivePageIndex(this.filePageIndex, this.files.length);
+    const startIndex: number = pageIndex * BatchMangaImportDialog.VIEW_PAGE_SIZE;
+    return this.files.slice(startIndex, startIndex + BatchMangaImportDialog.VIEW_PAGE_SIZE);
+  }
+
+  private getFilePageCount(): number {
+    return this.getPageCount(this.files.length);
+  }
+
+  private getEffectiveFilePageIndex(): number {
+    return this.getEffectivePageIndex(this.filePageIndex, this.files.length);
+  }
+
+  @Builder
+  buildGroupPager() {
+    if (this.getGroupPageCount() > 1) {
+      Row({ space: 12 }) {
+        Button() {
+          SymbolGlyph($r('sys.symbol.arrow_left'))
+            .fontSize(16)
+            .fontColor([ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme)])
+        }
+        .width(36)
+        .height(36)
+        .enabled(this.getEffectiveGroupPageIndex() > 0)
+        .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('button_background', this.themeState.currentTheme))
+        .onClick(() => {
+          this.groupPageIndex = Math.max(0, this.getEffectiveGroupPageIndex() - 1);
+        })
+
+        Text(`${this.getEffectiveGroupPageIndex() + 1} / ${this.getGroupPageCount()}`)
+          .fontSize(12)
+          .fontFamily(this.appFontFamily)
+          .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
+
+        Button() {
+          SymbolGlyph($r('sys.symbol.arrow_right'))
+            .fontSize(16)
+            .fontColor([ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme)])
+        }
+        .width(36)
+        .height(36)
+        .enabled(this.getEffectiveGroupPageIndex() < this.getGroupPageCount() - 1)
+        .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('button_background', this.themeState.currentTheme))
+        .onClick(() => {
+          this.groupPageIndex = Math.min(this.getGroupPageCount() - 1, this.getEffectiveGroupPageIndex() + 1);
+        })
+      }
+      .width('100%')
+      .height(44)
+      .justifyContent(FlexAlign.Center)
+    }
+  }
+
+  @Builder
+  buildFilePager() {
+    if (this.getFilePageCount() > 1) {
+      Row({ space: 12 }) {
+        Button() {
+          SymbolGlyph($r('sys.symbol.arrow_left'))
+            .fontSize(16)
+            .fontColor([ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme)])
+        }
+        .width(36)
+        .height(36)
+        .enabled(this.getEffectiveFilePageIndex() > 0)
+        .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('button_background', this.themeState.currentTheme))
+        .onClick(() => {
+          this.filePageIndex = Math.max(0, this.getEffectiveFilePageIndex() - 1);
+        })
+
+        Text(`${this.getEffectiveFilePageIndex() + 1} / ${this.getFilePageCount()}`)
+          .fontSize(12)
+          .fontFamily(this.appFontFamily)
+          .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
+
+        Button() {
+          SymbolGlyph($r('sys.symbol.arrow_right'))
+            .fontSize(16)
+            .fontColor([ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme)])
+        }
+        .width(36)
+        .height(36)
+        .enabled(this.getEffectiveFilePageIndex() < this.getFilePageCount() - 1)
+        .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('button_background', this.themeState.currentTheme))
+        .onClick(() => {
+          this.filePageIndex = Math.min(this.getFilePageCount() - 1, this.getEffectiveFilePageIndex() + 1);
+        })
+      }
+      .width('100%')
+      .height(44)
+      .justifyContent(FlexAlign.Center)
+    }
+  }
   
   /**
    * 构建分组视图
    */
   @Builder
   buildGroupsView() {
-    Scroll() {
-      Column({ space: 12 }) {
-        ForEach(this.groups.filter((group: MangaGroup) => this.hasEnabledFiles(group)), (group: MangaGroup) => {
-          this.buildGroupCardById(group.groupId)
-        }, (group: MangaGroup) => `r${this.groupViewRefreshTick}_v${this.dataVersion}_${group.groupId}_${group.isExpanded}_${group.mergeToExisting}_${group.targetMangaId}_${group.title}_${group.importMode}_${group.status}_${group.isNSFW}_${group.selectedCoverIndex}_${group.files.length}_${group.files.filter((f: BatchFileInfo) => f.enabled).length}_${group.chapters.length}_${group.files.map((f: BatchFileInfo) => f.contentType).join(',')}`)
+    Column({ space: 0 }) {
+      Scroll() {
+        Column({ space: 12 }) {
+          ForEach(this.getVisibleGroups(), (group: MangaGroup) => {
+            this.buildGroupCardById(group.groupId)
+          }, (group: MangaGroup) => `r${this.groupViewRefreshTick}_v${this.dataVersion}_${group.groupId}_${group.isExpanded}_${group.mergeToExisting}_${group.targetMangaId}_${group.title}_${group.importMode}_${group.status}_${group.isNSFW}_${group.selectedCoverIndex}_${group.files.length}_${group.files.filter((f: BatchFileInfo) => f.enabled).length}_${group.chapters.length}_${group.files.map((f: BatchFileInfo) => f.contentType).join(',')}`)
+        }
+        .width('100%')
+        .padding({ left: 16, right: 16, top: 12, bottom: 12 })
       }
-      .width('100%')
-      .padding({ left: 16, right: 16, top: 12, bottom: 12 })
+      .layoutWeight(1)
+      .scrollable(ScrollDirection.Vertical)
+      .scrollBar(BarState.Auto)
+
+      this.buildGroupPager()
     }
+    .width('100%')
     .layoutWeight(1)
-    .scrollable(ScrollDirection.Vertical)
-    .scrollBar(BarState.Auto)
     .transition(TransitionEffect.asymmetric(
       TransitionEffect.OPACITY.animation({ duration: 250, curve: Curve.EaseOut })
         .combine(TransitionEffect.translate({ x: -15 }).animation({ duration: 250, curve: Curve.EaseOut })),
@@ -1182,8 +1554,9 @@ export struct BatchMangaImportDialog {
    */
   @Builder
   buildGroupCardById(groupId: string) {
-    // 在渲染时动态查找索引并构建
-    this.buildGroupCard(this.getGroupByIdOrFirst(groupId), this.findGroupIndex(groupId))
+    if (this.groups.length > 0) {
+      this.buildGroupCard(this.getGroupByIdOrFirst(groupId), this.getGroupIndexOrFirst(groupId))
+    }
   }
   
   /**
@@ -1192,6 +1565,11 @@ export struct BatchMangaImportDialog {
   private getGroupByIdOrFirst(groupId: string): MangaGroup {
     const idx = this.findGroupIndex(groupId);
     return idx >= 0 ? this.groups[idx] : this.groups[0];
+  }
+
+  private getGroupIndexOrFirst(groupId: string): number {
+    const index: number = this.findGroupIndex(groupId);
+    return index >= 0 ? index : 0;
   }
 
   /**
@@ -1820,34 +2198,10 @@ export struct BatchMangaImportDialog {
       this.buildFileListToolbar()
       Scroll() {
         Column({ space: 10 }) {
-          ForEach(this.groups, (group: MangaGroup) => {
-            this.buildFileGroupSection(group)
-          }, (group: MangaGroup) =>
-            `v${this.dataVersion}_sec_${group.groupId}_${group.importMode}_${group.files.length}_${group.files.filter((f: BatchFileInfo) => f.enabled).length}`)
-          if (this.getErrorFiles().length > 0) {
-            Column({ space: 4 }) {
-              Row({ space: 6 }) {
-                Text('解析失败')
-                  .fontSize(12)
-                  .fontFamily(this.appFontFamily)
-                  .fontWeight(FontWeight.Medium)
-                  .fontColor(AppColors.error)
-                Text(`${this.getErrorFiles().length} 个`)
-                  .fontSize(11)
-                  .fontFamily(this.appFontFamily)
-                  .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_muted', this.themeState.currentTheme))
-              }
-              .width('100%')
-              .padding({ left: 8, bottom: 4 })
-              ForEach(this.getErrorFiles(), (file: BatchFileInfo) => {
-                this.buildFileItemInGroup(file, this.getFileIndex(file))
-              }, (file: BatchFileInfo) => `err_${file.fileUri}`)
-            }
-            .width('100%')
-            .padding(8)
-            .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('panel_background', this.themeState.currentTheme))
-            .borderRadius(8)
-          }
+          ForEach(this.getVisibleFiles(), (file: BatchFileInfo) => {
+            this.buildFileItemInGroup(file, this.getFileIndex(file))
+          }, (file: BatchFileInfo) =>
+            `v${this.dataVersion}_file_${file.fileUri}_${file.enabled}_${file.contentType}_${file.parseError || ''}_${this.selectedFileIndices.includes(this.getFileIndex(file))}`)
         }
         .width('100%')
         .padding({ left: 16, right: 16, top: 12, bottom: 12 })
@@ -1855,6 +2209,8 @@ export struct BatchMangaImportDialog {
       .layoutWeight(1)
       .scrollable(ScrollDirection.Vertical)
       .scrollBar(BarState.Auto)
+
+      this.buildFilePager()
     }
     .width('100%')
     .layoutWeight(1)
@@ -1995,6 +2351,8 @@ export struct BatchMangaImportDialog {
     let customAuthor = '';
     let customDescription = '';
     let customTags: string[] = [];
+    let customStatus: MangaStatus = MangaStatus.UNKNOWN;
+    let customIsNSFW: boolean = false;
     
     // 从现有分组中收集用户可能修改过的信息，并移除这些文件
     for (let i = this.groups.length - 1; i >= 0; i--) {
@@ -2015,6 +2373,12 @@ export struct BatchMangaImportDialog {
         if (customTags.length === 0 && group.tags.length > 0) {
           customTags = group.tags.slice();
         }
+        if (customStatus === MangaStatus.UNKNOWN && group.status !== MangaStatus.UNKNOWN) {
+          customStatus = group.status;
+        }
+        if (group.isNSFW) {
+          customIsNSFW = true;
+        }
       }
       
       group.files = group.files.filter(f => !selectedFiles.includes(f));
@@ -2028,7 +2392,7 @@ export struct BatchMangaImportDialog {
     
     // 使用第一个文件的信息作为基础（如果没有用户自定义信息）
     const firstFile = selectedFiles[0];
-    const prefilledInfo = firstFile.prefilledInfo;
+    const prefilledInfo = this.getFirstPrefilledInfo(selectedFiles);
     
     // 合并后统一设置为 CHAPTER 类型
     selectedFiles.forEach((f: BatchFileInfo) => { f.contentType = FileContentType.CHAPTER; });
@@ -2041,7 +2405,9 @@ export struct BatchMangaImportDialog {
         number: file.inferredChapterNumber || (index + 1),
         title: file.prefilledInfo?.title || `第${file.inferredChapterNumber || (index + 1)}话`,
         file: file,
-        pageCount: file.parsedStructure?.totalImageCount || 0
+        pageCount: this.getDefaultChapterPageCount(file),
+        sourcePath: this.getDefaultChapterSourcePath(file),
+        preserveSource: this.shouldPreserveChapterSource(file)
       };
       return chapterInfo;
     });
@@ -2051,6 +2417,9 @@ export struct BatchMangaImportDialog {
     const finalAuthor = customAuthor || prefilledInfo?.author || '';
     const finalDescription = customDescription || prefilledInfo?.description || '';
     const finalTags = customTags.length > 0 ? customTags : (prefilledInfo?.tags || []);
+    const metadataStatus = this.getMangaStatusFromPrefilledInfo(prefilledInfo);
+    const finalStatus = customStatus !== MangaStatus.UNKNOWN ? customStatus : metadataStatus;
+    const finalIsNSFW = customIsNSFW || prefilledInfo?.isNSFW || false;
     
     // 创建新分组
     const newGroup: MangaGroup = {
@@ -2068,8 +2437,8 @@ export struct BatchMangaImportDialog {
       selectedCoverFileIndex: 0,
       coverCandidates: this.initCoverCandidatesForGroup(selectedFiles),
       selectedCoverIndex: 0,
-      status: MangaStatus.UNKNOWN,
-      isNSFW: false
+      status: finalStatus,
+      isNSFW: finalIsNSFW
     };
     
     this.groups.push(newGroup);
@@ -2095,6 +2464,7 @@ export struct BatchMangaImportDialog {
     
     // 保存原分组的用户自定义信息（用于没有xml信息的文件）
     const originalAuthor = group.author;
+    const originalDescription = group.description;
     const originalTags = group.tags.slice();
     
     // 移除原分组
@@ -2106,13 +2476,14 @@ export struct BatchMangaImportDialog {
       
       // 优先使用xml信息，其次使用原分组的用户自定义信息
       const splitImportMode = this.contentTypeToImportMode(file.contentType);
+      const fileStatus = this.getMangaStatusFromPrefilledInfo(prefilledInfo);
       const newGroup: MangaGroup = {
         groupId: file.contentType !== FileContentType.CHAPTER
           ? `__solo_${file.fileUri}`
           : `group_split_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
         title: prefilledInfo?.series || prefilledInfo?.title || file.inferredTitle,
         author: prefilledInfo?.author || originalAuthor,
-        description: prefilledInfo?.description || '',
+        description: prefilledInfo?.description || originalDescription,
         tags: prefilledInfo?.tags || originalTags,
         files: [file],
         chapters: [this.createChapterInfo(file, prefilledInfo)],
@@ -2123,8 +2494,8 @@ export struct BatchMangaImportDialog {
         selectedCoverFileIndex: 0,
         coverCandidates: this.initCoverCandidatesForGroup([file]),
         selectedCoverIndex: 0,
-        status: MangaStatus.UNKNOWN,
-        isNSFW: false
+        status: fileStatus !== MangaStatus.UNKNOWN ? fileStatus : group.status,
+        isNSFW: (prefilledInfo?.isNSFW === true) || group.isNSFW
       };
       
       this.groups.push(newGroup);
@@ -2242,6 +2613,11 @@ export struct BatchMangaImportDialog {
             .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_muted', this.themeState.currentTheme))
             .maxLines(1)
             .textOverflow({ overflow: TextOverflow.Ellipsis })
+        } else if (file.parseError) {
+          Text('解析失败')
+            .fontSize(10)
+            .fontFamily(this.appFontFamily)
+            .fontColor(AppColors.error)
         }
       }
       .layoutWeight(1)
@@ -2366,11 +2742,12 @@ export struct BatchMangaImportDialog {
         if (this.groups[i].files.length === 0) {
           this.groups.splice(i, 1);
         }
+        const fileStatus = this.getMangaStatusFromPrefilledInfo(file.prefilledInfo);
         const soloGroup: MangaGroup = {
           groupId: `__solo_${file.fileUri}`,
           title: file.prefilledInfo?.series || file.prefilledInfo?.title || file.inferredTitle,
           author: file.prefilledInfo?.author || group.author,
-          description: file.prefilledInfo?.description || '',
+          description: file.prefilledInfo?.description || group.description,
           tags: file.prefilledInfo?.tags || group.tags.slice(),
           files: [file],
           chapters: [{
@@ -2379,7 +2756,9 @@ export struct BatchMangaImportDialog {
               : (file.inferredChapterNumber || 1),
             title: file.prefilledInfo?.title || file.inferredTitle,
             file: file,
-            pageCount: file.parsedStructure?.totalImageCount || 0
+            pageCount: this.getDefaultChapterPageCount(file),
+            sourcePath: this.getDefaultChapterSourcePath(file),
+            preserveSource: this.shouldPreserveChapterSource(file)
           }],
           isExpanded: false,
           importMode: this.contentTypeToImportMode(newContentType),
@@ -2388,8 +2767,8 @@ export struct BatchMangaImportDialog {
           selectedCoverFileIndex: 0,
           coverCandidates: this.initCoverCandidatesForGroup([file]),
           selectedCoverIndex: 0,
-          status: MangaStatus.UNKNOWN,
-          isNSFW: false
+          status: fileStatus !== MangaStatus.UNKNOWN ? fileStatus : group.status,
+          isNSFW: (file.prefilledInfo?.isNSFW === true) || group.isNSFW
         };
         this.groups.push(soloGroup);
       }
@@ -2504,7 +2883,9 @@ export struct BatchMangaImportDialog {
           number: existing?.number ?? (f.inferredChapterNumber || (index + 1)),
           title: existing?.title || f.prefilledInfo?.title || f.inferredTitle,
           file: f,
-          pageCount: existing?.pageCount ?? (f.parsedStructure?.totalImageCount || 0),
+          pageCount: existing?.pageCount ?? this.getDefaultChapterPageCount(f),
+          sourcePath: existing?.sourcePath || this.getDefaultChapterSourcePath(f),
+          preserveSource: existing?.preserveSource ?? this.shouldPreserveChapterSource(f),
           mayExist: existing?.mayExist
         } as BatchChapterInfo;
       });
@@ -2518,6 +2899,8 @@ export struct BatchMangaImportDialog {
             title: chapter.title,
             file: enabledFile,
             pageCount: chapter.pageCount,
+            sourcePath: chapter.sourcePath,
+            preserveSource: chapter.preserveSource,
             mayExist: chapter.mayExist
           } as BatchChapterInfo)));
         } else {
@@ -2540,13 +2923,10 @@ export struct BatchMangaImportDialog {
   private inferChaptersFromFile(file: BatchFileInfo): BatchChapterInfo[] {
     if (file.contentType === FileContentType.MULTI_CHAPTER &&
       file.parsedStructure?.detectedChapters &&
-      file.parsedStructure.detectedChapters.length > 1) {
-      return file.parsedStructure.detectedChapters.map((chapter: ChapterInfo) => ({
-        number: chapter.number,
-        title: chapter.title,
-        file: file,
-        pageCount: chapter.pageCount
-      } as BatchChapterInfo));
+      file.parsedStructure.detectedChapters.length >= 1) {
+      return file.parsedStructure.detectedChapters.map((chapter: ChapterInfo) =>
+        this.createDetectedChapterInfo(file, chapter)
+      );
     }
 
     if (file.contentType === FileContentType.VOLUME) {
@@ -2554,7 +2934,9 @@ export struct BatchMangaImportDialog {
         number: file.inferredVolumeNumber || 1,
         title: file.prefilledInfo?.title || file.inferredTitle,
         file: file,
-        pageCount: file.parsedStructure?.totalImageCount || 0
+        pageCount: this.getDefaultChapterPageCount(file),
+        sourcePath: this.getDefaultChapterSourcePath(file),
+        preserveSource: this.shouldPreserveChapterSource(file)
       }];
     }
 
@@ -2562,7 +2944,9 @@ export struct BatchMangaImportDialog {
       number: file.inferredChapterNumber || 1,
       title: file.prefilledInfo?.title || file.inferredTitle,
       file: file,
-      pageCount: file.parsedStructure?.totalImageCount || 0
+      pageCount: this.getDefaultChapterPageCount(file),
+      sourcePath: this.getDefaultChapterSourcePath(file),
+      preserveSource: this.shouldPreserveChapterSource(file)
     }];
   }
 
@@ -2601,7 +2985,12 @@ export struct BatchMangaImportDialog {
         .height(44)
         .layoutWeight(1)
         .fontFamily(this.appFontFamily)
+        .enabled(!this.isActionLocked)
         .onClick(() => {
+          if (this.isActionLocked) {
+            return;
+          }
+          this.isActionLocked = true;
           this.emitFlowEvent(ImportFlowEventType.DIALOG_CANCELLED, 'batch_dialog_cancelled', true, '', '', 0, this.files.length, 0);
           this.onCancel();
           this.controller.close();
@@ -2615,13 +3004,16 @@ export struct BatchMangaImportDialog {
         .height(44)
         .layoutWeight(1)
         .fontFamily(this.appFontFamily)
+        .enabled(!this.isActionLocked)
         .onClick(() => {
-          if (this.validateForm()) {
-            const result = this.buildResult();
-            this.emitFlowEvent(ImportFlowEventType.DIALOG_CONFIRMED, 'batch_dialog_confirmed', true, '', `groups=${result.groups.length}`, result.groups.length, result.groups.length, 0);
-            this.onConfirm(result);
-            this.controller.close();
+          if (this.isActionLocked || !this.validateForm()) {
+            return;
           }
+          const result = this.buildResult();
+          this.isActionLocked = true;
+          this.emitFlowEvent(ImportFlowEventType.DIALOG_CONFIRMED, 'batch_dialog_confirmed', true, '', `groups=${result.groups.length}`, result.groups.length, result.groups.length, 0);
+          this.onConfirm(result);
+          this.controller.close();
         })
     }
     .width('100%')
@@ -2724,7 +3116,9 @@ export struct BatchMangaImportDialog {
       number: file.inferredChapterNumber || 1,
       title: prefilledInfo?.title || `第${file.inferredChapterNumber || 1}话`,
       file: file,
-      pageCount: file.parsedStructure?.totalImageCount || 0
+      pageCount: this.getDefaultChapterPageCount(file),
+      sourcePath: this.getDefaultChapterSourcePath(file),
+      preserveSource: this.shouldPreserveChapterSource(file)
     };
     return chapterInfo;
   }
@@ -2746,6 +3140,9 @@ export struct BatchMangaImportDialog {
         config: config,
         themeState: this.themeState,
         onConfirm: (result: ScraperDialogResult) => {
+          if (this.isDisposed) {
+            return;
+          }
           this.applyScraperResultToGroup(result);
           this.scraperDialogController?.close();
         },

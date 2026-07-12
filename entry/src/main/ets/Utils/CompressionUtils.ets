@@ -125,6 +125,7 @@ interface RecursiveExtractionInternalResult {
 export class CompressionUtils {
   private static instance: CompressionUtils | null = null;
   private sandboxManager: SandboxManager;
+  private tempCopySequence: number = 0;
 
   // 支持的压缩文件格式
   private readonly supportedArchiveFormats = ['.zip', '.cbz', '.tar', '.gz', '.tgz', '.bz2', '.xz', '.rar', '.cbr', '.7z', '.lzma'];
@@ -195,12 +196,13 @@ export class CompressionUtils {
       totalSize: 0,
       warnings: []
     };
+    let actualFilePath: string = archivePath;
 
     try {
       logger.info(TAG, `开始解压缩文件: ${archivePath}`);
 
       // 验证输入文件并获取实际文件路径
-      const actualFilePath = await this.validateArchiveFile(archivePath);
+      actualFilePath = await this.validateArchiveFile(archivePath);
 
       // 准备解压缩目录
       const targetDir = await this.prepareExtractionDirectory(archivePath, mergedOptions);
@@ -217,22 +219,28 @@ export class CompressionUtils {
 
       result.success = true;
       logger.info(TAG, `解压缩完成: ${result.fileCount} 个文件, 总大小: ${result.totalSize} 字节`);
-
-      // 如果使用了临时文件，清理它
+    } catch (error) {
+      result.error = String(error);
+      const errorStr = String(error);
+      logger.error(TAG, '解压缩失败', errorStr);
+      if (result.extractedPath.length > 0) {
+        try {
+          await this.sandboxManager.deleteDirectory(result.extractedPath, true);
+          result.extractedPath = '';
+        } catch (cleanupError) {
+          logger.warn(TAG, `清理解压失败目录失败: ${result.extractedPath}`, String(cleanupError));
+        }
+      }
+    } finally {
+      // Picker URI 会先复制到沙箱；无论解压成功或失败都必须释放该临时副本。
       if (actualFilePath !== archivePath) {
         try {
           await this.sandboxManager.deleteFile(actualFilePath);
           logger.debug(TAG, `清理临时文件: ${actualFilePath}`);
         } catch (cleanupError) {
-          const cleanupErrorStr = String(cleanupError);
-          logger.warn(TAG, `清理临时文件失败: ${actualFilePath}`, cleanupErrorStr);
+          logger.warn(TAG, `清理临时文件失败: ${actualFilePath}`, String(cleanupError));
         }
       }
-
-    } catch (error) {
-      result.error = String(error);
-      const errorStr = String(error);
-      logger.error(TAG, '解压缩失败', errorStr);
     }
 
     return result;
@@ -341,58 +349,53 @@ export class CompressionUtils {
    * @returns 临时文件路径
    */
   private async copyUriFileToTemp(uriPath: string): Promise<string> {
+    let tempFilePath: string = '';
+    let sourceFile: fileIo.File | null = null;
     try {
       // 生成临时文件路径
-      const fileName = this.getFileNameFromUri(uriPath);
+      const fileName: string = this.sanitizeTemporaryFileName(this.getFileNameFromUri(uriPath));
       const timestamp = Date.now();
+      this.tempCopySequence += 1;
       const tempDir = this.sandboxManager.getDirectory('temp');
-      const tempFilePath = `${tempDir}/temp_${timestamp}_${fileName}`;
+      tempFilePath = `${tempDir}/temp_${timestamp}_${this.tempCopySequence}_${fileName}`;
       
       // 确保临时目录存在
       await this.sandboxManager.createDirectory(tempDir);
       
-      // 使用fs.openSync打开URI文件（只读模式）
-      const sourceFile = SafeFileUtils.openSync(uriPath, fileIo.OpenMode.READ_ONLY);
-      
-      try {
-        // 获取文件大小
-        const stat = SafeFileUtils.statSync(sourceFile.fd);
-        const fileSize = stat.size;
-        
-        if (fileSize === 0) {
-          throw new Error('选择的文件为空');
-        }
-        
-        // 检查文件大小限制（最大1GB）
-        const maxFileSize = 1024 * 1024 * 1024; // 1GB
-        if (fileSize > maxFileSize) {
-          throw new Error(`文件过大: ${(fileSize / 1024 / 1024).toFixed(2)}MB，最大支持: 1GB`);
-        }
-        
-        // 创建缓冲区读取文件内容
-        const buffer = new ArrayBuffer(fileSize);
-        const readLength = SafeFileUtils.readSync(sourceFile.fd, buffer);
-        
-        if (readLength !== fileSize) {
-          throw new Error(`文件读取不完整: 期望 ${fileSize} 字节，实际读取 ${readLength} 字节`);
-        }
-        
-        // 创建目标文件并写入内容
-        const targetFile = SafeFileUtils.openSync(tempFilePath, fileIo.OpenMode.CREATE | fileIo.OpenMode.WRITE_ONLY);
-        
-        try {
-          SafeFileUtils.writeSync(targetFile.fd, buffer);
-          logger.debug(TAG, `URI文件复制到临时目录: ${uriPath} -> ${tempFilePath}, 大小: ${readLength} bytes`);
-          return tempFilePath;
-        } finally {
-          SafeFileUtils.closeSync(targetFile);
-        }
-      } finally {
-        SafeFileUtils.closeSync(sourceFile);
+      // 先打开 Picker URI 取得临时只读权限，再让系统按 FD 流式复制。
+      // 避免按整个 CBZ 大小分配 ArrayBuffer，批量导入时不会叠加大块 JS 堆内存。
+      sourceFile = await fileIo.open(uriPath, fileIo.OpenMode.READ_ONLY);
+      const sourceStat = await fileIo.stat(sourceFile.fd);
+      const fileSize: number = sourceStat.size;
+
+      if (fileSize === 0) {
+        throw new Error('选择的文件为空');
       }
+
+      const maxFileSize: number = 1024 * 1024 * 1024;
+      if (fileSize > maxFileSize) {
+        throw new Error(`文件过大: ${(fileSize / 1024 / 1024).toFixed(2)}MB，最大支持: 1GB`);
+      }
+
+      await fileIo.copyFile(sourceFile.fd, tempFilePath);
+      const copiedStat = await fileIo.stat(tempFilePath);
+      if (copiedStat.size !== fileSize) {
+        throw new Error(`文件复制不完整: 期望 ${fileSize} 字节，实际复制 ${copiedStat.size} 字节`);
+      }
+
+      logger.debug(TAG, `URI文件复制到临时目录: ${uriPath} -> ${tempFilePath}, 大小: ${fileSize} bytes`);
+      return tempFilePath;
     } catch (error) {
       const errorStr = String(error);
       logger.error(TAG, `复制URI文件失败: ${uriPath}`, errorStr);
+
+      if (tempFilePath.length > 0) {
+        try {
+          await this.sandboxManager.deleteFile(tempFilePath);
+        } catch (cleanupError) {
+          logger.debug(TAG, `清理未完成URI临时副本失败: ${tempFilePath}, ${String(cleanupError)}`);
+        }
+      }
       
       // 提供更友好的错误信息
       if (errorStr.includes('Permission denied') || errorStr.includes('Operation not permitted')) {
@@ -403,6 +406,14 @@ export class CompressionUtils {
         throw new Error('设备存储空间不足，无法复制文件');
       } else {
         throw new Error(`无法访问文件: ${this.getFileNameFromUri(uriPath)} (${errorStr})`);
+      }
+    } finally {
+      if (sourceFile !== null) {
+        try {
+          await fileIo.close(sourceFile);
+        } catch (closeError) {
+          logger.warn(TAG, `关闭Picker文件失败: ${this.getFileNameFromUri(uriPath)}`, String(closeError));
+        }
       }
     }
   }
@@ -426,6 +437,21 @@ export class CompressionUtils {
       logger.warn(TAG, `解析文件名失败: ${uri}`, errorStr);
       return 'unknown_file';
     }
+  }
+
+  /**
+   * URI 文件名可能在 URL 解码后重新包含路径分隔符。临时副本只能使用
+   * 单一 basename，避免 ../ 或编码后的斜杠逃出临时目录。
+   */
+  private sanitizeTemporaryFileName(fileName: string): string {
+    let safeName: string = fileName
+      .replace(/[\\/:*?"<>|]/g, '_')
+      .replace(/\.\./g, '_')
+      .trim();
+    if (safeName.length <= 0 || safeName === '.' || safeName === '..') {
+      safeName = 'archive.cbz';
+    }
+    return safeName;
   }
 
   /**
@@ -569,7 +595,7 @@ export class CompressionUtils {
 
     try {
       if (this.zlibFormats.includes(extension)) {
-        await this.extractZipArchive(archivePath, targetDir, options.password);
+        await this.extractZipArchive(archivePath, targetDir, options);
       } else if (
         this.commonsCompressFormats.includes(extension) ||
         this.unrarFormats.includes(extension) ||
@@ -627,25 +653,41 @@ export class CompressionUtils {
   private async extractZipArchive(
     archivePath: string,
     targetDir: string,
-    password?: string
+    options: ExtractionOptions
   ): Promise<void> {
-    const finalPassword = password?.trim();
+    const finalPassword = options.password?.trim();
     if (!finalPassword) {
       try {
         await this.extractWithZlib(archivePath, targetDir);
         return;
       } catch (error) {
         logger.warn(TAG, `zlib 解压失败，尝试使用 minizip 兜底: ${archivePath}`, String(error));
+        // zlib 可能已经写入了部分条目。回退前必须清空目标目录，避免
+        // 编码错误的半成品与 minizip 的正确结果混合，造成重复页面。
+        try {
+          await this.sandboxManager.deleteDirectory(targetDir, true);
+          await this.sandboxManager.createDirectory(targetDir);
+        } catch (cleanupError) {
+          throw new Error(`清理 zlib 半成品失败，无法安全回退: ${String(cleanupError)}`);
+        }
       }
     }
 
-    await this.extractZipWithMinizip(archivePath, targetDir, finalPassword);
+    await this.extractZipWithMinizip(
+      archivePath,
+      targetDir,
+      finalPassword,
+      options.maxFiles,
+      options.maxTotalSize
+    );
   }
 
   private async extractZipWithMinizip(
     archivePath: string,
     targetDir: string,
-    password?: string
+    password?: string,
+    maxFiles?: number,
+    maxTotalSize?: number
   ): Promise<void> {
     const charEncoding = this.pickZipCharEncoding(archivePath);
     const minizip = this.createMinizipReader(archivePath, charEncoding);
@@ -655,6 +697,18 @@ export class CompressionUtils {
     if (!finalPassword && this.zipHasEncryptedEntries(minizip, entryNames)) {
       throw this.createPasswordRequiredError(archivePath);
     }
+
+    let archiveFileCount: number = 0;
+    for (const entryName of entryNames) {
+      if (!entryName.endsWith('/')) {
+        archiveFileCount += 1;
+      }
+    }
+    if (maxFiles !== undefined && archiveFileCount > maxFiles) {
+      throw new Error(`ZIP 条目数量超过限制: ${archiveFileCount}/${maxFiles}`);
+    }
+
+    let extractedTotalSize: number = 0;
 
     for (const entryName of entryNames) {
       const isDirectoryEntry = entryName.endsWith('/');
@@ -680,6 +734,11 @@ export class CompressionUtils {
           throw this.createPasswordRequiredError(archivePath);
         }
         throw new Error(`ZIP 条目解压失败: ${entryName}`);
+      }
+
+      extractedTotalSize += content.byteLength;
+      if (maxTotalSize !== undefined && extractedTotalSize > maxTotalSize) {
+        throw new Error(`ZIP 解压总大小超过限制: ${extractedTotalSize}/${maxTotalSize}`);
       }
 
       const file = SafeFileUtils.openSync(outputPath, fs.OpenMode.CREATE | fs.OpenMode.TRUNC | fs.OpenMode.WRITE_ONLY);
@@ -841,51 +900,10 @@ export class CompressionUtils {
     options: ExtractionOptions
   ): Promise<ExtractedFileInfo[]> {
     const fileInfos: ExtractedFileInfo[] = [];
+    const state: ExtractionScanState = { totalSize: 0 };
 
     try {
-      const files = await this.sandboxManager.listDirectory(directory);
-      
-      for (const fileName of files) {
-        const filePath = `${directory}/${fileName}`;
-        
-        // 应用文件过滤器
-        if (options.fileFilter && !options.fileFilter(fileName)) {
-          continue;
-        }
-
-        // 检查文件数量限制
-        if (options.maxFiles && fileInfos.length >= options.maxFiles) {
-          logger.warn(TAG, `达到最大文件数量限制: ${options.maxFiles}`);
-          break;
-        }
-
-        try {
-          const fileInfo = await this.sandboxManager.getFileInfo(filePath);
-          const mimeType = getMimeTypeFromExtension(this.getFileExtension(fileName).substring(1));
-          
-          const extractedFileInfo: ExtractedFileInfo = {
-            fileName: fileName,
-            filePath: filePath,
-            fileSize: fileInfo.size,
-            mimeType: mimeType,
-            isImage: this.supportedImageFormats.includes(mimeType),
-            isXml: fileName.toLowerCase().endsWith('.xml')
-          };
-
-          fileInfos.push(extractedFileInfo);
-
-          // 检查总大小限制
-          const currentTotalSize = fileInfos.reduce((sum, info) => sum + info.fileSize, 0);
-          if (options.maxTotalSize && currentTotalSize > options.maxTotalSize) {
-            logger.warn(TAG, `达到最大总大小限制: ${options.maxTotalSize} 字节`);
-            break;
-          }
-
-        } catch (error) {
-          const errorStr = String(error);
-          logger.warn(TAG, `获取文件信息失败: ${fileName}`, errorStr);
-        }
-      }
+      await this.scanExtractedDirectory(directory, options, fileInfos, state);
 
     } catch (error) {
       const errorStr = String(error);
@@ -894,6 +912,51 @@ export class CompressionUtils {
     }
 
     return fileInfos;
+  }
+
+  private async scanExtractedDirectory(
+    directory: string,
+    options: ExtractionOptions,
+    fileInfos: ExtractedFileInfo[],
+    state: ExtractionScanState
+  ): Promise<void> {
+    const files: string[] = await this.sandboxManager.listDirectory(directory);
+    files.sort((left: string, right: string): number => this.naturalCompare(left, right));
+    for (const fileName of files) {
+      const filePath: string = `${directory}/${fileName}`;
+      if (await this.sandboxManager.isSymbolicLink(filePath)) {
+        logger.warn(TAG, `扫描解压结果跳过符号链接: ${filePath}`);
+        continue;
+      }
+
+      const stat = await fileIo.lstat(filePath);
+      if (stat.isDirectory()) {
+        await this.scanExtractedDirectory(directory + '/' + fileName, options, fileInfos, state);
+        continue;
+      }
+
+      if (options.fileFilter && !options.fileFilter(fileName)) {
+        continue;
+      }
+      if (options.maxFiles !== undefined && fileInfos.length >= options.maxFiles) {
+        throw new Error(`达到最大文件数量限制: ${options.maxFiles}`);
+      }
+      if (options.maxTotalSize !== undefined && state.totalSize + stat.size > options.maxTotalSize) {
+        throw new Error(`达到最大总大小限制: ${options.maxTotalSize} 字节`);
+      }
+
+      const mimeType: string = getMimeTypeFromExtension(this.getFileExtension(fileName).substring(1));
+      const extractedFileInfo: ExtractedFileInfo = {
+        fileName: fileName,
+        filePath: filePath,
+        fileSize: stat.size,
+        mimeType: mimeType,
+        isImage: this.supportedImageFormats.includes(mimeType),
+        isXml: fileName.toLowerCase().endsWith('.xml')
+      };
+      fileInfos.push(extractedFileInfo);
+      state.totalSize += stat.size;
+    }
   }
 
   /**
@@ -930,6 +993,9 @@ export class CompressionUtils {
       for (const fileName of files) {
         if (fileName.toLowerCase() === 'comicinfo.xml') {
           const filePath = `${directory}/${fileName}`;
+          if (await this.sandboxManager.isSymbolicLink(filePath)) {
+            continue;
+          }
           logger.info(TAG, `找到ComicInfo.xml: ${filePath}`);
           return filePath;
         }
@@ -938,10 +1004,11 @@ export class CompressionUtils {
       // 如果当前目录没有，递归查找子目录
       for (const fileName of files) {
         const filePath = `${directory}/${fileName}`;
+        if (await this.sandboxManager.isSymbolicLink(filePath)) {
+          continue;
+        }
         
         try {
-          const fileInfo = await this.sandboxManager.getFileInfo(filePath);
-          
           // 判断是否为目录（通过尝试列出目录内容）
           const isDirectory = await this.isDirectory(filePath);
           
@@ -966,14 +1033,70 @@ export class CompressionUtils {
   }
 
   /**
+   * Return a ComicInfo.xml that is directly inside the supplied directory.
+   * This deliberately does not recurse into sibling/child directories.
+   */
+  private async findDirectComicInfoFile(directory: string): Promise<string | null> {
+    try {
+      const files: string[] = await this.sandboxManager.listDirectory(directory);
+      for (const fileName of files) {
+        if (fileName.toLowerCase() === 'comicinfo.xml') {
+          const filePath: string = `${directory}/${fileName}`;
+          if (!(await this.sandboxManager.isSymbolicLink(filePath))) {
+            return filePath;
+          }
+        }
+      }
+    } catch (error) {
+      logger.debug(TAG, `Unable to read ComicInfo.xml directory: ${directory}`, String(error));
+    }
+    return null;
+  }
+
+  /**
+   * Find the nearest metadata file on the direct parent chain of a flat image
+   * directory. A bounded parent walk avoids taking metadata from an unrelated
+   * sibling manga through the old recursive search.
+   */
+  private async findNearestParentComicInfoFile(
+    directory: string,
+    maxDepth: number = 4
+  ): Promise<string | null> {
+    let currentPath: string = this.convertUriToLocalPath(directory)
+      .replace(/\\/g, '/').replace(/\/+$/g, '');
+    for (let depth = 0; depth < maxDepth; depth++) {
+      const slashIndex: number = currentPath.lastIndexOf('/');
+      if (slashIndex < 0) {
+        break;
+      }
+      if (slashIndex === 0) {
+        currentPath = '/';
+      } else {
+        currentPath = currentPath.substring(0, slashIndex);
+      }
+      if (currentPath === '/') {
+        break;
+      }
+      const comicInfoPath: string | null = await this.findDirectComicInfoFile(currentPath);
+      if (comicInfoPath !== null) {
+        return comicInfoPath;
+      }
+    }
+    return null;
+  }
+
+  /**
    * 判断路径是否为目录
    * @param path 路径
    * @returns 是否为目录
    */
   private async isDirectory(path: string): Promise<boolean> {
     try {
-      // 使用底层stat检查目录属性，避免通过列目录判断造成误判与日志污染
-      const stat = await fileIo.stat(path);
+      // 使用 lstat，符号链接不能作为可递归的导入目录。
+      const stat = await fileIo.lstat(path);
+      if (stat.isSymbolicLink()) {
+        return false;
+      }
       return stat.isDirectory();
     } catch (error) {
       return false;
@@ -1218,6 +1341,9 @@ export class CompressionUtils {
       // 如果当前目录只有一个子目录，递归进入
       if (files.length === 1) {
         const singleItem = `${startPath}/${files[0]}`;
+        if (await this.sandboxManager.isSymbolicLink(singleItem)) {
+          return startPath;
+        }
         const isDir = await this.isDirectory(singleItem);
         
         if (isDir) {
@@ -1230,6 +1356,9 @@ export class CompressionUtils {
       const subDirs: string[] = [];
       for (const fileName of files) {
         const filePath = `${startPath}/${fileName}`;
+        if (await this.sandboxManager.isSymbolicLink(filePath)) {
+          continue;
+        }
         const isDir = await this.isDirectory(filePath);
         
         if (isDir) {
@@ -1266,6 +1395,10 @@ export class CompressionUtils {
       const files = await this.sandboxManager.listDirectory(directory);
       
       for (const fileName of files) {
+        const filePath: string = `${directory}/${fileName}`;
+        if (await this.sandboxManager.isSymbolicLink(filePath)) {
+          continue;
+        }
         const extension = this.getFileExtension(fileName).toLowerCase();
         if (['.jpg', '.jpeg', '.png', '.webp', '.gif', '.bmp'].includes(extension)) {
           return true;
@@ -1286,7 +1419,10 @@ export class CompressionUtils {
   private async cleanupTempDirectories(tempDirectories: string[]): Promise<void> {
     logger.info(TAG, `开始清理 ${tempDirectories.length} 个临时目录`);
     
-    for (const dir of tempDirectories) {
+    // Nested extraction targets can live inside their parent extraction root.
+    // Remove children first so every tracked path is cleaned deterministically.
+    for (let index = tempDirectories.length - 1; index >= 0; index--) {
+      const dir: string = tempDirectories[index];
       try {
         await this.cleanupExtractionDirectory(dir);
       } catch (error) {
@@ -1358,6 +1494,10 @@ export class CompressionUtils {
       }
 
       // 6. 对章节进行自然排序
+      const rootChapterName: string = this.getFileNameWithoutExtension(
+        this.getFileNameFromUri(archivePath)
+      );
+      this.appendRootImageChapter(detectedChapters, extractedPath, rootImageCount, rootChapterName);
       this.sortChaptersNaturally(detectedChapters);
 
       const result: ParsedArchiveStructure = {
@@ -1385,6 +1525,54 @@ export class CompressionUtils {
     }
   }
 
+  private createNestedExtractionOptions(
+    options: Partial<ExtractionOptions> | undefined,
+    targetDirectory: string
+  ): Partial<ExtractionOptions> {
+    const nestedOptions: Partial<ExtractionOptions> = {
+      targetDirectory: targetDirectory,
+      overwrite: false,
+      createSubDirectory: false,
+      fileFilter: options?.fileFilter,
+      maxFiles: options?.maxFiles,
+      maxTotalSize: options?.maxTotalSize,
+      password: options?.password
+    };
+    return nestedOptions;
+  }
+
+  private async findNestedArchiveFiles(
+    directory: string,
+    currentDepth: number = 0,
+    maxDepth: number = 16
+  ): Promise<string[]> {
+    if (currentDepth > maxDepth) {
+      throw new Error(`Nested archive directory depth exceeds ${maxDepth}: ${directory}`);
+    }
+    const nestedArchives: string[] = [];
+    const entries: string[] = await this.sandboxManager.listDirectory(directory);
+    entries.sort((left: string, right: string): number => this.naturalCompare(left, right));
+    for (const entry of entries) {
+      const entryPath: string = `${directory}/${entry}`;
+      if (await this.sandboxManager.isSymbolicLink(entryPath)) {
+        continue;
+      }
+      if (await this.isDirectory(entryPath)) {
+        const childArchives: string[] = await this.findNestedArchiveFiles(
+          entryPath,
+          currentDepth + 1,
+          maxDepth
+        );
+        for (const childArchive of childArchives) {
+          nestedArchives.push(childArchive);
+        }
+      } else if (this.isSupportedArchive(entryPath)) {
+        nestedArchives.push(entryPath);
+      }
+    }
+    return nestedArchives;
+  }
+
   /**
    * 递归解压所有嵌套的压缩包
    */
@@ -1397,12 +1585,9 @@ export class CompressionUtils {
     currentDepth: number = 0
   ): Promise<NestedExtractionResult> {
     if (currentDepth > maxDepth) {
-      warnings.push(`达到最大递归深度 ${maxDepth}`);
-      const maxDepthResult: NestedExtractionResult = {
-        finalPath: archivePath,
-        recursionDepth: currentDepth
-      };
-      return maxDepthResult;
+      const depthError: string = `Nested archive depth exceeds ${maxDepth}: ${archivePath}`;
+      warnings.push(depthError);
+      throw new Error(depthError);
     }
 
     // 解压当前压缩包
@@ -1415,33 +1600,34 @@ export class CompressionUtils {
     let finalPath = extractResult.extractedPath;
     let maxRecursionDepth = currentDepth;
 
-    // 扫描解压后的内容，查找嵌套的压缩包
-    const files = await this.sandboxManager.listDirectory(extractResult.extractedPath);
-    const nestedArchives: string[] = [];
-
-    for (const fileName of files) {
-      const filePath = `${extractResult.extractedPath}/${fileName}`;
-      if (this.isSupportedArchive(filePath)) {
-        nestedArchives.push(filePath);
-      }
-    }
+    // Scan all wrapper directories before creating nested extraction targets.
+    const nestedArchives: string[] = await this.findNestedArchiveFiles(extractResult.extractedPath);
 
     // 递归解压所有嵌套的压缩包
-    for (const nestedArchive of nestedArchives) {
+    for (let nestedIndex = 0; nestedIndex < nestedArchives.length; nestedIndex++) {
+      const nestedArchive: string = nestedArchives[nestedIndex];
+      const archiveName: string = this.getFileNameWithoutExtension(nestedArchive);
+      const safeArchiveName: string = archiveName.replace(/[\\/:*?"<>|]/g, '_') || 'archive';
+      const nestedTargetDirectory: string =
+        `${extractResult.extractedPath}/${safeArchiveName}__nested_${nestedIndex + 1}`;
       try {
+        const nestedOptions: Partial<ExtractionOptions> = this.createNestedExtractionOptions(
+          options,
+          nestedTargetDirectory
+        );
         const nestedResult = await this.extractAllNestedArchives(
           nestedArchive,
           tempDirectories,
           warnings,
-          options,
+          nestedOptions,
           maxDepth,
           currentDepth + 1
         );
         maxRecursionDepth = Math.max(maxRecursionDepth, nestedResult.recursionDepth);
-        // 更新最终路径为最后解压的路径
-        finalPath = nestedResult.finalPath;
       } catch (error) {
-        warnings.push(`解压嵌套压缩包失败: ${nestedArchive}, ${error}`);
+        const nestedError: string = `Failed to extract nested archive: ${nestedArchive}, ${error}`;
+        warnings.push(nestedError);
+        throw new Error(nestedError);
       }
     }
 
@@ -1463,6 +1649,30 @@ export class CompressionUtils {
   }
 
   /**
+   * Turn images that live directly in a parsed root into an explicit chapter.
+   * The recursive scanner reports their count separately; without this step
+   * mixed archives (root pages plus chapter directories) would silently omit
+   * the root pages during import.
+   */
+  private appendRootImageChapter(
+    chapters: DetectedChapterInfo[],
+    rootPath: string,
+    rootImageCount: number,
+    displayName?: string
+  ): void {
+    if (rootImageCount <= 0) {
+      return;
+    }
+    const fallbackName: string = this.getFileNameFromUri(rootPath) || 'Images';
+    let rootName: string = fallbackName;
+    if (displayName !== undefined && displayName.length > 0) {
+      rootName = displayName;
+    }
+    const chapterName: string = chapters.length > 0 ? `${rootName} (Images)` : rootName;
+    chapters.push(this.extractChapterInfoFromName(chapterName, rootPath, rootImageCount));
+  }
+
+  /**
    * 扫描目录结构，检测章节
    */
   private async scanDirectoryForChapters(rootPath: string): Promise<DirectoryScanResult> {
@@ -1475,6 +1685,10 @@ export class CompressionUtils {
 
       for (const fileName of files) {
         const filePath = `${rootPath}/${fileName}`;
+        if (await this.sandboxManager.isSymbolicLink(filePath)) {
+          logger.warn(TAG, `跳过符号链接导入项: ${filePath}`);
+          continue;
+        }
         const isDir = await this.isDirectory(filePath);
 
         if (isDir) {
@@ -1509,6 +1723,7 @@ export class CompressionUtils {
 
     } catch (error) {
       logger.error(TAG, `扫描目录失败: ${rootPath}`, String(error));
+      throw error as Error;
     }
 
     const result: DirectoryScanResult = {
@@ -1528,6 +1743,10 @@ export class CompressionUtils {
       let count = 0;
 
       for (const fileName of files) {
+        const filePath: string = `${directory}/${fileName}`;
+        if (await this.sandboxManager.isSymbolicLink(filePath)) {
+          continue;
+        }
         const extension = this.getFileExtension(fileName).toLowerCase();
         if (['.jpg', '.jpeg', '.png', '.webp', '.gif', '.bmp', '.avif'].includes(extension)) {
           count++;
@@ -1577,12 +1796,9 @@ export class CompressionUtils {
       }
     }
 
-    // 如果没有提取到章节编号，使用默认值
-    if (chapterNumber === 0) {
-      chapterNumber = 1;
-    }
-
     const result: DetectedChapterInfo = {
+      // 未命名章节先保留 0；自然排序完成后再用稳定的显示序号回填，
+      // 避免多个 Prologue/Side Story 全部变成第 1 章。
       index: chapterNumber,
       number: chapterNumber,
       title: chapterTitle,
@@ -1611,8 +1827,16 @@ export class CompressionUtils {
         return this.naturalCompare(a.title, b.title);
       }
       
-      // 如果都不是外传，按章节编号排序
-      if (a.number !== b.number) {
+      // 有明确编号的章节优先按编号；无法识别编号的章节按名称排在后面。
+      const aHasNumber: boolean = a.number > 0;
+      const bHasNumber: boolean = b.number > 0;
+      if (aHasNumber && !bHasNumber) {
+        return -1;
+      }
+      if (!aHasNumber && bHasNumber) {
+        return 1;
+      }
+      if (aHasNumber && bHasNumber && a.number !== b.number) {
         return a.number - b.number;
       }
       // 如果编号相同，按原始名称自然排序
@@ -1622,6 +1846,9 @@ export class CompressionUtils {
     // 重新分配索引
     for (let i = 0; i < chapters.length; i++) {
       chapters[i].index = i + 1;
+      if (chapters[i].number <= 0) {
+        chapters[i].number = i + 1;
+      }
     }
   }
 
@@ -1759,6 +1986,7 @@ export class CompressionUtils {
       }
 
       // 4. 对章节进行自然排序
+      this.appendRootImageChapter(detectedChapters, effectivePath, rootImageCount);
       this.sortChaptersNaturally(detectedChapters);
 
       const result: ParsedArchiveStructure = {
@@ -1778,6 +2006,186 @@ export class CompressionUtils {
 
     } catch (error) {
       logger.error(TAG, '解析文件夹结构失败', String(error));
+      throw error as Error;
+    }
+  }
+
+  /**
+   * 递归发现可导入的漫画候选。
+   *
+   * 一个目录可能同时包含多个 CBZ、多个散图目录以及 ComicInfo.xml。
+   * 不能把整个目录直接当作一部漫画，否则不同 Series 的元数据会互相覆盖。
+   * 这里把每个归档文件和“直属包含图片的目录”分别返回，调用方再逐项解析和分组。
+   * 平铺散图目录使用 folder-flat: 前缀，避免旧的 folder: 语义把单章误判为多章节容器。
+   */
+  public async discoverMangaImportCandidates(
+    folderPath: string,
+    maxDepth: number = 16,
+    maxCandidates: number = 2000,
+    excludedDirectoryNames: string[] = []
+  ): Promise<string[]> {
+    const candidates: string[] = [];
+    const visited: Set<string> = new Set<string>();
+    await this.discoverMangaImportCandidatesRecursive(
+      folderPath,
+      0,
+      maxDepth,
+      maxCandidates,
+      excludedDirectoryNames,
+      visited,
+      candidates
+    );
+    candidates.sort((left: string, right: string): number => {
+      return this.naturalCompare(left, right);
+    });
+    return candidates;
+  }
+
+  private async discoverMangaImportCandidatesRecursive(
+    directory: string,
+    currentDepth: number,
+    maxDepth: number,
+    maxCandidates: number,
+    excludedDirectoryNames: string[],
+    visited: Set<string>,
+    candidates: string[]
+  ): Promise<void> {
+    if (currentDepth > maxDepth || candidates.length >= maxCandidates) {
+      return;
+    }
+    const normalizedDirectory: string = directory.replace(/\\/g, '/');
+    if (visited.has(normalizedDirectory)) {
+      return;
+    }
+    visited.add(normalizedDirectory);
+
+    let entries: string[];
+    try {
+      entries = await this.sandboxManager.listDirectory(directory);
+    } catch (error) {
+      logger.warn(TAG, `发现漫画候选时无法读取目录: ${directory}`, String(error));
+      return;
+    }
+
+    entries.sort((left: string, right: string): number => this.naturalCompare(left, right));
+    const childDirectories: string[] = [];
+    let directImageCount: number = 0;
+    for (const entry of entries) {
+      if (entry.startsWith('.')) {
+        continue;
+      }
+      const entryPath: string = `${directory}/${entry}`;
+      if (await this.sandboxManager.isSymbolicLink(entryPath)) {
+        logger.warn(TAG, `发现漫画候选时跳过符号链接: ${entryPath}`);
+        continue;
+      }
+      if (await this.isDirectory(entryPath)) {
+        if (excludedDirectoryNames.includes(entry.toLowerCase())) {
+          continue;
+        }
+        childDirectories.push(entryPath);
+        continue;
+      }
+      if (this.isSupportedArchive(entryPath)) {
+        if (candidates.length < maxCandidates) {
+          candidates.push(entryPath);
+        }
+        continue;
+      }
+      const extension: string = this.getFileExtension(entry).toLowerCase();
+      if (['.jpg', '.jpeg', '.png', '.webp', '.gif', '.bmp', '.avif'].includes(extension)) {
+        directImageCount += 1;
+      }
+    }
+
+    if (directImageCount > 0 && candidates.length < maxCandidates) {
+      candidates.push(`folder-flat:${directory}`);
+    }
+
+    for (const childDirectory of childDirectories) {
+      await this.discoverMangaImportCandidatesRecursive(
+        childDirectory,
+        currentDepth + 1,
+        maxDepth,
+        maxCandidates,
+        excludedDirectoryNames,
+        visited,
+        candidates
+      );
+      if (candidates.length >= maxCandidates) {
+        break;
+      }
+    }
+  }
+
+  /**
+   * 解析只包含直属散图的目录，不递归读取子目录。
+   * 这样每个 Gallery/章节目录只绑定自己的 ComicInfo.xml。
+   */
+  public async parseFlatImageFolderAsArchiveStructure(folderPath: string): Promise<ParsedArchiveStructure> {
+    const warnings: string[] = [];
+    let hasComicInfo: boolean = false;
+    let comicInfoContent: string | undefined;
+    let imageCount: number = 0;
+    let directComicInfoFound: boolean = false;
+    try {
+      const entries: string[] = await this.sandboxManager.listDirectory(folderPath);
+      for (const entry of entries) {
+        const entryPath: string = `${folderPath}/${entry}`;
+        if (await this.sandboxManager.isSymbolicLink(entryPath)) {
+          logger.warn(TAG, `平铺散图解析跳过符号链接: ${entryPath}`);
+          continue;
+        }
+        if (await this.isDirectory(entryPath)) {
+          continue;
+        }
+        if (entry.toLowerCase() === 'comicinfo.xml') {
+          directComicInfoFound = true;
+          try {
+            comicInfoContent = SafeFileUtils.readTextSync(entryPath);
+            hasComicInfo = true;
+          } catch (error) {
+            warnings.push(`读取ComicInfo.xml失败: ${error}`);
+          }
+          continue;
+        }
+        const extension: string = this.getFileExtension(entry).toLowerCase();
+        if (['.jpg', '.jpeg', '.png', '.webp', '.gif', '.bmp', '.avif'].includes(extension)) {
+          imageCount += 1;
+        }
+      }
+      if (!directComicInfoFound) {
+        const parentComicInfoPath: string | null = await this.findNearestParentComicInfoFile(folderPath);
+        if (parentComicInfoPath !== null) {
+          try {
+            comicInfoContent = SafeFileUtils.readTextSync(parentComicInfoPath);
+            hasComicInfo = true;
+            logger.info(TAG, `Flat image folder inherited ComicInfo.xml: ${parentComicInfoPath}`);
+          } catch (error) {
+            warnings.push(`读取父级ComicInfo.xml失败: ${error}`);
+          }
+        }
+      }
+      if (imageCount <= 0) {
+        throw new Error(`目录中未找到图片: ${folderPath}`);
+      }
+      const detectedChapters: DetectedChapterInfo[] = [];
+      this.appendRootImageChapter(detectedChapters, folderPath, imageCount);
+      const result: ParsedArchiveStructure = {
+        hasComicInfo: hasComicInfo,
+        comicInfoContent: comicInfoContent,
+        isMultiLayer: false,
+        detectedChapters: detectedChapters,
+        rootImageCount: imageCount,
+        totalImageCount: imageCount,
+        extractedPath: folderPath,
+        tempDirectories: [],
+        warnings: warnings
+      };
+      logger.info(TAG, `平铺散图目录解析完成: ${folderPath}, ${imageCount} 张图片`);
+      return result;
+    } catch (error) {
+      logger.error(TAG, `解析平铺散图目录失败: ${folderPath}`, String(error));
       throw error as Error;
     }
   }
@@ -1817,6 +2225,10 @@ interface DirectoryScanResult {
   chapters: DetectedChapterInfo[];
   rootImageCount: number;
   totalImageCount: number;
+}
+
+interface ExtractionScanState {
+  totalSize: number;
 }
 
 /**

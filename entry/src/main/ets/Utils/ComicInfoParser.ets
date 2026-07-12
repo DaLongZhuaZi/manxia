@@ -19,6 +19,7 @@ export interface ComicInfo {
   summary?: string;
   writer?: string;
   genre?: string;
+  categories?: string;
   web?: string;
   publishingStatus?: string;
   source?: string;
@@ -175,7 +176,11 @@ export class ComicInfoParser {
    */
   private mapXmlFieldToComicInfo(fieldName: string, fieldValue: string): void {
     try {
-      switch (fieldName.toLowerCase()) {
+      const separatorIndex: number = fieldName.lastIndexOf(':');
+      const localFieldName: string = separatorIndex >= 0
+        ? fieldName.substring(separatorIndex + 1)
+        : fieldName;
+      switch (localFieldName.toLowerCase()) {
         case 'title':
           this.comicInfo.title = fieldValue;
           break;
@@ -186,21 +191,31 @@ export class ComicInfoParser {
           this.comicInfo.number = fieldValue;
           break;
         case 'summary':
+        case 'description':
           this.comicInfo.summary = fieldValue;
           break;
         case 'writer':
+        case 'author':
           this.comicInfo.writer = fieldValue;
           break;
         case 'genre':
+        case 'tags':
           this.comicInfo.genre = fieldValue;
           break;
+        case 'categories':
+          this.comicInfo.categories = fieldValue;
+          break;
         case 'web':
+        case 'weburl':
+        case 'url':
           this.comicInfo.web = fieldValue;
           break;
+        case 'status':
         case 'publishingstatus':
         case 'publishingstatustachiyomi':
           this.comicInfo.publishingStatus = fieldValue;
           break;
+        case 'publisher':
         case 'source':
         case 'sourcemihon':
           this.comicInfo.source = fieldValue;

@@ -44,6 +44,11 @@ interface TransitionStateListener {
   callback: (state: GlobalTransitionState) => void;
 }
 
+interface PendingReaderPixelMapRelease {
+  pixelMap: image.PixelMap;
+  transitionId: number;
+}
+
 /**
  * 过渡动画请求参数
  */
@@ -79,6 +84,7 @@ export interface EBookBackgroundSettings {
  */
 export class GlobalTransitionState {
   isActive: boolean = false;
+  transitionId: number = 0;
   mode: TransitionMode = TransitionMode.OPEN;
   coverImagePath: string = '';
   coverPosition: CoverPosition = { x: 0, y: 0, width: 100, height: 150 };
@@ -116,6 +122,7 @@ export class TransitionController {
   
   // 当前状态
   private currentState: GlobalTransitionState = new GlobalTransitionState();
+  private nextTransitionId: number = 0;
   private settingsManager: SettingsManager = SettingsManager.getInstance();
   private uiContext: UIContext | null = null;
   
@@ -128,6 +135,11 @@ export class TransitionController {
   private isCancelling: boolean = false;
   private pendingNavigationTimer: number = -1;
   private openReadyHideTimer: number = -1;
+  private cancelFallbackTimer: number = -1;
+  private pendingReaderPixelMapReleases: PendingReaderPixelMapRelease[] = [];
+  private pendingReaderPixelMapReleaseTimer: number = -1;
+  private static readonly CANCEL_FALLBACK_MS: number = 420;
+  private static readonly PIXEL_MAP_RELEASE_FALLBACK_MS: number = 2200;
 
   private isDefaultCoverPosition(coverPosition: CoverPosition): boolean {
     return coverPosition.x === DEFAULT_COVER_POSITION.x
@@ -182,6 +194,13 @@ export class TransitionController {
       }
     }
   }
+
+  private createTransitionState(): GlobalTransitionState {
+    this.nextTransitionId = this.nextTransitionId + 1;
+    const state: GlobalTransitionState = new GlobalTransitionState();
+    state.transitionId = this.nextTransitionId;
+    return state;
+  }
   
   /**
    * 开始翻开过渡动画
@@ -202,6 +221,7 @@ export class TransitionController {
     metaInfo?: BookTransitionMetaInfo
   ): void {
     this.clearOpenReadyHideTimer();
+    this.prepareForNewTransition('open_reentry');
 
     // 检查动画是否启用
     const animationSettingsManager = AnimationSettingsManager.getInstance();
@@ -214,19 +234,16 @@ export class TransitionController {
       }
       // 直接执行回调，跳过动画
       if (onComplete) {
-        onComplete();
+        try {
+          onComplete();
+        } catch (error) {
+          logger.warn(TAG, `打开转场完成回调异常: ${String(error)}`);
+        }
       }
       return;
     }
     
     logger.info(TAG, `开始翻开过渡: bookId=${targetBookId}, type=${targetBookType}, 有背景设置=${ebookBackground ? '是' : '否'}`);
-    
-    // [修复] 重置取消状态，防止上次残留的 isCancelling=true 导致 cancelTransition() 失效
-    if (this.isCancelling) {
-      logger.warn(TAG, '检测到残留的 isCancelling=true，在新的翻开过渡开始前强制重置');
-      this.isCancelling = false;
-      this.onCancelCallback = null;
-    }
     
     // 只在位置有效时保存（避免默认位置覆盖正确位置）
     const isDefaultPosition = this.isDefaultCoverPosition(coverPosition);
@@ -244,9 +261,11 @@ export class TransitionController {
     }
 
     const resolvedBackground = this.resolveOpenTransitionBackground(targetBookType, targetBookId, ebookBackground);
+    const transitionState: GlobalTransitionState = this.createTransitionState();
     
     this.currentState = {
       isActive: true,
+      transitionId: transitionState.transitionId,
       mode: TransitionMode.OPEN,
       coverImagePath: coverImagePath,
       coverPosition: coverPosition,
@@ -394,6 +413,192 @@ export class TransitionController {
   private clampBackgroundOpacity(value: number): number {
     return Math.max(0, Math.min(1, value));
   }
+
+  private releaseReaderPixelMap(pixelMap: image.PixelMap | null, reason: string): void {
+    if (pixelMap === null) {
+      return;
+    }
+    try {
+      void pixelMap.release().then((): void => {
+        logger.debug(TAG, `阅读器过渡截图已释放: reason=${reason}`);
+      }).catch((error: Error): void => {
+        logger.debug(TAG, `释放阅读器过渡截图失败: reason=${reason}, error=${error.message}`);
+      });
+    } catch (error) {
+      logger.debug(TAG, `释放阅读器过渡截图同步异常: reason=${reason}, error=${String(error)}`);
+    }
+  }
+
+  private queueReaderPixelMapReleaseAfterDetach(
+    pixelMap: image.PixelMap | null,
+    reason: string,
+    transitionId: number = -1
+  ): void {
+    if (pixelMap === null) {
+      return;
+    }
+    let alreadyPending = false;
+    for (let index = 0; index < this.pendingReaderPixelMapReleases.length; index += 1) {
+      if (this.pendingReaderPixelMapReleases[index].pixelMap === pixelMap) {
+        alreadyPending = true;
+        break;
+      }
+    }
+    if (!alreadyPending) {
+      const pendingRelease: PendingReaderPixelMapRelease = {
+        pixelMap: pixelMap,
+        transitionId: transitionId
+      };
+      this.pendingReaderPixelMapReleases.push(pendingRelease);
+      logger.debug(TAG, `阅读器过渡截图等待内容节点卸载后释放: reason=${reason}, transitionId=${transitionId}`);
+    }
+    this.schedulePendingReaderPixelMapReleaseFallback();
+  }
+
+  private removePendingReaderPixelMapRelease(pixelMap: image.PixelMap | null): void {
+    if (pixelMap === null || this.pendingReaderPixelMapReleases.length <= 0) {
+      return;
+    }
+    for (let index = this.pendingReaderPixelMapReleases.length - 1; index >= 0; index -= 1) {
+      if (this.pendingReaderPixelMapReleases[index].pixelMap === pixelMap) {
+        this.pendingReaderPixelMapReleases.splice(index, 1);
+      }
+    }
+    if (this.pendingReaderPixelMapReleases.length <= 0 && this.pendingReaderPixelMapReleaseTimer !== -1) {
+      clearTimeout(this.pendingReaderPixelMapReleaseTimer);
+      this.pendingReaderPixelMapReleaseTimer = -1;
+    } else if (this.pendingReaderPixelMapReleases.length > 0 && this.pendingReaderPixelMapReleaseTimer === -1) {
+      this.schedulePendingReaderPixelMapReleaseFallback();
+    }
+  }
+
+  private schedulePendingReaderPixelMapReleaseFallback(): void {
+    if (this.pendingReaderPixelMapReleaseTimer !== -1) {
+      return;
+    }
+    let releaseTimerId: number = -1;
+    releaseTimerId = setTimeout((): void => {
+      if (this.pendingReaderPixelMapReleaseTimer !== releaseTimerId) {
+        return;
+      }
+      this.pendingReaderPixelMapReleaseTimer = -1;
+      if (this.pendingReaderPixelMapReleases.length <= 0) {
+        return;
+      }
+      logger.warn(TAG, '过渡内容卸载回调未到达，使用延迟截图释放兜底');
+      this.flushPendingReaderPixelMapReleases('detach_fallback');
+    }, TransitionController.PIXEL_MAP_RELEASE_FALLBACK_MS);
+    this.pendingReaderPixelMapReleaseTimer = releaseTimerId;
+  }
+
+  private flushPendingReaderPixelMapReleases(reason: string, transitionId?: number): void {
+    if (this.pendingReaderPixelMapReleases.length <= 0) {
+      if (this.pendingReaderPixelMapReleaseTimer !== -1) {
+        clearTimeout(this.pendingReaderPixelMapReleaseTimer);
+        this.pendingReaderPixelMapReleaseTimer = -1;
+      }
+      return;
+    }
+    const pendingReleases: image.PixelMap[] = [];
+    const remainingReleases: PendingReaderPixelMapRelease[] = [];
+    for (let index = 0; index < this.pendingReaderPixelMapReleases.length; index += 1) {
+      const pendingRelease = this.pendingReaderPixelMapReleases[index];
+      if (transitionId === undefined || pendingRelease.transitionId === transitionId) {
+        pendingReleases.push(pendingRelease.pixelMap);
+      } else {
+        remainingReleases.push(pendingRelease);
+      }
+    }
+    this.pendingReaderPixelMapReleases = remainingReleases;
+    if (this.pendingReaderPixelMapReleases.length <= 0 && this.pendingReaderPixelMapReleaseTimer !== -1) {
+      clearTimeout(this.pendingReaderPixelMapReleaseTimer);
+      this.pendingReaderPixelMapReleaseTimer = -1;
+    } else if (this.pendingReaderPixelMapReleases.length > 0 && this.pendingReaderPixelMapReleaseTimer === -1) {
+      this.schedulePendingReaderPixelMapReleaseFallback();
+    }
+    for (let index = 0; index < pendingReleases.length; index += 1) {
+      this.releaseReaderPixelMap(pendingReleases[index], reason);
+    }
+  }
+
+  /**
+   * 由承载动画内容的节点 onDetach 回调触发。只有到达该生命周期后，
+   * Image 才不会再读取上一轮转场的 PixelMap。
+   */
+  public onTransitionContentDetached(detachedTransitionId: number = -1): void {
+    // 内容节点可能是上一轮转场异步卸载的。只有节点对应的仍是当前活动轮次时，
+    // 才允许在卸载回调中重置控制器；旧轮次不能覆盖新转场的状态。
+    const isCurrentDetachedTransition: boolean = detachedTransitionId >= 0 &&
+      this.currentState.transitionId === detachedTransitionId;
+    const isUnknownActiveRootDetach: boolean = detachedTransitionId < 0 && this.currentState.isActive;
+    if (this.currentState.isActive && (isCurrentDetachedTransition || isUnknownActiveRootDetach)) {
+      logger.warn(TAG, `活动转场内容节点提前卸载，执行精确重置: transitionId=${detachedTransitionId}`);
+      this.forceReset();
+    }
+    if (detachedTransitionId >= 0) {
+      this.flushPendingReaderPixelMapReleases('transition_content_detached', detachedTransitionId);
+    } else {
+      this.flushPendingReaderPixelMapReleases('transition_content_detached');
+    }
+  }
+
+  /**
+   * 在开始新一轮转场前清理上一轮控制器状态。
+   * 不能假设覆盖层组件一定已经挂载，否则旧截图和取消锁会跨轮次残留。
+   */
+  private prepareForNewTransition(reason: string): void {
+    this.clearCancelFallbackTimer();
+    if (this.pendingNavigationTimer !== -1) {
+      clearTimeout(this.pendingNavigationTimer);
+      this.pendingNavigationTimer = -1;
+    }
+    this.clearOpenReadyHideTimer();
+    this.isCancelling = false;
+    this.onCancelCallback = null;
+    this.onOpenComplete = null;
+    this.onCloseComplete = null;
+
+    const oldPixelMap: image.PixelMap | null = this.currentState.readerContentPixelMap;
+    const oldTransitionId: number = this.currentState.transitionId;
+    const hadActiveState: boolean = this.currentState.isActive;
+    this.currentState = this.createTransitionState();
+    if (hadActiveState || oldPixelMap !== null) {
+      this.queueReaderPixelMapReleaseAfterDetach(oldPixelMap, reason, oldTransitionId);
+      this.notifyStateChange();
+    }
+  }
+
+  private clearCancelFallbackTimer(): void {
+    if (this.cancelFallbackTimer !== -1) {
+      clearTimeout(this.cancelFallbackTimer);
+      this.cancelFallbackTimer = -1;
+    }
+  }
+
+  private completeCancellation(reason: string, expectedTransitionId: number = -1): void {
+    if (!this.isCancelling ||
+      (expectedTransitionId >= 0 && this.currentState.transitionId !== expectedTransitionId)) {
+      return;
+    }
+    this.clearCancelFallbackTimer();
+    const readerPixelMap: image.PixelMap | null = this.currentState.readerContentPixelMap;
+    const readerTransitionId: number = this.currentState.transitionId;
+    const cancelCallback: (() => void) | null = this.onCancelCallback;
+    this.isCancelling = false;
+    this.onCancelCallback = null;
+    this.onOpenComplete = null;
+    this.onCloseComplete = null;
+    this.currentState = this.createTransitionState();
+    this.queueReaderPixelMapReleaseAfterDetach(readerPixelMap, reason, readerTransitionId);
+    this.notifyStateChange();
+    if (cancelCallback) {
+      try {
+        cancelCallback();
+      } catch (error) {
+        logger.warn(TAG, `取消转场回调异常: ${String(error)}`);
+      }
+    }
+  }
   
   /**
    * 开始关闭过渡动画
@@ -410,26 +615,26 @@ export class TransitionController {
     closeCoverComponentId?: string
   ): void {
     this.clearOpenReadyHideTimer();
+    this.prepareForNewTransition('close_reentry');
 
     // 检查动画是否启用
     const animationSettingsManager = AnimationSettingsManager.getInstance();
     if (!animationSettingsManager.isBookCloseAnimationEnabled()) {
       logger.info(TAG, '书籍关闭动画已禁用，直接执行回调');
+      // 转场节点可能尚未卸载，统一走延迟释放，避免覆盖层仍在读取截图时释放。
+      this.queueReaderPixelMapReleaseAfterDetach(readerContentPixelMap || null, 'close_animation_disabled', -1);
       // 直接执行回调，跳过动画
       if (onComplete) {
-        onComplete();
+        try {
+          onComplete();
+        } catch (error) {
+          logger.warn(TAG, `关闭转场完成回调异常: ${String(error)}`);
+        }
       }
       return;
     }
     
     logger.info(TAG, '开始关闭过渡');
-    
-    // [修复] 重置取消状态，防止上次残留的 isCancelling=true 导致 cancelTransition() 失效
-    if (this.isCancelling) {
-      logger.warn(TAG, '检测到残留的 isCancelling=true，在新的关闭过渡开始前强制重置');
-      this.isCancelling = false;
-      this.onCancelCallback = null;
-    }
     
     // 关闭开始时先锁定一个稳定基础目标；淡出前只允许动画组件对明确的窗口坐标基准差做小幅补偿。
     let finalCoverPosition: CoverPosition;
@@ -455,6 +660,7 @@ export class TransitionController {
     this.currentState.coverPosition = finalCoverPosition;
     this.currentState.closeCoverComponentId = closeCoverComponentId || '';
     this.currentState.readerContentPixelMap = readerContentPixelMap || null;
+    this.removePendingReaderPixelMapRelease(this.currentState.readerContentPixelMap);
     this.currentState.readerContentImagePath = readerContentImagePath || '';
     this.currentState.isReaderReady = true;
     
@@ -476,6 +682,7 @@ export class TransitionController {
    */
   public prepareCloseTransition(coverPosition: CoverPosition): void {
     logger.info(TAG, '准备关闭过渡（显示遮罩层）');
+    this.prepareForNewTransition('prepare_close_reentry');
     
     // 计算最终封面位置
     let finalCoverPosition: CoverPosition;
@@ -517,6 +724,7 @@ export class TransitionController {
     
     // 更新截图数据
     this.currentState.readerContentPixelMap = readerContentPixelMap || null;
+    this.removePendingReaderPixelMapRelease(this.currentState.readerContentPixelMap);
     this.currentState.readerContentImagePath = readerContentImagePath || '';
     this.currentState.isReaderReady = true;  // 标记为就绪，开始动画
     this.currentState.closeCoverComponentId = '';
@@ -562,33 +770,52 @@ export class TransitionController {
 
     // 延迟一小段时间后隐藏覆盖层，让淡出动画有时间播放
     this.clearOpenReadyHideTimer();
-    this.openReadyHideTimer = setTimeout(() => {
-      this.openReadyHideTimer = -1;
-      if (!this.currentState.isActive || this.currentState.mode !== TransitionMode.OPEN) {
+    const readyTransitionId: number = this.currentState.transitionId;
+    let hideTimerId: number = -1;
+    hideTimerId = setTimeout(() => {
+      if (this.openReadyHideTimer !== hideTimerId) {
         return;
       }
-      this.currentState = new GlobalTransitionState();
+      this.openReadyHideTimer = -1;
+      if (!this.currentState.isActive || this.currentState.mode !== TransitionMode.OPEN ||
+        this.currentState.transitionId !== readyTransitionId) {
+        return;
+      }
+      this.currentState = this.createTransitionState();
       this.notifyStateChange();
       logger.info(TAG, '覆盖层已隐藏');
     }, TransitionController.OPEN_READER_READY_HIDE_DELAY_MS);
+    this.openReadyHideTimer = hideTimerId;
   }
   
   /**
    * 动画完成回调（由覆盖层组件调用）
    * 翻开模式：触发导航但保持覆盖层可见，等待setReaderReady
    * 关闭模式：直接完成并隐藏覆盖层
-   */
-  public onAnimationComplete(): void {
-    logger.info(TAG, `动画完成: mode=${this.currentState.mode}`);
+   * @param expectedMode 发起回调的子组件模式，用于拒绝上一轮残留回调
+   * @param transitionId 发起回调的转场序号
+    */
+  public onAnimationComplete(expectedMode: TransitionMode, transitionId: number = -1): void {
+    if (!this.currentState.isActive || this.currentState.mode !== expectedMode ||
+      (transitionId >= 0 && this.currentState.transitionId !== transitionId)) {
+      logger.debug(TAG, `忽略过期动画完成回调: expected=${expectedMode}, transitionId=${transitionId}, current=${this.currentState.mode}/${this.currentState.transitionId}, active=${this.currentState.isActive}`);
+      return;
+    }
+    logger.info(TAG, `动画完成: mode=${expectedMode}`);
     
-    const mode = this.currentState.mode;
+    const mode: TransitionMode = expectedMode;
     
     if (mode === TransitionMode.OPEN) {
       // 翻开模式：触发导航但保持覆盖层可见（黑色背景）
       // 等待阅读器加载完成后call setReaderReady()来隐藏覆盖层
-      if (this.onOpenComplete) {
-        this.onOpenComplete();
-        this.onOpenComplete = null;
+      const openCallback: (() => void) | null = this.onOpenComplete;
+      this.onOpenComplete = null;
+      if (openCallback) {
+        try {
+          openCallback();
+        } catch (error) {
+          logger.warn(TAG, `打开转场完成回调异常: ${String(error)}`);
+        }
       }
       // 不重置状态，保持覆盖层可见
     } else if (mode === TransitionMode.CLOSE) {
@@ -598,16 +825,31 @@ export class TransitionController {
       
       // 先保存回调引用
       const closeCallback = this.onCloseComplete;
+      const readerPixelMap: image.PixelMap | null = this.currentState.readerContentPixelMap;
+      const readerTransitionId: number = this.currentState.transitionId;
       this.onCloseComplete = null;
+      this.clearCancelFallbackTimer();
       
-      // 重置状态（确保isActive=false，组件会被移除）
-      this.currentState = new GlobalTransitionState();
+      // 重置状态（确保isActive=false，组件会被移除）。保存重置后的 ID，
+      // 使延迟完成回调不会误触发到随后开启的新一轮转场。
+      const resetState: GlobalTransitionState = this.createTransitionState();
+      this.currentState = resetState;
+      const resetTransitionId: number = resetState.transitionId;
+      this.queueReaderPixelMapReleaseAfterDetach(readerPixelMap, 'close_complete', readerTransitionId);
       this.notifyStateChange();
       
       // 延迟执行回调，确保UI状态已更新
       if (closeCallback) {
         setTimeout(() => {
-          closeCallback();
+          if (this.currentState.isActive || this.currentState.transitionId !== resetTransitionId) {
+            logger.debug(TAG, `忽略过期关闭转场回调: expectedReset=${resetTransitionId}, current=${this.currentState.transitionId}, active=${this.currentState.isActive}`);
+            return;
+          }
+          try {
+            closeCallback();
+          } catch (error) {
+            logger.warn(TAG, `关闭转场完成回调异常: ${String(error)}`);
+          }
         }, 50);
       }
     }
@@ -618,7 +860,10 @@ export class TransitionController {
    */
   public forceReset(): void {
     logger.warn(TAG, '强制重置过渡动画状态');
+    const readerPixelMap: image.PixelMap | null = this.currentState.readerContentPixelMap;
+    const readerTransitionId: number = this.currentState.transitionId;
     this.isCancelling = false;
+    this.clearCancelFallbackTimer();
     this.onOpenComplete = null;
     this.onCloseComplete = null;
     this.onCancelCallback = null;
@@ -627,7 +872,8 @@ export class TransitionController {
       this.pendingNavigationTimer = -1;
     }
     this.clearOpenReadyHideTimer();
-    this.currentState = new GlobalTransitionState();
+    this.currentState = this.createTransitionState();
+    this.queueReaderPixelMapReleaseAfterDetach(readerPixelMap, 'force_reset', readerTransitionId);
     this.notifyStateChange();
   }
   
@@ -636,7 +882,13 @@ export class TransitionController {
    * @param onCancel 取消完成后的回调
    */
   public cancelTransition(onCancel?: () => void): void {
-    if (!this.currentState.isActive || this.isCancelling) {
+    if (!this.currentState.isActive) {
+      if (this.isCancelling) {
+        this.completeCancellation('cancel_inactive_fallback', this.currentState.transitionId);
+      }
+      return;
+    }
+    if (this.isCancelling) {
       return;
     }
     
@@ -657,30 +909,38 @@ export class TransitionController {
     
     // 通知组件开始渐隐
     this.currentState.isActive = false;  // 触发渐隐动画
+    this.clearCancelFallbackTimer();
+    const cancelTransitionId: number = this.currentState.transitionId;
+    let cancelTimerId: number = -1;
+    cancelTimerId = setTimeout((): void => {
+      if (this.cancelFallbackTimer !== cancelTimerId) {
+        return;
+      }
+      this.cancelFallbackTimer = -1;
+      if (this.isCancelling && this.currentState.transitionId === cancelTransitionId) {
+        logger.warn(TAG, '覆盖层未回报取消完成，控制器执行取消兜底');
+        this.completeCancellation('cancel_controller_fallback', cancelTransitionId);
+      }
+    }, TransitionController.CANCEL_FALLBACK_MS);
+    this.cancelFallbackTimer = cancelTimerId;
     this.notifyStateChange();
   }
   
   /**
    * 取消动画渐隐完成
    */
-  public onCancelComplete(): void {
+  public onCancelComplete(transitionId: number = -1): void {
     logger.info(TAG, '取消动画渐隐完成');
-    this.isCancelling = false;
-    this.clearOpenReadyHideTimer();
-    this.currentState = new GlobalTransitionState();
-    
-    if (this.onCancelCallback) {
-      this.onCancelCallback();
-      this.onCancelCallback = null;
-    }
-    
-    this.notifyStateChange();
+    this.completeCancellation('cancel_complete', transitionId);
   }
   
   /**
    * 设置待执行的导航定时器（用于取消）
    */
   public setPendingNavigationTimer(timer: number): void {
+    if (this.pendingNavigationTimer !== -1 && this.pendingNavigationTimer !== timer) {
+      clearTimeout(this.pendingNavigationTimer);
+    }
     this.pendingNavigationTimer = timer;
   }
   
@@ -710,7 +970,11 @@ export class TransitionController {
    */
   private notifyStateChange(): void {
     for (let i = 0; i < this.stateListeners.length; i++) {
-      this.stateListeners[i].callback(this.currentState);
+      try {
+        this.stateListeners[i].callback(this.currentState);
+      } catch (error) {
+        logger.warn(TAG, `转场状态监听器异常: ${String(error)}`);
+      }
     }
   }
 
@@ -730,6 +994,7 @@ export class TransitionController {
 export struct BookTransitionOverlay {
   // 过渡状态
   @State private isActive: boolean = false;
+  @State private transitionId: number = 0;
   @State private mode: TransitionMode = TransitionMode.OPEN;
   @State private targetBookType: 'manga' | 'ebook' | 'novel' = 'manga';
   @State private coverImagePath: string = '';
@@ -780,6 +1045,7 @@ export struct BookTransitionOverlay {
 
   aboutToDisappear(): void {
     this.controller.removeStateChangeCallback(this.stateListenerId);
+    this.controller.forceReset();
     this.controller.setUIContext(null);
     this.stateListenerId = -1;
     this.clearSafetyTimeout();
@@ -789,15 +1055,39 @@ export struct BookTransitionOverlay {
   /**
    * 动画完成处理
    */
-  private handleAnimationComplete(): void {
-    this.controller.onAnimationComplete();
+  private handleAnimationComplete(expectedMode: TransitionMode, transitionId: number): void {
+    if (!this.isActive || this.mode !== expectedMode || this.transitionId !== transitionId) {
+      logger.debug(TAG, `忽略过期覆盖层完成回调: expected=${expectedMode}, transitionId=${transitionId}, current=${this.mode}/${this.transitionId}, active=${this.isActive}`);
+      return;
+    }
+    this.clearSafetyTimeout();
+    this.controller.onAnimationComplete(expectedMode, transitionId);
+  }
+
+  private createAnimationCompleteHandler(
+    expectedMode: TransitionMode,
+    transitionId: number
+  ): () => void {
+    return (): void => {
+      this.handleAnimationComplete(expectedMode, transitionId);
+    };
+  }
+
+  private createTransitionContentDetachHandler(transitionId: number): () => void {
+    return (): void => {
+      this.controller.onTransitionContentDetached(transitionId);
+    };
   }
   
   /**
    * 阶段变化处理
    */
-  private handlePhaseChange(phase: TransitionPhase): void {
-    logger.info(TAG, `阶段变化: ${phase}`);
+  private handlePhaseChange(expectedMode: TransitionMode, phase: TransitionPhase): void {
+    if (!this.isActive || this.mode !== expectedMode) {
+      logger.debug(TAG, `忽略过期阶段回调: expected=${expectedMode}, current=${this.mode}, phase=${phase}`);
+      return;
+    }
+    logger.info(TAG, `阶段变化: mode=${expectedMode}, phase=${phase}`);
   }
 
   private isUsableResolvedCoverPosition(position: CoverPosition): boolean {
@@ -835,14 +1125,20 @@ export struct BookTransitionOverlay {
   /**
    * 启动超时保护
    */
-  private startSafetyTimeout(): void {
+  private startSafetyTimeout(expectedMode: TransitionMode, expectedTransitionId: number): void {
     this.clearSafetyTimeout();
-    this.safetyTimeoutTimer = setTimeout(() => {
-      if (this.isActive) {
-        logger.warn(TAG, '动画超时，强制重置状态');
+    let safetyTimerId: number = -1;
+    safetyTimerId = setTimeout(() => {
+      if (this.safetyTimeoutTimer !== safetyTimerId) {
+        return;
+      }
+      this.safetyTimeoutTimer = -1;
+      if (this.isActive && this.mode === expectedMode && this.transitionId === expectedTransitionId) {
+        logger.warn(TAG, `动画超时，强制重置状态: mode=${expectedMode}`);
         this.controller.forceReset();
       }
     }, BookTransitionOverlay.ANIMATION_TIMEOUT_MS);
+    this.safetyTimeoutTimer = safetyTimerId;
   }
   
   /**
@@ -860,7 +1156,10 @@ export struct BookTransitionOverlay {
    */
   private updateState(state: GlobalTransitionState): void {
     const wasActive = this.isActive;
+    const previousMode: TransitionMode = this.mode;
+    const previousTransitionId: number = this.transitionId;
     this.isActive = state.isActive;
+    this.transitionId = state.transitionId;
     this.mode = state.mode;
     this.targetBookType = state.targetBookType;
     this.coverImagePath = state.coverImagePath;
@@ -876,15 +1175,15 @@ export struct BookTransitionOverlay {
     this.bookIntro = state.bookIntro;
     
     // 启动或清除超时保护
-    if (this.isActive && !wasActive) {
-      this.startSafetyTimeout();
+    if (this.isActive && (!wasActive || previousMode !== this.mode || previousTransitionId !== this.transitionId)) {
+      this.startSafetyTimeout(this.mode, this.transitionId);
     } else if (!this.isActive && wasActive) {
       this.clearSafetyTimeout();
       // [修复] 覆盖层已隐藏，若处于取消状态则通知控制器完成取消，重置 isCancelling
       // 若不重置，isCancelling 将永久为 true，导致后续 cancelTransition() 无法工作，
       // 从而使覆盖层在每次关闭时都锁死整个屏幕约 950ms
       if (this.controller.isCancellingTransition()) {
-        this.controller.onCancelComplete();
+        this.controller.onCancelComplete(this.transitionId);
       }
     }
     
@@ -894,27 +1193,61 @@ export struct BookTransitionOverlay {
   build() {
     Stack() {
       if (this.isActive) {
-        BookOpenTransition({
-          mode: this.mode,
-          contentType: this.targetBookType,
-          coverImagePath: this.coverImagePath,
-          coverPosition: this.coverPosition,
-          readerContentPixelMap: this.readerContentPixelMap,
-          readerContentImagePath: this.readerContentImagePath,
-          config: this.config,
-          isReaderReady: this.isReaderReady,
-          readerLoadProgress: this.readerLoadProgress,
-          ebookBackground: this.ebookBackground,
-          bookTitle: this.bookTitle,
-          bookAuthor: this.bookAuthor,
-          bookIntro: this.bookIntro,
-          resolveCloseCoverPosition: () => this.resolveCloseCoverPosition(),
-          onAnimationComplete: () => {
-            this.clearSafetyTimeout();
-            this.handleAnimationComplete();
-          },
-          onPhaseChange: (phase: TransitionPhase) => this.handlePhaseChange(phase)
-        })
+        if (this.mode === TransitionMode.OPEN) {
+          Stack() {
+            BookOpenTransition({
+              mode: TransitionMode.OPEN,
+              contentType: this.targetBookType,
+              coverImagePath: this.coverImagePath,
+              coverPosition: this.coverPosition,
+              readerContentPixelMap: this.readerContentPixelMap,
+              readerContentImagePath: this.readerContentImagePath,
+              config: this.config,
+              isReaderReady: this.isReaderReady,
+              readerLoadProgress: this.readerLoadProgress,
+              ebookBackground: this.ebookBackground,
+              bookTitle: this.bookTitle,
+              bookAuthor: this.bookAuthor,
+              bookIntro: this.bookIntro,
+              resolveCloseCoverPosition: () => this.resolveCloseCoverPosition(),
+              onAnimationComplete: this.createAnimationCompleteHandler(
+                TransitionMode.OPEN,
+                this.transitionId
+              ),
+              onPhaseChange: (phase: TransitionPhase) => this.handlePhaseChange(TransitionMode.OPEN, phase)
+            })
+          }
+          .width('100%')
+          .height('100%')
+          .onDetach(this.createTransitionContentDetachHandler(this.transitionId))
+        } else {
+          Stack() {
+            BookOpenTransition({
+              mode: TransitionMode.CLOSE,
+              contentType: this.targetBookType,
+              coverImagePath: this.coverImagePath,
+              coverPosition: this.coverPosition,
+              readerContentPixelMap: this.readerContentPixelMap,
+              readerContentImagePath: this.readerContentImagePath,
+              config: this.config,
+              isReaderReady: this.isReaderReady,
+              readerLoadProgress: this.readerLoadProgress,
+              ebookBackground: this.ebookBackground,
+              bookTitle: this.bookTitle,
+              bookAuthor: this.bookAuthor,
+              bookIntro: this.bookIntro,
+              resolveCloseCoverPosition: () => this.resolveCloseCoverPosition(),
+              onAnimationComplete: this.createAnimationCompleteHandler(
+                TransitionMode.CLOSE,
+                this.transitionId
+              ),
+              onPhaseChange: (phase: TransitionPhase) => this.handlePhaseChange(TransitionMode.CLOSE, phase)
+            })
+          }
+          .width('100%')
+          .height('100%')
+          .onDetach(this.createTransitionContentDetachHandler(this.transitionId))
+        }
       }
     }
     .width('100%')
@@ -924,6 +1257,10 @@ export struct BookTransitionOverlay {
     .zIndex(9999)  // 确保在最顶层
     .hitTestBehavior(this.isActive ? HitTestMode.Block : HitTestMode.None)
     .expandSafeArea([SafeAreaType.SYSTEM, SafeAreaType.CUTOUT], [SafeAreaEdge.TOP, SafeAreaEdge.BOTTOM, SafeAreaEdge.START, SafeAreaEdge.END])  // 扩展到所有安全区域
+    .onDetach((): void => {
+      // 根覆盖层卸载时，所有子节点均已退出视图树，可安全释放仍在等待的截图。
+      this.controller.onTransitionContentDetached();
+    })
   }
 }
 
@@ -1117,6 +1454,7 @@ export interface CaptureResult {
  */
 export async function captureComponent(componentId: string): Promise<CaptureResult | undefined> {
   logger.info(TAG, `📷 [组件截图] 开始截取: ${componentId}`);
+  let capturedPixelMap: image.PixelMap | null = null;
   
   try {
     if (!componentId || componentId.length === 0) {
@@ -1131,57 +1469,83 @@ export async function captureComponent(componentId: string): Promise<CaptureResu
     }
 
     logger.info(TAG, `📷 [组件截图] 调用 ComponentSnapshot.get...`);
-    const pixelMap = await uiContext.getComponentSnapshot().get(componentId);
+    capturedPixelMap = await uiContext.getComponentSnapshot().get(componentId);
     
-    if (pixelMap) {
-      const imageInfo = await pixelMap.getImageInfo();
+    if (capturedPixelMap) {
+      const imageInfo = await capturedPixelMap.getImageInfo();
       logger.info(TAG, `📷 [组件截图] ✅ 成功! 尺寸=${imageInfo.size.width}x${imageInfo.size.height}`);
       
       // 直接返回原始PixelMap，不进行压缩
       // 这样可以避免压缩导致的质量损失和延迟（约77ms）
       // Image组件可以直接使用PixelMap，无需文件路径
-      return {
-        pixelMap: pixelMap,
+      const result: CaptureResult = {
+        pixelMap: capturedPixelMap,
         imagePath: ''  // 不再保存压缩文件
       };
+      capturedPixelMap = null;
+      return result;
     } else {
       logger.warn(TAG, `📷 [组件截图] ⚠️ 返回空: ${componentId}`);
       return undefined;
     }
   } catch (error) {
     logger.error(TAG, `📷 [组件截图] ❌ 失败: ${componentId}, 错误=${String(error)}`);
+    if (capturedPixelMap !== null) {
+      try {
+        void capturedPixelMap.release().catch((releaseError: Error): void => {
+          logger.debug(TAG, `释放失败截图资源异常: ${releaseError.message}`);
+        });
+      } catch (releaseError) {
+        logger.debug(TAG, `释放失败截图资源同步异常: ${String(releaseError)}`);
+      }
+    }
     return undefined;
   }
 }
 
-function sleepMs(ms: number): Promise<void> {
-  return new Promise<void>((resolve) => {
-    setTimeout(() => resolve(), ms);
-  });
-}
-
-async function captureComponentWithRetry(
+function captureComponentWithTimeout(
   componentId: string,
-  maxAttempts: number = 6,
-  retryDelayMs: number = 40
+  timeoutMs: number = 500
 ): Promise<CaptureResult | undefined> {
-  for (let attempt = 1; attempt <= maxAttempts; attempt++) {
-    const result = await captureComponent(componentId);
-    if (result?.pixelMap || (result?.imagePath && result.imagePath.length > 0)) {
-      if (attempt > 1) {
-        logger.info(TAG, `📷 [组件截图] 第 ${attempt} 次重试成功: ${componentId}`);
+  return new Promise<CaptureResult | undefined>((resolve: (value: CaptureResult | undefined) => void) => {
+    let settled: boolean = false;
+    const timeoutId: number = setTimeout((): void => {
+      if (settled) {
+        return;
       }
-      return result;
-    }
+      settled = true;
+      logger.warn(TAG, `📷 [组件截图] 超时，跳过截图继续关闭: id=${componentId}, timeout=${timeoutMs}ms`);
+      resolve(undefined);
+    }, timeoutMs);
 
-    if (attempt < maxAttempts) {
-      logger.warn(TAG, `📷 [组件截图] 第 ${attempt} 次未获取到有效截图，${retryDelayMs}ms 后重试`);
-      await sleepMs(retryDelayMs);
-    }
-  }
-
-  logger.warn(TAG, `📷 [组件截图] 多次重试后仍未获取到有效截图: ${componentId}`);
-  return undefined;
+    // ComponentSnapshot 没有取消接口；这里只启动一次截图。超时仅放行导航，
+    // 迟到的单次结果会在下方立即释放，不再启动后台重试链。
+    captureComponent(componentId).then((result: CaptureResult | undefined): void => {
+      if (settled) {
+        if (result?.pixelMap) {
+          try {
+            void result.pixelMap.release().catch((error: Error): void => {
+              logger.debug(TAG, `释放超时后返回的截图失败: ${error.message}`);
+            });
+          } catch (releaseError) {
+            logger.debug(TAG, `释放超时后返回的截图同步异常: ${String(releaseError)}`);
+          }
+        }
+        return;
+      }
+      settled = true;
+      clearTimeout(timeoutId);
+      resolve(result);
+    }).catch((error: Error): void => {
+      if (settled) {
+        return;
+      }
+      settled = true;
+      clearTimeout(timeoutId);
+      logger.warn(TAG, `📷 [组件截图] 异常，跳过截图继续关闭: ${error.message}`);
+      resolve(undefined);
+    });
+  });
 }
 
 /**
@@ -1288,15 +1652,38 @@ async function saveCompressedScreenshot(
 export async function startBookCloseTransitionWithCapture(
   componentId: string,
   coverPosition: CoverPosition,
-  onComplete?: () => void
-): Promise<void> {
-  const captureResult = await captureComponent(componentId);
+  onComplete?: () => void,
+  isRequestValid?: () => boolean
+): Promise<boolean> {
+  const captureResult = await captureComponentWithTimeout(componentId);
+  let requestValid = true;
+  if (isRequestValid) {
+    try {
+      requestValid = isRequestValid();
+    } catch (error) {
+      requestValid = false;
+      logger.debug(TAG, `关闭转场请求有效性检查异常: ${String(error)}`);
+    }
+  }
+  if (!requestValid) {
+    if (captureResult?.pixelMap) {
+      try {
+        void captureResult.pixelMap.release().catch((releaseError: Error): void => {
+          logger.debug(TAG, `释放失效关闭截图失败: ${releaseError.message}`);
+        });
+      } catch (releaseError) {
+        logger.debug(TAG, `释放失效关闭截图同步异常: ${String(releaseError)}`);
+      }
+    }
+    return false;
+  }
   TransitionController.getInstance().startCloseTransition(
     coverPosition,
     captureResult?.pixelMap,
     onComplete,
     captureResult?.imagePath
   );
+  return true;
 }
 
 /**
@@ -1309,18 +1696,42 @@ export async function startBookCloseTransitionWithCapture(
 export async function startBookCloseTransitionWithComponentId(
   readerComponentId: string,
   coverComponentId: string,
-  onComplete?: () => void
-): Promise<void> {
+  onComplete?: () => void,
+  isRequestValid?: () => boolean
+): Promise<boolean> {
   logger.info(TAG, `🔴 startBookCloseTransitionWithComponentId 开始: reader=${readerComponentId}, cover=${coverComponentId}`);
-  
+  let captureResult: CaptureResult | undefined = undefined;
   try {
     const coverPosition = getCoverPositionById(coverComponentId);
     logger.info(TAG, `🔴 获取封面位置完成: pos=(${coverPosition.x}, ${coverPosition.y}), size=${coverPosition.width}x${coverPosition.height}`);
     
     // 直接截图（不显示任何遮罩层）
     logger.info(TAG, `🔴 开始调用 captureComponent...`);
-    const captureResult = await captureComponentWithRetry(readerComponentId);
+    captureResult = await captureComponentWithTimeout(readerComponentId);
     logger.info(TAG, `🔴 captureComponent 返回: pixelMap=${captureResult?.pixelMap ? '有效' : '空'}, imagePath=${captureResult?.imagePath ? '有' : '无'}`);
+
+    let requestValid = true;
+    if (isRequestValid) {
+      try {
+        requestValid = isRequestValid();
+      } catch (validityError) {
+        requestValid = false;
+        logger.debug(TAG, `🔴 关闭转场请求有效性检查异常: ${String(validityError)}`);
+      }
+    }
+    if (!requestValid) {
+      if (captureResult?.pixelMap) {
+        try {
+          void captureResult.pixelMap.release().catch((releaseError: Error): void => {
+            logger.debug(TAG, `释放失效关闭截图失败: ${releaseError.message}`);
+          });
+        } catch (releaseError) {
+          logger.debug(TAG, `释放失效关闭截图同步异常: ${String(releaseError)}`);
+        }
+      }
+      captureResult = undefined;
+      return false;
+    }
     
     // 截图完成后，直接启动关闭动画（带截图数据）
     // 动画组件会立即显示全屏截图，覆盖住底层阅读器
@@ -1331,14 +1742,30 @@ export async function startBookCloseTransitionWithComponentId(
       captureResult?.imagePath,
       coverComponentId
     );
+    captureResult = undefined;
     logger.info(TAG, `🔴 startCloseTransition 调用完成`);
+    return true;
   } catch (error) {
     logger.error(TAG, `🔴 startBookCloseTransitionWithComponentId 错误: ${String(error)}`);
+    if (captureResult?.pixelMap) {
+      try {
+        void captureResult.pixelMap.release().catch((releaseError: Error): void => {
+          logger.debug(TAG, `释放未接管的关闭截图失败: ${releaseError.message}`);
+        });
+      } catch (releaseError) {
+        logger.debug(TAG, `释放未接管的关闭截图同步异常: ${String(releaseError)}`);
+      }
+    }
     // 即使截图失败也要确保能返回
     TransitionController.getInstance().forceReset();
     if (onComplete) {
-      onComplete();
+      try {
+        onComplete();
+      } catch (callbackError) {
+        logger.warn(TAG, `关闭转场异常回调失败: ${String(callbackError)}`);
+      }
     }
+    return false;
   }
 }
 

@@ -148,6 +148,24 @@ export async function md5Hash(data: string): Promise<string> {
 }
 
 /**
+ * SHA-256 hash for stable, non-secret identifiers.
+ */
+export async function sha256Hash(data: string): Promise<string> {
+  try {
+    const md = cryptoFramework.createMd('SHA256');
+    const dataBlob: cryptoFramework.DataBlob = {
+      data: stringToUint8Array(data)
+    };
+    await md.update(dataBlob);
+    const result = await md.digest();
+    return uint8ArrayToHex(result.data);
+  } catch (error) {
+    logger.error(TAG, `SHA-256哈希失败: ${String(error)}`);
+    throw new Error(String(error));
+  }
+}
+
+/**
  * 生成加密安全的随机字节
  * @param length 字节数
  * @returns 随机字节数组

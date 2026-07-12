@@ -85,6 +85,10 @@ export class DatabaseManager {
   private static instance: DatabaseManager | null = null;
   private store: relationalStore.RdbStore | null = null;
   private isInitialized: boolean = false;
+  private transactionPermitWaiters: Array<() => void> = [];
+  private transactionPermitHeld: boolean = false;
+  private transactionPermitReleaseScheduled: boolean = false;
+  private transactionActive: boolean = false;
   // [性能优化] 列名→setter函数的映射表，替代130+ if-else链，实现O(1)查找
   private columnSetterMap: Map<string, (record: GenericQueryRecord, value: DatabaseValue) => void> | null = null;
 
@@ -432,11 +436,13 @@ export class DatabaseManager {
     records: T[], 
     conflictResolution: 'REPLACE' | 'IGNORE' | 'FAIL' = 'FAIL'
   ): Promise<number[]> {
-    const store = this.getStore();
     const rowIds: number[] = [];
+    let transactionStarted: boolean = false;
     
     try {
-      store.beginTransaction();
+      await this.beginTransaction();
+      transactionStarted = true;
+      const store = this.getStore();
       
       for (let i = 0; i < records.length; i++) {
         const record = records[i];
@@ -465,11 +471,18 @@ export class DatabaseManager {
         }
       }
       
-      store.commit();
+      await this.commit();
+      transactionStarted = false;
       logger.debug(TAG, `批量插入记录成功，表: ${tableName}, 数量: ${records.length}, 冲突策略: ${conflictResolution}`);
       return rowIds;
     } catch (error) {
-      store.rollBack();
+      if (transactionStarted && this.transactionActive) {
+        try {
+          await this.rollBack();
+        } catch (rollbackError) {
+          logger.error(TAG, `批量插入事务回滚失败: ${String(rollbackError)}`);
+        }
+      }
       logger.error(TAG, `批量插入记录失败: ${String(error)}`);
       throw error as Error;
     }
@@ -724,6 +737,27 @@ export class DatabaseManager {
   }
 
   /**
+   * 插入记录但不替换已有唯一键记录。
+   * 调用方可以在同一事务内随后查询实际记录，避免 INSERT OR REPLACE
+   * 删除并重建仍被其他流程引用的章节或页面。
+   */
+  public async insertIgnore<T extends DatabaseRecord>(tableName: string, record: T): Promise<void> {
+    const store = this.getStore();
+    const dbRecord = this.convertRecordToDbFormat(tableName, record);
+    const columns = Object.keys(dbRecord);
+    const placeholders = columns.map(() => '?').join(', ');
+    const values: DatabaseValue[] = Object.values(dbRecord);
+    const sql = `INSERT OR IGNORE INTO ${tableName} (${columns.join(', ')}) VALUES (${placeholders})`;
+    try {
+      await store.executeSql(sql, values);
+      logger.debug(TAG, `插入记录（忽略冲突）成功，表: ${tableName}`);
+    } catch (error) {
+      logger.error(TAG, `插入记录（忽略冲突）失败，表: ${tableName}: ${String(error)}`);
+      throw error as Error;
+    }
+  }
+
+  /**
    * 获取表记录数量（类型安全的聚合查询）
    */
   public async getTableCount(tableName: string): Promise<number> {
@@ -785,15 +819,65 @@ export class DatabaseManager {
 
   // ==================== 事务管理 ====================
 
+  private async acquireTransactionPermit(): Promise<void> {
+    if (!this.transactionPermitHeld && this.transactionPermitWaiters.length === 0) {
+      this.transactionPermitHeld = true;
+      return;
+    }
+
+    await new Promise<void>((resolve: () => void) => {
+      this.transactionPermitWaiters.push(resolve);
+    });
+  }
+
+  private releaseTransactionPermit(deferHandoff: boolean): void {
+    if (!this.transactionPermitHeld || this.transactionPermitReleaseScheduled) {
+      return;
+    }
+
+    if (!deferHandoff) {
+      this.handoffTransactionPermit();
+      return;
+    }
+
+    // 失败调用方通常会紧接着执行 rollBack。延迟交接可避免旧回滚误伤下一位 owner。
+    this.transactionPermitReleaseScheduled = true;
+    setTimeout(() => {
+      this.transactionPermitReleaseScheduled = false;
+      this.handoffTransactionPermit();
+    }, 0);
+  }
+
+  private handoffTransactionPermit(): void {
+    const nextWaiter: (() => void) | undefined = this.transactionPermitWaiters.shift();
+    if (nextWaiter) {
+      nextWaiter();
+      return;
+    }
+    this.transactionPermitHeld = false;
+  }
+
   /**
    * 开始事务
    */
   public async beginTransaction(): Promise<void> {
+    await this.acquireTransactionPermit();
+    let store: relationalStore.RdbStore | null = null;
     try {
-      const store = this.getStore();
+      store = this.getStore();
       store.beginTransaction();
+      this.transactionActive = true;
       logger.debug(TAG, '开始事务');
     } catch (error) {
+      if (store !== null) {
+        try {
+          store.rollBack();
+        } catch (rollbackError) {
+          logger.warn(TAG, `开始事务失败后的清理回滚失败: ${String(rollbackError)}`);
+        }
+      }
+      this.transactionActive = false;
+      this.releaseTransactionPermit(true);
       logger.error(TAG, `开始事务失败: ${String(error)}`);
       throw error as Error;
     }
@@ -803,13 +887,30 @@ export class DatabaseManager {
    * 提交事务
    */
   public async commit(): Promise<void> {
+    if (!this.transactionActive) {
+      throw new Error('当前没有可提交的活动事务');
+    }
+
+    let store: relationalStore.RdbStore | null = null;
+    let commitSucceeded: boolean = false;
     try {
-      const store = this.getStore();
+      store = this.getStore();
       store.commit();
+      commitSucceeded = true;
       logger.debug(TAG, '提交事务');
     } catch (error) {
+      if (store !== null) {
+        try {
+          store.rollBack();
+        } catch (rollbackError) {
+          logger.error(TAG, `提交失败后的事务回滚失败: ${String(rollbackError)}`);
+        }
+      }
       logger.error(TAG, `提交事务失败: ${String(error)}`);
       throw error as Error;
+    } finally {
+      this.transactionActive = false;
+      this.releaseTransactionPermit(!commitSucceeded);
     }
   }
 
@@ -817,13 +918,23 @@ export class DatabaseManager {
    * 回滚事务
    */
   public async rollBack(): Promise<void> {
+    if (!this.transactionActive) {
+      logger.debug(TAG, '忽略无活动事务的回滚请求');
+      return;
+    }
+
+    let rollbackSucceeded: boolean = false;
     try {
       const store = this.getStore();
       store.rollBack();
+      rollbackSucceeded = true;
       logger.debug(TAG, '回滚事务');
     } catch (error) {
       logger.error(TAG, `回滚事务失败: ${String(error)}`);
       throw error as Error;
+    } finally {
+      this.transactionActive = false;
+      this.releaseTransactionPermit(!rollbackSucceeded);
     }
   }
 

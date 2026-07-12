@@ -18,7 +18,7 @@ import { PageLifecycleManager } from '../Framework/Lifecycle';
 import { picker, Environment } from '@kit.CoreFileKit';
 import { common, abilityAccessCtrl, bundleManager, Permissions } from '@kit.AbilityKit';
 
-import { DataManager, ComicInfoInput, ChapterInfoInput, PageInfoInput, ComicInfo as ComicRecord, ChapterInfo as ChapterRecord, PageInfo as PageRecord, FavoriteInfoInput } from '../Framework/Data/DataManager';
+import { DataManager, ComicInfoInput, ChapterInfoInput, ChapterInfoCreationResult, PageInfoInput, ComicInfo as ComicRecord, ChapterInfo as ChapterRecord, PageInfo as PageRecord, FavoriteInfoInput } from '../Framework/Data/DataManager';
 import { DataService } from '../Framework/Services/DataService';
 import { DownloadStatus, MangaStatus, StatusConverter } from '../Framework/Types/StatusEnums';
 import { Manga, MangaChapter } from '../Models/MangaModels';
@@ -37,6 +37,7 @@ import { UniversalDialogManager, ButtonStyle, DialogButton, UniversalDialogOptio
 import { EBook, EBookMetadata } from '../Models/EBookModels';
 import { EBookParserFactory, EBookCoverExtractor } from '../Framework/Parsers/EBookParser';
 import { generateUUID } from '../Framework/Utils/UUIDGenerator';
+import { createLocalMangaChapterExternalId, createPickedImageGroupUri } from '../Utils/LocalMangaImportIdentity';
 import { EBookDataManager } from '../Framework/Data/EBookDataManager';
 import { EBookMetadataDialog, EBookMetadataDialogResult } from '../Framework/Components/EBookMetadataDialog';
 import { PdfImportResult, PdfContentType, PdfImportMode } from '../Framework/Parsers/PdfToMangaImporter';
@@ -50,7 +51,13 @@ import { BackgroundTaskManager, TaskType, TaskStatus, TaskNotificationScene, Bac
 import { TaskFloatingBall } from '../Framework/Components/TaskFloatingBall';
 import { PdfImportDialog, PdfImportDialogResult } from '../Framework/Components/PdfImportDialog';
 import { MangaImportDialog, MangaImportDialogResult, MangaImportMode, ChapterInfo, ParsedArchiveStructure, ExistingMangaCandidate, PrefilledComicInfo } from '../Framework/Components/MangaImportDialog';
-import { BatchMangaImportDialog, BatchMangaImportDialogResult, MangaGroupResult, BatchChapterResult } from '../Framework/Components/BatchMangaImportDialog';
+import {
+  BatchMangaImportDialog,
+  BatchMangaImportDialogResult,
+  MangaGroupResult,
+  BatchChapterResult,
+  MangaStatus as BatchDialogMangaStatus
+} from '../Framework/Components/BatchMangaImportDialog';
 import { showArchivePasswordDialog } from '../Framework/Components/ArchivePasswordDialog';
 import { ParsedArchiveStructure as CompressionParsedStructure } from '../Utils/CompressionUtils';
 import { getHelpPanelManagerV2 } from '../Framework/Components/HelpPanelV2';
@@ -765,6 +772,16 @@ struct DataManagementPage {
   private readonly importFlowMonitor: ImportFlowMonitor = getImportFlowMonitor();
   private readonly importArchiveParseCache: ImportArchiveParseCache = getImportArchiveParseCache();
   private readonly importDuplicateDetectionCache: ImportDuplicateDetectionCache = getImportDuplicateDetectionCache();
+  private trackedArchiveStructures: Map<string, CompressionParsedStructure> = new Map<string, CompressionParsedStructure>();
+  private archiveCleanupPromise: Promise<void> | null = null;
+  private activeBatchAnalysisGenerations: Set<string> = new Set<string>();
+  private pendingBatchDialogAnalysisGenerations: Set<string> = new Set<string>();
+  private batchDialogAnalysisPromise: Promise<void> | null = null;
+  private batchDialogAnalysisResolver: (() => void) | null = null;
+  /** 由文件选择器选中的散图按父目录暂存，解析时组装成一个受控临时目录。 */
+  private selectedImageGroupSources: Map<string, string[]> = new Map<string, string[]>();
+  @State private isFilePickerActive: boolean = false;
+  private isMangaDialogOpening: boolean = false;
   private fileImportEventSubscribed: boolean = false;
   private readonly fileImportRequestedListener = (payload: IEventPayload): void => {
     const filePayload = payload as FileImportRequestedPayload;
@@ -782,6 +799,46 @@ struct DataManagementPage {
     return this.importProgress.status !== ImportStatus.IDLE && 
            this.importProgress.status !== ImportStatus.COMPLETED && 
            this.importProgress.status !== ImportStatus.ERROR;
+  }
+
+  private isPageActive: boolean = false;
+  private pageLifecycleGeneration: number = 0;
+  private isMangaImportCommitting: boolean = false;
+  /** 提交阶段的所有者令牌，防止旧页面回调清理新导入任务。 */
+  private mangaImportOwnerToken: number = 0;
+  private nextMangaImportOwnerToken: number = 0;
+
+  private isCurrentPageGeneration(pageGeneration: number): boolean {
+    return this.isPageActive && this.pageLifecycleGeneration === pageGeneration;
+  }
+
+  private beginMangaImportCommit(): number {
+    this.nextMangaImportOwnerToken += 1;
+    this.mangaImportOwnerToken = this.nextMangaImportOwnerToken;
+    this.isMangaImportCommitting = true;
+    return this.mangaImportOwnerToken;
+  }
+
+  private finishMangaImport(pageGeneration: number, ownerToken: number = 0): void {
+    if (ownerToken > 0) {
+      if (this.mangaImportOwnerToken !== ownerToken) {
+        return;
+      }
+      this.mangaImportOwnerToken = 0;
+      this.isMangaImportCommitting = false;
+      // 提交属于该 owner，即使页面已重新出现也只释放它自己的 busy 状态。
+      this.isMangaImportRunning = false;
+      return;
+    }
+    // 旧代次的准备阶段回调不能清理正在提交的任务。
+    if (this.mangaImportOwnerToken !== 0) {
+      return;
+    }
+    if (!this.isCurrentPageGeneration(pageGeneration)) {
+      return;
+    }
+    this.isMangaImportCommitting = false;
+    this.isMangaImportRunning = false;
   }
 
   private recordMangaImportFlow(
@@ -897,14 +954,208 @@ struct DataManagementPage {
   }
 
   private endCurrentImportFlow(reason: string): void {
-    if (this.currentImportFlowId.length <= 0) {
-      return;
+    if (this.currentImportFlowId.length > 0) {
+      const endedSessionId: string = this.currentImportFlowId;
+      this.importFlowMonitor.endSession(endedSessionId, reason);
+      this.importDuplicateDetectionCache.clearSession(endedSessionId);
     }
-    const endedSessionId: string = this.currentImportFlowId;
-    this.importFlowMonitor.endSession(endedSessionId, reason);
-    this.importDuplicateDetectionCache.clearSession(endedSessionId);
     this.importArchiveParseCache.clear();
     this.currentImportFlowId = '';
+    this.restorePickedImageSelections();
+    this.selectedImageGroupSources.clear();
+    this.scheduleTrackedArchiveCleanup(reason);
+  }
+
+  private buildTrackedArchiveStructureKey(
+    fileUri: string,
+    structure: CompressionParsedStructure,
+    analysisGeneration: string = ''
+  ): string {
+    const pathKey: string = structure.extractedPath.length > 0
+      ? structure.extractedPath
+      : structure.tempDirectories.join('|');
+    const normalizedFileUri: string = fileUri.trim().replace(/\\/g, '/');
+    return `${analysisGeneration}|${normalizedFileUri}|${pathKey}`;
+  }
+
+  private trackArchiveStructure(
+    fileUri: string,
+    structure: CompressionParsedStructure,
+    analysisGeneration: string = ''
+  ): void {
+    const trackingKey: string = this.buildTrackedArchiveStructureKey(fileUri, structure, analysisGeneration);
+    this.trackedArchiveStructures.set(trackingKey, structure);
+  }
+
+  private releaseLateBatchArchiveStructure(
+    fileUri: string,
+    structure: ParsedArchiveStructure,
+    analysisGeneration: string
+  ): void {
+    const compressionStructure: CompressionParsedStructure = structure as CompressionParsedStructure;
+    const cachedStructure: CompressionParsedStructure | null =
+      this.importArchiveParseCache.get(fileUri, analysisGeneration);
+    if (cachedStructure !== null && cachedStructure.extractedPath === compressionStructure.extractedPath) {
+      this.importArchiveParseCache.delete(fileUri, analysisGeneration);
+    }
+    const trackingKey: string = this.buildTrackedArchiveStructureKey(
+      fileUri,
+      compressionStructure,
+      analysisGeneration
+    );
+    this.trackedArchiveStructures.delete(trackingKey);
+    this.scheduleArchiveStructureCleanup(compressionStructure, 'batch_dialog_disposed_late_result');
+  }
+
+  private createBatchAnalysisGeneration(): string {
+    return `batch_${generateUUID()}`;
+  }
+
+  private isBatchAnalysisGenerationActive(analysisGeneration: string): boolean {
+    return analysisGeneration.length <= 0 || this.activeBatchAnalysisGenerations.has(analysisGeneration);
+  }
+
+  private throwIfBatchAnalysisGenerationInvalidated(
+    analysisGeneration: string,
+    fileUri: string,
+    startedAt: number,
+    sessionId: string,
+    reason: string
+  ): void {
+    if (this.isBatchAnalysisGenerationActive(analysisGeneration)) {
+      return;
+    }
+    this.recordArchiveStructureParseFailure(
+      fileUri,
+      startedAt,
+      '批量解析代次已失效',
+      reason,
+      sessionId
+    );
+    throw new UserSkipError('批量解析已取消');
+  }
+
+  private beginBatchDialogAnalysis(analysisGeneration: string): void {
+    this.activeBatchAnalysisGenerations.add(analysisGeneration);
+    if (this.pendingBatchDialogAnalysisGenerations.size === 0) {
+      this.batchDialogAnalysisPromise = new Promise<void>((resolve: () => void) => {
+        this.batchDialogAnalysisResolver = resolve;
+      });
+    }
+    this.pendingBatchDialogAnalysisGenerations.add(analysisGeneration);
+  }
+
+  private finishBatchDialogAnalysis(analysisGeneration: string): void {
+    if (!this.pendingBatchDialogAnalysisGenerations.has(analysisGeneration)) {
+      return;
+    }
+    this.pendingBatchDialogAnalysisGenerations.delete(analysisGeneration);
+    if (this.pendingBatchDialogAnalysisGenerations.size > 0) {
+      return;
+    }
+    const resolver: (() => void) | null = this.batchDialogAnalysisResolver;
+    this.batchDialogAnalysisResolver = null;
+    this.batchDialogAnalysisPromise = null;
+    if (resolver !== null) {
+      resolver();
+    }
+  }
+
+  private invalidateBatchAnalysisGeneration(analysisGeneration: string): void {
+    this.activeBatchAnalysisGenerations.delete(analysisGeneration);
+  }
+
+  private async waitForPendingBatchDialogAnalysis(): Promise<void> {
+    let pendingAnalysis: Promise<void> | null = this.batchDialogAnalysisPromise;
+    while (pendingAnalysis !== null) {
+      logger.info(TAG, '等待上一轮批量漫画解析任务退出');
+      await pendingAnalysis;
+      pendingAnalysis = this.batchDialogAnalysisPromise;
+    }
+  }
+
+  private scheduleTrackedArchiveCleanup(reason: string): void {
+    if (this.trackedArchiveStructures.size <= 0) {
+      return;
+    }
+    const structures: CompressionParsedStructure[] =
+      Array.from<CompressionParsedStructure>(this.trackedArchiveStructures.values());
+    this.trackedArchiveStructures.clear();
+    this.scheduleArchiveStructuresCleanup(structures, reason);
+  }
+
+  private scheduleArchiveStructureCleanup(structure: CompressionParsedStructure, reason: string): void {
+    const structures: CompressionParsedStructure[] = [structure];
+    this.scheduleArchiveStructuresCleanup(structures, reason);
+  }
+
+  private scheduleArchiveStructuresCleanup(
+    structures: CompressionParsedStructure[],
+    reason: string
+  ): void {
+    const previousCleanup: Promise<void> | null = this.archiveCleanupPromise;
+    const cleanupPromise: Promise<void> = this.runTrackedArchiveCleanup(previousCleanup, structures, reason);
+    this.archiveCleanupPromise = cleanupPromise;
+    cleanupPromise.then((): void => {
+      if (this.archiveCleanupPromise === cleanupPromise) {
+        this.archiveCleanupPromise = null;
+      }
+    }).catch((error: Error): void => {
+      logger.warn(TAG, `批量导入临时目录清理异常: reason=${reason}, error=${error.message}`);
+      if (this.archiveCleanupPromise === cleanupPromise) {
+        this.archiveCleanupPromise = null;
+      }
+    });
+  }
+
+  private async runTrackedArchiveCleanup(
+    previousCleanup: Promise<void> | null,
+    structures: CompressionParsedStructure[],
+    reason: string
+  ): Promise<void> {
+    if (previousCleanup !== null) {
+      try {
+        await previousCleanup;
+      } catch (error) {
+        logger.warn(TAG, `等待前序漫画临时目录清理失败: ${String(error)}`);
+      }
+    }
+    await this.cleanupTrackedArchiveStructures(structures, reason);
+  }
+
+  private async cleanupTrackedArchiveStructures(
+    structures: CompressionParsedStructure[],
+    reason: string
+  ): Promise<void> {
+    const cleanedPaths: Set<string> = new Set<string>();
+    for (let index = 0; index < structures.length; index += 1) {
+      const structure: CompressionParsedStructure = structures[index];
+      if (structure.tempDirectories.length <= 0) {
+        continue;
+      }
+      const cleanupKey: string = structure.extractedPath.length > 0
+        ? structure.extractedPath
+        : structure.tempDirectories.join('|');
+      if (cleanedPaths.has(cleanupKey)) {
+        continue;
+      }
+      cleanedPaths.add(cleanupKey);
+      try {
+        await this.compressionUtils.cleanupParsedArchiveStructure(structure);
+      } catch (error) {
+        logger.warn(TAG, `清理漫画导入临时目录失败: reason=${reason}, path=${cleanupKey}, error=${String(error)}`);
+      }
+    }
+    logger.info(TAG, `漫画导入临时目录清理完成: reason=${reason}, count=${cleanedPaths.size}`);
+  }
+
+  private async waitForPendingArchiveCleanup(): Promise<void> {
+    const cleanupPromise: Promise<void> | null = this.archiveCleanupPromise;
+    if (cleanupPromise === null) {
+      return;
+    }
+    logger.info(TAG, '等待上一轮漫画导入临时目录清理完成');
+    await cleanupPromise;
   }
 
   private mapImportSource(source: string): ImportFlowEntrySource {
@@ -956,7 +1207,7 @@ struct DataManagementPage {
     }
     return ImportFlowContentType.UNKNOWN;
   }
-  
+
   // 管理器实例
   private dataManager: DataManager = DataManager.getInstance();
   private compressionUtils: CompressionUtils = CompressionUtils.getInstance();
@@ -990,11 +1241,13 @@ struct DataManagementPage {
   @State private downloadDirFileCount: number = 0;
 
   // 扫描到的待导入文件分类
-  @State private pendingMangaFiles: string[] = [];  // 漫画压缩包
+  @State private pendingMangaFiles: string[] = [];  // 漫画候选URI或folder-flat虚拟URI
   @State private pendingEbookFiles: string[] = [];  // 电子书
   @State private pendingPdfFiles: string[] = [];    // PDF文件
   @State private pendingNovelFiles: string[] = [];  // 小说文件
   @State private isScanning: boolean = false;
+  @State private isMangaImportRunning: boolean = false;
+  private folderPickerGeneration: number = 0;
 
   // 一级-二级标签模式状态
   @State private primaryTab: 'file_select' | 'download_sync' = 'file_select';  // 一级标签
@@ -1016,6 +1269,9 @@ struct DataManagementPage {
   private static readonly EBOOK_EXTENSIONS: string[] = ['epub', 'mobi', 'azw', 'azw3'];
   private static readonly PDF_EXTENSIONS: string[] = ['pdf'];
   private static readonly NOVEL_EXTENSIONS: string[] = ['txt'];
+  private static readonly DOWNLOAD_IMPORT_RESERVED_FOLDERS: string[] = [
+    'ebooks', 'manga', 'novel', 'storage', 'covers', 'temp', 'backup', 'legadoextensions'
+  ];
 
   private showFileImportHelp(): void {
     const helpContent = `# 文件导入帮助
@@ -1244,6 +1500,15 @@ struct DataManagementPage {
     return filename.substring(lastDot + 1).toLowerCase();
   }
 
+  private getDownloadCandidateDisplayName(candidate: string): string {
+    const rawPath: string = candidate.startsWith('folder-flat:')
+      ? candidate.substring('folder-flat:'.length)
+      : candidate;
+    const normalizedPath: string = rawPath.replace(/\\/g, '/').replace(/\/$/, '');
+    const lastSlash: number = normalizedPath.lastIndexOf('/');
+    return lastSlash >= 0 ? normalizedPath.substring(lastSlash + 1) : normalizedPath;
+  }
+
   /**
    * 扫描Download目录并分类文件
    */
@@ -1252,7 +1517,7 @@ struct DataManagementPage {
       this.getUIContext().getPromptAction().showToast({ message: '请先访问Download目录' });
       return;
     }
-    
+
     this.startImportFlow(
       ImportFlowEntrySource.DOWNLOAD_DIR,
       ImportFlowContentType.UNKNOWN,
@@ -1282,16 +1547,21 @@ struct DataManagementPage {
       const filenames = SafeFileUtils.listFileSync(this.downloadDirPath);
       this.downloadDirFiles = filenames;
       this.downloadDirFileCount = filenames.length;
-      
+
+      this.pendingMangaFiles = await this.compressionUtils.discoverMangaImportCandidates(
+        this.downloadDirPath,
+        16,
+        2000,
+        DataManagementPage.DOWNLOAD_IMPORT_RESERVED_FOLDERS
+      );
+
       for (let i = 0; i < filenames.length; i++) {
         const filename = filenames[i];
         const ext = this.getDownloadFileExtension(filename);
         
         if (filename.startsWith('.')) continue;
         
-        if (DataManagementPage.MANGA_EXTENSIONS.includes(ext)) {
-          this.pendingMangaFiles.push(filename);
-        } else if (DataManagementPage.EBOOK_EXTENSIONS.includes(ext)) {
+        if (DataManagementPage.EBOOK_EXTENSIONS.includes(ext)) {
           this.pendingEbookFiles.push(filename);
         } else if (DataManagementPage.PDF_EXTENSIONS.includes(ext)) {
           this.pendingPdfFiles.push(filename);
@@ -1321,7 +1591,7 @@ struct DataManagementPage {
       completedEvent.elapsedMs = Date.now() - scanStartedAt;
       completedEvent.detail = classifiedEvent.detail;
       this.recordImportFlowEvent(completedEvent);
-      
+
       logger.info(TAG, `扫描完成: 漫画=${this.pendingMangaFiles.length}, 电子书=${this.pendingEbookFiles.length}, PDF=${this.pendingPdfFiles.length}, 小说=${this.pendingNovelFiles.length}`);
       this.getUIContext().getPromptAction().showToast({ message: `扫描完成，发现 ${totalPending} 个可导入文件` });
     } catch (error) {
@@ -1346,27 +1616,52 @@ struct DataManagementPage {
    * 解压到Download目录下，不复制到沙箱
    */
   private async importMangaFromDownloadDir(): Promise<void> {
-    if (this.pendingMangaFiles.length === 0) {
-      this.getUIContext().getPromptAction().showToast({ message: '没有待导入的漫画文件' });
+    if (this.isMangaImportRunning || this.isMangaDialogOpening ||
+      this.batchMangaImportDialogController !== null || this.mangaImportDialogController !== null) {
+      logger.warn(TAG, '漫画导入流程正在运行，忽略重复请求');
       return;
     }
-    
-    // 如果有多个文件，显示批量导入对话框
-    if (this.pendingMangaFiles.length >= 2) {
-      await this.showDownloadBatchImportDialog();
+    const pageGeneration: number = this.pageLifecycleGeneration;
+    if (!this.isCurrentPageGeneration(pageGeneration)) {
       return;
     }
-    
-    // 单个文件，显示单文件导入对话框
-    const filename = this.pendingMangaFiles[0];
-    const uri = `${this.downloadDirUri}/${filename}`;
-    await this.showDownloadSingleImportDialog(uri, filename);
+    this.isMangaImportRunning = true;
+    this.isMangaDialogOpening = true;
+    try {
+      if (this.pendingMangaFiles.length === 0) {
+        this.getUIContext().getPromptAction().showToast({ message: '没有待导入的漫画文件' });
+        if (this.isCurrentPageGeneration(pageGeneration)) {
+          this.isMangaImportRunning = false;
+        }
+        return;
+      }
+
+      // 单文件与批量候选统一走同一分析/校验/回滚链路，避免旧单文件实现
+      // 忽略多章节结构、元数据和页面写入完整性。
+      await this.showDownloadBatchImportDialog(pageGeneration);
+    } catch (error) {
+      logger.error(TAG, 'Download漫画导入准备失败', String(error));
+      if (this.isCurrentPageGeneration(pageGeneration)) {
+        this.getUIContext().getPromptAction().showToast({ message: `导入失败: ${String(error)}` });
+        this.endCurrentImportFlow('download_manga_prepare_failed');
+        this.isMangaImportRunning = false;
+      }
+    } finally {
+      if (this.isCurrentPageGeneration(pageGeneration)) {
+        this.isMangaDialogOpening = false;
+      }
+    }
   }
   
   /**
    * 显示Download目录批量导入对话框
    */
-  private async showDownloadBatchImportDialog(): Promise<void> {
+  private async showDownloadBatchImportDialog(pageGeneration: number): Promise<void> {
+    await this.waitForPendingBatchDialogAnalysis();
+    await this.waitForPendingArchiveCleanup();
+    if (!this.isCurrentPageGeneration(pageGeneration)) {
+      return;
+    }
     this.ensureImportFlow(
       ImportFlowEntrySource.DOWNLOAD_DIR,
       ImportFlowContentType.MANGA,
@@ -1376,46 +1671,105 @@ struct DataManagementPage {
       this.downloadDirPath,
       this.downloadDirPath
     );
-    // 构建文件URI列表
-    const fileUris: string[] = [];
-    for (let i = 0; i < this.pendingMangaFiles.length; i++) {
-      const filename = this.pendingMangaFiles[i];
-      const uri = `${this.downloadDirUri}/${filename}`;
-      fileUris.push(uri);
-    }
+    const fileUris: string[] = this.pendingMangaFiles.slice();
     
     // 查找可能的重复漫画
-    await this.findExistingMangaCandidatesForBatch();
-    
-    this.batchMangaImportDialogController = new CustomDialogController({
+    await this.findExistingMangaCandidatesForBatch(pageGeneration);
+    if (!this.isCurrentPageGeneration(pageGeneration)) {
+      return;
+    }
+
+    const analysisGeneration: string = this.createBatchAnalysisGeneration();
+    const analysisSessionId: string = this.currentImportFlowId;
+    this.beginBatchDialogAnalysis(analysisGeneration);
+    try {
+      this.batchMangaImportDialogController = new CustomDialogController({
       builder: BatchMangaImportDialog({
         themeState: this.themeState,
         fileUris: fileUris,
         existingMangaCandidates: this.existingMangaCandidates,
         parseFileStructure: async (fileUri: string): Promise<ParsedArchiveStructure | null> => {
-          const parsed = await this.parseArchiveStructureWithPasswordRetry(fileUri);
-          return this.convertToDialogStructure(parsed);
+          const parsed = await this.parseFileStructureForBatch(
+            fileUri,
+            analysisGeneration,
+            analysisSessionId
+          );
+          return parsed;
+        },
+        onReleaseParsedStructure: (fileUri: string, structure: ParsedArchiveStructure) => {
+          this.releaseLateBatchArchiveStructure(fileUri, structure, analysisGeneration);
+        },
+        onAnalysisSettled: () => {
+          this.finishBatchDialogAnalysis(analysisGeneration);
+        },
+        onAnalysisGenerationInvalidated: () => {
+          this.invalidateBatchAnalysisGeneration(analysisGeneration);
         },
         parseComicInfoXml: (xmlContent: string): PrefilledComicInfo | null => {
           return this.parseComicInfoXml(xmlContent);
         },
         onFlowEvent: (event: ImportFlowEvent) => {
+          event.sessionId = analysisSessionId;
           this.recordImportFlowEvent(event);
         },
         onConfirm: (result: BatchMangaImportDialogResult) => {
-          this.handleDownloadBatchImportResult(result);
+          if (!this.isCurrentPageGeneration(pageGeneration)) {
+            this.invalidateBatchAnalysisGeneration(analysisGeneration);
+            return;
+          }
+          if (this.mangaImportOwnerToken !== 0) {
+            logger.warn(TAG, '已有漫画提交任务，忽略重复确认');
+            return;
+          }
+          const ownerToken: number = this.beginMangaImportCommit();
+          this.isMangaImportRunning = true;
+          this.invalidateBatchAnalysisGeneration(analysisGeneration);
+          this.batchMangaImportDialogController = null;
+          void (async (): Promise<void> => {
+            try {
+              await this.handleDownloadBatchImportResult(result, pageGeneration);
+            } catch (error) {
+              logger.error(TAG, `Download批量漫画导入异常: ${String(error)}`);
+            } finally {
+              this.finishMangaImport(pageGeneration, ownerToken);
+            }
+          })();
         },
         onCancel: () => {
-          this.updateProgress(ImportStatus.IDLE, '已取消批量导入', 0);
-          this.pendingMangaFiles = [];
-          this.endCurrentImportFlow('download_batch_manga_cancelled');
+          this.invalidateBatchAnalysisGeneration(analysisGeneration);
+          if (this.isCurrentPageGeneration(pageGeneration)) {
+            this.batchMangaImportDialogController = null;
+            this.updateProgress(ImportStatus.IDLE, '已取消批量导入', 0);
+            this.pendingMangaFiles = [];
+            this.endCurrentImportFlow('download_batch_manga_cancelled');
+          }
+          void (async (): Promise<void> => {
+            try {
+              await this.waitForPendingBatchDialogAnalysis();
+              await this.waitForPendingArchiveCleanup();
+            } finally {
+              if (this.isCurrentPageGeneration(pageGeneration)) {
+                this.isMangaImportRunning = false;
+              }
+            }
+          })();
         }
       }),
       autoCancel: false,
       alignment: DialogAlignment.Center
-    });
-
-    this.batchMangaImportDialogController.open();
+      });
+      this.batchMangaImportDialogController.open();
+    } catch (error) {
+      this.invalidateBatchAnalysisGeneration(analysisGeneration);
+      this.finishBatchDialogAnalysis(analysisGeneration);
+      if (this.isCurrentPageGeneration(pageGeneration)) {
+        this.batchMangaImportDialogController = null;
+      }
+      throw error as Error;
+    }
+    if (!this.isCurrentPageGeneration(pageGeneration)) {
+      return;
+    }
     this.recordSimpleImportFlowEvent(
       ImportFlowEventType.DIALOG_OPENED,
       'download_batch_manga_dialog_opened',
@@ -1431,7 +1785,10 @@ struct DataManagementPage {
   /**
    * 处理Download目录批量导入结果
    */
-  private async handleDownloadBatchImportResult(result: BatchMangaImportDialogResult): Promise<void> {
+  private async handleDownloadBatchImportResult(
+    result: BatchMangaImportDialogResult,
+    pageGeneration: number = this.pageLifecycleGeneration
+  ): Promise<void> {
     this.updateProgress(ImportStatus.IMPORTING, `开始导入...`, 10);
     const batchStartedAt: number = Date.now();
     const confirmEvent: ImportFlowEvent = new ImportFlowEvent();
@@ -1444,6 +1801,11 @@ struct DataManagementPage {
     this.recordImportFlowEvent(confirmEvent);
     let successCount = 0;
     const total = result.groups.length;
+    if (total <= 0) {
+      this.updateProgress(ImportStatus.ERROR, '没有可导入的漫画分组', 0);
+      this.endCurrentImportFlow('download_batch_manga_no_groups');
+      return;
+    }
     
     for (let i = 0; i < result.groups.length; i++) {
       const group: MangaGroupResult = result.groups[i];
@@ -1478,9 +1840,14 @@ struct DataManagementPage {
       }
     }
     
-    this.updateProgress(ImportStatus.COMPLETED, `完成: 成功 ${successCount}/${total}`, 100);
-    this.getUIContext().getPromptAction().showToast({ message: `导入完成: 成功 ${successCount}` });
-    this.pendingMangaFiles = [];
+    const finalStatus: ImportStatus = successCount === total ? ImportStatus.COMPLETED : ImportStatus.ERROR;
+    this.updateProgress(finalStatus, `完成: 成功 ${successCount}/${total}`, 100);
+    if (this.isCurrentPageGeneration(pageGeneration)) {
+      this.getUIContext().getPromptAction().showToast({
+        message: `导入完成: 成功 ${successCount}，失败 ${total - successCount}`
+      });
+      this.pendingMangaFiles = [];
+    }
     
     if (successCount > 0) {
       eventBus.publish(GameEvent.MANGA_IMPORT_COMPLETED, new MangaImportCompletedPayload(successCount, total));
@@ -1494,176 +1861,261 @@ struct DataManagementPage {
       refreshEvent.elapsedMs = Date.now() - batchStartedAt;
       this.recordImportFlowEvent(refreshEvent);
     }
-    this.endCurrentImportFlow(successCount > 0 ? 'download_batch_manga_completed' : 'download_batch_manga_no_success');
+    this.endCurrentImportFlow(successCount === total
+      ? 'download_batch_manga_completed'
+      : (successCount > 0 ? 'download_batch_manga_partial_failure' : 'download_batch_manga_no_success'));
   }
   
   /**
    * 导入Download目录的漫画组
    */
   private async importDownloadMangaGroup(group: MangaGroupResult): Promise<void> {
+    if (group.chapters.length <= 0) {
+      throw new Error(`漫画 ${group.title} 没有可导入章节`);
+    }
+    for (const chapter of group.chapters) {
+      if (chapter.parsedStructure === null || chapter.sourcePath.trim().length <= 0 || chapter.pageCount <= 0) {
+        throw new Error(`漫画 ${group.title} 包含无效章节: ${chapter.title}`);
+      }
+    }
+
+    let mangaId: string = '';
+    let storageTitle: string = group.title;
+    let createdManga: boolean = false;
+    const createdChapterIds: string[] = [];
+    const organizedPaths: string[] = [];
+    const transientStagingPaths: string[] = [];
     const dbStartedAt: number = Date.now();
-    const dbStartEvent: ImportFlowEvent = new ImportFlowEvent();
-    dbStartEvent.eventType = ImportFlowEventType.DB_WRITE_STARTED;
-    dbStartEvent.reason = 'download_group_manga_db_started';
-    dbStartEvent.contentType = ImportFlowContentType.MANGA;
-    dbStartEvent.displayName = group.title;
-    dbStartEvent.chapterCount = group.chapters.length;
-    this.recordImportFlowEvent(dbStartEvent);
-    // 创建漫画记录
-    const mangaId = await this.dataManager.addComicInfo({
-      title: group.title,
-      author: group.author || '',
-      description: group.description || '',
-      coverUrl: '',
-      sourceId: 'download_import',
-      externalId: `download_${generateUUID()}`,
-      status: MangaStatus.UNKNOWN,
-      tags: group.tags || [],
-      rating: 0,
-      chapterCount: group.chapters.length,
-      lastUpdateTime: Date.now()
-    } as ComicInfoInput);
-    
-    // 添加收藏
-    await DataService.getInstance().addToFavorites(mangaId, group.tags || []);
-    const dbCompletedEvent: ImportFlowEvent = new ImportFlowEvent();
-    dbCompletedEvent.eventType = ImportFlowEventType.DB_WRITE_COMPLETED;
-    dbCompletedEvent.reason = 'download_group_manga_record_created';
-    dbCompletedEvent.contentType = ImportFlowContentType.MANGA;
-    dbCompletedEvent.displayName = group.title;
-    dbCompletedEvent.elapsedMs = Date.now() - dbStartedAt;
-    dbCompletedEvent.chapterCount = group.chapters.length;
-    dbCompletedEvent.detail = `mangaId=${mangaId}`;
-    this.recordImportFlowEvent(dbCompletedEvent);
-    
-    // 在Download目录创建漫画文件夹
-    const folderName = this.sanitizeFolderName(group.title);
-    const mangaPath = `${this.downloadDirPath}/${folderName}`;
-    try { SafeFileUtils.mkdirSync(mangaPath); } catch (e) { /* 已存在 */ }
-    
-    let firstCoverPath = '';
-    let totalPageCount = 0;
-    let firstChapterId = '';
-    let firstChapterTitle = '';
-    
-    // 处理每个章节
-    for (let i = 0; i < group.chapters.length; i++) {
-      const chapter = group.chapters[i];
-      const chapterPath = `${mangaPath}/${this.sanitizeFolderName(chapter.title)}`;
-      try { SafeFileUtils.mkdirSync(chapterPath); } catch (e) { /* 已存在 */ }
-      
-      // 解析并复制文件
-      const parsed = await this.parseArchiveStructureWithPasswordRetry(chapter.fileUri);
-      const imageFiles: string[] = [];
-      const copyStartedAt: number = Date.now();
-      const copyStartEvent: ImportFlowEvent = new ImportFlowEvent();
-      copyStartEvent.eventType = ImportFlowEventType.COPY_STARTED;
-      copyStartEvent.reason = 'download_group_chapter_copy_started';
-      copyStartEvent.contentType = ImportFlowContentType.MANGA;
-      copyStartEvent.displayName = group.title;
-      copyStartEvent.fileName = chapter.title;
-      copyStartEvent.sourceUri = chapter.fileUri;
-      copyStartEvent.targetPath = chapterPath;
-      copyStartEvent.currentIndex = i + 1;
-      copyStartEvent.totalCount = group.chapters.length;
-      this.recordImportFlowEvent(copyStartEvent);
-      
-      if (parsed.extractedPath) {
-        const files = SafeFileUtils.listFileSync(parsed.extractedPath);
-        for (const file of files) {
-          if (/\.(jpg|jpeg|png|webp|avif)$/i.test(file)) {
-            const srcPath = `${parsed.extractedPath}/${file}`;
-            const destPath = `${chapterPath}/${file}`;
-            try {
-              SafeFileUtils.copyFileSync(srcPath, destPath);
-              imageFiles.push(file);
-            } catch (e) {
-              logger.warn(TAG, `复制文件失败: ${file}`);
-            }
-          }
+    let mangaPath: string = '';
+
+    try {
+      const dbStartEvent: ImportFlowEvent = new ImportFlowEvent();
+      dbStartEvent.eventType = ImportFlowEventType.DB_WRITE_STARTED;
+      dbStartEvent.reason = 'download_group_manga_db_started';
+      dbStartEvent.contentType = ImportFlowContentType.MANGA;
+      dbStartEvent.displayName = group.title;
+      dbStartEvent.chapterCount = group.chapters.length;
+      this.recordImportFlowEvent(dbStartEvent);
+
+      if (group.mergeToExisting) {
+        const targetMangaId: string = group.targetMangaId || '';
+        if (targetMangaId.trim().length <= 0) {
+          throw new Error(`漫画 ${group.title} 已选择合并但缺少目标漫画ID`);
+        }
+        const existingManga: ComicRecord | null = await this.dataManager.getComicInfo(targetMangaId);
+        if (existingManga === null) {
+          throw new Error(`合并目标漫画不存在: ${targetMangaId}`);
+        }
+        mangaId = targetMangaId;
+        storageTitle = existingManga.title || group.title;
+      } else {
+        const comicInfoInput: ComicInfoInput = {
+          title: group.title,
+          author: group.author,
+          description: group.description,
+          coverUrl: '',
+          sourceId: 'download_import',
+          externalId: `download_${generateUUID()}`,
+          status: this.convertBatchDialogMangaStatus(group.status),
+          tags: group.tags,
+          rating: 0,
+          chapterCount: group.chapters.length,
+          lastUpdateTime: Date.now(),
+          webUrl: group.webUrl,
+          isNSFW: group.isNSFW
+        };
+        mangaId = await this.dataManager.addComicInfo(comicInfoInput);
+        createdManga = true;
+      }
+
+      const mangaBaseDir: string = `${this.downloadDirPath}/manga`;
+      await this.sandboxManager.createDirectory(mangaBaseDir);
+      const rawFolderName: string = this.sanitizeFolderName(storageTitle);
+      const folderName: string = rawFolderName.length > 0 ? rawFolderName : `manga_${mangaId}`;
+      mangaPath = `${mangaBaseDir}/${folderName}`;
+      await this.sandboxManager.createDirectory(mangaPath);
+      let selectedCoverTargetPath: string = '';
+      if (createdManga && group.selectedCoverPath.length > 0) {
+        const coverDotIndex: number = group.selectedCoverPath.lastIndexOf('.');
+        const coverExtension: string = coverDotIndex >= 0
+          ? group.selectedCoverPath.substring(coverDotIndex)
+          : '.jpg';
+        selectedCoverTargetPath = `${mangaPath}/cover_${mangaId}${coverExtension}`;
+        try {
+          await this.sandboxManager.copyFile(group.selectedCoverPath, selectedCoverTargetPath);
+          await this.dataManager.updateComicCoverUrl(mangaId, selectedCoverTargetPath);
+        } catch (coverError) {
+          selectedCoverTargetPath = '';
+          logger.warn(TAG, `保存用户选择的封面失败: ${group.title}`, String(coverError));
         }
       }
-      const copyCompletedEvent: ImportFlowEvent = new ImportFlowEvent();
-      copyCompletedEvent.eventType = ImportFlowEventType.COPY_COMPLETED;
-      copyCompletedEvent.reason = 'download_group_chapter_copy_completed';
-      copyCompletedEvent.contentType = ImportFlowContentType.MANGA;
-      copyCompletedEvent.displayName = group.title;
-      copyCompletedEvent.fileName = chapter.title;
-      copyCompletedEvent.sourceUri = chapter.fileUri;
-      copyCompletedEvent.targetPath = chapterPath;
-      copyCompletedEvent.currentIndex = i + 1;
-      copyCompletedEvent.totalCount = group.chapters.length;
-      copyCompletedEvent.pageCount = imageFiles.length;
-      copyCompletedEvent.elapsedMs = Date.now() - copyStartedAt;
-      this.recordImportFlowEvent(copyCompletedEvent);
-      
-      // 创建章节记录
-      const chapterId = await this.dataManager.addChapterInfo({
-        comicId: mangaId,
-        title: chapter.title,
-        index: i,
-        pageCount: imageFiles.length,
-        isDownloaded: true,
-        downloadPath: chapterPath,
-        publishTime: Date.now(),
-        externalId: `local_chapter_${generateUUID()}`
-      } as ChapterInfoInput);
-      
-      // 添加页面信息
-      await this.addPageInfoToDatabaseFromPath(chapterId, chapterPath);
-      totalPageCount += imageFiles.length;
-      if (firstChapterId.length <= 0) {
-        firstChapterId = chapterId;
-        firstChapterTitle = chapter.title;
+
+      const dbCompletedEvent: ImportFlowEvent = new ImportFlowEvent();
+      dbCompletedEvent.eventType = ImportFlowEventType.DB_WRITE_COMPLETED;
+      dbCompletedEvent.reason = 'download_group_manga_record_created';
+      dbCompletedEvent.contentType = ImportFlowContentType.MANGA;
+      dbCompletedEvent.displayName = group.title;
+      dbCompletedEvent.elapsedMs = Date.now() - dbStartedAt;
+      dbCompletedEvent.chapterCount = group.chapters.length;
+      dbCompletedEvent.detail = `mangaId=${mangaId}`;
+      this.recordImportFlowEvent(dbCompletedEvent);
+
+      let firstCoverPath: string = '';
+      let totalPageCount: number = 0;
+      let firstChapterId: string = '';
+      let firstChapterTitle: string = '';
+      for (let i: number = 0; i < group.chapters.length; i++) {
+        const chapter: BatchChapterResult = group.chapters[i];
+        let effectiveSourcePath: string = chapter.sourcePath;
+        let preserveSource: boolean = chapter.preserveSource;
+        if (chapter.parsedStructure !== null &&
+          this.isMixedRootImageChapter(chapter.parsedStructure, chapter.sourcePath, chapter.pageCount)) {
+          effectiveSourcePath = await this.stageDirectImageChapter(chapter.sourcePath, chapter.pageCount);
+          transientStagingPaths.push(effectiveSourcePath);
+          preserveSource = false;
+        }
+        const chapterSuffix: string = generateUUID().replace(/-/g, '').substring(0, 12);
+        const chapterDirectoryName: string =
+          `${chapter.number}_${this.sanitizeFolderName(chapter.title)}_${chapterSuffix}`;
+        const chapterPath: string = `${mangaPath}/${chapterDirectoryName}`;
+        const sourceImageCount: number = await this.countImportableImages(effectiveSourcePath);
+        if (sourceImageCount !== chapter.pageCount) {
+          throw new Error(
+            `章节 ${chapter.title} 页数不一致: 识别 ${chapter.pageCount}，源目录 ${sourceImageCount}`
+          );
+        }
+
+        await this.sandboxManager.createDirectory(chapterPath);
+        organizedPaths.push(chapterPath);
+        const copyStartedAt: number = Date.now();
+        const copyStartEvent: ImportFlowEvent = new ImportFlowEvent();
+        copyStartEvent.eventType = ImportFlowEventType.COPY_STARTED;
+        copyStartEvent.reason = 'download_group_chapter_copy_started';
+        copyStartEvent.contentType = ImportFlowContentType.MANGA;
+        copyStartEvent.displayName = group.title;
+        copyStartEvent.fileName = chapter.title;
+        copyStartEvent.sourceUri = chapter.fileUri;
+        copyStartEvent.targetPath = chapterPath;
+        copyStartEvent.currentIndex = i + 1;
+        copyStartEvent.totalCount = group.chapters.length;
+        this.recordImportFlowEvent(copyStartEvent);
+
+        await this.transferDirectoryContents(effectiveSourcePath, chapterPath, preserveSource);
+        if (!preserveSource) {
+          await this.sandboxManager.deleteDirectory(effectiveSourcePath, true);
+        }
+        const imageFiles: ImageFileInfo[] = await this.scanImageFiles(chapterPath);
+        if (imageFiles.length !== chapter.pageCount) {
+          throw new Error(
+            `章节 ${chapter.title} 落盘页数不一致: 应为 ${chapter.pageCount}，实际 ${imageFiles.length}`
+          );
+        }
+
+        const chapterInfoInput: ChapterInfoInput = {
+          comicId: mangaId,
+          title: chapter.title,
+          index: chapter.number > 0 ? chapter.number - 1 : i,
+          pageCount: chapter.pageCount,
+          isDownloaded: true,
+          downloadPath: chapterPath,
+          publishTime: chapter.publishTime,
+          externalId: await createLocalMangaChapterExternalId(
+            mangaId,
+            chapter.fileUri,
+            chapter.sourcePath,
+            chapter.parsedStructure?.extractedPath || '',
+            chapter.number
+          )
+        };
+        const chapterCreation: ChapterInfoCreationResult =
+          await this.dataManager.addChapterInfoWithResult(chapterInfoInput);
+        if (!chapterCreation.created) {
+          throw new Error(`章节已存在，已停止重复导入: ${chapter.title}`);
+        }
+        const chapterId: string = chapterCreation.id;
+        createdChapterIds.push(chapterId);
+        const addedPageCount: number = await this.addPageInfoToDatabaseFromPath(chapterId, chapterPath);
+        if (addedPageCount !== chapter.pageCount) {
+          throw new Error(
+            `章节 ${chapter.title} 页面写入不完整: 应为 ${chapter.pageCount}，实际 ${addedPageCount}`
+          );
+        }
+
+        const copyCompletedEvent: ImportFlowEvent = new ImportFlowEvent();
+        copyCompletedEvent.eventType = ImportFlowEventType.COPY_COMPLETED;
+        copyCompletedEvent.reason = 'download_group_chapter_copy_completed';
+        copyCompletedEvent.contentType = ImportFlowContentType.MANGA;
+        copyCompletedEvent.displayName = group.title;
+        copyCompletedEvent.fileName = chapter.title;
+        copyCompletedEvent.sourceUri = chapter.fileUri;
+        copyCompletedEvent.targetPath = chapterPath;
+        copyCompletedEvent.currentIndex = i + 1;
+        copyCompletedEvent.totalCount = group.chapters.length;
+        copyCompletedEvent.pageCount = addedPageCount;
+        copyCompletedEvent.elapsedMs = Date.now() - copyStartedAt;
+        this.recordImportFlowEvent(copyCompletedEvent);
+
+        totalPageCount += addedPageCount;
+        if (firstChapterId.length <= 0) {
+          firstChapterId = chapterId;
+          firstChapterTitle = chapter.title;
+        }
+        if (firstCoverPath.length <= 0 && imageFiles.length > 0) {
+          firstCoverPath = imageFiles[0].path;
+        }
       }
-      
-      // 记录第一个章节的第一张图片作为封面
-      if (i === 0 && imageFiles.length > 0) {
-        imageFiles.sort();
-        firstCoverPath = `${chapterPath}/${imageFiles[0]}`;
+
+      await this.validateImportedMangaGroup(mangaId, createdChapterIds, group.chapters.length);
+      if (createdManga) {
+        await DataService.getInstance().addToFavorites(mangaId, group.tags);
       }
-    }
-    
-    // 处理封面
-    if (firstCoverPath) {
-      const ext = firstCoverPath.substring(firstCoverPath.lastIndexOf('.'));
-      const coverPath = `${mangaPath}/cover${ext}`;
-      
-      try {
-        SafeFileUtils.copyFileSync(firstCoverPath, coverPath);
+
+      if (createdManga && selectedCoverTargetPath.length <= 0 && firstCoverPath.length > 0) {
+        const coverExtension: string = firstCoverPath.substring(firstCoverPath.lastIndexOf('.'));
+        const coverPath: string = `${mangaPath}/cover_${mangaId}${coverExtension}`;
+        await this.sandboxManager.copyFile(firstCoverPath, coverPath);
         await this.dataManager.updateComicCoverUrl(mangaId, coverPath);
-        const coverEvent: ImportFlowEvent = new ImportFlowEvent();
-        coverEvent.eventType = ImportFlowEventType.COVER_HANDLED;
-        coverEvent.reason = 'download_group_cover_saved';
-        coverEvent.contentType = ImportFlowContentType.MANGA;
-        coverEvent.displayName = group.title;
-        coverEvent.targetPath = coverPath;
-        this.recordImportFlowEvent(coverEvent);
-        logger.info(TAG, `封面已保存: ${coverPath}`);
-      } catch (e) {
-        logger.warn(TAG, `保存封面失败: ${String(e)}`);
       }
+
+      await this.updateMangaChapterCount(mangaId);
+
+      logger.info(TAG, `Download导入成功: ${group.title}`);
+      this.recordMangaImportFlow(
+        mangaId,
+        group.title,
+        firstChapterId,
+        firstChapterTitle,
+        totalPageCount,
+        group.chapters.length,
+        group.chapters[0].fileUri,
+        mangaPath,
+        'download_batch_group_import_completed'
+      );
+    } catch (error) {
+      await this.rollbackSingleImport(mangaId, createdManga, createdChapterIds, organizedPaths);
+      for (const stagingPath of transientStagingPaths) {
+        try {
+          await this.sandboxManager.deleteDirectory(stagingPath, true);
+        } catch (cleanupError) {
+          logger.debug(TAG, `根散图暂存目录已清理或不存在: ${stagingPath}`, String(cleanupError));
+        }
+      }
+      throw error as Error;
     }
-    
-    logger.info(TAG, `Download导入成功: ${group.title}`);
-    this.recordMangaImportFlow(
-      mangaId,
-      group.title,
-      firstChapterId,
-      firstChapterTitle,
-      totalPageCount,
-      group.chapters.length,
-      group.chapters.length > 0 ? group.chapters[0].fileUri : '',
-      mangaPath,
-      'download_batch_group_import_completed'
-    );
   }
-  
+
   /**
    * 显示Download目录单文件导入对话框
    */
-  private async showDownloadSingleImportDialog(fileUri: string, filename: string): Promise<void> {
+  private async showDownloadSingleImportDialog(
+    fileUri: string,
+    filename: string,
+    pageGeneration: number = this.pageLifecycleGeneration
+  ): Promise<void> {
     try {
+      if (!this.isCurrentPageGeneration(pageGeneration)) {
+        return;
+      }
       this.ensureImportFlow(
         ImportFlowEntrySource.DOWNLOAD_DIR,
         ImportFlowContentType.MANGA,
@@ -1677,6 +2129,10 @@ struct DataManagementPage {
       
       // 解析压缩包结构
       const parsed = await this.parseArchiveStructureWithPasswordRetry(fileUri);
+      if (!this.isCurrentPageGeneration(pageGeneration)) {
+        await this.compressionUtils.cleanupParsedArchiveStructure(parsed);
+        return;
+      }
       
       // 转换为对话框需要的格式
       const dialogStructure: ParsedArchiveStructure = this.convertToDialogStructure(parsed);
@@ -1685,6 +2141,10 @@ struct DataManagementPage {
       const titleMatch = filename.match(/^(.+?)(?:_[a-f0-9]+)?\.(?:zip|cbz|rar|cbr|7z|tar|gz|tgz|bz2|xz|lzma)$/i);
       const title = titleMatch ? titleMatch[1] : filename.replace(/\.[^.]+$/, '');
       await this.findExistingMangaCandidates(title);
+      if (!this.isCurrentPageGeneration(pageGeneration)) {
+        await this.compressionUtils.cleanupParsedArchiveStructure(parsed);
+        return;
+      }
       
       // 保存当前文件信息
       this.currentFileUri = fileUri;
@@ -1702,12 +2162,35 @@ struct DataManagementPage {
             this.recordImportFlowEvent(event);
           },
           onConfirm: (result: MangaImportDialogResult) => {
-            this.handleDownloadSingleImportResult(result);
+            if (!this.isCurrentPageGeneration(pageGeneration)) {
+              return;
+            }
+            if (this.mangaImportOwnerToken !== 0) {
+              logger.warn(TAG, '已有漫画提交任务，忽略重复确认');
+              return;
+            }
+            const ownerToken: number = this.beginMangaImportCommit();
+            this.isMangaImportRunning = true;
+            this.mangaImportDialogController = null;
+            this.pendingMangaFiles = [];
+            void (async (): Promise<void> => {
+              try {
+                await this.handleDownloadSingleImportResult(result);
+              } catch (error) {
+                logger.error(TAG, `Download单文件漫画导入异常: ${String(error)}`);
+              } finally {
+                this.finishMangaImport(pageGeneration, ownerToken);
+              }
+            })();
           },
           onCancel: () => {
-            this.updateProgress(ImportStatus.IDLE, '已取消导入', 0);
-            this.pendingMangaFiles = [];
-            this.endCurrentImportFlow('download_single_manga_cancelled');
+            if (this.isCurrentPageGeneration(pageGeneration)) {
+              this.mangaImportDialogController = null;
+              this.updateProgress(ImportStatus.IDLE, '已取消导入', 0);
+              this.pendingMangaFiles = [];
+              this.endCurrentImportFlow('download_single_manga_cancelled');
+              this.isMangaImportRunning = false;
+            }
           }
         }),
         autoCancel: false,
@@ -1716,6 +2199,9 @@ struct DataManagementPage {
       });
 
       this.mangaImportDialogController.open();
+      if (!this.isCurrentPageGeneration(pageGeneration)) {
+        return;
+      }
       this.recordSimpleImportFlowEvent(
         ImportFlowEventType.DIALOG_OPENED,
         'download_single_manga_dialog_opened',
@@ -1738,9 +2224,11 @@ struct DataManagementPage {
       failedEvent.severity = ImportFlowSeverity.ERROR;
       failedEvent.errorMessage = String(error);
       this.recordImportFlowEvent(failedEvent);
-      this.getUIContext().getPromptAction().showToast({ message: `解析失败: ${String(error)}` });
-      this.pendingMangaFiles = [];
-      this.endCurrentImportFlow('download_single_manga_prepare_failed');
+      if (this.isCurrentPageGeneration(pageGeneration)) {
+        this.getUIContext().getPromptAction().showToast({ message: `解析失败: ${String(error)}` });
+        this.pendingMangaFiles = [];
+        this.endCurrentImportFlow('download_single_manga_prepare_failed');
+      }
     }
   }
   
@@ -1749,15 +2237,19 @@ struct DataManagementPage {
    */
   private async handleDownloadSingleImportResult(result: MangaImportDialogResult): Promise<void> {
     const importStartedAt: number = Date.now();
+    let mangaId: string = '';
+    let chapterId: string = '';
+    let mangaPath: string = '';
+    let chapterPath: string = '';
     try {
       this.updateProgress(ImportStatus.IMPORTING, '正在导入漫画...', 30);
       
       const parsed = result.parsedStructure;
       
       // 在Download目录创建漫画文件夹
-      const folderName = this.sanitizeFolderName(result.title);
-      const mangaPath = `${this.downloadDirPath}/${folderName}`;
-      const chapterPath = `${mangaPath}/第1话`;
+      const folderName = `${this.sanitizeFolderName(result.title)}_${generateUUID().replace(/-/g, '').substring(0, 12)}`;
+      mangaPath = `${this.downloadDirPath}/${folderName}`;
+      chapterPath = `${mangaPath}/第1话`;
       
       try { SafeFileUtils.mkdirSync(mangaPath); } catch (e) { /* 已存在 */ }
       try { SafeFileUtils.mkdirSync(chapterPath); } catch (e) { /* 已存在 */ }
@@ -1832,7 +2324,7 @@ struct DataManagementPage {
       dbStartedEvent.displayName = result.title;
       dbStartedEvent.pageCount = imageFiles.length;
       this.recordImportFlowEvent(dbStartedEvent);
-      const mangaId = await this.dataManager.addComicInfo({
+      mangaId = await this.dataManager.addComicInfo({
         title: result.title,
         author: result.author,
         description: result.description,
@@ -1846,16 +2338,15 @@ struct DataManagementPage {
         lastUpdateTime: Date.now()
       } as ComicInfoInput);
       
-      // 添加收藏
-      await DataService.getInstance().addToFavorites(mangaId, result.tags);
-      
       // 更新章节信息
       chapterInput.comicId = mangaId;
       chapterInput.pageCount = imageFiles.length;
-      const chapterId = await this.dataManager.addChapterInfo(chapterInput);
+      chapterId = await this.dataManager.addChapterInfo(chapterInput);
        
       // 添加页面信息
       await this.addPageInfoToDatabaseFromPath(chapterId, chapterPath);
+      await this.validateImportedMangaGroup(mangaId, [chapterId], 1);
+      await DataService.getInstance().addToFavorites(mangaId, result.tags);
       const dbCompletedEvent: ImportFlowEvent = new ImportFlowEvent();
       dbCompletedEvent.eventType = ImportFlowEventType.DB_WRITE_COMPLETED;
       dbCompletedEvent.reason = 'download_single_db_completed';
@@ -1868,10 +2359,12 @@ struct DataManagementPage {
        
       // 处理封面 - 复制第一张图片到漫画目录作为封面
       if (imageFiles.length > 0) {
-        imageFiles.sort();
+        imageFiles.sort((left: string, right: string): number =>
+          left.localeCompare(right, undefined, { numeric: true })
+        );
         const firstImagePath = `${chapterPath}/${imageFiles[0]}`;
         const ext = imageFiles[0].substring(imageFiles[0].lastIndexOf('.'));
-        const coverPath = `${mangaPath}/cover${ext}`;
+        const coverPath = `${mangaPath}/cover_${mangaId}${ext}`;
         
         try {
           SafeFileUtils.copyFileSync(firstImagePath, coverPath);
@@ -1920,6 +2413,19 @@ struct DataManagementPage {
         this.askDeleteSourceFile(result.sourceFileUri, result.title);
       }
     } catch (error) {
+      if (mangaId.length > 0) {
+        try {
+          await this.rollbackSingleImport(mangaId, true, [chapterId], [chapterPath]);
+        } catch (rollbackError) {
+          logger.error(TAG, `Download单文件导入回滚失败: ${mangaId}`, String(rollbackError));
+        }
+      } else if (mangaPath.length > 0) {
+        try {
+          await this.sandboxManager.deleteDirectory(mangaPath, true);
+        } catch (cleanupError) {
+          logger.warn(TAG, `清理Download单文件暂存目录失败: ${mangaPath}`, String(cleanupError));
+        }
+      }
       logger.error(TAG, `导入失败: ${String(error)}`);
       const failedEvent: ImportFlowEvent = new ImportFlowEvent();
       failedEvent.eventType = ImportFlowEventType.ERROR;
@@ -2055,9 +2561,6 @@ struct DataManagementPage {
       lastUpdateTime: Date.now()
     } as ComicInfoInput);
     
-    // 添加收藏
-    await DataService.getInstance().addToFavorites(mangaId, comicInfo?.tags || []);
-    
     // 创建章节记录
     const chapterId = await this.dataManager.addChapterInfo({
       comicId: mangaId,
@@ -2072,13 +2575,17 @@ struct DataManagementPage {
     
     // 添加页面信息
     await this.addPageInfoToDatabaseFromPath(chapterId, chapterPath);
+    await this.validateImportedMangaGroup(mangaId, [chapterId], 1);
+    await DataService.getInstance().addToFavorites(mangaId, comicInfo?.tags || []);
     
     // 处理封面 - 复制第一张图片到漫画目录作为封面
     if (imageFiles.length > 0) {
-      imageFiles.sort();
+      imageFiles.sort((left: string, right: string): number =>
+        left.localeCompare(right, undefined, { numeric: true })
+      );
       const firstImagePath = `${chapterPath}/${imageFiles[0]}`;
       const ext = imageFiles[0].substring(imageFiles[0].lastIndexOf('.'));
-      const coverPath = `${mangaPath}/cover${ext}`;
+      const coverPath = `${mangaPath}/cover_${mangaId}${ext}`;
       
       try {
         SafeFileUtils.copyFileSync(firstImagePath, coverPath);
@@ -2153,6 +2660,10 @@ struct DataManagementPage {
    * 将电子书复制到Download目录的ebooks子文件夹
    */
   private async importEbooksFromDownloadDir(): Promise<void> {
+    if (this.isMangaImportRunning || this.isMangaDialogOpening || this.isFilePickerActive || this.isProcessing()) {
+      logger.warn(TAG, '已有导入流程运行，忽略电子书快速导入请求');
+      return;
+    }
     if (this.pendingEbookFiles.length === 0) {
       this.getUIContext().getPromptAction().showToast({ message: '没有待导入的电子书文件' });
       return;
@@ -2254,6 +2765,10 @@ struct DataManagementPage {
    * 从Download目录导入PDF文件
    */
   private async importPdfsFromDownloadDir(): Promise<void> {
+    if (this.isMangaImportRunning || this.isMangaDialogOpening || this.isFilePickerActive || this.isProcessing()) {
+      logger.warn(TAG, '已有导入流程运行，忽略PDF快速导入请求');
+      return;
+    }
     if (this.pendingPdfFiles.length === 0) {
       this.getUIContext().getPromptAction().showToast({ message: '没有待导入的PDF文件' });
       return;
@@ -2728,6 +3243,9 @@ struct DataManagementPage {
    */
   aboutToAppear(): void {
     logger.lifecycle(TAG, 'aboutToAppear');
+    this.pageLifecycleGeneration += 1;
+    this.isPageActive = true;
+    this.isMangaImportRunning = this.isMangaImportCommitting && this.mangaImportOwnerToken !== 0;
     
     try {
       const deviceType = this.deviceManager.getDeviceInfo().deviceType;
@@ -3360,7 +3878,11 @@ struct DataManagementPage {
 
         // 延迟自动开始导入，给用户查看的时间
         setTimeout(async () => {
-          await this.startImport();
+          try {
+            await this.startImport();
+          } catch (error) {
+            logger.error(TAG, '分享文件自动导入失败', String(error));
+          }
         }, 1000);
       } else {
         logger.warn(TAG, `不支持的分享文件类型: ${fileType}`);
@@ -3430,6 +3952,8 @@ struct DataManagementPage {
   private async handleExternalComicImport(fileUri: string): Promise<void> {
     try {
       logger.info(TAG, `处理外部漫画文件导入: ${fileUri}`);
+      await this.waitForPendingBatchDialogAnalysis();
+      await this.waitForPendingArchiveCleanup();
       this.ensureImportFlow(
         this.currentImportFlowId.length > 0 ? ImportFlowEntrySource.UNKNOWN : ImportFlowEntrySource.EXTERNAL_FILE_TASK,
         ImportFlowContentType.MANGA,
@@ -3940,6 +4464,28 @@ struct DataManagementPage {
    */
   aboutToDisappear(): void {
     logger.lifecycle(TAG, 'aboutToDisappear');
+    this.isPageActive = false;
+    this.pageLifecycleGeneration += 1;
+    this.folderPickerGeneration += 1;
+    this.isFilePickerActive = false;
+    this.isMangaDialogOpening = false;
+    this.batchMangaImportDialogController?.close();
+    this.batchMangaImportDialogController = null;
+    this.mangaImportDialogController?.close();
+    this.mangaImportDialogController = null;
+    if (!this.isMangaImportCommitting) {
+      this.isMangaImportRunning = false;
+    }
+    const activeGenerations: string[] = Array.from<string>(this.activeBatchAnalysisGenerations);
+    for (const generation of activeGenerations) {
+      this.invalidateBatchAnalysisGeneration(generation);
+    }
+    this.importArchiveParseCache.clear();
+    this.restorePickedImageSelections();
+    this.selectedImageGroupSources.clear();
+    if (!this.isMangaImportCommitting) {
+      this.scheduleTrackedArchiveCleanup('page_disappeared');
+    }
     this.lifecycle.destroy();
     ThemeAwareHelper.cleanupThemeAware(TAG);
     FontAwareHelper.cleanupFontAware(TAG);
@@ -4082,6 +4628,9 @@ struct DataManagementPage {
    * 显示Toast提示
    */
   private showToast(message: string): void {
+    if (!this.isPageActive) {
+      return;
+    }
     try {
       this.getUIContext().getPromptAction().showToast({
         message: message,
@@ -5134,10 +5683,227 @@ struct DataManagementPage {
   /**
    * 选择本地文件
    */
+  private isImageImportUri(uri: string): boolean {
+    const fileName: string = this.getFileNameFromUri(uri).toLowerCase();
+    const imageExtensions: string[] = ['.jpg', '.jpeg', '.png', '.webp', '.gif', '.bmp', '.avif'];
+    return imageExtensions.some((extension: string): boolean => fileName.endsWith(extension));
+  }
+
+  private isComicInfoUri(uri: string): boolean {
+    return this.getFileNameFromUri(uri).toLowerCase() === 'comicinfo.xml';
+  }
+
+  private getParentUri(uri: string): string {
+    const normalized: string = uri.replace(/\\/g, '/');
+    const separatorIndex: number = normalized.lastIndexOf('/');
+    return separatorIndex > 0 ? normalized.substring(0, separatorIndex) : normalized;
+  }
+
+  /**
+   * picked-images: 是分析期虚拟 URI，真正源文件保存在 Map 中。取消、失败或
+   * 页面离开前恢复源 URI，避免下一次点击导入时命中已被清空的虚拟分组。
+   */
+  private restorePickedImageSelections(): void {
+    if (this.selectedImageGroupSources.size <= 0 || this.selectedFiles.length <= 0) {
+      return;
+    }
+    const restoredSelections: string[] = [];
+    const seen: Set<string> = new Set<string>();
+    for (const selection of this.selectedFiles) {
+      if (selection.startsWith('picked-images:')) {
+        const sources: string[] | undefined = this.selectedImageGroupSources.get(selection);
+        if (sources !== undefined) {
+          for (const source of sources) {
+            if (!seen.has(source)) {
+              seen.add(source);
+              restoredSelections.push(source);
+            }
+          }
+        }
+        continue;
+      }
+      if (!seen.has(selection)) {
+        seen.add(selection);
+        restoredSelections.push(selection);
+      }
+    }
+    this.selectedFiles = restoredSelections;
+  }
+
+  private sanitizeImportFileName(fileName: string, fallbackName: string): string {
+    let safeName: string = fileName
+      .replace(/[\\/:*?"<>|]/g, '_')
+      .replace(/\.\./g, '_')
+      .trim();
+    if (safeName.length <= 0 || safeName === '.' || safeName === '..') {
+      safeName = fallbackName;
+    }
+    return safeName;
+  }
+
+  /**
+   * 将文件夹选择展开为独立归档/散图候选，并将直接选中的散图按父目录分组。
+   * 这样批量弹窗收到的每一项都对应一个明确章节源，而不是把整个聚合目录误当成一章。
+   */
+  private async expandMangaSelectionCandidates(pageGeneration: number): Promise<void> {
+    this.restorePickedImageSelections();
+    this.selectedImageGroupSources.clear();
+    const originalSelections: string[] = this.selectedFiles.slice();
+    const expanded: string[] = [];
+    const imageGroups: Map<string, string[]> = new Map<string, string[]>();
+    const seen: Set<string> = new Set<string>();
+
+    for (const selection of originalSelections) {
+      if (selection.startsWith('picked-images:')) {
+        if (!seen.has(selection)) {
+          seen.add(selection);
+          expanded.push(selection);
+        }
+        continue;
+      }
+      if (selection.startsWith('folder:')) {
+        const folderPath: string = this.resolveLocalImportPath(selection.substring('folder:'.length));
+        try {
+          const candidates: string[] = await this.compressionUtils.discoverMangaImportCandidates(folderPath);
+          if (!this.isCurrentPageGeneration(pageGeneration)) {
+            return;
+          }
+          for (const candidate of candidates) {
+            if (!seen.has(candidate)) {
+              seen.add(candidate);
+              expanded.push(candidate);
+            }
+          }
+          if (candidates.length === 0 && !seen.has(selection)) {
+            // 保留旧语义作为兜底，让后续解析给出明确错误，而不是静默丢失用户选择。
+            seen.add(selection);
+            expanded.push(selection);
+          }
+        } catch (error) {
+          logger.warn(TAG, `展开漫画文件夹失败，保留原始选择: ${folderPath}`, String(error));
+          if (!seen.has(selection)) {
+            seen.add(selection);
+            expanded.push(selection);
+          }
+        }
+        continue;
+      }
+      if (this.isImageImportUri(selection) || this.isComicInfoUri(selection)) {
+        const parentUri: string = this.getParentUri(selection);
+        const group: string[] = imageGroups.get(parentUri) || [];
+        group.push(selection);
+        imageGroups.set(parentUri, group);
+        continue;
+      }
+      if (!seen.has(selection)) {
+        seen.add(selection);
+        expanded.push(selection);
+      }
+    }
+
+    const parentUris: string[] = Array.from<string>(imageGroups.keys());
+    for (const parentUri of parentUris) {
+      const sources: string[] = imageGroups.get(parentUri) || [];
+      let hasImage: boolean = false;
+      for (const source of sources) {
+        if (this.isImageImportUri(source)) {
+          hasImage = true;
+          break;
+        }
+      }
+      if (!hasImage) {
+        logger.warn(TAG, `忽略不含图片的ComicInfo.xml选择: ${parentUri}`);
+        continue;
+      }
+      const parentName: string = this.getFileNameFromUri(parentUri);
+      const displayName: string = parentName.length > 0 ? parentName : '散图漫画';
+      const virtualUri: string = await createPickedImageGroupUri(displayName, sources);
+      if (!this.isCurrentPageGeneration(pageGeneration)) {
+        return;
+      }
+      this.selectedImageGroupSources.set(virtualUri, sources.slice());
+      expanded.push(virtualUri);
+    }
+
+    if (!this.isCurrentPageGeneration(pageGeneration)) {
+      return;
+    }
+    this.selectedFiles = expanded;
+    logger.info(TAG, `漫画选择展开完成: 原始=${originalSelections.length}, 候选=${expanded.length}`);
+  }
+
+  /**
+   * 将文件选择器选中的散图复制到应用临时目录，形成可复用的平铺章节。
+   */
+  private async stagePickedImageGroup(virtualUri: string): Promise<CompressionParsedStructure> {
+    const sources: string[] | undefined = this.selectedImageGroupSources.get(virtualUri);
+    if (!sources || sources.length === 0) {
+      throw new Error(`找不到散图选择分组: ${virtualUri}`);
+    }
+    const baseDirectory: string = this.sandboxManager.getDirectory('temp');
+    const stagingDirectory: string = `${baseDirectory}/manga_pick_${generateUUID()}`;
+    await this.sandboxManager.createDirectory(stagingDirectory);
+    try {
+      const usedNames: Set<string> = new Set<string>();
+      let copiedImages: number = 0;
+      for (const source of sources) {
+        const rawFileName: string = this.getFileNameFromUri(source);
+        const fallbackName: string = this.isComicInfoUri(source)
+          ? 'ComicInfo.xml'
+          : `image_${copiedImages + 1}`;
+        const fileName: string = this.sanitizeImportFileName(rawFileName, fallbackName);
+        const lowerName: string = fileName.toLowerCase();
+        if (!this.isImageImportUri(source) && lowerName !== 'comicinfo.xml') {
+          continue;
+        }
+        let targetName: string = fileName;
+        let suffix: number = 1;
+        while (usedNames.has(targetName)) {
+          targetName = `${suffix}_${fileName}`;
+          suffix += 1;
+        }
+        usedNames.add(targetName);
+        const targetPath: string = `${stagingDirectory}/${targetName}`;
+        await this.sandboxManager.copyFile(source, targetPath);
+        if (this.isImageImportUri(source)) {
+          copiedImages += 1;
+        }
+      }
+      if (copiedImages <= 0) {
+        throw new Error(`散图分组没有可复制的图片: ${virtualUri}`);
+      }
+      const parsed: CompressionParsedStructure =
+        await this.compressionUtils.parseFlatImageFolderAsArchiveStructure(stagingDirectory);
+      parsed.tempDirectories.push(stagingDirectory);
+      return parsed;
+    } catch (error) {
+      try {
+        await this.sandboxManager.deleteDirectory(stagingDirectory, true);
+      } catch (cleanupError) {
+        logger.warn(TAG, `清理散图暂存目录失败: ${stagingDirectory}`, String(cleanupError));
+      }
+      throw error as Error;
+    }
+  }
+
   private async selectFiles(): Promise<void> {
+    if (this.isFilePickerActive || this.isMangaDialogOpening || this.isMangaImportRunning || this.isProcessing()) {
+      logger.warn(TAG, '忽略重复的漫画文件选择请求');
+      return;
+    }
+    const pageGeneration: number = this.pageLifecycleGeneration;
+    if (!this.isCurrentPageGeneration(pageGeneration)) {
+      return;
+    }
+    this.isFilePickerActive = true;
     try {
       logger.info(TAG, '开始选择本地文件');
       this.updateProgress(ImportStatus.SELECTING, '选择文件中...', 0);
+      await this.waitForPendingBatchDialogAnalysis();
+      await this.waitForPendingArchiveCleanup();
+      if (!this.isCurrentPageGeneration(pageGeneration)) {
+        return;
+      }
 
       // 获取UIAbilityContext
       const context = this.uiContext?.getHostContext() as common.UIAbilityContext;
@@ -5147,22 +5913,27 @@ struct DataManagementPage {
 
       // 创建文档选择器
       const documentPicker = new picker.DocumentViewPicker(context);
-      
+
       // 设置选择选项
       const selectOptions = new picker.DocumentSelectOptions();
-      selectOptions.maxSelectNumber = 50; // 最多选择50个文件（优化性能，避免卡死）
-      selectOptions.selectMode = picker.DocumentSelectMode.FILE;
+      // SDK 23 声明范围为 1..500；FILE 是默认模式，避免在非二合一设备设置仅二合一支持的 selectMode。
+      selectOptions.maxSelectNumber = 500;
       selectOptions.fileSuffixFilters = [
         '.zip', '.cbz',
         '.rar', '.cbr',
         '.7z', '.lzma',
         '.tar', '.gz', '.tgz',
-        '.bz2', '.xz'
+        '.bz2', '.xz',
+        '.jpg', '.jpeg', '.png', '.webp', '.gif', '.bmp', '.avif',
+        '.xml'
       ];
 
       // 选择文件
       const selectResult = await documentPicker.select(selectOptions);
-      
+      if (!this.isCurrentPageGeneration(pageGeneration)) {
+        return;
+      }
+
       if (!selectResult || selectResult.length === 0) {
         this.updateProgress(ImportStatus.IDLE, '未选择任何文件', 0);
         return;
@@ -5175,7 +5946,13 @@ struct DataManagementPage {
     } catch (error) {
       const err = error as BusinessError;
       logger.error(TAG, '选择文件失败', String(err.message || err));
-      this.updateProgress(ImportStatus.ERROR, `选择文件失败: ${err.message || err}`, 0);
+      if (this.isCurrentPageGeneration(pageGeneration)) {
+        this.updateProgress(ImportStatus.ERROR, `选择文件失败: ${err.message || err}`, 0);
+      }
+    } finally {
+      if (this.isCurrentPageGeneration(pageGeneration)) {
+        this.isFilePickerActive = false;
+      }
     }
   }
 
@@ -5183,6 +5960,17 @@ struct DataManagementPage {
    * 选择漫画文件夹
    */
   private selectFolder(): void {
+    if (this.isFilePickerActive || this.isMangaDialogOpening || this.isMangaImportRunning || this.isProcessing()) {
+      logger.warn(TAG, '忽略重复的漫画文件夹选择请求');
+      return;
+    }
+    const pickerGeneration: number = this.folderPickerGeneration + 1;
+    const pageGeneration: number = this.pageLifecycleGeneration;
+    if (!this.isCurrentPageGeneration(pageGeneration)) {
+      return;
+    }
+    this.folderPickerGeneration = pickerGeneration;
+    this.isFilePickerActive = true;
     logger.info(TAG, '开始选择漫画文件夹');
     this.updateProgress(ImportStatus.SELECTING, '准备拉起文件夹选择器...', 0);
 
@@ -5190,6 +5978,7 @@ struct DataManagementPage {
     if (!context) {
       logger.error(TAG, '选择文件夹失败', '无法获取应用上下文');
       this.updateProgress(ImportStatus.ERROR, '无法获取应用上下文', 0);
+      this.isFilePickerActive = false;
       return;
     }
 
@@ -5198,7 +5987,11 @@ struct DataManagementPage {
       const selectOptions = new picker.DocumentSelectOptions();
       selectOptions.selectMode = picker.DocumentSelectMode.FOLDER;
       
-      documentPicker.select(selectOptions).then((uris: Array<string>) => {
+      void documentPicker.select(selectOptions).then((uris: Array<string>) => {
+        if (this.folderPickerGeneration !== pickerGeneration ||
+          !this.isCurrentPageGeneration(pageGeneration)) {
+          return;
+        }
         if (!uris || uris.length === 0) {
           this.updateProgress(ImportStatus.IDLE, '未选择任何文件夹', 0);
           return;
@@ -5211,14 +6004,27 @@ struct DataManagementPage {
         this.selectedFiles = [...this.selectedFiles, ...folderUris];
         this.updateProgress(ImportStatus.IDLE, `已添加 ${uris.length} 个文件夹`, 10);
       }).catch((err: BusinessError) => {
+        if (this.folderPickerGeneration !== pickerGeneration ||
+          !this.isCurrentPageGeneration(pageGeneration)) {
+          return;
+        }
         const errorMsg = String(err.message || err);
         logger.error(TAG, `选择失败，错误码: ${err.code}, 信息: ${errorMsg}`);
         this.updateProgress(ImportStatus.ERROR, `拉起文件夹选择器失败: ${errorMsg}`, 0);
+      }).then((): void => {
+        if (this.folderPickerGeneration === pickerGeneration &&
+          this.isCurrentPageGeneration(pageGeneration)) {
+          this.isFilePickerActive = false;
+        }
       });
     } catch (error) {
       const err = error as BusinessError;
       logger.error(TAG, `DocumentViewPicker 初始化失败，错误码: ${err.code}, 信息: ${err.message}`);
       this.updateProgress(ImportStatus.ERROR, `选择文件夹失败: ${err.message}`, 0);
+      if (this.folderPickerGeneration === pickerGeneration &&
+        this.isCurrentPageGeneration(pageGeneration)) {
+        this.isFilePickerActive = false;
+      }
     }
   }
 
@@ -5227,74 +6033,165 @@ struct DataManagementPage {
    * 支持无XML信息的压缩包，弹出配置对话框
    */
   private async startImport(): Promise<void> {
+    if (this.isMangaDialogOpening || this.isFilePickerActive || this.isMangaImportRunning ||
+      this.batchMangaImportDialogController !== null || this.mangaImportDialogController !== null) {
+      logger.warn(TAG, '忽略重复的漫画导入启动请求');
+      return;
+    }
+    const pageGeneration: number = this.pageLifecycleGeneration;
+    if (!this.isCurrentPageGeneration(pageGeneration)) {
+      return;
+    }
     if (this.selectedFiles.length === 0) {
       this.updateProgress(ImportStatus.ERROR, '请先选择要导入的文件', 0);
       return;
     }
-    this.ensureImportFlow(
-      this.currentImportFlowId.length > 0 ? ImportFlowEntrySource.UNKNOWN : ImportFlowEntrySource.FILE_PICKER,
-      ImportFlowContentType.MANGA,
-      this.selectedFiles.length === 1 ? this.getFileNameFromUri(this.selectedFiles[0]) : '批量漫画导入',
-      this.selectedFiles.length,
-      this.selectedFiles.length >= 2,
-      this.selectedFiles[0],
-      ''
-    );
-    const entryEvent: ImportFlowEvent = new ImportFlowEvent();
-    entryEvent.eventType = ImportFlowEventType.ENTRY_RECEIVED;
-    entryEvent.reason = 'manga_start_import';
-    entryEvent.contentType = ImportFlowContentType.MANGA;
-    entryEvent.fileCount = this.selectedFiles.length;
-    entryEvent.batchMode = this.selectedFiles.length >= 2;
-    entryEvent.sourceUri = this.selectedFiles[0];
-    entryEvent.displayName = this.selectedFiles.length === 1 ? this.getFileNameFromUri(this.selectedFiles[0]) : '批量漫画导入';
-    this.recordImportFlowEvent(entryEvent);
+    this.isMangaDialogOpening = true;
+    try {
+      await this.waitForPendingBatchDialogAnalysis();
+      await this.waitForPendingArchiveCleanup();
+      if (!this.isCurrentPageGeneration(pageGeneration)) {
+        return;
+      }
+      this.updateProgress(ImportStatus.PARSING, '正在识别漫画文件和章节...', 5);
+      await this.expandMangaSelectionCandidates(pageGeneration);
+      if (!this.isCurrentPageGeneration(pageGeneration)) {
+        return;
+      }
+      if (this.selectedFiles.length === 0) {
+        this.updateProgress(ImportStatus.ERROR, '未识别到可导入的漫画图片或压缩包', 0);
+        return;
+      }
+      this.ensureImportFlow(
+        this.currentImportFlowId.length > 0 ? ImportFlowEntrySource.UNKNOWN : ImportFlowEntrySource.FILE_PICKER,
+        ImportFlowContentType.MANGA,
+        this.selectedFiles.length === 1 ? this.getFileNameFromUri(this.selectedFiles[0]) : '批量漫画导入',
+        this.selectedFiles.length,
+        this.selectedFiles.length >= 2,
+        this.selectedFiles[0],
+        ''
+      );
+      const entryEvent: ImportFlowEvent = new ImportFlowEvent();
+      entryEvent.eventType = ImportFlowEventType.ENTRY_RECEIVED;
+      entryEvent.reason = 'manga_start_import';
+      entryEvent.contentType = ImportFlowContentType.MANGA;
+      entryEvent.fileCount = this.selectedFiles.length;
+      entryEvent.batchMode = this.selectedFiles.length >= 2;
+      entryEvent.sourceUri = this.selectedFiles[0];
+      entryEvent.displayName = this.selectedFiles.length === 1 ? this.getFileNameFromUri(this.selectedFiles[0]) : '批量漫画导入';
+      this.recordImportFlowEvent(entryEvent);
 
-    // 如果选择了多个文件（2个或以上），显示批量导入配置对话框
-    if (this.selectedFiles.length >= 2) {
-      await this.showBatchMangaImportDialog();
-      return;
+      if (this.selectedFiles.length >= 2) {
+        await this.showBatchMangaImportDialog(pageGeneration);
+        return;
+      }
+
+      await this.processFileWithDialog(this.selectedFiles[0], pageGeneration);
+    } catch (error) {
+      logger.error(TAG, '启动漫画导入失败', String(error));
+      if (this.isCurrentPageGeneration(pageGeneration)) {
+        this.updateProgress(ImportStatus.ERROR, `导入准备失败: ${error}`, 0);
+        this.showToast(`导入准备失败: ${error instanceof Error ? error.message : String(error)}`);
+        this.endCurrentImportFlow('manga_start_import_failed');
+      }
+    } finally {
+      if (this.isCurrentPageGeneration(pageGeneration)) {
+        this.isMangaDialogOpening = false;
+      }
     }
-
-    // 单个文件：先解析结构，然后决定是否需要显示配置对话框
-    await this.processFileWithDialog(this.selectedFiles[0]);
   }
   
   /**
    * 显示批量漫画导入配置对话框
    */
-  private async showBatchMangaImportDialog(): Promise<void> {
+  private async showBatchMangaImportDialog(pageGeneration: number): Promise<void> {
     // 先查找可能的重复漫画
-    await this.findExistingMangaCandidatesForBatch();
-    
-    this.batchMangaImportDialogController = new CustomDialogController({
+    await this.findExistingMangaCandidatesForBatch(pageGeneration);
+    if (!this.isCurrentPageGeneration(pageGeneration)) {
+      return;
+    }
+
+    const analysisGeneration: string = this.createBatchAnalysisGeneration();
+    const analysisSessionId: string = this.currentImportFlowId;
+    this.beginBatchDialogAnalysis(analysisGeneration);
+    try {
+      this.batchMangaImportDialogController = new CustomDialogController({
       builder: BatchMangaImportDialog({
         themeState: this.themeState,
         fileUris: this.selectedFiles,
         existingMangaCandidates: this.existingMangaCandidates,
         parseFileStructure: async (fileUri: string): Promise<ParsedArchiveStructure | null> => {
-          return await this.parseFileStructureForBatch(fileUri);
+          return await this.parseFileStructureForBatch(fileUri, analysisGeneration, analysisSessionId);
+        },
+        onReleaseParsedStructure: (fileUri: string, structure: ParsedArchiveStructure) => {
+          this.releaseLateBatchArchiveStructure(fileUri, structure, analysisGeneration);
+        },
+        onAnalysisSettled: () => {
+          this.finishBatchDialogAnalysis(analysisGeneration);
+        },
+        onAnalysisGenerationInvalidated: () => {
+          this.invalidateBatchAnalysisGeneration(analysisGeneration);
         },
         parseComicInfoXml: (xmlContent: string): PrefilledComicInfo | null => {
           return this.parseComicInfoXml(xmlContent);
         },
         onFlowEvent: (event: ImportFlowEvent) => {
+          event.sessionId = analysisSessionId;
           this.recordImportFlowEvent(event);
         },
         onConfirm: (result: BatchMangaImportDialogResult) => {
-          this.handleBatchMangaImportDialogResult(result);
+          if (!this.isCurrentPageGeneration(pageGeneration)) {
+            this.invalidateBatchAnalysisGeneration(analysisGeneration);
+            return;
+          }
+          if (this.isMangaImportRunning) {
+            logger.warn(TAG, '批量漫画导入已在运行，忽略重复确认');
+            return;
+          }
+          if (this.mangaImportOwnerToken !== 0) {
+            logger.warn(TAG, '已有漫画提交任务，忽略重复确认');
+            return;
+          }
+          const ownerToken: number = this.beginMangaImportCommit();
+          this.isMangaImportRunning = true;
+          this.invalidateBatchAnalysisGeneration(analysisGeneration);
+          this.batchMangaImportDialogController = null;
+          void (async (): Promise<void> => {
+            try {
+              await this.handleBatchMangaImportDialogResult(result, pageGeneration);
+            } catch (error) {
+              logger.error(TAG, `批量漫画导入异常: ${String(error)}`);
+            } finally {
+              this.finishMangaImport(pageGeneration, ownerToken);
+            }
+          })();
         },
         onCancel: () => {
-          this.updateProgress(ImportStatus.IDLE, '已取消批量导入', 0);
-          this.endCurrentImportFlow('batch_manga_cancelled');
+          this.invalidateBatchAnalysisGeneration(analysisGeneration);
+          if (this.isCurrentPageGeneration(pageGeneration)) {
+            this.batchMangaImportDialogController = null;
+            this.updateProgress(ImportStatus.IDLE, '已取消批量导入', 0);
+            this.endCurrentImportFlow('batch_manga_cancelled');
+            this.isMangaImportRunning = false;
+          }
         }
       }),
       autoCancel: false,
       customStyle: true,
       alignment: DialogAlignment.Center
-    });
-
-    this.batchMangaImportDialogController.open();
+      });
+      this.batchMangaImportDialogController.open();
+    } catch (error) {
+      this.invalidateBatchAnalysisGeneration(analysisGeneration);
+      this.finishBatchDialogAnalysis(analysisGeneration);
+      if (this.isCurrentPageGeneration(pageGeneration)) {
+        this.batchMangaImportDialogController = null;
+      }
+      throw error as Error;
+    }
+    if (!this.isCurrentPageGeneration(pageGeneration)) {
+      return;
+    }
     this.recordSimpleImportFlowEvent(
       ImportFlowEventType.DIALOG_OPENED,
       'batch_manga_dialog_opened',
@@ -5310,17 +6207,25 @@ struct DataManagementPage {
   /**
    * 为批量导入查找可能的重复漫画
    */
-  private async parseArchiveStructureWithPasswordRetry(fileUri: string): Promise<CompressionParsedStructure> {
-    const cachedParsed = this.importArchiveParseCache.get(fileUri);
+  private async parseArchiveStructureWithPasswordRetry(
+    fileUri: string,
+    analysisGeneration: string = '',
+    fixedSessionId: string = ''
+  ): Promise<CompressionParsedStructure> {
+    const cachedParsed = this.importArchiveParseCache.get(fileUri, analysisGeneration);
     if (cachedParsed !== null) {
+      if (this.isBatchAnalysisGenerationActive(analysisGeneration)) {
+        this.trackArchiveStructure(fileUri, cachedParsed, analysisGeneration);
+      }
       const cacheEvent: ImportFlowEvent = new ImportFlowEvent();
       cacheEvent.eventType = ImportFlowEventType.ARCHIVE_PARSE_CACHE_HIT;
       cacheEvent.reason = 'archive_parse_cache_hit';
       cacheEvent.contentType = ImportFlowContentType.MANGA;
+      cacheEvent.sessionId = fixedSessionId;
       cacheEvent.sourceUri = fileUri;
       cacheEvent.fileName = this.getFileNameFromUri(fileUri);
       cacheEvent.cacheHit = true;
-      cacheEvent.cacheKey = this.importArchiveParseCache.buildKey(fileUri);
+      cacheEvent.cacheKey = this.importArchiveParseCache.buildKey(fileUri, analysisGeneration);
       cacheEvent.detail = `chapters=${cachedParsed.detectedChapters.length}, pages=${cachedParsed.totalImageCount}`;
       this.recordImportFlowEvent(cacheEvent);
       return cachedParsed;
@@ -5331,32 +6236,66 @@ struct DataManagementPage {
     startedEvent.eventType = ImportFlowEventType.ARCHIVE_PARSE_STARTED;
     startedEvent.reason = 'archive_parse_started';
     startedEvent.contentType = ImportFlowContentType.MANGA;
+    startedEvent.sessionId = fixedSessionId;
     startedEvent.sourceUri = fileUri;
     startedEvent.fileName = this.getFileNameFromUri(fileUri);
     this.recordImportFlowEvent(startedEvent);
+    const parseSessionId: string = startedEvent.sessionId;
 
     const cachedPassword = this.archivePasswordCache.get(fileUri);
     if (cachedPassword) {
       try {
         const parsed = await this.compressionUtils.parseArchiveStructure(fileUri, { password: cachedPassword });
-        return this.completeArchiveStructureParse(fileUri, parsed, startedAt, 'cached_password');
+        return this.completeArchiveStructureParse(
+          fileUri,
+          parsed,
+          startedAt,
+          'cached_password',
+          parseSessionId,
+          analysisGeneration
+        );
       } catch (error) {
+        this.throwIfBatchAnalysisGenerationInvalidated(
+          analysisGeneration,
+          fileUri,
+          startedAt,
+          parseSessionId,
+          'batch_generation_invalidated_after_cached_password'
+        );
         if (!this.compressionUtils.isPasswordRequiredError(error)) {
-          this.recordArchiveStructureParseFailure(fileUri, startedAt, String(error), 'cached_password_failed');
+          this.recordArchiveStructureParseFailure(fileUri, startedAt, String(error), 'cached_password_failed', parseSessionId);
           throw error as Error;
         }
-        this.archivePasswordCache.delete(fileUri);
+        if (this.isBatchAnalysisGenerationActive(analysisGeneration)) {
+          this.archivePasswordCache.delete(fileUri);
+        }
       }
     }
 
     if (this.lastArchivePassword) {
       try {
         const parsed = await this.compressionUtils.parseArchiveStructure(fileUri, { password: this.lastArchivePassword });
-        this.archivePasswordCache.set(fileUri, this.lastArchivePassword);
-        return this.completeArchiveStructureParse(fileUri, parsed, startedAt, 'last_password');
+        if (this.isBatchAnalysisGenerationActive(analysisGeneration)) {
+          this.archivePasswordCache.set(fileUri, this.lastArchivePassword);
+        }
+        return this.completeArchiveStructureParse(
+          fileUri,
+          parsed,
+          startedAt,
+          'last_password',
+          parseSessionId,
+          analysisGeneration
+        );
       } catch (error) {
+        this.throwIfBatchAnalysisGenerationInvalidated(
+          analysisGeneration,
+          fileUri,
+          startedAt,
+          parseSessionId,
+          'batch_generation_invalidated_after_last_password'
+        );
         if (!this.compressionUtils.isPasswordRequiredError(error)) {
-          this.recordArchiveStructureParseFailure(fileUri, startedAt, String(error), 'last_password_failed');
+          this.recordArchiveStructureParseFailure(fileUri, startedAt, String(error), 'last_password_failed', parseSessionId);
           throw error as Error;
         }
       }
@@ -5364,28 +6303,65 @@ struct DataManagementPage {
 
     try {
       const parsed = await this.compressionUtils.parseArchiveStructure(fileUri);
-      return this.completeArchiveStructureParse(fileUri, parsed, startedAt, 'no_password');
+      return this.completeArchiveStructureParse(
+        fileUri,
+        parsed,
+        startedAt,
+        'no_password',
+        parseSessionId,
+        analysisGeneration
+      );
     } catch (error) {
+      this.throwIfBatchAnalysisGenerationInvalidated(
+        analysisGeneration,
+        fileUri,
+        startedAt,
+        parseSessionId,
+        'batch_generation_invalidated_after_no_password'
+      );
       if (!this.compressionUtils.isPasswordRequiredError(error)) {
-        this.recordArchiveStructureParseFailure(fileUri, startedAt, String(error), 'no_password_failed');
+        this.recordArchiveStructureParseFailure(fileUri, startedAt, String(error), 'no_password_failed', parseSessionId);
         throw error as Error;
       }
+    }
+
+    if (!this.isBatchAnalysisGenerationActive(analysisGeneration)) {
+      this.recordArchiveStructureParseFailure(
+        fileUri,
+        startedAt,
+        '批量解析代次已失效',
+        'batch_generation_invalidated_before_password',
+        parseSessionId
+      );
+      throw new UserSkipError('批量解析已取消');
     }
 
     const passwordRequiredEvent: ImportFlowEvent = new ImportFlowEvent();
     passwordRequiredEvent.eventType = ImportFlowEventType.PASSWORD_REQUIRED;
     passwordRequiredEvent.reason = 'archive_password_required';
     passwordRequiredEvent.contentType = ImportFlowContentType.MANGA;
+    passwordRequiredEvent.sessionId = parseSessionId;
     passwordRequiredEvent.sourceUri = fileUri;
     passwordRequiredEvent.fileName = this.getFileNameFromUri(fileUri);
     this.recordImportFlowEvent(passwordRequiredEvent);
 
     let errorMessage = '该压缩包需要密码才能继续导入';
     for (let attempt = 0; attempt < 3; attempt++) {
+      if (!this.isBatchAnalysisGenerationActive(analysisGeneration)) {
+        this.recordArchiveStructureParseFailure(
+          fileUri,
+          startedAt,
+          '批量解析代次已失效',
+          'batch_generation_invalidated_before_password_retry',
+          parseSessionId
+        );
+        throw new UserSkipError('批量解析已取消');
+      }
       const retryEvent: ImportFlowEvent = new ImportFlowEvent();
       retryEvent.eventType = ImportFlowEventType.PASSWORD_RETRY;
       retryEvent.reason = 'archive_password_retry';
       retryEvent.contentType = ImportFlowContentType.MANGA;
+      retryEvent.sessionId = parseSessionId;
       retryEvent.sourceUri = fileUri;
       retryEvent.fileName = this.getFileNameFromUri(fileUri);
       retryEvent.currentIndex = attempt + 1;
@@ -5397,26 +6373,64 @@ struct DataManagementPage {
         this.lastArchivePassword,
         errorMessage
       );
+      if (!this.isBatchAnalysisGenerationActive(analysisGeneration)) {
+        this.recordArchiveStructureParseFailure(
+          fileUri,
+          startedAt,
+          '批量解析代次已失效',
+          'batch_generation_invalidated_during_password',
+          parseSessionId
+        );
+        throw new UserSkipError('批量解析已取消');
+      }
       if (!password) {
-        this.recordArchiveStructureParseFailure(fileUri, startedAt, '用户取消输入压缩包密码', 'password_cancelled');
+        this.recordArchiveStructureParseFailure(
+          fileUri,
+          startedAt,
+          '用户取消输入压缩包密码',
+          'password_cancelled',
+          parseSessionId
+        );
         throw new UserSkipError('用户取消输入压缩包密码');
       }
 
       try {
         const parsed = await this.compressionUtils.parseArchiveStructure(fileUri, { password: password });
-        this.lastArchivePassword = password;
-        this.archivePasswordCache.set(fileUri, password);
-        return this.completeArchiveStructureParse(fileUri, parsed, startedAt, 'password_retry_success');
+        if (this.isBatchAnalysisGenerationActive(analysisGeneration)) {
+          this.lastArchivePassword = password;
+          this.archivePasswordCache.set(fileUri, password);
+        }
+        return this.completeArchiveStructureParse(
+          fileUri,
+          parsed,
+          startedAt,
+          'password_retry_success',
+          parseSessionId,
+          analysisGeneration
+        );
       } catch (error) {
+        this.throwIfBatchAnalysisGenerationInvalidated(
+          analysisGeneration,
+          fileUri,
+          startedAt,
+          parseSessionId,
+          'batch_generation_invalidated_after_password_retry'
+        );
         if (!this.compressionUtils.isPasswordRequiredError(error)) {
-          this.recordArchiveStructureParseFailure(fileUri, startedAt, String(error), 'password_retry_failed');
+          this.recordArchiveStructureParseFailure(fileUri, startedAt, String(error), 'password_retry_failed', parseSessionId);
           throw error as Error;
         }
         errorMessage = '密码不正确，请重试';
       }
     }
 
-    this.recordArchiveStructureParseFailure(fileUri, startedAt, '压缩包密码错误', 'password_retry_exhausted');
+    this.recordArchiveStructureParseFailure(
+      fileUri,
+      startedAt,
+      '压缩包密码错误',
+      'password_retry_exhausted',
+      parseSessionId
+    );
     throw new Error('压缩包密码错误');
   }
 
@@ -5424,29 +6438,44 @@ struct DataManagementPage {
     fileUri: string,
     parsed: CompressionParsedStructure,
     startedAt: number,
-    reason: string
+    reason: string,
+    sessionId: string,
+    analysisGeneration: string
   ): CompressionParsedStructure {
-    this.importArchiveParseCache.set(fileUri, parsed);
+    if (this.isBatchAnalysisGenerationActive(analysisGeneration)) {
+      this.importArchiveParseCache.set(fileUri, parsed, analysisGeneration);
+      this.trackArchiveStructure(fileUri, parsed, analysisGeneration);
+    } else {
+      logger.info(TAG, `忽略已失效批量解析结果: generation=${analysisGeneration}, file=${fileUri}`);
+    }
     const event: ImportFlowEvent = new ImportFlowEvent();
     event.eventType = ImportFlowEventType.ARCHIVE_PARSE_COMPLETED;
     event.reason = reason;
     event.contentType = ImportFlowContentType.MANGA;
+    event.sessionId = sessionId;
     event.sourceUri = fileUri;
     event.fileName = this.getFileNameFromUri(fileUri);
     event.chapterCount = parsed.detectedChapters.length;
     event.pageCount = parsed.totalImageCount;
     event.elapsedMs = Date.now() - startedAt;
-    event.cacheKey = this.importArchiveParseCache.buildKey(fileUri);
+    event.cacheKey = this.importArchiveParseCache.buildKey(fileUri, analysisGeneration);
     event.detail = `chapters=${parsed.detectedChapters.length}, pages=${parsed.totalImageCount}, rootImages=${parsed.rootImageCount}`;
     this.recordImportFlowEvent(event);
     return parsed;
   }
 
-  private recordArchiveStructureParseFailure(fileUri: string, startedAt: number, errorMessage: string, reason: string): void {
+  private recordArchiveStructureParseFailure(
+    fileUri: string,
+    startedAt: number,
+    errorMessage: string,
+    reason: string,
+    sessionId: string
+  ): void {
     const event: ImportFlowEvent = new ImportFlowEvent();
     event.eventType = ImportFlowEventType.ARCHIVE_PARSE_FAILED;
     event.reason = reason;
     event.contentType = ImportFlowContentType.MANGA;
+    event.sessionId = sessionId;
     event.sourceUri = fileUri;
     event.fileName = this.getFileNameFromUri(fileUri);
     event.success = false;
@@ -5587,7 +6616,10 @@ struct DataManagementPage {
     throw new Error('压缩包密码错误');
   }
 
-  private async findExistingMangaCandidatesForBatch(): Promise<void> {
+  private async findExistingMangaCandidatesForBatch(pageGeneration: number): Promise<void> {
+    if (!this.isCurrentPageGeneration(pageGeneration)) {
+      return;
+    }
     const cacheTitle: string = 'batch';
     const cachedCandidates = this.importDuplicateDetectionCache.get(this.currentImportFlowId, cacheTitle, 'manga', 'batch');
     if (cachedCandidates !== null) {
@@ -5612,11 +6644,16 @@ struct DataManagementPage {
     try {
       // 获取所有漫画记录
       const allComics: ComicRecord[] = await this.dataManager.getAllComics();
+      if (!this.isCurrentPageGeneration(pageGeneration)) {
+        return;
+      }
       
       // 转换为候选格式
       const candidates: ExistingMangaCandidate[] = [];
-      const comicsToProcess = allComics.slice(0, 20);
-      for (const comic of comicsToProcess) {
+      for (const comic of allComics) {
+        if (comic.sourceId !== 'local_import' && comic.sourceId !== 'download_import') {
+          continue;
+        }
         const candidate: ExistingMangaCandidate = {
           id: comic.id,
           title: comic.title,
@@ -5641,6 +6678,9 @@ struct DataManagementPage {
       logger.info(TAG, `批量导入找到 ${this.existingMangaCandidates.length} 个已有漫画候选`);
     } catch (error) {
       logger.error(TAG, `查找已有漫画失败: ${error}`);
+      if (!this.isCurrentPageGeneration(pageGeneration)) {
+        return;
+      }
       this.existingMangaCandidates = [];
       const failedEvent: ImportFlowEvent = new ImportFlowEvent();
       failedEvent.eventType = ImportFlowEventType.ERROR;
@@ -5658,21 +6698,58 @@ struct DataManagementPage {
    * 为批量导入解析文件结构
    * 支持压缩包和文件夹（解压失败时回退到文件夹扫描）
    */
-  private async parseFileStructureForBatch(fileUri: string): Promise<ParsedArchiveStructure | null> {
+  private async parseFileStructureForBatch(
+    fileUri: string,
+    analysisGeneration: string,
+    analysisSessionId: string
+  ): Promise<ParsedArchiveStructure | null> {
     try {
+      if (fileUri.startsWith('picked-images:')) {
+        const pickedStructure: CompressionParsedStructure = await this.stagePickedImageGroup(fileUri);
+        if (!this.isBatchAnalysisGenerationActive(analysisGeneration)) {
+          await this.compressionUtils.cleanupParsedArchiveStructure(pickedStructure);
+          return null;
+        }
+        this.trackArchiveStructure(fileUri, pickedStructure, analysisGeneration);
+        return this.convertParsedStructure(pickedStructure);
+      }
+      if (fileUri.startsWith('folder-flat:')) {
+        const folderPath: string = this.resolveLocalImportPath(fileUri.substring('folder-flat:'.length));
+        const flatStructure: CompressionParsedStructure =
+          await this.compressionUtils.parseFlatImageFolderAsArchiveStructure(folderPath);
+        if (!this.isBatchAnalysisGenerationActive(analysisGeneration)) {
+          return null;
+        }
+        return this.convertParsedStructure(flatStructure);
+      }
       // 检查是否为文件夹类型
       if (fileUri.startsWith('folder:')) {
-        const folderPath = fileUri.substring(7);
-        return await this.convertParsedStructure(
-          await this.compressionUtils.parseFolderAsArchiveStructure(folderPath)
-        );
+        const folderPath = this.resolveLocalImportPath(fileUri.substring(7));
+        const folderStructure: CompressionParsedStructure =
+          await this.compressionUtils.parseFolderAsArchiveStructure(folderPath);
+        if (!this.isBatchAnalysisGenerationActive(analysisGeneration)) {
+          return null;
+        }
+        return await this.convertParsedStructure(folderStructure);
       }
       
       // 尝试作为压缩包解析
       try {
-        const parsedStructure = await this.parseArchiveStructureWithPasswordRetry(fileUri);
+        const parsedStructure = await this.parseArchiveStructureWithPasswordRetry(
+          fileUri,
+          analysisGeneration,
+          analysisSessionId
+        );
+        if (!this.isBatchAnalysisGenerationActive(analysisGeneration)) {
+          const staleStructure: ParsedArchiveStructure = this.convertParsedStructure(parsedStructure);
+          this.releaseLateBatchArchiveStructure(fileUri, staleStructure, analysisGeneration);
+          return null;
+        }
         return this.convertParsedStructure(parsedStructure);
       } catch (archiveError) {
+        if (!this.isBatchAnalysisGenerationActive(analysisGeneration)) {
+          return null;
+        }
         // 解压失败，尝试将路径当作文件夹扫描
         logger.warn(TAG, `解压失败，尝试作为文件夹解析: ${fileUri}`, String(archiveError));
         try {
@@ -5682,7 +6759,7 @@ struct DataManagementPage {
             localPath = fileUri.replace('file://', '');
           }
           const parsedStructure = await this.compressionUtils.parseFolderAsArchiveStructure(localPath);
-          if (parsedStructure.totalImageCount > 0) {
+          if (parsedStructure.totalImageCount > 0 && this.isBatchAnalysisGenerationActive(analysisGeneration)) {
             return this.convertParsedStructure(parsedStructure);
           }
         } catch (folderError) {
@@ -5730,12 +6807,17 @@ struct DataManagementPage {
   /**
    * 处理批量漫画导入对话框结果
    */
-  private async handleBatchMangaImportDialogResult(result: BatchMangaImportDialogResult): Promise<void> {
+  private async handleBatchMangaImportDialogResult(
+    result: BatchMangaImportDialogResult,
+    pageGeneration: number = this.pageLifecycleGeneration
+  ): Promise<void> {
     const batchStartedAt: number = Date.now();
     try {
-      this.importResults = [];
-      this.importResultDetails = [];
-      this.showResults = false;
+      if (this.isCurrentPageGeneration(pageGeneration)) {
+        this.importResults = [];
+        this.importResultDetails = [];
+        this.showResults = false;
+      }
       
       const totalGroups = result.groups.length;
       let processedGroups = 0;
@@ -5762,7 +6844,9 @@ struct DataManagementPage {
         try {
           await this.importMangaGroup(group);
           successfulImports++;
-          this.importResults.push(`✅ ${group.title}: 导入成功 (${group.chapters.length} 章节)`);
+          if (this.isCurrentPageGeneration(pageGeneration)) {
+            this.importResults.push(`✅ ${group.title}: 导入成功 (${group.chapters.length} 章节)`);
+          }
           const progressEvent: ImportFlowEvent = new ImportFlowEvent();
           progressEvent.eventType = ImportFlowEventType.COPY_PROGRESS;
           progressEvent.reason = 'batch_manga_group_imported';
@@ -5773,7 +6857,9 @@ struct DataManagementPage {
           progressEvent.totalCount = totalGroups;
           this.recordImportFlowEvent(progressEvent);
         } catch (error) {
-          this.importResults.push(`❌ ${group.title}: 导入失败 - ${error}`);
+          if (this.isCurrentPageGeneration(pageGeneration)) {
+            this.importResults.push(`❌ ${group.title}: 导入失败 - ${error}`);
+          }
           logger.error(TAG, `导入漫画分组失败: ${group.title}`, String(error));
           const failedEvent: ImportFlowEvent = new ImportFlowEvent();
           failedEvent.eventType = ImportFlowEventType.ERROR;
@@ -5791,7 +6877,9 @@ struct DataManagementPage {
       }
       
       this.updateProgress(ImportStatus.COMPLETED, `导入完成，成功 ${successfulImports}/${totalGroups} 部漫画`, 100);
-      this.showResults = true;
+      if (this.isCurrentPageGeneration(pageGeneration)) {
+        this.showResults = true;
+      }
       
       // 显示导入结果Toast
       if (successfulImports > 0) {
@@ -5801,7 +6889,9 @@ struct DataManagementPage {
       }
       
       // 清除选择的文件
-      this.selectedFiles = [];
+      if (this.isCurrentPageGeneration(pageGeneration)) {
+        this.selectedFiles = [];
+      }
       
       // 发布导入完成事件
       if (successfulImports > 0) {
@@ -5830,8 +6920,10 @@ struct DataManagementPage {
       failedEvent.elapsedMs = Date.now() - batchStartedAt;
       failedEvent.errorMessage = String(error);
       this.recordImportFlowEvent(failedEvent);
-      this.updateProgress(ImportStatus.ERROR, `批量导入失败: ${error}`, 0);
-      this.showToast(`批量导入失败: ${error instanceof Error ? error.message : String(error)}`);
+      if (this.isCurrentPageGeneration(pageGeneration)) {
+        this.updateProgress(ImportStatus.ERROR, `批量导入失败: ${error}`, 0);
+        this.showToast(`批量导入失败: ${error instanceof Error ? error.message : String(error)}`);
+      }
       this.endCurrentImportFlow('batch_manga_failed');
     }
   }
@@ -5839,28 +6931,62 @@ struct DataManagementPage {
   /**
    * 导入单个漫画分组
    */
+  private convertBatchDialogMangaStatus(status: BatchDialogMangaStatus): MangaStatus {
+    switch (status) {
+      case BatchDialogMangaStatus.ONGOING:
+        return MangaStatus.ONGOING;
+      case BatchDialogMangaStatus.COMPLETED:
+        return MangaStatus.COMPLETED;
+      case BatchDialogMangaStatus.HIATUS:
+        return MangaStatus.HIATUS;
+      case BatchDialogMangaStatus.CANCELLED:
+        return MangaStatus.CANCELLED;
+      default:
+        return MangaStatus.UNKNOWN;
+    }
+  }
+
   private async importMangaGroup(group: MangaGroupResult): Promise<void> {
-    let mangaId: string;
+    if (group.chapters.length <= 0) {
+      throw new Error(`漫画 ${group.title} 没有可导入章节`);
+    }
+    for (const chapter of group.chapters) {
+      if (chapter.parsedStructure === null || chapter.sourcePath.trim().length <= 0 || chapter.pageCount <= 0) {
+        throw new Error(`漫画 ${group.title} 包含无效章节: ${chapter.title}`);
+      }
+    }
+    let mangaId: string = '';
+    let createdMangaId: string = '';
+    const createdChapterIds: string[] = [];
     const dbStartedAt: number = Date.now();
-    
-    if (group.mergeToExisting && group.targetMangaId) {
-      // 合并到已有漫画
-      mangaId = group.targetMangaId;
-      logger.info(TAG, `合并到已有漫画: ${mangaId}`);
-    } else {
+    try {
+      if (group.mergeToExisting) {
+        const targetMangaId: string = group.targetMangaId || '';
+        if (targetMangaId.trim().length <= 0) {
+          throw new Error(`漫画 ${group.title} 已选择合并但缺少目标漫画ID`);
+        }
+        const existingManga: ComicRecord | null = await this.dataManager.getComicInfo(targetMangaId);
+        if (existingManga === null) {
+          throw new Error(`合并目标漫画不存在: ${targetMangaId}`);
+        }
+        mangaId = targetMangaId;
+        logger.info(TAG, `合并到已有漫画: ${mangaId}`);
+      } else {
       // 创建新漫画
       const comicInfoInput: ComicInfoInput = {
         title: group.title,
         author: group.author,
         description: group.description,
-        coverUrl: group.selectedCoverPath || '',
+        coverUrl: '',
         sourceId: 'local_import',
         externalId: `local_${generateUUID()}`,
-        status: MangaStatus.UNKNOWN,
+        status: this.convertBatchDialogMangaStatus(group.status),
         tags: group.tags,
         rating: 0,
         chapterCount: group.chapters.length,
-        lastUpdateTime: Date.now()
+        lastUpdateTime: Date.now(),
+        webUrl: group.webUrl,
+        isNSFW: group.isNSFW
       };
       
       const dbStartedEvent: ImportFlowEvent = new ImportFlowEvent();
@@ -5871,11 +6997,8 @@ struct DataManagementPage {
       dbStartedEvent.chapterCount = group.chapters.length;
       this.recordImportFlowEvent(dbStartedEvent);
       mangaId = await this.dataManager.addComicInfo(comicInfoInput);
+      createdMangaId = mangaId;
       logger.info(TAG, `创建新漫画: ${mangaId}, 标题: ${group.title}`);
-      
-      // 添加到收藏
-      const dataService = DataService.getInstance();
-      await dataService.addToFavorites(mangaId, group.tags);
       
       // 处理封面
       if (group.selectedCoverPath) {
@@ -5888,8 +7011,8 @@ struct DataManagementPage {
         coverEvent.targetPath = group.selectedCoverPath;
         this.recordImportFlowEvent(coverEvent);
       }
-    }
-    const dbCompletedEvent: ImportFlowEvent = new ImportFlowEvent();
+      }
+      const dbCompletedEvent: ImportFlowEvent = new ImportFlowEvent();
     dbCompletedEvent.eventType = ImportFlowEventType.DB_WRITE_COMPLETED;
     dbCompletedEvent.reason = 'batch_manga_record_ready';
     dbCompletedEvent.contentType = ImportFlowContentType.MANGA;
@@ -5897,42 +7020,134 @@ struct DataManagementPage {
     dbCompletedEvent.chapterCount = group.chapters.length;
     dbCompletedEvent.elapsedMs = Date.now() - dbStartedAt;
     dbCompletedEvent.detail = `mangaId=${mangaId}`;
-    this.recordImportFlowEvent(dbCompletedEvent);
+      this.recordImportFlowEvent(dbCompletedEvent);
+
+      // 导入所有章节
+      for (const chapter of group.chapters) {
+        const chapterCreation: ChapterInfoCreationResult =
+          await this.importChapterFromBatch(mangaId, chapter, group.title);
+        if (!chapterCreation.created) {
+          throw new Error(`章节已存在，已停止重复导入: ${chapter.title}`);
+        }
+        createdChapterIds.push(chapterCreation.id);
+      }
+      await this.dataManager.refreshComicChapterCount(mangaId);
+
+      await this.validateImportedMangaGroup(mangaId, createdChapterIds, group.chapters.length);
+      if (createdMangaId.length > 0) {
+        // 只有章节和页面全部落盘后才进入收藏书架，避免失败中的父记录
+        // 先以空壳形式出现在用户书架。
+        await DataService.getInstance().addToFavorites(mangaId, group.tags);
+      }
     
-    // 导入所有章节
-    for (const chapter of group.chapters) {
-      await this.importChapterFromBatch(mangaId, chapter, group.title);
+      logger.info(TAG, `漫画 ${group.title} 导入完成，共 ${group.chapters.length} 个章节`);
+    } catch (error) {
+      if (createdMangaId.length > 0) {
+        try {
+          await this.dataManager.deleteComic(createdMangaId);
+          logger.info(TAG, `已回滚失败的漫画分组: ${group.title}, id=${createdMangaId}`);
+        } catch (rollbackError) {
+          logger.error(TAG, `回滚漫画分组失败: ${group.title}`, String(rollbackError));
+        }
+      } else {
+        for (let index: number = createdChapterIds.length - 1; index >= 0; index--) {
+          const chapterId: string = createdChapterIds[index];
+          try {
+            const chapterInfo: ChapterRecord | null = await this.dataManager.getChapterInfo(chapterId);
+            await this.dataManager.deleteChapter(chapterId);
+            if (chapterInfo?.downloadPath && chapterInfo.downloadPath.length > 0) {
+              await this.sandboxManager.deleteDirectory(chapterInfo.downloadPath, true);
+            }
+          } catch (rollbackError) {
+            logger.error(TAG, `回滚合并章节失败: ${chapterId}`, String(rollbackError));
+          }
+        }
+      }
+      throw error as Error;
     }
-    
-    // 注意：章节数已在创建漫画时设置，无需再次更新
-    logger.info(TAG, `漫画 ${group.title} 导入完成，共 ${group.chapters.length} 个章节`);
+  }
+
+  private async validateImportedMangaGroup(
+    mangaId: string,
+    createdChapterIds: string[],
+    expectedChapterCount: number
+  ): Promise<void> {
+    if (createdChapterIds.length !== expectedChapterCount) {
+      throw new Error(
+        `漫画导入章节不完整: mangaId=${mangaId}, expected=${expectedChapterCount}, actual=${createdChapterIds.length}`
+      );
+    }
+    for (const chapterId of createdChapterIds) {
+      const chapterInfo: ChapterRecord | null = await this.dataManager.getChapterInfo(chapterId);
+      if (chapterInfo === null) {
+        throw new Error(`漫画导入验证失败，章节不存在: ${chapterId}`);
+      }
+      const pages: PageRecord[] = await this.dataManager.getChapterPages(chapterId);
+      if (pages.length <= 0 || pages.length !== chapterInfo.pageCount) {
+        throw new Error(
+          `漫画导入验证失败，章节页面不完整: chapterId=${chapterId}, expected=${chapterInfo.pageCount}, actual=${pages.length}`
+        );
+      }
+    }
   }
   
   /**
    * 从批量导入结果导入单个章节
    */
-  private async importChapterFromBatch(mangaId: string, chapter: BatchChapterResult, comicTitle: string): Promise<void> {
+  private async importChapterFromBatch(
+    mangaId: string,
+    chapter: BatchChapterResult,
+    comicTitle: string
+  ): Promise<ChapterInfoCreationResult> {
     if (!chapter.parsedStructure) {
-      logger.warn(TAG, `章节 ${chapter.title} 没有解析结构，跳过`);
-      return;
+      throw new Error(`章节 ${chapter.title} 没有解析结构`);
     }
-    
-    const parsedStructure = chapter.parsedStructure;
+    if (chapter.sourcePath.trim().length <= 0 || chapter.pageCount <= 0) {
+      throw new Error(`章节 ${chapter.title} 没有可导入的图片`);
+    }
+
+    let effectiveSourcePath: string = chapter.sourcePath;
+    let effectivePreserveSource: boolean = chapter.preserveSource;
+    let stagedRootPath: string = '';
+    if (this.isMixedRootImageChapter(chapter.parsedStructure, chapter.sourcePath, chapter.pageCount)) {
+      stagedRootPath = await this.stageDirectImageChapter(chapter.sourcePath, chapter.pageCount);
+      effectiveSourcePath = stagedRootPath;
+      effectivePreserveSource = false;
+    }
     
     // 创建章节
     const chapterInfoInput: ChapterInfoInput = {
       comicId: mangaId,
       title: chapter.title,
       index: chapter.number - 1,
-      pageCount: parsedStructure.totalImageCount,
+      pageCount: chapter.pageCount,
       isDownloaded: true,
-      downloadPath: parsedStructure.extractedPath,
-      publishTime: Date.now(),
-      externalId: `local_chapter_${generateUUID()}`
+      downloadPath: effectiveSourcePath,
+      publishTime: chapter.publishTime,
+      externalId: await createLocalMangaChapterExternalId(
+        mangaId,
+        chapter.fileUri,
+        chapter.sourcePath,
+        chapter.parsedStructure?.extractedPath || '',
+        chapter.number
+      )
     };
     
     const dbStartedAt: number = Date.now();
-    const chapterId = await this.dataManager.addChapterInfo(chapterInfoInput);
+    const chapterCreation: ChapterInfoCreationResult =
+      await this.dataManager.addChapterInfoWithResult(chapterInfoInput);
+    const chapterId: string = chapterCreation.id;
+    if (!chapterCreation.created) {
+      if (stagedRootPath.length > 0) {
+        try {
+          await this.sandboxManager.deleteDirectory(stagedRootPath, true);
+        } catch (cleanupError) {
+          logger.warn(TAG, `清理重复章节暂存目录失败: ${stagedRootPath}`, String(cleanupError));
+        }
+      }
+      logger.warn(TAG, `跳过重复章节页面写入: ${chapter.title}, chapterId=${chapterId}`);
+      return chapterCreation;
+    }
     logger.info(TAG, `创建章节: ${chapterId}, 标题: ${chapter.title}`);
     
     // 整理文件并添加页面信息
@@ -5951,15 +7166,34 @@ struct DataManagementPage {
     };
     
     const copyStartedAt: number = Date.now();
-    await this.organizeAndAddPages(comicInfoInput, chapterInfoInput, parsedStructure.extractedPath, chapterId);
+    try {
+      await this.organizeAndAddPages(
+        comicInfoInput,
+        chapterInfoInput,
+        effectiveSourcePath,
+        chapterId,
+        effectivePreserveSource,
+        chapter.pageCount
+      );
+    } catch (error) {
+      await this.dataManager.deleteChapter(chapterId);
+      if (stagedRootPath.length > 0) {
+        try {
+          await this.sandboxManager.deleteDirectory(stagedRootPath, true);
+        } catch (cleanupError) {
+          logger.warn(TAG, `清理失败根散图暂存目录失败: ${stagedRootPath}`, String(cleanupError));
+        }
+      }
+      throw error as Error;
+    }
     const copyEvent: ImportFlowEvent = new ImportFlowEvent();
     copyEvent.eventType = ImportFlowEventType.COPY_COMPLETED;
     copyEvent.reason = 'batch_chapter_organized';
     copyEvent.contentType = ImportFlowContentType.MANGA;
     copyEvent.displayName = comicTitle;
     copyEvent.fileName = chapter.title;
-    copyEvent.targetPath = parsedStructure.extractedPath;
-    copyEvent.pageCount = parsedStructure.totalImageCount;
+    copyEvent.targetPath = effectiveSourcePath;
+    copyEvent.pageCount = chapter.pageCount;
     copyEvent.elapsedMs = Date.now() - copyStartedAt;
     this.recordImportFlowEvent(copyEvent);
     const dbEvent: ImportFlowEvent = new ImportFlowEvent();
@@ -5968,25 +7202,31 @@ struct DataManagementPage {
     dbEvent.contentType = ImportFlowContentType.MANGA;
     dbEvent.displayName = comicTitle;
     dbEvent.fileName = chapter.title;
-    dbEvent.pageCount = parsedStructure.totalImageCount;
+    dbEvent.pageCount = chapter.pageCount;
     dbEvent.elapsedMs = Date.now() - dbStartedAt;
     dbEvent.detail = `chapterId=${chapterId}`;
     this.recordImportFlowEvent(dbEvent);
+    return chapterCreation;
   }
 
   /**
    * 处理单个文件（带对话框）
    * 解析压缩包结构，根据情况显示配置对话框
    */
-  private async processFileWithDialog(fileUri: string): Promise<void> {
+  private async processFileWithDialog(fileUri: string, pageGeneration: number): Promise<void> {
     const fileName = this.getFileNameFromUri(fileUri);
     
     try {
       this.updateProgress(ImportStatus.EXTRACTING, `正在解析结构: ${fileName}`, 10);
       
       let parsedStructure: CompressionParsedStructure;
-      if (fileUri.startsWith('folder:')) {
-        const folderPath = fileUri.substring(7);
+      if (fileUri.startsWith('picked-images:')) {
+        parsedStructure = await this.stagePickedImageGroup(fileUri);
+      } else if (fileUri.startsWith('folder-flat:')) {
+        const folderPath: string = this.resolveLocalImportPath(fileUri.substring('folder-flat:'.length));
+        parsedStructure = await this.compressionUtils.parseFlatImageFolderAsArchiveStructure(folderPath);
+      } else if (fileUri.startsWith('folder:')) {
+        const folderPath = this.resolveLocalImportPath(fileUri.substring(7));
         parsedStructure = await this.compressionUtils.parseFolderAsArchiveStructure(folderPath);
       } else {
         parsedStructure = await this.parseArchiveStructureWithPasswordRetry(fileUri);
@@ -6018,13 +7258,21 @@ struct DataManagementPage {
         tempDirectories: parsedStructure.tempDirectories,
         warnings: parsedStructure.warnings
       };
+      if (!this.isCurrentPageGeneration(pageGeneration)) {
+        this.releaseLateBatchArchiveStructure(fileUri, dialogStructure, '');
+        return;
+      }
       
       this.currentParsedStructure = dialogStructure;
       this.currentFileUri = fileUri;
       
       // 始终显示配置对话框，让用户确认信息和选择封面
       // 如果有ComicInfo.xml，会预填充信息供用户确认
-      await this.findExistingMangaCandidates(fileName);
+      await this.findExistingMangaCandidates(fileName, pageGeneration);
+      if (!this.isCurrentPageGeneration(pageGeneration)) {
+        this.releaseLateBatchArchiveStructure(fileUri, dialogStructure, '');
+        return;
+      }
       
       // 如果有ComicInfo.xml，预填充对话框的信息
       if (parsedStructure.hasComicInfo && parsedStructure.comicInfoContent) {
@@ -6037,11 +7285,14 @@ struct DataManagementPage {
       }
       
       // 显示配置对话框
-      this.showMangaImportDialog(fileName, dialogStructure);
+      this.showMangaImportDialog(fileName, dialogStructure, pageGeneration);
       
     } catch (error) {
       logger.error(TAG, `解析压缩包结构失败: ${fileName}`, String(error));
-      this.updateProgress(ImportStatus.ERROR, `解析失败: ${error}`, 0);
+      if (this.isCurrentPageGeneration(pageGeneration)) {
+        this.updateProgress(ImportStatus.ERROR, `解析失败: ${error}`, 0);
+        this.endCurrentImportFlow('manga_prepare_failed');
+      }
     }
   }
   
@@ -6058,12 +7309,23 @@ struct DataManagementPage {
         series: comicInfo.series || undefined,
         author: comicInfo.writer || undefined,
         description: comicInfo.summary || undefined,
-        number: comicInfo.number?.toString() || undefined
+        number: comicInfo.number?.toString() || undefined,
+        publishingStatus: comicInfo.publishingStatus?.trim() || undefined,
+        webUrl: comicInfo.web?.trim() || undefined,
+        source: comicInfo.source?.trim() || undefined,
+        publishTime: comicInfo.year
+          ? this.getPublishTimestamp(comicInfo)
+          : undefined
       };
       
       // 处理标签
-      if (comicInfo.genre) {
-        prefilledInfo.tags = comicInfo.genre.split(',').map((t: string) => t.trim()).filter((t: string) => t.length > 0);
+      const metadataTags: string[] = [comicInfo.genre || '', comicInfo.categories || '']
+        .join(',')
+        .split(/[,;，；]/)
+        .map((tag: string): string => tag.trim())
+        .filter((tag: string): boolean => tag.length > 0);
+      if (metadataTags.length > 0) {
+        prefilledInfo.tags = metadataTags;
       }
       
       return prefilledInfo;
@@ -6076,7 +7338,13 @@ struct DataManagementPage {
   /**
    * 查找可能的重复漫画
    */
-  private async findExistingMangaCandidates(fileName: string): Promise<void> {
+  private async findExistingMangaCandidates(
+    fileName: string,
+    pageGeneration: number = this.pageLifecycleGeneration
+  ): Promise<void> {
+    if (!this.isCurrentPageGeneration(pageGeneration)) {
+      return;
+    }
     const possibleTitle = removeFileExtension(fileName);
     const cachedCandidates = this.importDuplicateDetectionCache.get(this.currentImportFlowId, possibleTitle, 'manga', 'single');
     if (cachedCandidates !== null) {
@@ -6103,10 +7371,13 @@ struct DataManagementPage {
       
       // 查询数据库中的本地漫画
       const allManga: ComicRecord[] = await this.dataManager.getAllComics();
+      if (!this.isCurrentPageGeneration(pageGeneration)) {
+        return;
+      }
       const localManga: ComicRecord[] = [];
       for (let i = 0; i < allManga.length; i++) {
         const m: ComicRecord = allManga[i];
-        if (m.sourceId === 'local_import') {
+        if (m.sourceId === 'local_import' || m.sourceId === 'download_import') {
           localManga.push(m);
         }
       }
@@ -6148,6 +7419,9 @@ struct DataManagementPage {
       
     } catch (error) {
       logger.error(TAG, '查找重复漫画失败', String(error));
+      if (!this.isCurrentPageGeneration(pageGeneration)) {
+        return;
+      }
       this.existingMangaCandidates = [];
       const failedEvent: ImportFlowEvent = new ImportFlowEvent();
       failedEvent.eventType = ImportFlowEventType.ERROR;
@@ -6186,7 +7460,14 @@ struct DataManagementPage {
   /**
    * 显示漫画导入配置对话框
    */
-  private showMangaImportDialog(fileName: string, parsedStructure: ParsedArchiveStructure): void {
+  private showMangaImportDialog(
+    fileName: string,
+    parsedStructure: ParsedArchiveStructure,
+    pageGeneration: number = this.pageLifecycleGeneration
+  ): void {
+    if (!this.isCurrentPageGeneration(pageGeneration)) {
+      return;
+    }
     this.mangaImportDialogController = new CustomDialogController({
       builder: MangaImportDialog({
         themeState: this.themeState,
@@ -6197,19 +7478,41 @@ struct DataManagementPage {
         onFlowEvent: (event: ImportFlowEvent) => {
           this.recordImportFlowEvent(event);
         },
-        onConfirm: (result: MangaImportDialogResult) => {
-          this.handleMangaImportDialogResult(result);
-        },
-        onCancel: () => {
-          // 清理临时文件
-          if (this.currentParsedStructure) {
-            this.compressionUtils.cleanupParsedArchiveStructure(this.currentParsedStructure as CompressionParsedStructure);
+          onConfirm: (result: MangaImportDialogResult) => {
+            if (!this.isCurrentPageGeneration(pageGeneration)) {
+              return;
+            }
+            if (this.isMangaImportRunning) {
+              logger.warn(TAG, '漫画导入已在运行，忽略重复确认');
+              return;
+            }
+            if (this.mangaImportOwnerToken !== 0) {
+              logger.warn(TAG, '已有漫画提交任务，忽略重复确认');
+              return;
+            }
+            const ownerToken: number = this.beginMangaImportCommit();
+            this.isMangaImportRunning = true;
+            this.mangaImportDialogController = null;
+            void (async (): Promise<void> => {
+              try {
+                await this.handleMangaImportDialogResult(result, pageGeneration);
+              } catch (error) {
+                logger.error(TAG, `漫画导入异常: ${String(error)}`);
+              } finally {
+                this.finishMangaImport(pageGeneration, ownerToken);
+              }
+            })();
+          },
+          onCancel: () => {
+          if (this.isCurrentPageGeneration(pageGeneration)) {
+            this.mangaImportDialogController = null;
+            this.currentParsedStructure = null;
+            this.currentFileUri = '';
+            this.updateProgress(ImportStatus.IDLE, '已取消导入', 0);
+            this.finalizeTrackedTransferImport('import_cancelled');
+            this.endCurrentImportFlow('manga_dialog_cancelled');
+            this.isMangaImportRunning = false;
           }
-          this.currentParsedStructure = null;
-          this.currentFileUri = '';
-          this.updateProgress(ImportStatus.IDLE, '已取消导入', 0);
-          this.finalizeTrackedTransferImport('import_cancelled');
-          this.endCurrentImportFlow('manga_dialog_cancelled');
         }
       }),
       autoCancel: false,
@@ -6218,6 +7521,9 @@ struct DataManagementPage {
     });
 
     this.mangaImportDialogController.open();
+    if (!this.isCurrentPageGeneration(pageGeneration)) {
+      return;
+    }
     this.recordSimpleImportFlowEvent(
       ImportFlowEventType.DIALOG_OPENED,
       'manga_dialog_opened',
@@ -6233,7 +7539,10 @@ struct DataManagementPage {
   /**
    * 处理漫画导入对话框结果
    */
-  private async handleMangaImportDialogResult(result: MangaImportDialogResult): Promise<void> {
+  private async handleMangaImportDialogResult(
+    result: MangaImportDialogResult,
+    pageGeneration: number = this.pageLifecycleGeneration
+  ): Promise<void> {
     const importStartedAt: number = Date.now();
     try {
       this.updateProgress(ImportStatus.IMPORTING, '正在导入漫画...', 30);
@@ -6298,13 +7607,82 @@ struct DataManagementPage {
       this.finalizeTrackedTransferImport('import_failed');
       this.endCurrentImportFlow('manga_import_failed');
     } finally {
-      // 清理临时文件
-      if (this.currentParsedStructure) {
-        await this.compressionUtils.cleanupParsedArchiveStructure(this.currentParsedStructure as CompressionParsedStructure);
-      }
       this.currentParsedStructure = null;
       this.currentFileUri = '';
     }
+  }
+
+  private async rollbackSingleImport(
+    mangaId: string,
+    createdManga: boolean,
+    chapterIds: string[],
+    organizedPaths: string[]
+  ): Promise<void> {
+    if (createdManga && mangaId.length > 0) {
+      try {
+        await this.dataManager.deleteComic(mangaId);
+      } catch (rollbackError) {
+        logger.error(TAG, `回滚新建漫画失败: ${mangaId}`, String(rollbackError));
+      }
+    } else {
+      for (let i: number = chapterIds.length - 1; i >= 0; i--) {
+        const chapterId: string = chapterIds[i];
+        if (chapterId.length <= 0) {
+          continue;
+        }
+        try {
+          await this.dataManager.deleteChapter(chapterId);
+        } catch (rollbackError) {
+          logger.error(TAG, `回滚新增章节失败: ${chapterId}`, String(rollbackError));
+        }
+      }
+    }
+
+    for (const organizedPath of organizedPaths) {
+      if (organizedPath.length <= 0) {
+        continue;
+      }
+      try {
+        await this.sandboxManager.deleteDirectory(organizedPath, true);
+      } catch (cleanupError) {
+        logger.warn(TAG, `清理失败导入目录失败: ${organizedPath}`, String(cleanupError));
+      }
+    }
+  }
+
+  private async findImportedCoverPath(
+    organizedPaths: string[],
+    selectedCoverPath: string
+  ): Promise<string> {
+    const normalizedSelectedPath: string = selectedCoverPath.replace(/\\/g, '/');
+    const selectedName: string = normalizedSelectedPath.substring(normalizedSelectedPath.lastIndexOf('/') + 1);
+    const selectedDotIndex: number = selectedName.lastIndexOf('.');
+    const selectedBaseName: string = selectedDotIndex > 0
+      ? selectedName.substring(0, selectedDotIndex)
+      : selectedName;
+    let firstImagePath: string = '';
+
+    for (const organizedPath of organizedPaths) {
+      if (organizedPath.length <= 0) {
+        continue;
+      }
+      const imageFiles: ImageFileInfo[] = await this.scanImageFiles(organizedPath);
+      for (const imageFile of imageFiles) {
+        if (firstImagePath.length <= 0) {
+          firstImagePath = imageFile.path;
+        }
+        const normalizedName: string = imageFile.name.replace(/\\/g, '/');
+        const candidateName: string = normalizedName.substring(normalizedName.lastIndexOf('/') + 1);
+        const candidateDotIndex: number = candidateName.lastIndexOf('.');
+        const candidateBaseName: string = candidateDotIndex > 0
+          ? candidateName.substring(0, candidateDotIndex)
+          : candidateName;
+        if (candidateName === selectedName || candidateBaseName === selectedBaseName) {
+          return imageFile.path;
+        }
+      }
+    }
+    return firstImagePath;
   }
 
   /**
@@ -6312,7 +7690,15 @@ struct DataManagementPage {
    */
   private async importAsTankoubon(result: MangaImportDialogResult): Promise<void> {
     const parsedStructure = result.parsedStructure;
-    
+    if (parsedStructure.totalImageCount <= 0) {
+      throw new Error(`漫画 ${result.title} 未找到可导入图片`);
+    }
+    let mangaId: string = '';
+    let chapterId: string = '';
+    let organizedPath: string = '';
+    let createdManga: boolean = false;
+
+    try {
     // 创建漫画信息（使用用户选择的封面）
     const comicInfoInput: ComicInfoInput = {
       title: result.title,
@@ -6321,14 +7707,14 @@ struct DataManagementPage {
       coverUrl: result.selectedCoverPath || '',
       sourceId: 'local_import',
       externalId: `local_${generateUUID()}`,
-      status: MangaStatus.UNKNOWN,
+      status: this.convertToMangaStatus(result.publishingStatus),
       tags: result.tags,
       rating: 0,
       chapterCount: 1,
-      lastUpdateTime: Date.now()
+      lastUpdateTime: Date.now(),
+      webUrl: result.webUrl,
+      isNSFW: result.isNSFW
     };
-    
-    let mangaId: string;
     
     if (result.mergeToExisting && result.targetMangaId) {
       // 合并到已有漫画
@@ -6337,35 +7723,66 @@ struct DataManagementPage {
     } else {
       // 创建新漫画
       mangaId = await this.dataManager.addComicInfo(comicInfoInput);
+      createdManga = true;
       logger.info(TAG, `创建新漫画: ${mangaId}, 封面: ${result.selectedCoverPath}`);
-      
-      // 添加到收藏
-      const dataService = DataService.getInstance();
-      await dataService.addToFavorites(mangaId, result.tags);
     }
     
     // 创建章节
+    const chapterTitle: string = '第1话';
+    const chapterSourceUri: string = result.sourceFileUri || this.currentFileUri;
+    const chapterSourcePath: string = this.resolveSingleChapterSourcePath(parsedStructure);
     const chapterInfoInput: ChapterInfoInput = {
       comicId: mangaId,
-      title: '第1话',
+      title: chapterTitle,
       index: 0,
       pageCount: parsedStructure.totalImageCount,
       isDownloaded: true,
       downloadPath: parsedStructure.extractedPath,
-      publishTime: Date.now(),
-      externalId: `local_chapter_${generateUUID()}`
+      publishTime: result.publishTime,
+      externalId: await createLocalMangaChapterExternalId(
+        mangaId,
+        chapterSourceUri,
+        chapterSourcePath,
+        parsedStructure.extractedPath,
+        1
+      )
     };
     
-    const chapterId = await this.dataManager.addChapterInfo(chapterInfoInput);
+    const chapterCreation: ChapterInfoCreationResult =
+      await this.dataManager.addChapterInfoWithResult(chapterInfoInput);
+    if (!chapterCreation.created) {
+      throw new Error(`章节已存在，已停止重复导入: ${chapterInfoInput.title}`);
+    }
+    chapterId = chapterCreation.id;
     logger.info(TAG, `创建章节: ${chapterId}`);
     
-    // 先处理封面（在文件被移动之前）
-    if (result.selectedCoverPath) {
+    // 新建漫画先保存封面；合并目标只在章节成功后更新，避免失败覆盖既有封面。
+    if (createdManga && result.selectedCoverPath) {
       await this.processCoverImage(mangaId, result.selectedCoverPath, result.title);
     }
     
     // 整理文件并添加页面信息
-    await this.organizeAndAddPages(comicInfoInput, chapterInfoInput, parsedStructure.extractedPath, chapterId);
+    organizedPath = await this.organizeAndAddPages(
+      comicInfoInput,
+      chapterInfoInput,
+      chapterSourcePath,
+      chapterId,
+      parsedStructure.tempDirectories.length <= 0,
+      parsedStructure.totalImageCount
+    );
+    await this.validateImportedMangaGroup(mangaId, [chapterId], 1);
+    if (createdManga) {
+      await DataService.getInstance().addToFavorites(mangaId, result.tags);
+    }
+    if (!createdManga && result.selectedCoverPath) {
+      const importedCoverPath: string = await this.findImportedCoverPath(
+        [organizedPath],
+        result.selectedCoverPath
+      );
+      if (importedCoverPath.length > 0) {
+        await this.processCoverImage(mangaId, importedCoverPath, result.title);
+      }
+    }
     
     // 记录结果
     this.importResultDetails.push({
@@ -6388,6 +7805,10 @@ struct DataManagementPage {
       parsedStructure.extractedPath,
       'local_tankoubon_import_completed'
     );
+    } catch (error) {
+      await this.rollbackSingleImport(mangaId, createdManga, [chapterId], [organizedPath]);
+      throw error as Error;
+    }
   }
   
   /**
@@ -6411,7 +7832,7 @@ struct DataManagementPage {
       
       // 获取封面文件扩展名
       const ext = coverSourcePath.substring(coverSourcePath.lastIndexOf('.'));
-      const coverTargetPath = `${mangaDir}/cover${ext}`;
+      const coverTargetPath = `${mangaDir}/cover_${mangaId}${ext}`;
       
       // 复制封面文件
       await sandboxManager.copyFile(coverSourcePath, coverTargetPath);
@@ -6431,9 +7852,15 @@ struct DataManagementPage {
    */
   private async importAsSingleChapter(result: MangaImportDialogResult): Promise<void> {
     const parsedStructure = result.parsedStructure;
-    
-    let mangaId: string;
-    
+    if (parsedStructure.totalImageCount <= 0) {
+      throw new Error(`章节 ${result.chapterTitle || result.title} 未找到可导入图片`);
+    }
+    let mangaId: string = '';
+    let chapterId: string = '';
+    let organizedPath: string = '';
+    let createdManga: boolean = false;
+
+    try {
     if (result.mergeToExisting && result.targetMangaId) {
       // 合并到已有漫画
       mangaId = result.targetMangaId;
@@ -6447,19 +7874,18 @@ struct DataManagementPage {
         coverUrl: result.selectedCoverPath || '',
         sourceId: 'local_import',
         externalId: `local_${generateUUID()}`,
-        status: MangaStatus.UNKNOWN,
+        status: this.convertToMangaStatus(result.publishingStatus),
         tags: result.tags,
         rating: 0,
         chapterCount: 1,
-        lastUpdateTime: Date.now()
+        lastUpdateTime: Date.now(),
+        webUrl: result.webUrl,
+        isNSFW: result.isNSFW
       };
       
       mangaId = await this.dataManager.addComicInfo(comicInfoInput);
+      createdManga = true;
       logger.info(TAG, `创建新漫画: ${mangaId}, 封面: ${result.selectedCoverPath}`);
-      
-      // 添加到收藏
-      const dataService = DataService.getInstance();
-      await dataService.addToFavorites(mangaId, result.tags);
       
       // 处理封面
       if (result.selectedCoverPath) {
@@ -6468,19 +7894,34 @@ struct DataManagementPage {
     }
     
     // 创建章节
-    const chapterIndex = (result.chapterNumber || 1) - 1;
+    const chapterNumber: number = result.chapterNumber || 1;
+    const chapterTitle: string = result.chapterTitle || `第${chapterNumber}话`;
+    const chapterIndex: number = chapterNumber - 1;
+    const chapterSourceUri: string = result.sourceFileUri || this.currentFileUri;
+    const chapterSourcePath: string = this.resolveSingleChapterSourcePath(parsedStructure);
     const chapterInfoInput: ChapterInfoInput = {
       comicId: mangaId,
-      title: result.chapterTitle || `第${result.chapterNumber || 1}话`,
+      title: chapterTitle,
       index: chapterIndex,
       pageCount: parsedStructure.totalImageCount,
       isDownloaded: true,
       downloadPath: parsedStructure.extractedPath,
-      publishTime: Date.now(),
-      externalId: `local_chapter_${generateUUID()}`
+      publishTime: result.publishTime,
+      externalId: await createLocalMangaChapterExternalId(
+        mangaId,
+        chapterSourceUri,
+        chapterSourcePath,
+        parsedStructure.extractedPath,
+        chapterNumber
+      )
     };
     
-    const chapterId = await this.dataManager.addChapterInfo(chapterInfoInput);
+    const chapterCreation: ChapterInfoCreationResult =
+      await this.dataManager.addChapterInfoWithResult(chapterInfoInput);
+    if (!chapterCreation.created) {
+      throw new Error(`章节已存在，已停止重复导入: ${chapterInfoInput.title}`);
+    }
+    chapterId = chapterCreation.id;
     logger.info(TAG, `创建章节: ${chapterId}`);
     
     // 整理文件并添加页面信息
@@ -6491,14 +7932,34 @@ struct DataManagementPage {
       coverUrl: result.selectedCoverPath || '',
       sourceId: 'local_import',
       externalId: '',
-      status: MangaStatus.UNKNOWN,
+      status: this.convertToMangaStatus(result.publishingStatus),
       tags: result.tags,
       rating: 0,
       chapterCount: 1,
       lastUpdateTime: Date.now()
     };
     
-    await this.organizeAndAddPages(comicInfoForOrganize, chapterInfoInput, parsedStructure.extractedPath, chapterId);
+    organizedPath = await this.organizeAndAddPages(
+      comicInfoForOrganize,
+      chapterInfoInput,
+      chapterSourcePath,
+      chapterId,
+      parsedStructure.tempDirectories.length <= 0,
+      parsedStructure.totalImageCount
+    );
+    await this.validateImportedMangaGroup(mangaId, [chapterId], 1);
+    if (createdManga) {
+      await DataService.getInstance().addToFavorites(mangaId, result.tags);
+    }
+    if (!createdManga && result.selectedCoverPath) {
+      const importedCoverPath: string = await this.findImportedCoverPath(
+        [organizedPath],
+        result.selectedCoverPath
+      );
+      if (importedCoverPath.length > 0) {
+        await this.processCoverImage(mangaId, importedCoverPath, result.title);
+      }
+    }
     
     // 更新漫画章节数
     await this.updateMangaChapterCount(mangaId);
@@ -6524,14 +7985,31 @@ struct DataManagementPage {
       parsedStructure.extractedPath,
       'local_single_chapter_import_completed'
     );
+    } catch (error) {
+      await this.rollbackSingleImport(mangaId, createdManga, [chapterId], [organizedPath]);
+      throw error as Error;
+    }
   }
 
   /**
    * 以多章节模式导入
    */
   private async importAsMultiChapter(result: MangaImportDialogResult): Promise<void> {
-    let mangaId: string;
-    
+    if (result.chapters.length <= 0) {
+      throw new Error(`漫画 ${result.title} 没有可导入章节`);
+    }
+    for (const chapter of result.chapters) {
+      if (chapter.path.length <= 0 || chapter.pageCount <= 0) {
+        throw new Error(`漫画 ${result.title} 包含无效章节: ${chapter.title}`);
+      }
+    }
+    let mangaId: string = '';
+    let createdManga: boolean = false;
+    const createdChapterIds: string[] = [];
+    const organizedPaths: string[] = [];
+    const transientStagingPaths: string[] = [];
+
+    try {
     if (result.mergeToExisting && result.targetMangaId) {
       // 合并到已有漫画
       mangaId = result.targetMangaId;
@@ -6545,19 +8023,18 @@ struct DataManagementPage {
         coverUrl: result.selectedCoverPath || '',
         sourceId: 'local_import',
         externalId: `local_${generateUUID()}`,
-        status: MangaStatus.UNKNOWN,
+        status: this.convertToMangaStatus(result.publishingStatus),
         tags: result.tags,
         rating: 0,
         chapterCount: result.chapters.length,
-        lastUpdateTime: Date.now()
+        lastUpdateTime: Date.now(),
+        webUrl: result.webUrl,
+        isNSFW: result.isNSFW
       };
       
       mangaId = await this.dataManager.addComicInfo(comicInfoInput);
+      createdManga = true;
       logger.info(TAG, `创建新漫画: ${mangaId}, 封面: ${result.selectedCoverPath}`);
-      
-      // 添加到收藏
-      const dataService = DataService.getInstance();
-      await dataService.addToFavorites(mangaId, result.tags);
       
       // 处理封面
       if (result.selectedCoverPath) {
@@ -6572,19 +8049,41 @@ struct DataManagementPage {
     for (let i = 0; i < result.chapters.length; i++) {
       const chapter = result.chapters[i];
       this.updateProgress(ImportStatus.IMPORTING, `正在导入章节 ${i + 1}/${result.chapters.length}: ${chapter.title}`, 30 + (i / result.chapters.length) * 60);
+
+      let effectiveSourcePath: string = chapter.path;
+      let preserveSource: boolean = result.parsedStructure.tempDirectories.length <= 0;
+      if (this.isMixedRootImageChapter(result.parsedStructure, chapter.path, chapter.pageCount)) {
+        effectiveSourcePath = await this.stageDirectImageChapter(chapter.path, chapter.pageCount);
+        transientStagingPaths.push(effectiveSourcePath);
+        preserveSource = false;
+      }
+      const chapterNumber: number = chapter.number > 0 ? chapter.number : Math.max(1, chapter.index);
+      const chapterSourceUri: string = result.sourceFileUri || this.currentFileUri;
       
       const chapterInfoInput: ChapterInfoInput = {
         comicId: mangaId,
         title: chapter.title,
-        index: chapter.index - 1,
+        index: chapter.number > 0 ? chapter.number - 1 : Math.max(0, chapter.index - 1),
         pageCount: chapter.pageCount,
         isDownloaded: true,
-        downloadPath: chapter.path,
-        publishTime: Date.now(),
-        externalId: `local_chapter_${generateUUID()}`
+        downloadPath: effectiveSourcePath,
+        publishTime: result.publishTime,
+        externalId: await createLocalMangaChapterExternalId(
+          mangaId,
+          chapterSourceUri,
+          chapter.path,
+          result.parsedStructure.extractedPath,
+          chapterNumber
+        )
       };
       
-      const chapterId = await this.dataManager.addChapterInfo(chapterInfoInput);
+      const chapterCreation: ChapterInfoCreationResult =
+        await this.dataManager.addChapterInfoWithResult(chapterInfoInput);
+      if (!chapterCreation.created) {
+        throw new Error(`章节已存在，已停止重复导入: ${chapter.title}`);
+      }
+      const chapterId: string = chapterCreation.id;
+      createdChapterIds.push(chapterId);
       logger.info(TAG, `创建章节 ${i + 1}: ${chapterId}`);
       if (firstChapterId.length <= 0) {
         firstChapterId = chapterId;
@@ -6599,15 +8098,36 @@ struct DataManagementPage {
         coverUrl: result.selectedCoverPath || '',
         sourceId: 'local_import',
         externalId: '',
-        status: MangaStatus.UNKNOWN,
+        status: this.convertToMangaStatus(result.publishingStatus),
         tags: result.tags,
         rating: 0,
         chapterCount: result.chapters.length,
         lastUpdateTime: Date.now()
       };
       
-      await this.organizeAndAddPages(comicInfoForOrganize, chapterInfoInput, chapter.path, chapterId);
+      const organizedPath: string = await this.organizeAndAddPages(
+        comicInfoForOrganize,
+        chapterInfoInput,
+        effectiveSourcePath,
+        chapterId,
+        preserveSource,
+        chapter.pageCount
+      );
+      organizedPaths.push(organizedPath);
       totalPages += chapter.pageCount;
+    }
+    await this.validateImportedMangaGroup(mangaId, createdChapterIds, result.chapters.length);
+    if (createdManga) {
+      await DataService.getInstance().addToFavorites(mangaId, result.tags);
+    }
+    if (!createdManga && result.selectedCoverPath) {
+      const importedCoverPath: string = await this.findImportedCoverPath(
+        organizedPaths,
+        result.selectedCoverPath
+      );
+      if (importedCoverPath.length > 0) {
+        await this.processCoverImage(mangaId, importedCoverPath, result.title);
+      }
     }
     
     // 更新漫画章节数
@@ -6633,26 +8153,136 @@ struct DataManagementPage {
       result.chapters.length > 0 ? result.chapters[0].path : '',
       'local_multi_chapter_import_completed'
     );
+    } catch (error) {
+      await this.rollbackSingleImport(mangaId, createdManga, createdChapterIds, organizedPaths);
+      for (const stagingPath of transientStagingPaths) {
+        try {
+          await this.sandboxManager.deleteDirectory(stagingPath, true);
+        } catch (cleanupError) {
+          logger.debug(TAG, `根散图暂存目录已清理或不存在: ${stagingPath}`, String(cleanupError));
+        }
+      }
+      throw error as Error;
+    }
   }
 
   /**
    * 整理文件并添加页面信息
    */
+  private resolveSingleChapterSourcePath(parsedStructure: ParsedArchiveStructure): string {
+    if (parsedStructure.rootImageCount > 0 || parsedStructure.detectedChapters.length !== 1) {
+      return parsedStructure.extractedPath;
+    }
+    return parsedStructure.detectedChapters[0].path;
+  }
+
+  private async countImportableImages(directoryPath: string): Promise<number> {
+    const files: string[] = await this.sandboxManager.listDirectory(directoryPath);
+    const extensions: string[] = ['.jpg', '.jpeg', '.png', '.gif', '.bmp', '.webp', '.avif'];
+    let count: number = 0;
+    for (const fileName of files) {
+      const filePath: string = `${directoryPath}/${fileName}`;
+      if (await this.sandboxManager.isSymbolicLink(filePath)) {
+        logger.warn(TAG, `计数时跳过符号链接: ${filePath}`);
+        continue;
+      }
+      const stat = await fileIo.lstat(filePath);
+      if (stat.isDirectory()) {
+        count += await this.countImportableImages(filePath);
+        continue;
+      }
+      const lowerName: string = fileName.toLowerCase();
+      const dotIndex: number = lowerName.lastIndexOf('.');
+      const extension: string = dotIndex >= 0 ? lowerName.substring(dotIndex) : '';
+      if (extensions.includes(extension)) {
+        count += 1;
+      }
+    }
+    return count;
+  }
+
+  private isMixedRootImageChapter(
+    parsedStructure: ParsedArchiveStructure,
+    sourcePath: string,
+    pageCount: number
+  ): boolean {
+    if (parsedStructure.rootImageCount <= 0 || parsedStructure.detectedChapters.length <= 1) {
+      return false;
+    }
+    const normalizedSourcePath: string = sourcePath.replace(/\\/g, '/').replace(/\/$/, '');
+    const normalizedRootPath: string = parsedStructure.extractedPath.replace(/\\/g, '/').replace(/\/$/, '');
+    return normalizedSourcePath === normalizedRootPath && pageCount === parsedStructure.rootImageCount;
+  }
+
+  private async stageDirectImageChapter(sourcePath: string, expectedPageCount: number): Promise<string> {
+    const baseDirectory: string = this.sandboxManager.getDirectory('temp');
+    const stagingDirectory: string = `${baseDirectory}/manga_root_${generateUUID()}`;
+    await this.sandboxManager.createDirectory(stagingDirectory);
+    try {
+      const entries: string[] = await this.sandboxManager.listDirectory(sourcePath);
+      const imageExtensions: string[] = ['.jpg', '.jpeg', '.png', '.gif', '.bmp', '.webp', '.avif'];
+      let copiedPageCount: number = 0;
+      for (const entry of entries) {
+        const sourceFilePath: string = `${sourcePath}/${entry}`;
+        if (await this.sandboxManager.isSymbolicLink(sourceFilePath)) {
+          logger.warn(TAG, `根散图暂存跳过符号链接: ${sourceFilePath}`);
+          continue;
+        }
+        const stat = await fileIo.lstat(sourceFilePath);
+        if (stat.isDirectory()) {
+          continue;
+        }
+        const lowerName: string = entry.toLowerCase();
+        const dotIndex: number = lowerName.lastIndexOf('.');
+        const extension: string = dotIndex >= 0 ? lowerName.substring(dotIndex) : '';
+        if (!imageExtensions.includes(extension)) {
+          continue;
+        }
+        await this.sandboxManager.copyFile(sourceFilePath, `${stagingDirectory}/${entry}`);
+        copiedPageCount += 1;
+      }
+      if (copiedPageCount !== expectedPageCount) {
+        throw new Error(
+          `根目录散图页数不一致: 识别 ${expectedPageCount}，直属图片 ${copiedPageCount}`
+        );
+      }
+      return stagingDirectory;
+    } catch (error) {
+      try {
+        await this.sandboxManager.deleteDirectory(stagingDirectory, true);
+      } catch (cleanupError) {
+        logger.warn(TAG, `清理根散图暂存目录失败: ${stagingDirectory}`, String(cleanupError));
+      }
+      throw error as Error;
+    }
+  }
+
   private async organizeAndAddPages(
     comicInfo: ComicInfoInput,
     chapterInfo: ChapterInfoInput,
     sourcePath: string,
-    chapterId: string
-  ): Promise<void> {
+    chapterId: string,
+    preserveSource: boolean = false,
+    expectedPageCount: number = chapterInfo.pageCount
+  ): Promise<string> {
+    if (sourcePath.length <= 0) {
+      throw new Error(`章节 ${chapterInfo.title} 的源目录为空`);
+    }
+    const sourceImageCount: number = await this.countImportableImages(sourcePath);
+    if (sourceImageCount <= 0) {
+      throw new Error(`章节 ${chapterInfo.title} 未找到可导入图片`);
+    }
+    if (expectedPageCount > 0 && sourceImageCount !== expectedPageCount) {
+      throw new Error(
+        `章节 ${chapterInfo.title} 页数不一致: 识别 ${expectedPageCount}，源目录 ${sourceImageCount}`
+      );
+    }
+
     // 构造ExtractionResult
     const extractedFiles: string[] = [];
-    try {
-      const files = await this.sandboxManager.listDirectory(sourcePath);
-      for (const file of files) {
-        extractedFiles.push(file);
-      }
-    } catch (error) {
-      logger.warn(TAG, '获取文件列表失败', String(error));
+    const files: string[] = await this.sandboxManager.listDirectory(sourcePath);
+    for (const file of files) {
+      extractedFiles.push(file);
     }
     
     const extractionResult: ExtractionResult = {
@@ -6665,14 +8295,39 @@ struct DataManagementPage {
     };
     
     // 整理文件到分层存储目录
-    const organizedPath = await this.organizeImportedFiles(comicInfo, chapterInfo, extractionResult);
-    
-    if (organizedPath) {
+    let organizedPath: string = '';
+    try {
+      organizedPath = await this.organizeImportedFiles(
+        comicInfo,
+        chapterInfo,
+        extractionResult,
+        preserveSource
+      );
       // 更新章节下载路径
       await this.updateChapterDownloadPath(chapterId, organizedPath);
       
       // 添加页面信息
-      await this.addPageInfoToDatabaseFromPath(chapterId, organizedPath);
+      const addedPageCount: number = await this.addPageInfoToDatabaseFromPath(chapterId, organizedPath);
+      if (addedPageCount !== sourceImageCount) {
+        throw new Error(
+          `章节 ${chapterInfo.title} 页面写入不完整: 应为 ${sourceImageCount}，实际 ${addedPageCount}`
+        );
+      }
+      return organizedPath;
+    } catch (error) {
+      try {
+        await this.dataManager.removeChapterPages(chapterId);
+      } catch (cleanupError) {
+        logger.warn(TAG, `回滚章节页面失败: ${chapterId}`, String(cleanupError));
+      }
+      if (organizedPath.length > 0) {
+        try {
+          await this.sandboxManager.deleteDirectory(organizedPath, true);
+        } catch (cleanupError) {
+          logger.warn(TAG, `清理失败章节目录失败: ${organizedPath}`, String(cleanupError));
+        }
+      }
+      throw error as Error;
     }
   }
 
@@ -6771,7 +8426,8 @@ struct DataManagementPage {
       logger.info(TAG, `开始批量导入，共 ${totalFiles} 个文件，策略: ${this.batchImportStrategy}`);
 
       // 批量处理配置
-      const BATCH_SIZE = 5; // 每批处理5个文件
+      // 仅用于在长批次之间让出UI线程，不限制用户一次选择的文件数量。
+      const BATCH_SIZE = 20;
       const BATCH_DELAY = 100; // 每批之间延迟100ms，让UI线程有时间响应
       
       // 分批处理文件
@@ -7477,6 +9133,13 @@ struct DataManagementPage {
    * 导入漫画信息到数据库并返回ID
    */
   private async importComicToDatabaseWithIds(comicInfo: ComicInfo, extractionResult: ExtractionResult): Promise<ImportComicToDatabaseResult> {
+    let mangaId: string = '';
+    let chapterId: string = '';
+    let organizedPath: string = '';
+    let createdManga: boolean = false;
+    let createdChapter: boolean = false;
+    let reusedChapter: boolean = false;
+    let previousChapterDownloadPath: string = '';
     try {
       logger.info(TAG, '开始导入漫画信息到数据库');
 
@@ -7493,11 +9156,11 @@ struct DataManagementPage {
         tags: this.parseGenreTags(comicInfo.genre),
         rating: 0,
         chapterCount: 1,
-        lastUpdateTime: Date.now()
+        lastUpdateTime: Date.now(),
+        webUrl: comicInfo.web || ''
       };
 
       // 重名检测与合并决策（改为用户交互，禁止自动合并）
-      let mangaId: string;
       const dupCheck: DuplicateCheckResult = await this.checkDuplicateCandidates(comicInfoInput);
       const decision: MergeDecision = await this.resolveUserMergeDecision(this.mergeMode, dupCheck, comicInfoInput);
       if (decision.action === MergeAction.SKIP) {
@@ -7510,6 +9173,7 @@ struct DataManagementPage {
       } else {
         // 新建
         mangaId = await this.dataManager.addComicInfo(comicInfoInput);
+        createdManga = true;
         logger.info(TAG, `漫画信息已添加，ID: ${mangaId}`);
       }
 
@@ -7542,7 +9206,6 @@ struct DataManagementPage {
 
       // 检查重复章节
       const duplicateChapter: ChapterRecord | null = await this.findExistingChapter(mangaId, chapterInfoInput.index, chapterInfoInput.title);
-      let chapterId: string;
       if (duplicateChapter) {
         // 弹窗让用户选择章节处理方式
         const chapterAction: MergeAction = await this.resolveUserChapterMergeDecision(comicInfoInput.title, chapterInfoInput, duplicateChapter);
@@ -7552,14 +9215,28 @@ struct DataManagementPage {
         }
         if (chapterAction === MergeAction.MERGE_TO_EXISTING) {
           chapterId = duplicateChapter.id;
+          reusedChapter = true;
+          previousChapterDownloadPath = duplicateChapter.downloadPath || '';
           logger.info(TAG, `用户选择合并到已有章节（ID: ${chapterId}）`);
         } else {
-          chapterId = await this.dataManager.addChapterInfo(chapterInfoInput);
+          const chapterCreation: ChapterInfoCreationResult =
+            await this.dataManager.addChapterInfoWithResult(chapterInfoInput);
+          if (!chapterCreation.created) {
+            throw new Error(`章节已存在，已停止重复导入: ${chapterInfoInput.title}`);
+          }
+          chapterId = chapterCreation.id;
+          createdChapter = chapterCreation.created;
           logger.info(TAG, `章节信息已添加，ID: ${chapterId}`);
         }
       } else {
         // 添加章节信息到数据库
-        chapterId = await this.dataManager.addChapterInfo(chapterInfoInput);
+        const chapterCreation: ChapterInfoCreationResult =
+          await this.dataManager.addChapterInfoWithResult(chapterInfoInput);
+        if (!chapterCreation.created) {
+          throw new Error(`章节已存在，已停止重复导入: ${chapterInfoInput.title}`);
+        }
+        chapterId = chapterCreation.id;
+        createdChapter = chapterCreation.created;
         logger.info(TAG, `章节信息已添加，ID: ${chapterId}`);
       }
 
@@ -7569,7 +9246,7 @@ struct DataManagementPage {
       }
 
       // 先将文件移动到分层存储目录，再添加页面信息
-      const organizedPath = await this.organizeImportedFiles(comicInfoInput, chapterInfoInput, extractionResult);
+      organizedPath = await this.organizeImportedFiles(comicInfoInput, chapterInfoInput, extractionResult);
       
       if (!organizedPath) {
         throw new Error('文件组织失败：未获得有效的组织路径');
@@ -7631,6 +9308,23 @@ struct DataManagementPage {
       } as ImportComicToDatabaseResult;
 
     } catch (error) {
+      try {
+        if (createdManga && mangaId.length > 0) {
+          await this.dataManager.deleteComic(mangaId);
+        } else if (createdChapter && chapterId.length > 0) {
+          await this.dataManager.deleteChapter(chapterId);
+          if (organizedPath.length > 0) {
+            await this.sandboxManager.deleteDirectory(organizedPath, true);
+          }
+        } else if (reusedChapter && chapterId.length > 0) {
+          await this.updateChapterDownloadPath(chapterId, previousChapterDownloadPath);
+          if (organizedPath.length > 0) {
+            await this.sandboxManager.deleteDirectory(organizedPath, true);
+          }
+        }
+      } catch (rollbackError) {
+        logger.error(TAG, `传统导入回滚失败: ${mangaId}/${chapterId}`, String(rollbackError));
+      }
       logger.error(TAG, '导入数据库失败', String(error instanceof Error ? error.message : error));
       throw error as Error;
     }
@@ -7715,7 +9409,7 @@ struct DataManagementPage {
       return MangaStatus.UNKNOWN;
     }
     
-    switch (publishingStatus.toLowerCase()) {
+    switch (publishingStatus.trim().toLowerCase()) {
       case 'ongoing':
       case 'continuing':
         return MangaStatus.ONGOING;
@@ -7725,6 +9419,9 @@ struct DataManagementPage {
       case 'paused':
       case 'hiatus':
         return MangaStatus.HIATUS;
+      case 'cancelled':
+      case 'canceled':
+        return MangaStatus.CANCELLED;
       default:
         return MangaStatus.UNKNOWN;
     }
@@ -7765,8 +9462,10 @@ struct DataManagementPage {
   private async organizeImportedFiles(
     comicInfo: ComicInfoInput, 
     chapterInfo: ChapterInfoInput, 
-    extractionResult: ExtractionResult
-  ): Promise<string | null> {
+    extractionResult: ExtractionResult,
+    preserveSource: boolean = false
+  ): Promise<string> {
+    let targetPath: string = '';
     try {
       logger.info(TAG, '开始组织导入文件到分层存储');
 
@@ -7774,28 +9473,47 @@ struct DataManagementPage {
       const sourceName = this.sanitizeFileName(comicInfo.sourceId || 'local_import');
       const comicName = this.sanitizeFileName(comicInfo.title);
       const chapterName = this.sanitizeFileName(chapterInfo.title);
+      const externalKey: string = this.sanitizeFileName(chapterInfo.externalId);
+      const uniqueSuffix: string = externalKey.length > 12
+        ? externalKey.substring(externalKey.length - 12)
+        : externalKey;
+      const chapterDirectoryName: string = `${chapterInfo.index + 1}_${chapterName}_${uniqueSuffix}`;
 
-      // 构建目标目录路径：comics/图源/漫画名称/章节名称/
+      // 章节编号和externalId共同参与路径，避免同名章节或重复导入复用旧目录。
       const comicsDir = this.sandboxManager.getDirectory('comics');
-      const targetPath = `${comicsDir}/${sourceName}/${comicName}/${chapterName}`;
+      targetPath = `${comicsDir}/${sourceName}/${comicName}/${chapterDirectoryName}`;
 
       // 创建目标目录
       await this.sandboxManager.createDirectory(targetPath);
       logger.debug(TAG, `创建目标目录: ${targetPath}`);
 
-      // 移动解压后的文件到目标目录
-      await this.moveDirectoryContents(extractionResult.extractedPath, targetPath);
-      
-      // 清理临时解压目录
-      await this.sandboxManager.deleteDirectory(extractionResult.extractedPath);
-      logger.debug(TAG, `清理临时目录: ${extractionResult.extractedPath}`);
+      const transferredFileCount: number = await this.transferDirectoryContents(
+        extractionResult.extractedPath,
+        targetPath,
+        preserveSource
+      );
+      if (transferredFileCount <= 0) {
+        throw new Error(`源目录为空: ${extractionResult.extractedPath}`);
+      }
 
-      logger.info(TAG, `文件组织完成: ${targetPath}`);
+      if (!preserveSource) {
+        await this.sandboxManager.deleteDirectory(extractionResult.extractedPath, true);
+        logger.debug(TAG, `清理应用临时目录: ${extractionResult.extractedPath}`);
+      }
+
+      logger.info(TAG, `文件组织完成: ${targetPath}, preserveSource=${preserveSource}`);
       return targetPath;
 
     } catch (error) {
       logger.error(TAG, '文件组织失败', String(error instanceof Error ? error.message : error));
-      return null;
+      if (targetPath.length > 0) {
+        try {
+          await this.sandboxManager.deleteDirectory(targetPath, true);
+        } catch (cleanupError) {
+          logger.warn(TAG, `清理未完成目标目录失败: ${targetPath}`, String(cleanupError));
+        }
+      }
+      throw error as Error;
     }
   }
 
@@ -7813,7 +9531,7 @@ struct DataManagementPage {
   }
 
   /**
-   * 提示用户选择封面并保存到漫画目录（重命名为 cover.<ext>）
+   * 提示用户选择封面并保存到漫画目录（使用漫画ID隔离文件名）
    */
   private async promptUserSelectCover(mangaId: string, comicInfoInput: ComicInfoInput, chapterId: string): Promise<void> {
     try {
@@ -7900,7 +9618,7 @@ struct DataManagementPage {
           const comicRoot: string = `${comicsDir}/${sourceName}/${comicName}`;
           this.sandboxManager.createDirectory(comicRoot).then(() => {
             const ext: string = this.getFileExtension(selectedPath);
-            const coverTarget: string = `${comicRoot}/cover.${ext}`;
+            const coverTarget: string = `${comicRoot}/cover_${mangaId}.${ext}`;
             fileIo.copyFile(selectedPath, coverTarget).then(() => {
               logger.info(TAG, `封面已复制到：${coverTarget}`);
               this.dataManager.updateComicCoverUrl(mangaId, coverTarget).then(() => {
@@ -7946,16 +9664,38 @@ struct DataManagementPage {
   }
 
   /**
-   * 移动目录内容到目标目录
+   * 复制或移动目录内容。外部用户目录必须使用复制模式，应用临时目录才允许移动。
    */
-  private async moveDirectoryContents(sourcePath: string, targetPath: string): Promise<void> {
+  private async transferDirectoryContents(
+    sourcePath: string,
+    targetPath: string,
+    preserveSource: boolean
+  ): Promise<number> {
     try {
-      // 获取源目录中的所有文件
-      const files = await this.sandboxManager.listDirectory(sourcePath);
+      const files: string[] = await this.sandboxManager.listDirectory(sourcePath);
+      files.sort((left: string, right: string): number => left.localeCompare(right, undefined, { numeric: true }));
+      let transferredFileCount: number = 0;
       
       for (const file of files) {
         const sourceFilePath = `${sourcePath}/${file}`;
         const targetFilePath = `${targetPath}/${file}`;
+        if (await this.sandboxManager.isSymbolicLink(sourceFilePath)) {
+          logger.warn(TAG, `目录传输跳过符号链接: ${sourceFilePath}`);
+          continue;
+        }
+        const stat = await fileIo.lstat(sourceFilePath);
+        if (stat.isDirectory()) {
+          await this.sandboxManager.createDirectory(targetFilePath);
+          transferredFileCount += await this.transferDirectoryContents(
+            sourceFilePath,
+            targetFilePath,
+            preserveSource
+          );
+          if (!preserveSource) {
+            await this.sandboxManager.deleteDirectory(sourceFilePath, true);
+          }
+          continue;
+        }
         const lowerName: string = file.toLowerCase();
         const dotIndex: number = lowerName.lastIndexOf('.');
         const ext: string = dotIndex >= 0 ? lowerName.substring(dotIndex) : '';
@@ -7966,23 +9706,31 @@ struct DataManagementPage {
           const transcodeResult: AvifTranscodeResult = await AvifTranscoder.getInstance().transcodeToTargetDirectory(sourceFilePath, targetPath);
           if (transcodeResult.success && transcodeResult.webpPath) {
             logger.info(TAG, `组织阶段转码成功，已保存为WebP并跳过原AVIF: ${transcodeResult.webpPath}`);
-            // 不移动原始AVIF，避免在正式目录中保存不可兼容格式
+            if (!preserveSource) {
+              await this.sandboxManager.deleteFile(sourceFilePath);
+            }
+            transferredFileCount += 1;
             continue;
           } else {
-            // 转码失败，跳过该文件的移动，保持正式目录不包含AVIF，并记录详细错误
             this.logTranscodeFailure('组织阶段', sourceFilePath, transcodeResult);
-            continue;
+            throw new Error(`AVIF转码失败: ${file}`);
           }
         }
         
-        // 移动文件
-        await this.sandboxManager.moveFile(sourceFilePath, targetFilePath);
-        logger.debug(TAG, `移动文件: ${sourceFilePath} -> ${targetFilePath}`);
+        if (preserveSource) {
+          await this.sandboxManager.copyFile(sourceFilePath, targetFilePath);
+          logger.debug(TAG, `复制外部文件: ${sourceFilePath} -> ${targetFilePath}`);
+        } else {
+          await this.sandboxManager.moveFile(sourceFilePath, targetFilePath);
+          logger.debug(TAG, `移动临时文件: ${sourceFilePath} -> ${targetFilePath}`);
+        }
+        transferredFileCount += 1;
       }
       
-      logger.info(TAG, `成功移动 ${files.length} 个文件`);
+      logger.info(TAG, `目录内容传输完成: files=${transferredFileCount}, preserveSource=${preserveSource}`);
+      return transferredFileCount;
     } catch (error) {
-      logger.error(TAG, '移动目录内容失败', String(error instanceof Error ? error.message : error));
+      logger.error(TAG, '传输目录内容失败', String(error instanceof Error ? error.message : error));
       throw error as Error;
     }
   }
@@ -8038,8 +9786,7 @@ struct DataManagementPage {
       const imageFiles = await this.scanImageFiles(directoryPath);
       
       if (imageFiles.length === 0) {
-        logger.warn(TAG, '未找到任何图片文件');
-        return 0;
+        throw new Error(`目标目录未找到任何图片: ${directoryPath}`);
       }
 
       let addedCount = 0;
@@ -8066,6 +9813,7 @@ struct DataManagementPage {
           logger.debug(TAG, `添加页面信息成功: ${imageFile.path}`);
         } catch (error) {
           logger.error(TAG, `添加页面信息失败: ${imageFile.path}`, String(error instanceof Error ? error.message : error));
+          throw error as Error;
         }
       }
 
@@ -8074,7 +9822,7 @@ struct DataManagementPage {
 
     } catch (error) {
       logger.error(TAG, '从路径添加页面信息失败', String(error instanceof Error ? error.message : error));
-      return 0;
+      throw error as Error;
     }
   }
 
@@ -8132,52 +9880,59 @@ struct DataManagementPage {
   /**
    * 扫描图片文件
    */
+  private async collectImageFilesRecursive(
+    rootPath: string,
+    currentPath: string,
+    imageFiles: ImageFileInfo[]
+  ): Promise<void> {
+    const supportedExtensions: string[] = ['.jpg', '.jpeg', '.png', '.gif', '.bmp', '.webp', '.avif'];
+    const files: string[] = await fs.listFile(currentPath);
+    files.sort((left: string, right: string): number => left.localeCompare(right, undefined, { numeric: true }));
+    for (const fileName of files) {
+      const filePath: string = `${currentPath}/${fileName}`;
+      const stat = await fs.lstat(filePath);
+      if (stat.isSymbolicLink()) {
+        logger.warn(TAG, `图片扫描跳过符号链接: ${filePath}`);
+        continue;
+      }
+      if (stat.isDirectory()) {
+        await this.collectImageFilesRecursive(rootPath, filePath, imageFiles);
+        continue;
+      }
+      const lowerName: string = fileName.toLowerCase();
+      const dotIndex: number = lowerName.lastIndexOf('.');
+      const extension: string = dotIndex >= 0 ? lowerName.substring(dotIndex) : '';
+      if (!supportedExtensions.includes(extension)) {
+        continue;
+      }
+      const relativeName: string = filePath.startsWith(`${rootPath}/`)
+        ? filePath.substring(rootPath.length + 1)
+        : fileName;
+      const imageFileInfo: ImageFileInfo = {
+        path: filePath,
+        name: relativeName,
+        size: stat.size || 0,
+        width: undefined,
+        height: undefined,
+        fileSize: stat.size || 0
+      };
+      imageFiles.push(imageFileInfo);
+    }
+  }
+
   private async scanImageFiles(directoryPath: string): Promise<ImageFileInfo[]> {
     try {
       logger.info(TAG, `扫描目录: ${directoryPath}`);
       
       const imageFiles: ImageFileInfo[] = [];
-      // 扩展支持AVIF检测，后续将进行导入时转码到WebP
-      const supportedExtensions = ['.jpg', '.jpeg', '.png', '.gif', '.bmp', '.webp', '.avif'];
-      
-      // 使用HarmonyOS官方fs模块扫描目录
-      // fs模块已在文件顶部导入
       
       try {
-        // 读取目录内容
-        const files = await fs.listFile(directoryPath);
+        await this.collectImageFilesRecursive(directoryPath, directoryPath, imageFiles);
         
-        for (const fileName of files) {
-          const filePath = `${directoryPath}/${fileName}`;
-          
-          // 检查文件扩展名
-          const extension = fileName.toLowerCase().substring(fileName.lastIndexOf('.'));
-          if (supportedExtensions.includes(extension)) {
-            
-            try {
-              // 获取文件信息
-              const stat = await fs.stat(filePath);
-              
-              const imageFileInfo: ImageFileInfo = {
-                path: filePath,
-                name: fileName,
-                size: stat.size || 0,
-                width: undefined,
-                height: undefined,
-                fileSize: stat.size || 0
-              };
-              
-              imageFiles.push(imageFileInfo);
-              logger.debug(TAG, `找到图片文件: ${fileName}`);
-              
-            } catch (statError) {
-              logger.warn(TAG, `获取文件信息失败: ${fileName}`, String(statError instanceof Error ? statError.message : statError));
-            }
-          }
-        }
-        
-        // 按文件名排序，确保页面顺序正确
-        imageFiles.sort((a, b) => a.name.localeCompare(b.name, undefined, { numeric: true }));
+        // 按相对路径自然排序，压缩包物理entry顺序不会影响漫画页序。
+        imageFiles.sort((a: ImageFileInfo, b: ImageFileInfo): number =>
+          a.name.localeCompare(b.name, undefined, { numeric: true })
+        );
 
         // 统计原始文件的类型分布
         let avifCount: number = 0;
@@ -8320,7 +10075,11 @@ struct DataManagementPage {
       
       // 检查ComicInfo.xml文件是否存在
       try {
-        const stat = SafeFileUtils.statSync(comicInfoPath);
+        const stat = fs.lstatSync(comicInfoPath);
+        if (stat.isSymbolicLink()) {
+          logger.warn(TAG, `ComicInfo.xml是符号链接，拒绝读取: ${comicInfoPath}`);
+          return this.getDefaultComicInfo();
+        }
         if (!stat.isFile()) {
           logger.warn(TAG, `ComicInfo.xml不是文件: ${comicInfoPath}`);
           return this.getDefaultComicInfo();
@@ -8401,6 +10160,9 @@ struct DataManagementPage {
    * 更新导入进度
    */
   private updateProgress(status: ImportStatus, message: string, progress: number): void {
+    if (!this.isPageActive) {
+      return;
+    }
     this.importProgress = {
       status: status,
       message: message,
@@ -8621,7 +10383,15 @@ struct DataManagementPage {
    */
   @Builder
   buildProgressIndicator() {
-    Column({ space: 12 }) {
+    if (this.importProgress.status !== ImportStatus.IDLE) {
+      Stack({ alignContent: Alignment.Center }) {
+        Row()
+          .width('100%')
+          .height('100%')
+          .backgroundColor(this.themeState.currentTheme === ThemeType.DARK ? '#66000000' : '#33000000')
+          .backgroundBlurStyle(BlurStyle.BACKGROUND_THIN)
+          .transition(TransitionEffect.OPACITY.animation({ duration: 180, curve: Curve.EaseOut }))
+        Column({ space: 12 }) {
       // 状态文本
       Text(this.importProgress.message)
         .fontSize(14)
@@ -8643,22 +10413,33 @@ struct DataManagementPage {
       }
       .visibility(this.importProgress.status !== ImportStatus.ERROR && this.importProgress.status !== ImportStatus.COMPLETED ? Visibility.Visible : Visibility.None)
 
-      // 完成状态图标
-      Text('✅ 导入完成')
-        .fontSize(16)
-        .fontFamily(this.appFontFamily)
-        .fontColor(ThemeAwareHelper.getTestManagementThemedColor('accent_green', this.themeState.currentTheme))
-        .visibility(this.importProgress.status === ImportStatus.COMPLETED ? Visibility.Visible : Visibility.None)
+      if (this.importProgress.status === ImportStatus.COMPLETED) {
+        Row({ space: 8 }) {
+          SymbolGlyph($r('sys.symbol.checkmark_shield'))
+            .fontSize(22)
+            .fontColor([ThemeAwareHelper.getTestManagementThemedColor('accent_green', this.themeState.currentTheme)])
+          Text('导入完成')
+            .fontSize(16)
+            .fontFamily(this.appFontFamily)
+            .fontColor(ThemeAwareHelper.getTestManagementThemedColor('accent_green', this.themeState.currentTheme))
+        }
+      }
 
-      // 错误状态图标
-      Text('❌ 导入失败')
-        .fontSize(16)
-        .fontFamily(this.appFontFamily)
-        .fontColor(ThemeAwareHelper.getTestManagementThemedColor('color_error', this.themeState.currentTheme))
-        .visibility(this.importProgress.status === ImportStatus.ERROR ? Visibility.Visible : Visibility.None)
-    }
-    .width('100%')
-    .padding(16)
+      if (this.importProgress.status === ImportStatus.ERROR) {
+        Row({ space: 8 }) {
+          SymbolGlyph($r('sys.symbol.exclamationmark_triangle'))
+            .fontSize(22)
+            .fontColor([ThemeAwareHelper.getTestManagementThemedColor('color_error', this.themeState.currentTheme)])
+          Text('导入失败')
+            .fontSize(16)
+            .fontFamily(this.appFontFamily)
+            .fontColor(ThemeAwareHelper.getTestManagementThemedColor('color_error', this.themeState.currentTheme))
+        }
+      }
+        }
+    .width('86%')
+    .constraintSize({ maxWidth: 520 })
+    .padding(24)
     .backgroundColor(SettingsPanelSurfaceHelper.getBackground(this.themeState.currentTheme))
     .linearGradient(SettingsPanelSurfaceHelper.getSurfaceGradient(this.themeState.currentTheme))
     .backgroundBlurStyle(
@@ -8666,9 +10447,33 @@ struct DataManagementPage {
       SettingsPanelSurfaceHelper.getBlurOptions(this.themeState.currentTheme)
     )
     .backgroundEffect(SettingsPanelSurfaceHelper.getBackgroundEffect(this.themeState.currentTheme))
-    .borderRadius(8)
-    .margin({ bottom: 16 })
-    .visibility(this.importProgress.status !== ImportStatus.IDLE ? Visibility.Visible : Visibility.None)
+    .borderRadius(24)
+    .clip(true)
+    .border({
+      width: SettingsPanelSurfaceHelper.getBorderWidth(this.themeState.currentTheme),
+      color: SettingsPanelSurfaceHelper.getBorderColor(this.themeState.currentTheme)
+    })
+    .shadow({
+      radius: 28,
+      color: SettingsPanelSurfaceHelper.getShadowColor(this.themeState.currentTheme),
+      offsetX: 0,
+      offsetY: 12
+    })
+    .transition(
+      TransitionEffect.OPACITY.animation({ duration: 220, curve: Curve.EaseOut })
+        .combine(TransitionEffect.scale({ x: 0.94, y: 0.94 }).animation({ duration: 260, curve: Curve.EaseOut }))
+        .combine(TransitionEffect.translate({ y: 18 }).animation({ duration: 260, curve: Curve.EaseOut }))
+    )
+      }
+      .width('100%')
+      .height('100%')
+      .zIndex(1000)
+      .onClick(() => {
+        if (this.importProgress.status === ImportStatus.COMPLETED || this.importProgress.status === ImportStatus.ERROR) {
+          this.importProgress = { status: ImportStatus.IDLE, message: '准备就绪', progress: 0 };
+        }
+      })
+    }
   }
 
   /**
@@ -9310,6 +11115,7 @@ struct DataManagementPage {
         }
         .layoutWeight(1)
         .height(52)
+        .enabled(!this.isMangaImportRunning && !this.isFilePickerActive && !this.isProcessing())
         .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme))
         .borderRadius(12)
         .onClick(() => { this.selectFiles(); })
@@ -9323,6 +11129,7 @@ struct DataManagementPage {
           }
           .layoutWeight(1)
           .height(52)
+          .enabled(!this.isMangaImportRunning && !this.isFilePickerActive && !this.isProcessing())
           .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme))
           .borderRadius(12)
           .onClick(() => { this.selectFolder(); })
@@ -9381,8 +11188,9 @@ struct DataManagementPage {
           .height(48)
           .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('accent_green', this.themeState.currentTheme))
           .borderRadius(10)
-          .enabled(!this.isProcessing())
-          .onClick(() => { this.startImport(); })
+          .enabled(!this.isMangaImportRunning && !this.isMangaDialogOpening &&
+            !this.isFilePickerActive && !this.isProcessing())
+          .onClick(() => { void this.startImport(); })
         }
         .width('100%')
         .padding(16)
@@ -9666,12 +11474,14 @@ struct DataManagementPage {
                 .height(32)
                 .backgroundColor('#4CAF50')
                 .borderRadius(6)
-                .onClick(() => { this.importMangaFromDownloadDir(); })
+                .enabled(!this.isMangaImportRunning && !this.isMangaDialogOpening &&
+                  !this.isFilePickerActive && !this.isProcessing())
+                .onClick(() => { void this.importMangaFromDownloadDir(); })
               }
               .width('100%')
               
               ForEach(this.pendingMangaFiles.slice(0, 3), (file: string) => {
-                Text(file)
+                Text(this.getDownloadCandidateDisplayName(file))
                   .fontSize(12)
                   .fontFamily(this.appFontFamily)
                   .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_muted', this.themeState.currentTheme))
@@ -9713,6 +11523,8 @@ struct DataManagementPage {
                 .height(32)
                 .backgroundColor('#2196F3')
                 .borderRadius(6)
+                .enabled(!this.isMangaImportRunning && !this.isMangaDialogOpening &&
+                  !this.isFilePickerActive && !this.isProcessing())
                 .onClick(() => { this.importEbooksFromDownloadDir(); })
               }
               .width('100%')
@@ -9760,6 +11572,8 @@ struct DataManagementPage {
                 .height(32)
                 .backgroundColor('#FF9800')
                 .borderRadius(6)
+                .enabled(!this.isMangaImportRunning && !this.isMangaDialogOpening &&
+                  !this.isFilePickerActive && !this.isProcessing())
                 .onClick(() => { this.importPdfsFromDownloadDir(); })
               }
               .width('100%')
@@ -9828,8 +11642,6 @@ struct DataManagementPage {
                 this.buildPdfImportSection()
               }
 
-              // 进度指示器
-              this.buildProgressIndicator()
               // 底部间距
               Blank().height(24 + this.navigationBarHeight)
             }
@@ -9878,6 +11690,8 @@ struct DataManagementPage {
           appFontFamily: this.appFontFamily,
           actions: this.getTitleBarActions()
         })
+
+        this.buildProgressIndicator()
 
         // 批量导入策略选择对话框
         if (this.showBatchStrategyDialog) {

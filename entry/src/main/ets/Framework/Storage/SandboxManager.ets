@@ -280,6 +280,19 @@ export class SandboxManager {
   }
 
   /**
+   * 检查路径本身是否为符号链接。导入扫描必须使用 lstat，不能跟随链接
+   * 进入沙箱之外的目录或把链接目标当成可复制的漫画页面。
+   */
+  public async isSymbolicLink(path: string): Promise<boolean> {
+    try {
+      const stat = await fileIo.lstat(path);
+      return stat.isSymbolicLink();
+    } catch (error) {
+      return false;
+    }
+  }
+
+  /**
    * 创建目录
    */
   public async createDirectory(path: string): Promise<void> {
@@ -361,7 +374,7 @@ export class SandboxManager {
 
   /**
    * 复制文件
-   * [修复] 支持从相册URI（datashare://或file://media/）复制文件
+   * URI 通过只读 FD 交给系统流式复制，兼容 file://docs、相册和数据共享 URI。
    */
   public async copyFile(sourcePath: string, targetPath: string): Promise<void> {
     try {
@@ -371,30 +384,20 @@ export class SandboxManager {
         await this.createDirectory(parentDir);
       }
 
-      // [修复] 检查是否为相册URI，需要特殊处理
-      if (sourcePath.startsWith('datashare://') || sourcePath.startsWith('file://media/')) {
-        // 相册URI需要通过fd复制
+      if (sourcePath.includes('://')) {
         let sourceFile: fileIo.File | null = null;
-        let targetFile: fileIo.File | null = null;
         try {
           sourceFile = await fileIo.open(sourcePath, fileIo.OpenMode.READ_ONLY);
-          targetFile = await fileIo.open(targetPath, fileIo.OpenMode.CREATE | fileIo.OpenMode.READ_WRITE | fileIo.OpenMode.TRUNC);
-          
-          // 读取源文件内容
-          const stat = await fileIo.stat(sourceFile.fd);
-          const buffer = new ArrayBuffer(stat.size);
-          await fileIo.read(sourceFile.fd, buffer);
-          
-          // 写入目标文件
-          await fileIo.write(targetFile.fd, buffer);
-          
-          logger.debug(TAG, `从相册URI复制文件成功: ${sourcePath} -> ${targetPath}`);
+          const sourceStat = await fileIo.stat(sourceFile.fd);
+          await fileIo.copyFile(sourceFile.fd, targetPath);
+          const targetStat = await fileIo.stat(targetPath);
+          if (targetStat.size !== sourceStat.size) {
+            throw new Error(`文件复制不完整: 期望 ${sourceStat.size} 字节，实际 ${targetStat.size} 字节`);
+          }
+          logger.debug(TAG, `从URI复制文件成功: ${sourcePath} -> ${targetPath}`);
         } finally {
           if (sourceFile) {
             await fileIo.close(sourceFile);
-          }
-          if (targetFile) {
-            await fileIo.close(targetFile);
           }
         }
       } else {
@@ -441,7 +444,7 @@ export class SandboxManager {
   public async deleteDirectory(path: string, recursive: boolean = false): Promise<void> {
     try {
       if (recursive) {
-        await fileIo.rmdir(path);
+        await this.deleteDirectoryRecursive(path);
       } else {
         await fileIo.rmdir(path);
       }
@@ -450,6 +453,31 @@ export class SandboxManager {
       logger.error(TAG, `删除目录失败: ${path}` + String(error));
       throw error as Error;
     }
+  }
+
+  private async deleteDirectoryRecursive(path: string): Promise<void> {
+    const rootStat = await fileIo.lstat(path);
+    if (rootStat.isSymbolicLink()) {
+      await fileIo.unlink(path);
+      return;
+    }
+    if (!rootStat.isDirectory()) {
+      await fileIo.unlink(path);
+      return;
+    }
+    const entries: string[] = await fileIo.listFile(path);
+    for (const entry of entries) {
+      const entryPath: string = `${path}/${entry}`;
+      const stat = await fileIo.lstat(entryPath);
+      if (stat.isSymbolicLink()) {
+        await fileIo.unlink(entryPath);
+      } else if (stat.isDirectory()) {
+        await this.deleteDirectoryRecursive(entryPath);
+      } else {
+        await fileIo.unlink(entryPath);
+      }
+    }
+    await fileIo.rmdir(path);
   }
 
   /**

@@ -442,6 +442,8 @@ export struct MangaReaderPage {
   private componentId: string = 'MangaReaderPage';
   private appGuideManager: AppGuideManager = AppGuideManager.getInstance();
   private isPageVisible: boolean = false;
+  private isReaderPageDisposed: boolean = false;
+  @State private readerLifecycleGeneration: number = 0;
   
   // 动画相关
   private lifecycle = new PageLifecycleManager('MangaReaderPage', {
@@ -627,7 +629,12 @@ export struct MangaReaderPage {
   @State nextChapterForWebtoon: MangaChapter | undefined = undefined;
   // [修复] 章节边界状态：使用@State确保条漫模式下章节切换时能正确更新MangaViewer
   private pendingMangaSettingsSnapshot: ReadingSettings | null = null;
+  private pendingMangaSettingsMangaId: string = '';
+  private pendingMangaSettingsTrigger: string = '';
   private settingsSavePromise: Promise<void> | null = null;
+  private progressSavePending: boolean = false;
+  private pendingProgressSaveTrigger: string = '';
+  private progressSavePromise: Promise<void> | null = null;
   private settingsSaveTimeoutId: number = -1;
   @State isFirstChapterState: boolean = true;
   @State isLastChapterState: boolean = false;
@@ -660,10 +667,17 @@ private onlineDownloadedLocalFastPathActive: boolean = false;
   private hasNotifiedTransitionReaderReady: boolean = false;
   private transitionLoadingProgress: number = 0;
   private isCloseTransitionNavigating: boolean = false;
+  private isBackNavigationInProgress: boolean = false;
+  private backNavigationRequestId: number = 0;
+  private backNavigationWatchdogTimer: number = -1;
+  private isolatedTerminationWatchdogTimer: number = -1;
   private transitionReaderReadyPollTimer: number = -1;
   private transitionReaderReadyTimeoutTimer: number = -1;
   private static readonly TRANSITION_READY_POLL_MS: number = 80;
   private static readonly TRANSITION_READY_TIMEOUT_MS: number = 2500;
+  private static readonly EXIT_PERSIST_TIMEOUT_MS: number = 450;
+  private static readonly EXIT_TERMINATE_WATCHDOG_MS: number = 1200;
+  private static readonly EXIT_NAVIGATION_WATCHDOG_MS: number = 1400;
 
   // 音量键翻页回调函数（用于inputConsumer注册/注销）
   @State isDragging: boolean = false;
@@ -679,6 +693,7 @@ private onlineDownloadedLocalFastPathActive: boolean = false;
 
   onPageShow() {
     this.isPageVisible = true;
+    this.restoreStaleBackNavigationOnPageShow();
     this.uiContext = this.getUIContext();
     this.setupFullscreenMode();
     this.scheduleFullscreenRestore('page_show');
@@ -980,10 +995,22 @@ private onlineDownloadedLocalFastPathActive: boolean = false;
     }
   }
 
-  private async refreshPageGuide(trigger: string): Promise<void> {
+  private async refreshPageGuide(
+    trigger: string,
+    lifecycleGeneration: number = this.readerLifecycleGeneration
+  ): Promise<void> {
+    if (!this.isReaderLifecycleCurrent(lifecycleGeneration)) {
+      return;
+    }
     await this.appGuideManager.initialize();
+    if (!this.isReaderLifecycleCurrent(lifecycleGeneration)) {
+      return;
+    }
     if (!this.appGuideManager.getCurrentStep()) {
       await this.appGuideManager.tryAutoStartFlowByPage(AppGuidePageId.MANGA_READER);
+      if (!this.isReaderLifecycleCurrent(lifecycleGeneration)) {
+        return;
+      }
     }
     const step = this.appGuideManager.getCurrentStep();
     if (!step || step.pageId !== AppGuidePageId.MANGA_READER) {
@@ -992,30 +1019,46 @@ private onlineDownloadedLocalFastPathActive: boolean = false;
       return;
     }
     await this.prepareGuidePresentation(step.anchorId);
+    if (!this.isReaderLifecycleCurrent(lifecycleGeneration)) {
+      return;
+    }
     this.appGuideStep = step;
     this.appGuideHighlightRect = this.resolveGuideHighlightRect(step.anchorId, step.borderRadius ?? 18);
     if (!this.appGuideHighlightRect && trigger !== 'retry_layout') {
       setTimeout(() => {
-        void this.refreshPageGuide('retry_layout');
+        if (this.isReaderLifecycleCurrent(lifecycleGeneration)) {
+          void this.refreshPageGuide('retry_layout', lifecycleGeneration);
+        }
       }, 120);
     }
     logger.debug(TAG, `漫画阅读器引导已刷新: 触发源=${trigger}, 步骤=${step.id}`);
   }
 
   private handlePageGuideNext(): void {
+    const lifecycleGeneration: number = this.readerLifecycleGeneration;
     void this.appGuideManager.nextStep().then(() => {
-      void this.refreshPageGuide('next');
+      if (this.isReaderLifecycleCurrent(lifecycleGeneration)) {
+        void this.refreshPageGuide('next', lifecycleGeneration);
+      }
     });
   }
 
   private handlePageGuideSkip(): void {
+    const lifecycleGeneration: number = this.readerLifecycleGeneration;
     void this.appGuideManager.skipCurrentFlow().then(() => {
-      void this.refreshPageGuide('skip');
+      if (this.isReaderLifecycleCurrent(lifecycleGeneration)) {
+        void this.refreshPageGuide('skip', lifecycleGeneration);
+      }
     });
   }
 
   aboutToAppear() {
+    this.readerLifecycleGeneration += 1;
+    this.isReaderPageDisposed = false;
     this.isPageVisible = true;
+    // MangaViewer 可能在父页面 onPageShow 之前回报就绪；先清理上一次
+    // 未完成的返回状态，避免组件就绪 guard 把本次重进误判为退出中。
+    this.restoreStaleBackNavigationOnPageShow();
     logger.lifecycle(TAG, '漫画阅读器页面即将出现');
     
     // 初始化分布式阅读服务，支持跨设备无缝接续
@@ -1055,8 +1098,11 @@ private onlineDownloadedLocalFastPathActive: boolean = false;
     this.startReaderFlow();
     
     // 启动阅读时间定时记录
+    const entranceLifecycleGeneration: number = this.readerLifecycleGeneration;
     setTimeout(() => {
-      this.startEntranceAnimation();
+      if (this.isReaderLifecycleCurrent(entranceLifecycleGeneration)) {
+        this.startEntranceAnimation();
+      }
     }, 100);
     
     // 启动阅读时间定时记录
@@ -1265,7 +1311,10 @@ private onlineDownloadedLocalFastPathActive: boolean = false;
   }
 
   aboutToDisappear() {
+    this.isReaderPageDisposed = true;
     this.isPageVisible = false;
+    this.clearBackNavigationWatchdog();
+    this.clearIsolatedTerminationWatchdog();
     this.webViewControllerAttached = false;
     this.clearFullscreenRestoreTimer();
     logger.lifecycle(TAG, 'aboutToDisappear - 开始清理资源');
@@ -1628,13 +1677,20 @@ private onlineDownloadedLocalFastPathActive: boolean = false;
     if (this.interactionPauseTimer !== -1) {
       clearTimeout(this.interactionPauseTimer);
     }
-    this.interactionPauseTimer = setTimeout(() => {
+    const lifecycleGeneration: number = this.readerLifecycleGeneration;
+    let pauseTimerId: number = -1;
+    pauseTimerId = setTimeout(() => {
+      if (this.interactionPauseTimer !== pauseTimerId) {
+        return;
+      }
       this.interactionPauseTimer = -1;
-      if (!this.areMenusVisible() && this.autoPageTurnEnabled && this.autoPageTurnController) {
+      if (this.isReaderLifecycleCurrent(lifecycleGeneration) &&
+        !this.areMenusVisible() && this.autoPageTurnEnabled && this.autoPageTurnController) {
         this.autoPageTurnController.resume();
         logger.info(TAG, '自动翻页：交互暂停结束，恢复');
       }
     }, 1000) as number;
+    this.interactionPauseTimer = pauseTimerId;
   }
 
   /**
@@ -3081,15 +3137,24 @@ private onlineDownloadedLocalFastPathActive: boolean = false;
       this.onlineDownloadedWarmupState === OnlineDownloadedWarmupState.DEFERRED_WEBVIEW_WARMING) {
       return;
     }
+    const lifecycleGeneration: number = this.readerLifecycleGeneration;
     if (this.onlineDownloadedDeferredWarmupTimer !== -1) {
       clearTimeout(this.onlineDownloadedDeferredWarmupTimer);
     }
-    this.onlineDownloadedDeferredWarmupTimer = setTimeout(() => {
+    let timerId: number = -1;
+    timerId = setTimeout(() => {
+      if (this.onlineDownloadedDeferredWarmupTimer !== timerId) {
+        return;
+      }
       this.onlineDownloadedDeferredWarmupTimer = -1;
+      if (!this.isReaderLifecycleCurrent(lifecycleGeneration)) {
+        return;
+      }
       this.runOnlineDownloadedDeferredWarmup(reason, false).catch((error: Error) => {
         logger.warn(TAG, `在线已下载漫画延迟完整预热失败(已降级): ${error.message}`);
       });
     }, 140);
+    this.onlineDownloadedDeferredWarmupTimer = timerId;
   }
 
   private async ensureOnlineDownloadedWarmupBeforeNetworkFallback(reason: string): Promise<void> {
@@ -3286,8 +3351,10 @@ private onlineDownloadedLocalFastPathActive: boolean = false;
     if (this.onlineDownloadedWarmupState !== OnlineDownloadedWarmupState.LOCAL_FIRST_PAGE_READY) {
       return;
     }
+    const lifecycleGeneration: number = this.readerLifecycleGeneration;
     setTimeout(() => {
-      if (!this.isPageVisible || this.onlineDownloadedWarmupState !== OnlineDownloadedWarmupState.LOCAL_FIRST_PAGE_READY) {
+      if (!this.isReaderLifecycleCurrent(lifecycleGeneration) ||
+        this.onlineDownloadedWarmupState !== OnlineDownloadedWarmupState.LOCAL_FIRST_PAGE_READY) {
         return;
       }
       const viewer: MangaViewer | null = this.mangaViewerComponent;
@@ -3530,8 +3597,11 @@ private onlineDownloadedLocalFastPathActive: boolean = false;
     await this.loadReadingSettings();
     this.reportTransitionLoadingProgress(0.84, 'reading_settings_ready');
 
+    const preloadLifecycleGeneration: number = this.readerLifecycleGeneration;
     setTimeout(() => {
-      this.preloadImages();
+      if (this.isReaderLifecycleCurrent(preloadLifecycleGeneration)) {
+        this.preloadImages();
+      }
     }, 0);
 
     this.sessionStartTimestamp = Date.now();
@@ -5529,8 +5599,11 @@ private onlineDownloadedLocalFastPathActive: boolean = false;
       await this.updateNetworkHeadersForChapter(); 
 
       logger.debug(TAG, '🖼️ 开始预加载图片');
+      const preloadLifecycleGeneration: number = this.readerLifecycleGeneration;
       setTimeout(() => {
-        this.preloadImages();
+        if (this.isReaderLifecycleCurrent(preloadLifecycleGeneration)) {
+          this.preloadImages();
+        }
       }, 0);
 
       // 初始化阅读会话计时与保存状态
@@ -5607,7 +5680,7 @@ private onlineDownloadedLocalFastPathActive: boolean = false;
   }
 
   private reportTransitionLoadingProgress(progress: number, reason: string): void {
-    if (!this.shouldUseReaderTransition()) {
+    if (this.isReaderPageDisposed || this.isBackNavigationInProgress || !this.shouldUseReaderTransition()) {
       return;
     }
     const normalized = Math.max(0, Math.min(1, progress > 1 ? progress / 100 : progress));
@@ -5620,7 +5693,7 @@ private onlineDownloadedLocalFastPathActive: boolean = false;
   }
 
   private notifyTransitionReaderReadyOnce(reason: string): void {
-    if (!this.shouldUseReaderTransition()) {
+    if (this.isReaderPageDisposed || this.isBackNavigationInProgress || !this.shouldUseReaderTransition()) {
       return;
     }
     if (this.hasNotifiedTransitionReaderReady) {
@@ -5635,7 +5708,8 @@ private onlineDownloadedLocalFastPathActive: boolean = false;
   }
 
   private waitForTransitionReaderReady(trigger: string): void {
-    if (!this.shouldUseReaderTransition()) {
+    const lifecycleGeneration: number = this.readerLifecycleGeneration;
+    if (!this.isReaderLifecycleCurrent(lifecycleGeneration) || !this.shouldUseReaderTransition()) {
       return;
     }
     if (this.hasNotifiedTransitionReaderReady) {
@@ -5643,6 +5717,9 @@ private onlineDownloadedLocalFastPathActive: boolean = false;
     }
 
     const checkVisualReady = (): boolean => {
+      if (!this.isReaderLifecycleCurrent(lifecycleGeneration)) {
+        return true;
+      }
       const viewer = this.mangaViewerComponent;
       if (!viewer) {
         return false;
@@ -5669,18 +5746,37 @@ private onlineDownloadedLocalFastPathActive: boolean = false;
     }
 
     if (this.transitionReaderReadyPollTimer === -1) {
-      this.transitionReaderReadyPollTimer = setInterval(() => {
+      let pollTimerId: number = -1;
+      pollTimerId = setInterval(() => {
+        if (this.transitionReaderReadyPollTimer !== pollTimerId) {
+          return;
+        }
+        if (!this.isReaderLifecycleCurrent(lifecycleGeneration)) {
+          clearInterval(pollTimerId);
+          this.transitionReaderReadyPollTimer = -1;
+          return;
+        }
         checkVisualReady();
       }, MangaReaderPage.TRANSITION_READY_POLL_MS);
+      this.transitionReaderReadyPollTimer = pollTimerId;
     }
 
     if (this.transitionReaderReadyTimeoutTimer === -1) {
-      this.transitionReaderReadyTimeoutTimer = setTimeout(() => {
+      let timeoutTimerId: number = -1;
+      timeoutTimerId = setTimeout(() => {
+        if (this.transitionReaderReadyTimeoutTimer !== timeoutTimerId) {
+          return;
+        }
+        this.transitionReaderReadyTimeoutTimer = -1;
+        if (!this.isReaderLifecycleCurrent(lifecycleGeneration)) {
+          return;
+        }
         if (!this.hasNotifiedTransitionReaderReady) {
           logger.warn(TAG, `等待首屏视觉就绪超时，降级放行过渡动画: 触发源=${trigger}`);
           this.notifyTransitionReaderReadyOnce(`timeout_${trigger}`);
         }
       }, MangaReaderPage.TRANSITION_READY_TIMEOUT_MS);
+      this.transitionReaderReadyTimeoutTimer = timeoutTimerId;
     }
   }
 
@@ -5966,12 +6062,73 @@ private onlineDownloadedLocalFastPathActive: boolean = false;
       return;
     }
 
-    const mangaId = currentManga.id;
-    const settingKey = `manga_settings_${mangaId}`;
     const snapshot = this.cloneReadingSettings(this.readingSettings);
     this.readingSettings = snapshot;
     currentManga.readingSettings = snapshot;
+    const settingKey = `manga_settings_${currentManga.id}`;
     AppStorage.setOrCreate(settingKey, JSON.stringify(snapshot));
+    this.pendingMangaSettingsSnapshot = snapshot;
+    this.pendingMangaSettingsMangaId = currentManga.id;
+    this.pendingMangaSettingsTrigger = trigger;
+    this.ensureReadingSettingsSaveRunner();
+    await this.waitForReadingSettingsSaveDrain();
+  }
+
+  private ensureReadingSettingsSaveRunner(): void {
+    if (this.settingsSavePromise !== null || this.pendingMangaSettingsSnapshot === null) {
+      return;
+    }
+    const savePromise: Promise<void> = this.drainPendingReadingSettingsSaves();
+    this.settingsSavePromise = savePromise;
+    void savePromise.then((): void => {
+      this.onReadingSettingsSaveRunnerSettled(savePromise);
+    }, (_error: Error): void => {
+      this.onReadingSettingsSaveRunnerSettled(savePromise);
+    });
+  }
+
+  private onReadingSettingsSaveRunnerSettled(savePromise: Promise<void>): void {
+    if (this.settingsSavePromise !== savePromise) {
+      return;
+    }
+    this.settingsSavePromise = null;
+    this.ensureReadingSettingsSaveRunner();
+  }
+
+  private async waitForReadingSettingsSaveDrain(): Promise<void> {
+    while (this.settingsSavePromise !== null || this.pendingMangaSettingsSnapshot !== null) {
+      this.ensureReadingSettingsSaveRunner();
+      const activeSave: Promise<void> | null = this.settingsSavePromise;
+      if (activeSave === null) {
+        return;
+      }
+      await activeSave;
+    }
+  }
+
+  private async drainPendingReadingSettingsSaves(): Promise<void> {
+    while (this.pendingMangaSettingsSnapshot !== null) {
+      const snapshot: ReadingSettings = this.pendingMangaSettingsSnapshot;
+      const mangaId: string = this.pendingMangaSettingsMangaId;
+      const trigger: string = this.pendingMangaSettingsTrigger;
+      this.pendingMangaSettingsSnapshot = null;
+      this.pendingMangaSettingsMangaId = '';
+      this.pendingMangaSettingsTrigger = '';
+      await this.performReadingSettingsPersistence(mangaId, snapshot, trigger);
+    }
+  }
+
+  private async performReadingSettingsPersistence(
+    mangaId: string,
+    snapshot: ReadingSettings,
+    trigger: string
+  ): Promise<void> {
+    if (mangaId.length <= 0) {
+      logger.warn(TAG, `阅读设置持久化缺少漫画ID: trigger=${trigger}`);
+      return;
+    }
+
+    const settingKey = `manga_settings_${mangaId}`;
 
     let savedAnySettings = false;
     try {
@@ -6202,9 +6359,14 @@ private onlineDownloadedLocalFastPathActive: boolean = false;
 
   private scheduleFullscreenRestore(reason: string, delayMs: number = 120): void {
     this.clearFullscreenRestoreTimer();
-    this.fullscreenRestoreTimer = setTimeout(() => {
+    const lifecycleGeneration: number = this.readerLifecycleGeneration;
+    let restoreTimerId: number = -1;
+    restoreTimerId = setTimeout(() => {
+      if (this.fullscreenRestoreTimer !== restoreTimerId) {
+        return;
+      }
       this.fullscreenRestoreTimer = -1;
-      if (!this.isPageVisible) {
+      if (!this.isReaderLifecycleCurrent(lifecycleGeneration)) {
         return;
       }
       const uiContext = this.getUIContext() ?? this.uiContext;
@@ -6212,6 +6374,7 @@ private onlineDownloadedLocalFastPathActive: boolean = false;
       WindowManager.setDisplayMode(DisplayMode.FULL_IMMERSIVE, uiContext ?? undefined);
       WindowManager.reapplyCurrentDisplayMode(24);
     }, delayMs);
+    this.fullscreenRestoreTimer = restoreTimerId;
   }
 
   private restoreNormalMode(): void {
@@ -6361,9 +6524,18 @@ private onlineDownloadedLocalFastPathActive: boolean = false;
     void this.persistInteractionHintShown(this.readingSettings.readingMode);
     
     // 5秒后自动隐藏
-    this.overlayDismissTimer = setTimeout(() => {
-      this.hideInteractionOverlay();
+    const lifecycleGeneration: number = this.readerLifecycleGeneration;
+    let dismissTimerId: number = -1;
+    dismissTimerId = setTimeout(() => {
+      if (this.overlayDismissTimer !== dismissTimerId) {
+        return;
+      }
+      this.overlayDismissTimer = -1;
+      if (this.isReaderLifecycleCurrent(lifecycleGeneration)) {
+        this.hideInteractionOverlay();
+      }
     }, 5000);
+    this.overlayDismissTimer = dismissTimerId;
     
     logger.info(TAG, `显示交互提示Overlay（模式: ${this.readingSettings.readingMode}），5秒后自动隐藏`);
   }
@@ -6388,6 +6560,9 @@ private onlineDownloadedLocalFastPathActive: boolean = false;
    * 简化版：移除双击检测，单击立即响应
     */
   private handlePageTap(event: ClickEvent): void {
+    if (!this.isReaderLifecycleCurrent(this.readerLifecycleGeneration)) {
+      return;
+    }
     // 直接处理单击，无延迟
     this.handleSingleTap(event);
     // 直接处理单击，无延迟
@@ -6791,7 +6966,11 @@ private onlineDownloadedLocalFastPathActive: boolean = false;
 
   private scheduleChapterSwitchReaderReady(chapter: MangaChapter, pageIndex: number, reason: string): void {
     const expectedIndex: number = this.normalizeReaderPageIndexForChapter(chapter, pageIndex);
+    const lifecycleGeneration: number = this.readerLifecycleGeneration;
     setTimeout(() => {
+      if (!this.isReaderLifecycleCurrent(lifecycleGeneration)) {
+        return;
+      }
       const currentChapter = this.readerState.currentChapter;
       if (!currentChapter || currentChapter.id !== chapter.id) {
         logger.debug(TAG, `跨章阅读器就绪检查跳过: reason=${reason}, 当前章节已变化`);
@@ -7363,6 +7542,9 @@ private onlineDownloadedLocalFastPathActive: boolean = false;
    * @param keyCode 按键码
     */
   private handleVolumeKeyPageTurn(keyCode: number): boolean {
+    if (!this.isReaderLifecycleCurrent(this.readerLifecycleGeneration)) {
+      return false;
+    }
     logger.debug(TAG, `按键事件: keyCode=${keyCode}, volumeKeyNavigation=${this.readingSettings.volumeKeyNavigation}`);
     
     // 检查是否启用音量键翻页
@@ -7412,6 +7594,10 @@ private onlineDownloadedLocalFastPathActive: boolean = false;
   }
 
   private goToPreviousPageByVolumeKey(): void {
+    const lifecycleGeneration: number = this.readerLifecycleGeneration;
+    if (!this.isReaderLifecycleCurrent(lifecycleGeneration)) {
+      return;
+    }
     const currentChapter = this.readerState.currentChapter;
     if (!currentChapter || currentChapter.pages.length === 0) {
       return;
@@ -7424,9 +7610,15 @@ private onlineDownloadedLocalFastPathActive: boolean = false;
 
     if (effectivePageIndex <= 0) {
       this.saveReadingProgressInternal('beforePrevChapterFromVolumeKey').then(() => {
+        if (!this.isReaderLifecycleCurrent(lifecycleGeneration)) {
+          return;
+        }
         this.goToPreviousChapter();
       }).catch((error: Error) => {
         logger.error(TAG, '切到上一章节前保存进度失败', error.message);
+        if (!this.isReaderLifecycleCurrent(lifecycleGeneration)) {
+          return;
+        }
         this.goToPreviousChapter();
       });
       return;
@@ -7436,6 +7628,10 @@ private onlineDownloadedLocalFastPathActive: boolean = false;
   }
 
   private goToNextPageByVolumeKey(): void {
+    const lifecycleGeneration: number = this.readerLifecycleGeneration;
+    if (!this.isReaderLifecycleCurrent(lifecycleGeneration)) {
+      return;
+    }
     const currentChapter = this.readerState.currentChapter;
     if (!currentChapter || currentChapter.pages.length === 0) {
       return;
@@ -7448,9 +7644,15 @@ private onlineDownloadedLocalFastPathActive: boolean = false;
 
     if (effectivePageIndex >= currentChapter.pages.length - 1) {
       this.saveReadingProgressInternal('beforeNextChapterFromVolumeKey').then(() => {
+        if (!this.isReaderLifecycleCurrent(lifecycleGeneration)) {
+          return;
+        }
         this.goToNextChapter();
       }).catch((error: Error) => {
         logger.error(TAG, '切到下一章节前保存进度失败', error.message);
+        if (!this.isReaderLifecycleCurrent(lifecycleGeneration)) {
+          return;
+        }
         this.goToNextChapter();
       });
       return;
@@ -8254,6 +8456,10 @@ private onlineDownloadedLocalFastPathActive: boolean = false;
    * 处理条漫模式请求加载相邻章节
     */
   private async handleWebtoonAdjacentChapterRequest(direction: 'prev' | 'next'): Promise<void> {
+    const lifecycleGeneration: number = this.readerLifecycleGeneration;
+    if (!this.isReaderLifecycleCurrent(lifecycleGeneration)) {
+      return;
+    }
     const manga = this.readerState.currentManga;
     const chapter = this.readerState.currentChapter;
     
@@ -8301,6 +8507,9 @@ private onlineDownloadedLocalFastPathActive: boolean = false;
     
     try {
       await this.preloadChapterPages(targetChapter, -1);
+      if (!this.isReaderLifecycleCurrent(lifecycleGeneration)) {
+        return;
+      }
       
       // 加载完成后更新状态
       if (targetChapter.pages && targetChapter.pages.length > 0) {
@@ -8315,6 +8524,9 @@ private onlineDownloadedLocalFastPathActive: boolean = false;
       }
     } catch (error) {
       logger.error(TAG, `❌ 加载${direction === 'prev' ? '前' : '后'}一章失败: ${String(error)}`);
+      if (!this.isReaderLifecycleCurrent(lifecycleGeneration)) {
+        return;
+      }
       // 在线条漫保留旧邻章引用，避免边界失败后抖动；本地模式保持原有可重试行为
       if (!this.isOnlineReaderContentType()) {
         this.assignWebtoonAdjacentChapter(direction, undefined);
@@ -8372,15 +8584,28 @@ private onlineDownloadedLocalFastPathActive: boolean = false;
       clearTimeout(this.webtoonOnlineAdjacentWarmupTimer);
       this.webtoonOnlineAdjacentWarmupTimer = -1;
     }
-    this.webtoonOnlineAdjacentWarmupTimer = setTimeout(() => {
+    const lifecycleGeneration: number = this.readerLifecycleGeneration;
+    let timerId: number = -1;
+    timerId = setTimeout(() => {
+      if (this.webtoonOnlineAdjacentWarmupTimer !== timerId) {
+        return;
+      }
       this.webtoonOnlineAdjacentWarmupTimer = -1;
+      if (!this.isReaderLifecycleCurrent(lifecycleGeneration)) {
+        return;
+      }
       this.loadOnlineAdjacentChaptersForWebtoon(currentIndex).catch((error: Error) => {
         logger.warn(TAG, `在线条漫相邻章节预热失败: ${error.message}`);
       });
     }, 140);
+    this.webtoonOnlineAdjacentWarmupTimer = timerId;
   }
 
   private async loadOnlineAdjacentChaptersForWebtoon(currentIndex: number): Promise<void> {
+    const lifecycleGeneration: number = this.readerLifecycleGeneration;
+    if (!this.isReaderLifecycleCurrent(lifecycleGeneration)) {
+      return;
+    }
     const manga = this.readerState.currentManga;
     if (!manga) {
       return;
@@ -8408,6 +8633,9 @@ private onlineDownloadedLocalFastPathActive: boolean = false;
     }
 
     for (const target of loadTargets) {
+      if (!this.isReaderLifecycleCurrent(lifecycleGeneration)) {
+        return;
+      }
       const chapter = target.chapter;
       if (chapter.pages && chapter.pages.length > 0) {
         this.assignWebtoonAdjacentChapter(target.direction, chapter);
@@ -8422,7 +8650,12 @@ private onlineDownloadedLocalFastPathActive: boolean = false;
       } catch (error) {
         logger.warn(TAG, `在线条漫预热章节失败: ${chapter.title}, error=${String(error)}`);
       } finally {
-        this.webtoonOnlineAdjacentLoadingChapterIds.delete(chapter.id);
+        if (lifecycleGeneration === this.readerLifecycleGeneration) {
+          this.webtoonOnlineAdjacentLoadingChapterIds.delete(chapter.id);
+        }
+      }
+      if (!this.isReaderLifecycleCurrent(lifecycleGeneration)) {
+        return;
       }
       if (chapter.pages && chapter.pages.length > 0) {
         this.assignWebtoonAdjacentChapter(target.direction, chapter);
@@ -9024,6 +9257,54 @@ private onlineDownloadedLocalFastPathActive: boolean = false;
    * 保存阅读进度（带限流与空值检查）
     */
   private async saveReadingProgressInternal(trigger: string): Promise<void> {
+    this.progressSavePending = true;
+    this.pendingProgressSaveTrigger = trigger;
+    this.ensureReadingProgressSaveRunner();
+    await this.waitForReadingProgressSaveDrain();
+  }
+
+  private ensureReadingProgressSaveRunner(): void {
+    if (this.progressSavePromise !== null || !this.progressSavePending) {
+      return;
+    }
+    const savePromise: Promise<void> = this.drainPendingReadingProgressSaves();
+    this.progressSavePromise = savePromise;
+    void savePromise.then((): void => {
+      this.onReadingProgressSaveRunnerSettled(savePromise);
+    }, (_error: Error): void => {
+      this.onReadingProgressSaveRunnerSettled(savePromise);
+    });
+  }
+
+  private onReadingProgressSaveRunnerSettled(savePromise: Promise<void>): void {
+    if (this.progressSavePromise !== savePromise) {
+      return;
+    }
+    this.progressSavePromise = null;
+    this.ensureReadingProgressSaveRunner();
+  }
+
+  private async waitForReadingProgressSaveDrain(): Promise<void> {
+    while (this.progressSavePromise !== null || this.progressSavePending) {
+      this.ensureReadingProgressSaveRunner();
+      const activeSave: Promise<void> | null = this.progressSavePromise;
+      if (activeSave === null) {
+        return;
+      }
+      await activeSave;
+    }
+  }
+
+  private async drainPendingReadingProgressSaves(): Promise<void> {
+    while (this.progressSavePending) {
+      const trigger: string = this.pendingProgressSaveTrigger;
+      this.progressSavePending = false;
+      this.pendingProgressSaveTrigger = '';
+      await this.performReadingProgressSave(trigger);
+    }
+  }
+
+  private async performReadingProgressSave(trigger: string): Promise<void> {
     // [修复] 阻止初始化期间的阅读进度保存，避免覆盖正确的阅读进度
     // [修复] 阻止初始化期间的阅读进度保存，避免覆盖正确的阅读进度
     // 问题：MangaViewer 在初始化时会触发 onPageChange 回调，传递错误的页面索引
@@ -9254,6 +9535,10 @@ private onlineDownloadedLocalFastPathActive: boolean = false;
     */
   private switchToChapter(chapterId: string): void {
     try {
+      const lifecycleGeneration: number = this.readerLifecycleGeneration;
+      if (!this.isReaderLifecycleCurrent(lifecycleGeneration)) {
+        return;
+      }
       const manga = this.readerState.currentManga;
       if (!manga) {
         logger.warn(TAG, '无法切换章节：当前漫画信息为空');
@@ -9265,9 +9550,11 @@ private onlineDownloadedLocalFastPathActive: boolean = false;
         logger.warn(TAG, `无法切换章节：未找到章节ID ${chapterId}`);
         return;
       }
-
       // 保存当前章节进度
       this.saveReadingProgressInternal('switchChapter').then(async () => {
+        if (!this.isReaderLifecycleCurrent(lifecycleGeneration)) {
+          return;
+        }
       // 保存当前章节进度
         if (!targetChapter.pages || targetChapter.pages.length === 0 || this.shouldRefreshVolatileSourcePages()) {
           logger.info(TAG, `章节 ${targetChapter.title} 需要刷新页面信息，开始加载...`);
@@ -9276,8 +9563,14 @@ private onlineDownloadedLocalFastPathActive: boolean = false;
           
           try {
             await this.preloadChapterPages(targetChapter);
+            if (!this.isReaderLifecycleCurrent(lifecycleGeneration)) {
+              return;
+            }
             logger.info(TAG, `章节 ${targetChapter.title} 页面加载完成，数量=${targetChapter.pages?.length || 0}`);
           } catch (error) {
+            if (!this.isReaderLifecycleCurrent(lifecycleGeneration)) {
+              return;
+            }
             const errorMsg = error instanceof Error ? error.message : String(error);
             logger.error(TAG, `加载章节页面失败: ${errorMsg}`);
             this.readerState.errorMessage = `加载章节页面失败: ${errorMsg}`;
@@ -9310,6 +9603,9 @@ private onlineDownloadedLocalFastPathActive: boolean = false;
         
         logger.info(TAG, `切换到章节: ${targetChapter.title}, chapterTick=${this.chapterTick}`);
       }).catch((error: Error) => {
+        if (!this.isReaderLifecycleCurrent(lifecycleGeneration)) {
+          return;
+        }
         logger.error(TAG, '切换章节前保存进度失败', error.message);
         // 即使保存失败也继续切换（但不加载页面，避免错误）
         this.readerState.currentChapter = targetChapter;
@@ -9649,38 +9945,268 @@ private onlineDownloadedLocalFastPathActive: boolean = false;
     if (this.autoHideTimer !== -1) {
       clearTimeout(this.autoHideTimer);
     }
-    
-    this.autoHideTimer = setTimeout(() => {
-      if (this.showTopToolbar) {
+    const lifecycleGeneration: number = this.readerLifecycleGeneration;
+    let hideTimerId: number = -1;
+    hideTimerId = setTimeout(() => {
+      if (this.autoHideTimer !== hideTimerId) {
+        return;
+      }
+      this.autoHideTimer = -1;
+      if (this.isReaderLifecycleCurrent(lifecycleGeneration) && this.showTopToolbar) {
         this.toggleToolbars();
       }
     }, 3000);// 3秒后自动隐藏
+    this.autoHideTimer = hideTimerId;
   }
 
   /**
    * 返回上一页
     */
+  private isReaderLifecycleCurrent(generation: number, requireVisible: boolean = true): boolean {
+    if (generation !== this.readerLifecycleGeneration || this.isReaderPageDisposed) {
+      return false;
+    }
+    if (requireVisible && !this.isPageVisible) {
+      return false;
+    }
+    return !this.isBackNavigationInProgress;
+  }
+
+  private isBackRequestCurrent(generation: number, requestId?: number): boolean {
+    return generation === this.readerLifecycleGeneration &&
+      !this.isReaderPageDisposed &&
+      this.isPageVisible &&
+      this.isBackNavigationInProgress &&
+      (requestId === undefined || requestId === this.backNavigationRequestId);
+  }
+
   private isHostedByIsolatedReaderAbility(): boolean {
     return this.pageParams?.readerHostMode === MANGA_READER_ABILITY_HOST_MULTITON;
   }
 
-  private async terminateIsolatedReaderAbility(reason: string): Promise<void> {
+  private waitForExitTask(task: Promise<void>, timeoutMs: number, taskName: string): Promise<boolean> {
+    return new Promise<boolean>((resolve: (value: boolean) => void) => {
+      let settled: boolean = false;
+      const timeoutId: number = setTimeout((): void => {
+        if (settled) {
+          return;
+        }
+        settled = true;
+        logger.warn(TAG, `阅读器退出任务超时，继续执行返回: task=${taskName}, timeout=${timeoutMs}ms`);
+        resolve(false);
+      }, timeoutMs);
+
+      task.then((): void => {
+        if (settled) {
+          return;
+        }
+        settled = true;
+        clearTimeout(timeoutId);
+        resolve(true);
+      }).catch((error: Error): void => {
+        if (settled) {
+          return;
+        }
+        settled = true;
+        clearTimeout(timeoutId);
+        logger.warn(TAG, `阅读器退出任务失败: task=${taskName}, error=${String(error)}`);
+        resolve(false);
+      });
+    });
+  }
+
+  private restoreReaderInteractionAfterExitFailure(
+    message: string,
+    lifecycleGeneration?: number,
+    requestId?: number
+  ): void {
+    if (lifecycleGeneration !== undefined && lifecycleGeneration !== this.readerLifecycleGeneration) {
+      return;
+    }
+    if (requestId !== undefined && requestId !== this.backNavigationRequestId) {
+      return;
+    }
+    this.clearIsolatedTerminationWatchdog();
+    if (!this.isPageVisible || this.isReaderPageDisposed) {
+      return;
+    }
+    this.isCloseTransitionNavigating = false;
+    this.isBackNavigationInProgress = false;
+    this.backNavigationRequestId += 1;
+    this.startReadingTimeTracking();
+    try {
+      this.getUIContext().getPromptAction().showToast({ message: message });
+    } catch (error) {
+      logger.warn(TAG, `显示阅读器退出失败提示异常: ${String(error)}`);
+    }
+  }
+
+  private restoreStaleBackNavigationOnPageShow(): void {
+    if (!this.isBackNavigationInProgress) {
+      return;
+    }
+
+    this.clearBackNavigationWatchdog();
+    this.clearIsolatedTerminationWatchdog();
+    if (this.isCloseTransitionNavigating || this.shouldUseReaderTransition(this.pageParams)) {
+      cancelTransition();
+    }
+    this.isCloseTransitionNavigating = false;
+    this.isBackNavigationInProgress = false;
+    this.backNavigationRequestId += 1;
+    this.startReadingTimeTracking();
+    logger.warn(TAG, '阅读器重新显示时检测到未完成的返回状态，已恢复页面交互');
+  }
+
+  private clearBackNavigationWatchdog(): void {
+    if (this.backNavigationWatchdogTimer === -1) {
+      return;
+    }
+    clearTimeout(this.backNavigationWatchdogTimer);
+    this.backNavigationWatchdogTimer = -1;
+  }
+
+  private clearIsolatedTerminationWatchdog(): void {
+    if (this.isolatedTerminationWatchdogTimer === -1) {
+      return;
+    }
+    clearTimeout(this.isolatedTerminationWatchdogTimer);
+    this.isolatedTerminationWatchdogTimer = -1;
+  }
+
+  private handleIsolatedTerminationWatchdog(
+    hostContext: common.UIAbilityContext,
+    reason: string,
+    phase: number,
+    lifecycleGeneration: number,
+    requestId: number
+  ): void {
+    if (!this.isBackRequestCurrent(lifecycleGeneration, requestId)) {
+      return;
+    }
+    this.isolatedTerminationWatchdogTimer = -1;
+
+    let isTerminating: boolean = false;
+    try {
+      isTerminating = hostContext.isTerminating();
+    } catch (statusError) {
+      logger.warn(TAG, `查询独立阅读器退出状态失败: reason=${reason}, error=${String(statusError)}`);
+    }
+
+    // terminateSelf() resolved only means the request was accepted. Give the
+    // ability one additional window to deliver aboutToDisappear before
+    // restoring the page interaction state.
+    if (isTerminating && phase === 0) {
+      logger.info(TAG, `独立阅读器退出请求已接受，等待生命周期回调: reason=${reason}`);
+      this.isolatedTerminationWatchdogTimer = setTimeout((): void => {
+        this.handleIsolatedTerminationWatchdog(hostContext, reason, 1, lifecycleGeneration, requestId);
+      }, MangaReaderPage.EXIT_TERMINATE_WATCHDOG_MS);
+      return;
+    }
+
+    logger.error(TAG, `独立阅读器退出请求未完成，恢复页面交互: reason=${reason}, phase=${phase}`);
+    this.restoreReaderInteractionAfterExitFailure('退出阅读器超时，请重试', lifecycleGeneration, requestId);
+  }
+
+  private popReaderPathWithWatchdog(
+    reason: string,
+    lifecycleGeneration: number = this.readerLifecycleGeneration,
+    requestId: number = this.backNavigationRequestId
+  ): void {
+    if (!this.isBackRequestCurrent(lifecycleGeneration, requestId)) {
+      return;
+    }
+    this.clearBackNavigationWatchdog();
+    this.backNavigationWatchdogTimer = setTimeout((): void => {
+      if (!this.isBackRequestCurrent(lifecycleGeneration, requestId)) {
+        return;
+      }
+      this.backNavigationWatchdogTimer = -1;
+      cancelTransition();
+      logger.error(TAG, `阅读器返回导航无响应，恢复页面交互: reason=${reason}`);
+      this.restoreReaderInteractionAfterExitFailure('返回失败，请重试', lifecycleGeneration, requestId);
+    }, MangaReaderPage.EXIT_NAVIGATION_WATCHDOG_MS);
+
+    try {
+      this.pathStack.pop();
+    } catch (error) {
+      this.clearBackNavigationWatchdog();
+      logger.error(TAG, `阅读器返回导航异常: reason=${reason}, error=${String(error)}`);
+      cancelTransition();
+      this.restoreReaderInteractionAfterExitFailure('返回失败，请重试', lifecycleGeneration, requestId);
+    }
+  }
+
+  private terminateIsolatedReaderAbility(
+    reason: string,
+    lifecycleGeneration: number = this.readerLifecycleGeneration,
+    requestId: number = this.backNavigationRequestId
+  ): void {
+    if (!this.isBackRequestCurrent(lifecycleGeneration, requestId)) {
+      return;
+    }
     try {
       const hostContext = this.getUIContext()?.getHostContext() as common.UIAbilityContext;
       if (!hostContext) {
-        logger.warn(TAG, `独立阅读器退出失败，回退页面栈: reason=${reason}`);
-        this.pathStack.pop();
+        throw new Error(`独立阅读器缺少UIAbilityContext: reason=${reason}`);
+      }
+
+      let alreadyTerminating: boolean = false;
+      try {
+        alreadyTerminating = hostContext.isTerminating();
+      } catch (statusError) {
+        logger.warn(TAG, `查询独立阅读器退出状态失败: reason=${reason}, error=${String(statusError)}`);
+      }
+
+      this.clearIsolatedTerminationWatchdog();
+      this.isolatedTerminationWatchdogTimer = setTimeout((): void => {
+        this.handleIsolatedTerminationWatchdog(hostContext, reason, 0, lifecycleGeneration, requestId);
+      }, MangaReaderPage.EXIT_TERMINATE_WATCHDOG_MS);
+
+      if (alreadyTerminating) {
+        logger.info(TAG, `独立阅读器已处于退出中，等待生命周期回调: reason=${reason}`);
         return;
       }
+
       logger.info(TAG, `独立阅读器实例退出: reason=${reason}, instanceId=${this.pageParams?.readerInstanceId || ''}`);
-      await hostContext.terminateSelf();
+      const terminateTask: Promise<void> = hostContext.terminateSelf();
+      void terminateTask.then((): void => {
+        logger.info(TAG, `独立阅读器退出请求已提交，等待页面生命周期: reason=${reason}`);
+      }, (error: Error): void => {
+        logger.error(TAG, `独立阅读器实例退出异常: reason=${reason}, error=${error.message}`);
+        if (this.isBackRequestCurrent(lifecycleGeneration, requestId)) {
+          this.restoreReaderInteractionAfterExitFailure('退出阅读器失败，请重试', lifecycleGeneration, requestId);
+        }
+      });
     } catch (error) {
-      logger.error(TAG, `独立阅读器实例退出异常: ${String(error)}`);
-      this.pathStack.pop();
+      logger.error(TAG, `独立阅读器实例退出异常: reason=${reason}, error=${String(error)}`);
+      this.clearIsolatedTerminationWatchdog();
+      this.isCloseTransitionNavigating = false;
+      if (this.shouldUseReaderTransition(this.pageParams)) {
+        cancelTransition();
+      }
+      // 独立 Ability 的导航栈只有阅读器页；弹出该页会留下无法退出的空黑根页。
+      this.restoreReaderInteractionAfterExitFailure('退出阅读器失败，请重试', lifecycleGeneration, requestId);
     }
   }
 
   private async goBack(): Promise<void> {
+    if (this.isBackNavigationInProgress) {
+      logger.debug(TAG, '忽略重复的阅读器返回请求');
+      return;
+    }
+    const backGeneration: number = this.readerLifecycleGeneration;
+    this.backNavigationRequestId += 1;
+    const backRequestId: number = this.backNavigationRequestId;
+    this.isBackNavigationInProgress = true;
+    this.clearTransitionReaderReadyTimers();
+    this.stopReadingTimeTracking();
+    if (this.settingsSaveTimeoutId !== -1) {
+      clearTimeout(this.settingsSaveTimeoutId);
+      this.settingsSaveTimeoutId = -1;
+    }
+
+    let hasRequestedPathPop: boolean = false;
     try {
       const shouldUseTransition = this.shouldUseReaderTransition(this.pageParams);
       const isIsolatedReaderAbility = this.isHostedByIsolatedReaderAbility();
@@ -9688,22 +10214,35 @@ private onlineDownloadedLocalFastPathActive: boolean = false;
       const mangaId = this.readerState.currentManga?.id || '';
       const coverComponentId = this.pageParams?.coverComponentId || (mangaId ? `cover_manga_lib_${mangaId}` : '');
 
-      // Save progress before triggering transition.
-      try {
-        try {
-          await this.persistReadingSettings('go_back');
-        } catch (_settingsError) {}
-        await this.saveReadingProgressInternal('goBack');
-      } catch (saveError) {
-        logger.error(TAG, '返回前保存阅读进度失败', saveError instanceof Error ? saveError.message : String(saveError));
+      // 保存是尽力而为，不能阻塞已经被 onBackPressed 接管的导航。
+      const settingsWait: Promise<boolean> = this.waitForExitTask(
+        this.persistReadingSettings('go_back'),
+        MangaReaderPage.EXIT_PERSIST_TIMEOUT_MS,
+        'persist_reader_settings'
+      );
+      const progressWait: Promise<boolean> = this.waitForExitTask(
+        this.saveReadingProgressInternal('goBack'),
+        MangaReaderPage.EXIT_PERSIST_TIMEOUT_MS,
+        'persist_reading_progress'
+      );
+      const exitPersistenceTasks: Promise<boolean>[] = [settingsWait, progressWait];
+      await Promise.all(exitPersistenceTasks);
+
+      // 持久化等待期间页面可能已经被系统或上层导航销毁；旧返回任务
+      // 不得在生命周期结束后再次启动转场或修改导航栈。
+      if (!this.isBackRequestCurrent(backGeneration, backRequestId)) {
+        logger.debug(TAG, '阅读器已离开，忽略迟到的返回导航任务');
+        return;
       }
 
       if (!shouldUseTransition) {
         logger.info(TAG, '远程图源阅读器退出时跳过书籍开合转场');
         if (isIsolatedReaderAbility) {
-          await this.terminateIsolatedReaderAbility('go_back_without_transition');
+          this.isCloseTransitionNavigating = true;
+          this.terminateIsolatedReaderAbility('go_back_without_transition', backGeneration, backRequestId);
         } else {
-          this.pathStack.pop();
+          hasRequestedPathPop = true;
+          this.popReaderPathWithWatchdog('go_back_without_transition', backGeneration, backRequestId);
         }
         return;
       }
@@ -9714,30 +10253,45 @@ private onlineDownloadedLocalFastPathActive: boolean = false;
         if (shouldUseTransition) {
           cancelTransition();
         }
-        await this.terminateIsolatedReaderAbility('go_back_isolated_reader');
+        this.terminateIsolatedReaderAbility('go_back_isolated_reader', backGeneration, backRequestId);
         return;
       }
 
       logger.info(TAG, `触发关闭过渡动画（带截图），封面组件ID: ${coverComponentId}`);
-      await startBookCloseTransitionWithComponentId(
+      const closeTransitionStarted: boolean = await startBookCloseTransitionWithComponentId(
         'manga_reader_root',
-        coverComponentId
+        coverComponentId,
+        undefined,
+        (): boolean => this.isBackRequestCurrent(backGeneration, backRequestId)
       );
+
+      if (!this.isBackRequestCurrent(backGeneration, backRequestId)) {
+        if (closeTransitionStarted) {
+          cancelTransition();
+        }
+        logger.debug(TAG, '阅读器在关闭转场等待期间离开，忽略后续导航');
+        return;
+      }
 
       // Pop immediately after transition starts so detail page is visible during shrink.
       this.isCloseTransitionNavigating = true;
-      this.pathStack.pop();
+      hasRequestedPathPop = true;
+      this.popReaderPathWithWatchdog('go_back_after_transition', backGeneration, backRequestId);
     } catch (error) {
       const errorMessage = error instanceof Error ? error.message : String(error);
       logger.error(TAG, '返回上一页失败', errorMessage);
+      if (!this.isBackRequestCurrent(backGeneration, backRequestId)) {
+        return;
+      }
       this.isCloseTransitionNavigating = false;
       if (this.shouldUseReaderTransition(this.pageParams)) {
         cancelTransition();
       }
       if (this.isHostedByIsolatedReaderAbility()) {
-        await this.terminateIsolatedReaderAbility('go_back_error');
-      } else {
-        this.pathStack.pop();
+        this.restoreReaderInteractionAfterExitFailure('退出阅读器失败，请重试', backGeneration, backRequestId);
+      } else if (!hasRequestedPathPop) {
+        hasRequestedPathPop = true;
+        this.popReaderPathWithWatchdog('go_back_error_fallback', backGeneration, backRequestId);
       }
     }
   }
@@ -9842,7 +10396,11 @@ private onlineDownloadedLocalFastPathActive: boolean = false;
     this.getUIContext().getPromptAction().showToast({ message: '检测到长条图片，已自动切换为条漫模式' });
 
     const targetIndex: number = this.readerState.currentPageIndex;
+    const lifecycleGeneration: number = this.readerLifecycleGeneration;
     setTimeout(() => {
+      if (!this.isReaderLifecycleCurrent(lifecycleGeneration)) {
+        return;
+      }
       if (!this.isWebtoonMode()) {
         return;
       }
@@ -9934,6 +10492,10 @@ private onlineDownloadedLocalFastPathActive: boolean = false;
    * 翻到上一页
     */
   private goToPreviousPage(): void {
+    const lifecycleGeneration: number = this.readerLifecycleGeneration;
+    if (!this.isReaderLifecycleCurrent(lifecycleGeneration)) {
+      return;
+    }
     const currentChapter = this.readerState.currentChapter;
     const isDoublePage = this.isEffectiveDoublePageMode();
     const targetPageIndex = isDoublePage ? this.getPreviousDoublePagePairStart() : this.readerState.currentPageIndex - 1;
@@ -9976,9 +10538,15 @@ private onlineDownloadedLocalFastPathActive: boolean = false;
       // 切换到上一章节的最后一页
       // 切换到上一章节的最后一页
       this.saveReadingProgressInternal('beforePrevChapterFromPrevPage').then(() => {
+        if (!this.isReaderLifecycleCurrent(lifecycleGeneration)) {
+          return;
+        }
         this.goToPreviousChapter();
       }).catch((error: Error) => {
         logger.error(TAG, '切到上一章节前保存进度失败', error.message);
+        if (!this.isReaderLifecycleCurrent(lifecycleGeneration)) {
+          return;
+        }
         this.goToPreviousChapter();
       });
     }
@@ -9989,6 +10557,10 @@ private onlineDownloadedLocalFastPathActive: boolean = false;
    * 翻到下一页
     */
   private goToNextPage(onComplete?: (() => void) | undefined): void {
+    const lifecycleGeneration: number = this.readerLifecycleGeneration;
+    if (!this.isReaderLifecycleCurrent(lifecycleGeneration)) {
+      return;
+    }
     const currentChapter = this.readerState.currentChapter;
     const isAutoScroll = !!onComplete;// 判断是否为自动翻页
     const isDoublePage = this.isEffectiveDoublePageMode();
@@ -10017,6 +10589,9 @@ private onlineDownloadedLocalFastPathActive: boolean = false;
           } else {
             // 手动翻页模式：使用传统逻辑
             const success = this.mangaViewerComponent.smoothScrollToNextPage(scrollSpeed, scrollMode, () => {
+              if (!this.isReaderLifecycleCurrent(lifecycleGeneration)) {
+                return;
+              }
               this.syncReaderPageState(targetPageIndex);
               if (onComplete) { (onComplete as () => void)(); }
             });
@@ -10050,10 +10625,16 @@ private onlineDownloadedLocalFastPathActive: boolean = false;
       logger.debug(TAG, `到达章节末尾，切换到下一章节${isAutoScroll ? ' (自动翻页)' : ''}`);
       // 切换到下一章节的第一页
       this.saveReadingProgressInternal('beforeNextChapterFromNextPage').then(() => {
+        if (!this.isReaderLifecycleCurrent(lifecycleGeneration)) {
+          return;
+        }
         this.goToNextChapter();
         if (onComplete) { (onComplete as () => void)(); }
       }).catch((error: Error) => {
         logger.error(TAG, '切到下一章节前保存进度失败', error.message);
+        if (!this.isReaderLifecycleCurrent(lifecycleGeneration)) {
+          return;
+        }
         this.goToNextChapter();
         if (onComplete) { (onComplete as () => void)(); }
       });
@@ -10064,6 +10645,10 @@ private onlineDownloadedLocalFastPathActive: boolean = false;
    * 切换到上一章节
     */
   private goToPreviousChapter(): void {
+    const lifecycleGeneration: number = this.readerLifecycleGeneration;
+    if (!this.isReaderLifecycleCurrent(lifecycleGeneration)) {
+      return;
+    }
     const currentManga = this.readerState.currentManga;
     const currentChapter = this.readerState.currentChapter;
     
@@ -10082,6 +10667,9 @@ private onlineDownloadedLocalFastPathActive: boolean = false;
           
           // 异步加载页面信息
           this.preloadChapterPages(prevChapter).then(async () => {
+            if (!this.isReaderLifecycleCurrent(lifecycleGeneration)) {
+              return;
+            }
           // 异步加载页面信息
             if (!prevChapter.pages || prevChapter.pages.length === 0) {
               const errorMsg = `上一章节没有页面数据: ${prevChapter.title}`;
@@ -10095,6 +10683,9 @@ private onlineDownloadedLocalFastPathActive: boolean = false;
             }
             
             const targetPageIndex: number = await this.resolveChapterSwitchTargetPageIndex(currentManga.id, prevChapter, 'prev');
+            if (!this.isReaderLifecycleCurrent(lifecycleGeneration)) {
+              return;
+            }
             
             // 加载成功且有有效页面，原子更新章节与页面索引
             this.setChapterSwitchPageGuard(prevChapter, targetPageIndex, 'prev');
@@ -10108,6 +10699,9 @@ private onlineDownloadedLocalFastPathActive: boolean = false;
             this.scheduleChapterSwitchReaderReady(prevChapter, targetPageIndex, 'switch_prev_chapter_loaded');
             logger.info(TAG, `✅ 已切换到上一章节: ${prevChapter.title}，页面数: ${prevChapter.pages.length}, 目标页=${targetPageIndex + 1}, chapterTick=${this.chapterTick}`);
           }).catch((error: Error) => {
+            if (!this.isReaderLifecycleCurrent(lifecycleGeneration)) {
+              return;
+            }
             logger.error(TAG, `加载上一章节失败: ${error.message}`);
             this.readerState.isLoading = false;
             this.readerState.errorMessage = `加载上一章节失败: ${error.message}`;
@@ -10126,6 +10720,9 @@ private onlineDownloadedLocalFastPathActive: boolean = false;
           
           // 异步加载页面信息
           this.preloadChapterPages(prevChapter).then(async () => {
+            if (!this.isReaderLifecycleCurrent(lifecycleGeneration)) {
+              return;
+            }
           // 异步加载页面信息
             if (!prevChapter.pages || prevChapter.pages.length === 0) {
               const errorMsg = `上一章节没有页面数据: ${prevChapter.title}`;
@@ -10139,6 +10736,9 @@ private onlineDownloadedLocalFastPathActive: boolean = false;
             }
             
             const targetPageIndex: number = await this.resolveChapterSwitchTargetPageIndex(currentManga.id, prevChapter, 'prev');
+            if (!this.isReaderLifecycleCurrent(lifecycleGeneration)) {
+              return;
+            }
             
             // 加载成功，原子更新章节与页面索引
             this.setChapterSwitchPageGuard(prevChapter, targetPageIndex, 'prev');
@@ -10153,6 +10753,9 @@ private onlineDownloadedLocalFastPathActive: boolean = false;
             this.scheduleChapterSwitchReaderReady(prevChapter, targetPageIndex, 'switch_prev_chapter_cached');
             logger.info(TAG, `✅ 已切换到上一章节: ${prevChapter.title}，页面数: ${prevChapter.pages.length}, 目标页=${targetPageIndex + 1}, chapterTick=${this.chapterTick}`);
           }).catch((error: Error) => {
+            if (!this.isReaderLifecycleCurrent(lifecycleGeneration)) {
+              return;
+            }
             logger.error(TAG, `加载上一章节失败: ${error.message}`);
             this.readerState.isLoading = false;
             this.readerState.errorMessage = `加载上一章节失败: ${error.message}`;
@@ -10183,6 +10786,10 @@ private onlineDownloadedLocalFastPathActive: boolean = false;
   }
 
   private goToNextChapter(): void {
+    const lifecycleGeneration: number = this.readerLifecycleGeneration;
+    if (!this.isReaderLifecycleCurrent(lifecycleGeneration)) {
+      return;
+    }
     const currentManga = this.readerState.currentManga;
     const currentChapter = this.readerState.currentChapter;
     
@@ -10211,6 +10818,9 @@ private onlineDownloadedLocalFastPathActive: boolean = false;
           
           // 异步加载页面信息
           this.preloadChapterPages(nextChapter).then(async () => {
+            if (!this.isReaderLifecycleCurrent(lifecycleGeneration)) {
+              return;
+            }
           // 异步加载页面信息
             if (!nextChapter.pages || nextChapter.pages.length === 0) {
               const errorMsg = `下一章节没有页面数据: ${nextChapter.title}`;
@@ -10224,6 +10834,9 @@ private onlineDownloadedLocalFastPathActive: boolean = false;
             }
             
             const targetPageIndex: number = await this.resolveChapterSwitchTargetPageIndex(currentManga.id, nextChapter, 'next');
+            if (!this.isReaderLifecycleCurrent(lifecycleGeneration)) {
+              return;
+            }
             
             // 加载成功且有有效页面，原子更新章节与页面索引
             this.setChapterSwitchPageGuard(nextChapter, targetPageIndex, 'next');
@@ -10237,6 +10850,9 @@ private onlineDownloadedLocalFastPathActive: boolean = false;
             this.scheduleChapterSwitchReaderReady(nextChapter, targetPageIndex, 'switch_next_chapter_loaded');
             logger.info(TAG, `✅ 已切换到下一章节: ${nextChapter.title}，页面数: ${nextChapter.pages.length}, 目标页=${targetPageIndex + 1}, chapterTick=${this.chapterTick}`);
           }).catch((error: Error) => {
+            if (!this.isReaderLifecycleCurrent(lifecycleGeneration)) {
+              return;
+            }
             logger.error(TAG, `加载下一章节失败: ${error.message}`);
             this.readerState.isLoading = false;
             this.readerState.errorMessage = `加载下一章节失败: ${error.message}`;
@@ -10255,6 +10871,9 @@ private onlineDownloadedLocalFastPathActive: boolean = false;
           
           // 异步加载页面信息
           this.preloadChapterPages(nextChapter).then(async () => {
+            if (!this.isReaderLifecycleCurrent(lifecycleGeneration)) {
+              return;
+            }
           // 异步加载页面信息
             if (!nextChapter.pages || nextChapter.pages.length === 0) {
               const errorMsg = `下一章节没有页面数据: ${nextChapter.title}`;
@@ -10268,6 +10887,9 @@ private onlineDownloadedLocalFastPathActive: boolean = false;
             }
             
             const targetPageIndex: number = await this.resolveChapterSwitchTargetPageIndex(currentManga.id, nextChapter, 'next');
+            if (!this.isReaderLifecycleCurrent(lifecycleGeneration)) {
+              return;
+            }
             
             // 加载成功，原子更新章节与页面索引
             this.setChapterSwitchPageGuard(nextChapter, targetPageIndex, 'next');
@@ -10282,6 +10904,9 @@ private onlineDownloadedLocalFastPathActive: boolean = false;
             this.scheduleChapterSwitchReaderReady(nextChapter, targetPageIndex, 'switch_next_chapter_cached');
             logger.info(TAG, `✅ 已切换到下一章节: ${nextChapter.title}，页面数: ${nextChapter.pages.length}, 目标页=${targetPageIndex + 1}, chapterTick=${this.chapterTick}`);
           }).catch((error: Error) => {
+            if (!this.isReaderLifecycleCurrent(lifecycleGeneration)) {
+              return;
+            }
             logger.error(TAG, `加载下一章节失败: ${error.message}`);
             this.readerState.isLoading = false;
             this.readerState.errorMessage = `加载下一章节失败: ${error.message}`;
@@ -10610,7 +11235,7 @@ private onlineDownloadedLocalFastPathActive: boolean = false;
       .width(48)
       .height(48)
       .backgroundColor(Color.Transparent)
-      .onClick(() => this.goBack())
+      .onClick(() => void this.goBack())
 
             // 条漫模式下需要滚动到对应页面
       Column() {
@@ -10677,7 +11302,7 @@ private onlineDownloadedLocalFastPathActive: boolean = false;
     .backgroundBlurStyle(ThemeManager.getInstance().getGlassBlurStyle())
     .shadow({ radius: ThemeManager.getInstance().getGlassRadius(), color: ThemeManager.getInstance().getGlassShadowColor(), offsetX: 0, offsetY: 4 })
     .opacity(this.toolbarOpacity)
-    .id('' as string)
+    .id('guide_manga_reader_top_toolbar')
   }
 
   /**
@@ -10833,7 +11458,7 @@ private onlineDownloadedLocalFastPathActive: boolean = false;
     .backgroundBlurStyle(ThemeManager.getInstance().getGlassBlurStyle())
     .shadow({ radius: ThemeManager.getInstance().getGlassRadius(), color: ThemeManager.getInstance().getGlassShadowColor(), offsetX: 0, offsetY: -2 })
     .opacity(this.toolbarOpacity)
-    .id('' as string)
+    .id('guide_manga_reader_bottom_toolbar')
   }
 
 
@@ -10841,7 +11466,7 @@ private onlineDownloadedLocalFastPathActive: boolean = false;
   * 构建翻页动画按钮
   */
   @Builder
-  buildMangaContent() {
+  buildMangaContent(viewerLifecycleGeneration: number) {
     if (this.readerState.isLoading || (!this.isNetworkConfigReady && !this.readerState.errorMessage)) {
       // 错误状态2：章节数据为空
       Column() {
@@ -10927,7 +11552,7 @@ private onlineDownloadedLocalFastPathActive: boolean = false;
             .margin({ left: 16 })
             .onClick(() => {
               logger.info(TAG, `返回首页，当前页: ${this.readerState.currentPageIndex + 1}`);
-              this.goBack();
+              void this.goBack();
             })
         }
         .margin({ top: 24 })
@@ -10990,7 +11615,7 @@ private onlineDownloadedLocalFastPathActive: boolean = false;
             .margin({ left: 16 })
             .onClick(() => {
               logger.info(TAG, '触发漫画阅读组件预加载');
-              this.goBack();
+              void this.goBack();
             })
         }
         .margin({ top: 24 })
@@ -11032,13 +11657,23 @@ private onlineDownloadedLocalFastPathActive: boolean = false;
           isFirstChapter: this.isFirstChapterState,
           isLastChapter: this.isLastChapterState,
           onRequestAdjacentChapter: (direction: 'prev' | 'next') => {
+            if (!this.isReaderLifecycleCurrent(viewerLifecycleGeneration)) {
+              return;
+            }
             this.handleWebtoonAdjacentChapterRequest(direction);
           },
           loadPixivImageCallback: async (imageUrl: string): Promise<ArrayBuffer | null> => {
-            return await this.loadPixivImage(imageUrl);
+            if (!this.isReaderLifecycleCurrent(viewerLifecycleGeneration)) {
+              return null;
+            }
+            const imageData: ArrayBuffer | null = await this.loadPixivImage(imageUrl);
+            return this.isReaderLifecycleCurrent(viewerLifecycleGeneration) ? imageData : null;
           },
           callbacks: {
             onPageChange: (pageIndex: number) => {
+              if (!this.isReaderLifecycleCurrent(viewerLifecycleGeneration)) {
+                return;
+              }
               logger.info(TAG, `漫画阅读组件页码变化: ${pageIndex + 1}`);
               
               // 因此直接调用 jumpToPageImmediate 无效。使用 setTimeout 延迟到渲染完成后。
@@ -11089,8 +11724,14 @@ private onlineDownloadedLocalFastPathActive: boolean = false;
               this.preloadNextChapterIfNeeded(safePageIndex);
             },
             onChapterChange: (direction: 'prev' | 'next') => {
-        // 获取组件实际渲染尺寸（vp单位）
+              if (!this.isReaderLifecycleCurrent(viewerLifecycleGeneration)) {
+                return;
+              }
+              // 获取组件实际渲染尺寸（vp单位）
               this.saveReadingProgressInternal('onChapterChange').then(() => {
+                if (!this.isReaderLifecycleCurrent(viewerLifecycleGeneration)) {
+                  return;
+                }
                 if (direction === 'prev') {
                   this.goToPreviousChapter();
                 } else {
@@ -11098,6 +11739,9 @@ private onlineDownloadedLocalFastPathActive: boolean = false;
                 }
               }).catch((error: Error) => {
                 logger.error(TAG, '章节切换前保存阅读进度失败', error.message);
+                if (!this.isReaderLifecycleCurrent(viewerLifecycleGeneration)) {
+                  return;
+                }
                 if (direction === 'prev') {
                   this.goToPreviousChapter();
                 } else {
@@ -11106,19 +11750,34 @@ private onlineDownloadedLocalFastPathActive: boolean = false;
               });
             },
             onZoomChange: (scale: number) => {
+              if (!this.isReaderLifecycleCurrent(viewerLifecycleGeneration)) {
+                return;
+              }
               this.readerState.zoomScale = scale;
             },
             onSingleTap: (event: ClickEvent) => {
+              if (!this.isReaderLifecycleCurrent(viewerLifecycleGeneration)) {
+                return;
+              }
               this.handlePageTap(event);
             },
             onDoubleTap: (event: ClickEvent) => {
+              if (!this.isReaderLifecycleCurrent(viewerLifecycleGeneration)) {
+                return;
+              }
               this.handleDoubleTap(event);
             },
         // 内容层 - 占满全屏，使用安全区 padding 以遵循沉浸式规范
             onWebtoonChapterSwitch: (chapterId: string, chapterTitle: string, pageIndex: number) => {
+              if (!this.isReaderLifecycleCurrent(viewerLifecycleGeneration)) {
+                return;
+              }
               this.handleWebtoonChapterSwitch(chapterId, chapterTitle, pageIndex);
             },
             onFirstVisibleDisplayCommitted: (pageIndex: number, pageId: string, sourceType: ImageSourceType) => {
+              if (!this.isReaderLifecycleCurrent(viewerLifecycleGeneration)) {
+                return;
+              }
               this.handleFirstVisibleMangaImageCommitted(pageIndex, pageId, sourceType);
               this.handleOnlineDownloadedFirstVisibleDisplayCommitted(
                 pageIndex,
@@ -11128,67 +11787,108 @@ private onlineDownloadedLocalFastPathActive: boolean = false;
               );
             },
             onComponentReady: (component: MangaViewer) => {
+              if (!this.isReaderLifecycleCurrent(viewerLifecycleGeneration)) {
+                logger.debug(TAG, '忽略已退出阅读器的组件就绪回调');
+                return;
+              }
+              try {
           // 漫画内容区域 - 占满全屏
-              this.mangaViewerComponent = component;
-              logger.info(TAG, '漫画阅读组件已通过回调绑定');
-              const pendingKickstart = () => {
-                component.kickstartLoading();
-                this.waitForTransitionReaderReady('component_ready');
-              };
-              const chapter = this.readerState.currentChapter;
-              const expectedIndex = this.readerState.currentPageIndex;
-              
+                this.mangaViewerComponent = component;
+                logger.info(TAG, '漫画阅读组件已通过回调绑定');
+                const pendingKickstart = (): void => {
+                  if (!this.isReaderLifecycleCurrent(viewerLifecycleGeneration)) {
+                    return;
+                  }
+                  try {
+                    component.kickstartLoading();
+                    this.waitForTransitionReaderReady('component_ready');
+                  } catch (error) {
+                    logger.warn(TAG, `组件就绪后启动加载失败: ${String(error)}`);
+                  }
+                };
+                const chapter = this.readerState.currentChapter;
+                const expectedIndex = this.readerState.currentPageIndex;
+
         // 顶部工具栏（悬浮覆盖）
         // 每日限额提示横幅（顶部悬浮）
-              const viewerIndex: number = component.getCurrentViewPageIndex();
-              logger.debug(TAG, `初始化同步检查当前页: 组件页=${viewerIndex}, 预期页=${expectedIndex}`);
-              if (viewerIndex !== expectedIndex && expectedIndex >= 0) {
-                logger.info(TAG, `[初始化同步] 发现页码不一致: 组件页=${viewerIndex}, 预期页=${expectedIndex}`);
-                component.setPageIndex(expectedIndex);
-              } else {
-                logger.debug(TAG, '[初始化同步] 当前页与预期页一致，无需校正');
-              }
+                try {
+                  if (!this.isReaderLifecycleCurrent(viewerLifecycleGeneration)) {
+                    return;
+                  }
+                  const viewerIndex: number = component.getCurrentViewPageIndex();
+                  logger.debug(TAG, `初始化同步检查当前页: 组件页=${viewerIndex}, 预期页=${expectedIndex}`);
+                  if (viewerIndex !== expectedIndex && expectedIndex >= 0) {
+                    logger.info(TAG, `[初始化同步] 发现页码不一致: 组件页=${viewerIndex}, 预期页=${expectedIndex}`);
+                    component.setPageIndex(expectedIndex);
+                  } else {
+                    logger.debug(TAG, '[初始化同步] 当前页与预期页一致，无需校正');
+                  }
+                } catch (error) {
+                  logger.warn(TAG, `组件就绪时同步页码失败: ${String(error)}`);
+                }
               
         // 每日限额提示横幅（顶部悬浮）
-              if (chapter && this.isScrollableReaderMode() && (expectedIndex > 0 || this.isContinuousScrollMode())) {
-                setTimeout(() => {
-                  if (component.jumpToPageImmediate) {
-                    const success = component.jumpToPageImmediate(expectedIndex);
-                    if (success) {
-                      logger.info(TAG, `[初始化同步] 已立即跳转到目标页: ${expectedIndex + 1}`);
-                    } else {
-                      logger.warn(TAG, '[初始化同步] 立即跳转失败，回退到条漫页码滚动');
-                      this.scrollToWebtoonPage(expectedIndex);
+                if (chapter && this.isScrollableReaderMode() && (expectedIndex > 0 || this.isContinuousScrollMode())) {
+                  setTimeout(() => {
+                    if (!this.isReaderLifecycleCurrent(viewerLifecycleGeneration)) {
+                      return;
                     }
-                  } else {
-                    this.scrollToWebtoonPage(expectedIndex);
-                  }
-                }, 150);
-              }
+                    try {
+                      if (component.jumpToPageImmediate) {
+                        const success: boolean = component.jumpToPageImmediate(expectedIndex);
+                        if (success) {
+                          logger.info(TAG, `[初始化同步] 已立即跳转到目标页: ${expectedIndex + 1}`);
+                        } else {
+                          logger.warn(TAG, '[初始化同步] 立即跳转失败，回退到条漫页码滚动');
+                          if (this.isReaderLifecycleCurrent(viewerLifecycleGeneration)) {
+                            this.scrollToWebtoonPage(expectedIndex);
+                          }
+                        }
+                      } else {
+                        this.scrollToWebtoonPage(expectedIndex);
+                      }
+                    } catch (error) {
+                      logger.warn(TAG, `初始化延迟页码同步失败: ${String(error)}`);
+                    }
+                  }, 150);
+                }
               
         // 底部工具栏（悬浮覆盖，略高于底部）
         // 底部工具栏（悬浮覆盖，略高于底部）
-              setTimeout(() => {
-                this.isReaderInitialized = true;
-                const readyChapter = this.readerState.currentChapter;
-                if (readyChapter) {
-                  const guard: ChapterSwitchPageGuard | null = this.getActiveChapterSwitchPageGuard(readyChapter);
-                  if (guard) {
-                    const readyViewerIndex: number = component.getCurrentViewPageIndex();
-                    const normalizedViewerIndex: number = this.normalizeReaderPageIndexForChapter(readyChapter, readyViewerIndex);
-                    if (normalizedViewerIndex !== guard.pageIndex) {
-                      logger.info(TAG, `组件就绪后校正跨章页组: viewer=${readyViewerIndex + 1}, normalized=${normalizedViewerIndex + 1}, expected=${guard.pageIndex + 1}`);
-                      component.setPageIndex(guard.pageIndex);
-                      if (this.isDoublePageVerticalPortraitMode()) {
-                        component.syncVerticalDoublePageToPageIndex(guard.pageIndex, 'component_ready_chapter_guard');
+                setTimeout(() => {
+                  if (!this.isReaderLifecycleCurrent(viewerLifecycleGeneration)) {
+                    return;
+                  }
+                  try {
+                    this.isReaderInitialized = true;
+                    const readyChapter = this.readerState.currentChapter;
+                    if (readyChapter) {
+                      const guard: ChapterSwitchPageGuard | null = this.getActiveChapterSwitchPageGuard(readyChapter);
+                      if (guard) {
+                        if (!this.isReaderLifecycleCurrent(viewerLifecycleGeneration)) {
+                          return;
+                        }
+                        const readyViewerIndex: number = component.getCurrentViewPageIndex();
+                        const normalizedViewerIndex: number = this.normalizeReaderPageIndexForChapter(readyChapter, readyViewerIndex);
+                        if (normalizedViewerIndex !== guard.pageIndex) {
+                          logger.info(TAG, `组件就绪后校正跨章页组: viewer=${readyViewerIndex + 1}, normalized=${normalizedViewerIndex + 1}, expected=${guard.pageIndex + 1}`);
+                          component.setPageIndex(guard.pageIndex);
+                          if (this.isDoublePageVerticalPortraitMode()) {
+                            component.syncVerticalDoublePageToPageIndex(guard.pageIndex, 'component_ready_chapter_guard');
+                          }
+                        }
+                        this.syncReaderPageState(guard.pageIndex);
+                        this.clearChapterSwitchPageGuard('component_ready');
                       }
                     }
-                    this.syncReaderPageState(guard.pageIndex);
-                    this.clearChapterSwitchPageGuard('component_ready');
+                    logger.info(TAG, '漫画阅读组件初始化完成');
+                  } catch (error) {
+                    logger.warn(TAG, `组件延迟初始化同步失败: ${String(error)}`);
                   }
-                }
-                logger.info(TAG, '漫画阅读组件初始化完成');
-              }, 500);
+                }, 500);
+              } catch (error) {
+                logger.warn(TAG, `漫画阅读组件就绪处理异常: ${String(error)}`);
+              }
               
               logger.debug(TAG, '漫画阅读组件已就绪');
               this.scheduleOnlineDownloadedFirstDisplayVisualCheck('component_ready');
@@ -11203,6 +11903,9 @@ private onlineDownloadedLocalFastPathActive: boolean = false;
       .height('100%')
       .onClick((event: ClickEvent) => {
           // .padding({ bottom: this.navigationBarHeight + 8 })
+        if (!this.isReaderLifecycleCurrent(this.readerLifecycleGeneration)) {
+          return;
+        }
         this.handlePageTap(event);
       })
       .onAreaChange((oldArea: Area, newArea: Area) => {
@@ -11235,13 +11938,13 @@ private onlineDownloadedLocalFastPathActive: boolean = false;
           .width('100%')
           .height('100%')
           .backgroundColor(Color.Transparent)
-          .id('' as string)
+          .id('guide_manga_reader_root')
           .expandSafeArea([SafeAreaType.SYSTEM], [SafeAreaEdge.TOP, SafeAreaEdge.BOTTOM])
 
         // 快速设置面板（带动画）
         Column() {
         // 快速设置面板（带动画）
-          this.buildMangaContent()
+          this.buildMangaContent(this.readerLifecycleGeneration)
         }
         .width('100%')
         .height('100%')
@@ -11582,7 +12285,7 @@ private onlineDownloadedLocalFastPathActive: boolean = false;
               }
             }
           })
-          .id('' as string)
+          .id('guide_manga_reader_chapter_list')
           .zIndex(1000)
         }
 
@@ -12350,6 +13053,9 @@ private onlineDownloadedLocalFastPathActive: boolean = false;
           .visibility(Visibility.None)
           .zIndex(-1)
           .onControllerAttached(() => {
+            if (this.isReaderPageDisposed || this.isBackNavigationInProgress) {
+              return;
+            }
             this.webViewControllerAttached = true;
             logger.info(TAG, '隐藏WebView控制器已附加');
             this.initWebViewController();
@@ -12365,7 +13071,7 @@ private onlineDownloadedLocalFastPathActive: boolean = false;
       .expandSafeArea([SafeAreaType.SYSTEM], [SafeAreaEdge.TOP, SafeAreaEdge.BOTTOM])
       .focusable(true)
       .defaultFocus(true)
-      .id('' as string)
+      .id('manga_reader_root')
       .onKeyEvent((event: KeyEvent) => {
         // [修复] 始终调用初始化，即使参数已存在（可能是章节切换）
         if (event.type === KeyType.Up) {
@@ -12380,13 +13086,16 @@ private onlineDownloadedLocalFastPathActive: boolean = false;
     .hideTitleBar(true)
     .onBackPressed(() => {
         // [修复] 始终调用初始化，即使参数已存在（可能是章节切换）
-      this.goBack();
+      void this.goBack();
       return true;// 返回 true 表示已处理返回事件
     })
     .onReady((context: NavDestinationContext) => {
       this.pathStack = context.pathStack;
+      const readyLifecycleGeneration: number = this.readerLifecycleGeneration;
       setTimeout(() => {
-        void this.refreshPageGuide('onReady');
+        if (this.isReaderLifecycleCurrent(readyLifecycleGeneration)) {
+          void this.refreshPageGuide('onReady');
+        }
       }, 80);
       
         // [修复] 始终调用初始化，即使参数已存在（可能是章节切换）

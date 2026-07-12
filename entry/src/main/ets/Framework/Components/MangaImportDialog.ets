@@ -61,6 +61,11 @@ export interface PrefilledComicInfo {
   description?: string;
   tags?: string[];
   number?: string;
+  publishingStatus?: string;
+  webUrl?: string;
+  source?: string;
+  publishTime?: number;
+  isNSFW?: boolean;
 }
 
 /**
@@ -120,6 +125,16 @@ export interface MangaImportDialogResult {
   selectedCoverPath: string;
   /** 原文件URI（用于导入后删除） */
   sourceFileUri?: string;
+  /** ComicInfo 发布状态；没有元数据时为空字符串 */
+  publishingStatus: string;
+  /** ComicInfo 网页地址 */
+  webUrl: string;
+  /** ComicInfo 原始图源名称 */
+  source: string;
+  /** ComicInfo 记录的发布日期；没有时使用确认时刻 */
+  publishTime: number;
+  /** 是否为 NSFW 内容 */
+  isNSFW: boolean;
 }
 
 /**
@@ -174,8 +189,10 @@ export struct MangaImportDialog {
 
   // 刮削对话框控制器
   private scraperDialogController: CustomDialogController | null = null;
+  @State private isActionLocked: boolean = false;
 
   aboutToAppear(): void {
+    this.isActionLocked = false;
     // 根据解析结构初始化
     if (this.parsedStructure) {
       this.initFromParsedStructure();
@@ -291,25 +308,22 @@ export struct MangaImportDialog {
       for (const file of files) {
         const lowerFile = file.toLowerCase();
         const fullPath = `${dirPath}/${file}`;
-        let isImage = false;
-        
+        try {
+          const stat = SafeFileUtils.lstatSyncStrict(fullPath);
+          if (stat.isSymbolicLink()) {
+            continue;
+          }
+          if (stat.isDirectory()) {
+            subDirs.push(fullPath);
+            continue;
+          }
+        } catch (_statError) {
+          continue;
+        }
         for (const ext of imageExtensions) {
           if (lowerFile.endsWith(ext)) {
             imageFiles.push(fullPath);
-            isImage = true;
             break;
-          }
-        }
-        
-        if (!isImage) {
-          // 检查是否为目录
-          try {
-            const stat = SafeFileUtils.statSync(fullPath);
-            if (stat.isDirectory()) {
-              subDirs.push(fullPath);
-            }
-          } catch (_e) {
-            // 忽略
           }
         }
         
@@ -634,7 +648,12 @@ export struct MangaImportDialog {
           .height(44)
           .layoutWeight(1)
           .fontFamily(this.appFontFamily)
+          .enabled(!this.isActionLocked)
           .onClick(() => {
+            if (this.isActionLocked) {
+              return;
+            }
+            this.isActionLocked = true;
             this.emitFlowEvent(ImportFlowEventType.DIALOG_CANCELLED, 'manga_dialog_cancelled', true, '');
             this.onCancel();
             this.controller.close();
@@ -648,8 +667,12 @@ export struct MangaImportDialog {
           .height(44)
           .layoutWeight(1)
           .fontFamily(this.appFontFamily)
+          .enabled(!this.isActionLocked)
           .onClick(() => {
-            if (this.validateForm()) {
+            if (this.isActionLocked || !this.validateForm()) {
+              return;
+            }
+            this.isActionLocked = true;
               // 获取选中的封面路径
               const selectedCoverPath = this.coverCandidates.length > 0 
                 ? this.coverCandidates[this.selectedCoverIndex] 
@@ -668,12 +691,16 @@ export struct MangaImportDialog {
                 targetMangaId: this.selectedMangaId || undefined,
                 parsedStructure: this.parsedStructure,
                 selectedCoverPath: selectedCoverPath,
-                sourceFileUri: this.sourceFileUri || undefined
+                sourceFileUri: this.sourceFileUri || undefined,
+                publishingStatus: this.parsedStructure?.prefilledInfo?.publishingStatus || '',
+                webUrl: this.parsedStructure?.prefilledInfo?.webUrl || '',
+                source: this.parsedStructure?.prefilledInfo?.source || '',
+                publishTime: this.parsedStructure?.prefilledInfo?.publishTime ?? Date.now(),
+                isNSFW: this.parsedStructure?.prefilledInfo?.isNSFW === true
               };
               this.emitFlowEvent(ImportFlowEventType.DIALOG_CONFIRMED, 'manga_dialog_confirmed', true, `mode=${this.importMode}, merge=${this.mergeToExisting}`);
               this.onConfirm(result);
               this.controller.close();
-            }
           })
       }
       .width('100%')

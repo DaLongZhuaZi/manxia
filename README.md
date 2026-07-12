@@ -1,9 +1,7 @@
 # 漫匣 (ManXia)
 
 <div align="center">
-
-**一款基于 HarmonyOS Next 的现代化漫画与小说阅读应用**
-
+**一款基于 HarmonyOS Next 的现代化综合阅读应用**
 [![HarmonyOS](https://img.shields.io/badge/HarmonyOS-Next-blue)](https://developer.huawei.com/consumer/cn/harmonyos/)
 [![ArkTS](https://img.shields.io/badge/Language-ArkTS-green)](https://developer.huawei.com/consumer/cn/doc/harmonyos-guides/arkts-get-started-0000001504769321)
 [![License](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
@@ -46,20 +44,20 @@
 
 ### ✨ 核心特性
 
-- 🎨 **现代化UI设计** - 遵循 HarmonyOS 设计规范，支持深色/浅色主题自动切换
+- 🎨 **现代化UI设计** - 遵循 HarmonyOS 设计规范，支持深色/浅色主题自动切换，内置多种主题并且支持自定义主题与背景图片
 - 📚 **多图源支持** - 支持 WebView 和 API 两种图源类型，可扩展的图源系统
 - 📖 **网络小说** - 兼容 Legado 书源格式，支持数千书源导入，海量小说资源
 - 🔍 **全局搜索** - 支持跨图源/书源搜索，快速定位想看的内容
-- 📖 **优秀的阅读体验** - 漫画支持单页/双页/条漫模式，小说支持自定义排版规则与净化规则
-- 💾 **本地管理** - 支持本地漫画导入，电子书阅读（EPUB/PDF/TXT/MOBI/AZW3）与小说导入
+- 📖 **优秀的阅读体验** - 漫画支持单页/双页/条漫/连续滚动模式，小说支持自定义排版规则与净化规则
+- 💾 **本地管理** - 支持本地漫画导入，电子书阅读（EPUB/PDF/TXT/MOBI/AZW3/MD）与小说导入
 - 🔐 **源站登录** - 支持图源账号登录，访问个人收藏和历史记录
-- 🎯 **图片处理** - 支持特殊图源的图片解扰算法（如禁漫天堂）
+- 🎯 **图片处理** - 支持特殊图源的图片解扰算法（如禁漫天堂等）
 - 🌐 **离线阅读** - 支持漫画/小说下载缓存，随时随地阅读
 - 📊 **阅读统计** - 详细的阅读时长、进度统计和分析，并且支持阅读目标小组件
 
 ### 🏗️ 技术架构
 
-- **开发语言**: ArkTS + C++ (HarmonyOS Next API 18)
+- **开发语言**: ArkTS + C++ (HarmonyOS Next API 23)
 - **架构模式**: ECS (Entity-Component-System)
 - **UI框架**: ArkUI
 - **数据存储**: 关系型数据库 (RDB)
@@ -72,8 +70,8 @@
 
 ### 环境要求
 
-- DevEco Studio 5.0.0 或更高版本
-- HarmonyOS Next SDK (API 18)
+- DevEco Studio 6.1.0 或更高版本
+- HarmonyOS Next SDK (API 23)
 - Node.js 16.0.0 或更高版本
 
 ### 安装步骤
@@ -372,6 +370,7 @@ manxia/
 - **单页模式**: 传统的翻页阅读
 - **双页模式**: 横向展示，模拟实体书的阅读效果
 - **条漫模式**: 适合WEBTOON漫画类型
+- **连续滚动模式**:适合长图形漫画内容
 - **缩放功能**: 双击放大，捏合缩放
 - **进度保存**: 自动记录阅读进度
 
@@ -384,17 +383,22 @@ manxia/
 - **章节导航**: 快速跳转章节
 - **自定义字体**: 可导入本地字体文件 
 
+### 6. 电子书阅读器
+
+- **高级渲染支持**:支持系统ReaderKit与内置HTML渲染引擎切换
+- **多种格式支持**:支持 EPUB/PDF/TXT/MOBI/AZW3/MD 格式
+
 ### 6. 本地管理
 
-- **漫画导入**: 支持 ZIP/CBZ/TAR/GZ/7Z 等压缩格式
-- **电子书阅读**: 支持 EPUB/PDF/TXT/MOBI/AZW3 格式
+- **漫画导入**: 支持 ZIP/CBZ/TAR/GZ/7Z 等压缩格式以及散图
 - **书库管理**: 分类、排序、搜索、标签
 - **阅读历史**: 记录阅读轨迹
 - **阅读统计**: 详细的阅读时长和进度分析
+- **局域网传书**:可在局域网内实现文件批量传输与导入
 
-## 🔧 配置说明
+## 🔧 图源说明
 
-### 图源配置
+### 漫匣仅支持自有图源，不支持直接使用Tachiyomi图源
 
 图源配置文件位于 `manxia-extensions-source/` 目录，采用 JSON 格式：
 
@@ -419,7 +423,7 @@ manxia/
 }
 ```
 
-详细配置说明请参考 [图源配置文档](docs/development/)
+Tachiyomi图源可以借助Agent快速迁移到漫匣图源体系下，详细开发说明和完整技能库请参考 [漫匣图源 AgentKit](https://github.com/DaLongZhuaZi/manxia-source-agent-kit)
 
 ## 📚 开源致谢
 

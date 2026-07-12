@@ -134,6 +134,19 @@ export interface DeleteComicsResult {
   errors: string[];
 }
 
+export interface IncompleteLocalImportCleanupResult {
+  deletedCount: number;
+  deletedComicIds: string[];
+}
+
+interface LocalComicCleanupRecord {
+  localRowId: number;
+  id: string;
+  title: string;
+  sourceId: string;
+  addTime: number;
+}
+
 /**
  * 章节更新数据接口
  */
@@ -426,6 +439,11 @@ export interface ChapterInfoInput {
   externalId: string;          // 外部图源章节ID（必需）
 }
 
+export interface ChapterInfoCreationResult {
+  id: string;
+  created: boolean;
+}
+
 export interface PageInfoInput {
   chapterId: string;
   index: number;
@@ -450,6 +468,10 @@ export interface OnlineComicInfoInput {
   tags: string[];
   rating: number;
   lastUpdateTime: number;
+}
+
+interface ChapterComicIdRecord {
+  comicId: string;
 }
 
 export interface OnlineComicSourceSaveInput {
@@ -2153,22 +2175,16 @@ export class DataManager {
    * 添加章节信息
    */
   public async addChapterInfo(chapter: ChapterInfoInput): Promise<string> {
+    const result: ChapterInfoCreationResult = await this.addChapterInfoWithResult(chapter);
+    return result.id;
+  }
+
+  /**
+   * 添加章节并明确告知调用方是否真的创建了新记录。
+   * 批量导入回滚必须依赖该标志，避免把重复命中的旧章节误删。
+   */
+  public async addChapterInfoWithResult(chapter: ChapterInfoInput): Promise<ChapterInfoCreationResult> {
     try {
-      // 确保externalId不为undefined
-      const tempExternalId = chapter.externalId || this.generateId();
-      
-      // 检查是否已存在相同externalId的章节（根据数据库唯一性约束）
-      const checkSql = `SELECT id FROM chapter WHERE comicId = ? AND externalId = ?`;
-      logger.debug(TAG, `🔍 [数据库SELECT] 表名=chapter, 查询条件: comicId=${chapter.comicId}, externalId=${tempExternalId}`);
-      const existing = await this.databaseManager.querySql(checkSql, [chapter.comicId, tempExternalId]);
-      
-      if (existing.length > 0) {
-        logger.info(TAG, `⚠️ [数据库SELECT结果] 表名=chapter, 章节已存在: "${chapter.title}", internalId=${existing[0].id}, externalId=${tempExternalId}`);
-        return String(existing[0].id);
-      }
-      
-      logger.debug(TAG, `📋 [数据库SELECT结果] 表名=chapter, 章节不存在，准备插入新记录`);
-      
       const generatedId = this.generateId();
       const now = Date.now();
       const chapterData: ChapterInfo = {
@@ -2209,10 +2225,52 @@ export class DataManager {
         `, title="${record.title}"` +
         `, chapterIndex=${record.chapterIndex}`);
 
-      await this.databaseManager.insert('chapter', record);
-      logger.info(TAG, `✅ [数据库INSERT成功] 表名=chapter, 章节="${chapterData.title}", internalId=${chapterData.id}, externalId=${finalExternalId}`);
+      await this.databaseManager.beginTransaction();
+      try {
+        const comicRecords = await this.databaseManager.querySql(
+          'SELECT id FROM comic_info WHERE id = ? LIMIT 1',
+          [record.comicId]
+        );
+        if (comicRecords.length <= 0) {
+          throw new Error(`章节所属漫画不存在: comicId=${record.comicId}`);
+        }
+        const existingRecords: DatabaseRecord[] = await this.databaseManager.querySql(
+          'SELECT id FROM chapter WHERE comicId = ? AND externalId = ? LIMIT 1',
+          [record.comicId, record.externalId]
+        );
+        if (existingRecords.length > 0) {
+          const existingId: string = String(existingRecords[0].id);
+          await this.databaseManager.commit();
+          logger.info(TAG, `✅ [数据库INSERT忽略重复成功] 表名=chapter, 章节="${chapterData.title}", internalId=${existingId}, externalId=${finalExternalId}`);
+          return { id: existingId, created: false };
+        }
 
-      return chapterData.id;
+        // 不能使用 INSERT OR IGNORE：NOT NULL、CHECK 等约束失败也会被静默忽略，
+        // 调用方只能得到“写入后查不到”的二次错误，批量导入会全部失败。
+        await this.databaseManager.insert<ChapterInfoDatabaseRecord>('chapter', record);
+        // HarmonyOS RDB 在事务提交前通过 querySql 立即回查新写入记录时，部分设备
+        // 会返回旧快照。先提交，再进行可见性验证，避免把已成功写入误判为失败并回滚。
+        await this.databaseManager.commit();
+        const actualRecords: DatabaseRecord[] = await this.databaseManager.querySql(
+          'SELECT id FROM chapter WHERE id = ? LIMIT 1',
+          [generatedId]
+        );
+        if (actualRecords.length <= 0) {
+          throw new Error(`章节写入后无法查询记录: comicId=${record.comicId}, externalId=${record.externalId}`);
+        }
+        const actualId: string = String(actualRecords[0].id);
+        const created: boolean = true;
+        await this.refreshComicChapterCount(chapterData.comicId);
+        logger.info(TAG, `✅ [数据库INSERT${created ? '' : '忽略重复'}成功] 表名=chapter, 章节="${chapterData.title}", internalId=${actualId}, externalId=${finalExternalId}`);
+        return { id: actualId, created: created };
+      } catch (transactionError) {
+        try {
+          await this.databaseManager.rollBack();
+        } catch (rollbackError) {
+          logger.error(TAG, `添加章节事务回滚失败: ${String(rollbackError)}`);
+        }
+        throw transactionError as Error;
+      }
     } catch (error) {
       logger.error(TAG, `添加章节信息失败: ${error}`);
       throw error as Error;
@@ -2555,7 +2613,7 @@ export class DataManager {
 
       // 根据漫画ID获取漫画信息
       const comics: ComicInfo[] = [];
-      const ids: string[] = Array.from(comicIdSet);
+      const ids: string[] = Array.from<string>(comicIdSet);
       for (let i = 0; i < ids.length; i++) {
         const id: string = ids[i];
         const comic = await this.getComicInfo(id);
@@ -2706,6 +2764,66 @@ export class DataManager {
       logger.error(TAG, `删除章节页面记录失败: ${message}`);
       throw error as Error;
     }
+  }
+
+  /**
+   * 删除单个章节及其页面记录。
+   * 本地导入在文件复制或页面写入失败时使用，避免残留空章节。
+   */
+  public async deleteChapter(chapterId: string): Promise<void> {
+    try {
+      await this.databaseManager.beginTransaction();
+      let transactionCommitted: boolean = false;
+      try {
+      const chapterRecords = await this.databaseManager.querySql(
+        'SELECT comicId FROM chapter WHERE id = ? LIMIT 1',
+        [chapterId]
+      );
+      let comicId: string = '';
+      if (chapterRecords.length > 0) {
+        const chapterRecord: ChapterComicIdRecord = chapterRecords[0] as ChapterComicIdRecord;
+        comicId = chapterRecord.comicId;
+      }
+      await this.databaseManager.executeSql('DELETE FROM page WHERE chapterId = ?', [chapterId]);
+      await this.databaseManager.executeSql('DELETE FROM read_history WHERE chapterId = ?', [chapterId]);
+      await this.databaseManager.executeSql('DELETE FROM download_task WHERE chapterId = ?', [chapterId]);
+      await this.databaseManager.executeSql('DELETE FROM chapter WHERE id = ?', [chapterId]);
+      if (comicId.length > 0) {
+        await this.refreshComicChapterCount(comicId);
+      }
+      await this.databaseManager.commit();
+      transactionCommitted = true;
+      } catch (transactionError) {
+        if (!transactionCommitted) {
+          try {
+            await this.databaseManager.rollBack();
+          } catch (rollbackError) {
+            logger.error(TAG, `回滚章节事务回滚失败: ${String(rollbackError)}`);
+          }
+        }
+        throw transactionError as Error;
+      }
+      logger.info(TAG, `已回滚章节记录: ${chapterId}`);
+    } catch (error) {
+      const message: string = error instanceof Error ? error.message : String(error);
+      logger.error(TAG, `回滚章节记录失败: ${chapterId}, ${message}`);
+      throw error as Error;
+    }
+  }
+
+  /**
+   * 以章节表为准刷新漫画章节数，确保合并导入和失败回滚后的缓存字段一致。
+   */
+  public async refreshComicChapterCount(comicId: string): Promise<void> {
+    const now: number = Date.now();
+    await this.databaseManager.executeSql(
+      `UPDATE comic_info
+       SET chapterCount = (SELECT COUNT(*) FROM chapter WHERE comicId = ?),
+           lastUpdateTime = ?,
+           updateTime = ?
+       WHERE id = ?`,
+      [comicId, now, now, comicId]
+    );
   }
 
   // ==================== 收藏管理 ====================
@@ -3636,6 +3754,155 @@ export class DataManager {
 
   // ==================== 漫画删除 ====================
 
+  private async forceDeleteLocalComicRow(localRowId: number, comicId: string): Promise<void> {
+    await this.databaseManager.beginTransaction();
+    try {
+      await this.databaseManager.executeSql(
+        'DELETE FROM page WHERE chapterId IN (SELECT id FROM chapter WHERE comicId = ?)',
+        [comicId]
+      );
+      await this.databaseManager.executeSql('DELETE FROM chapter WHERE comicId = ?', [comicId]);
+      await this.databaseManager.executeSql('DELETE FROM read_history WHERE comicId = ?', [comicId]);
+      await this.databaseManager.executeSql('DELETE FROM favorite WHERE comicId = ?', [comicId]);
+      await this.databaseManager.executeSql('DELETE FROM download_task WHERE comicId = ?', [comicId]);
+      await this.databaseManager.executeSql('DELETE FROM comic_info WHERE rowid = ?', [localRowId]);
+      await this.databaseManager.commit();
+    } catch (error) {
+      try {
+        await this.databaseManager.rollBack();
+      } catch (rollbackError) {
+        logger.error(TAG, `强制删除空壳漫画回滚失败: rowid=${localRowId}`, String(rollbackError));
+      }
+      throw error as Error;
+    }
+  }
+
+  /**
+   * 删除书架项时先使用内部 ID；ID 丢失或已失效时，再按本地来源、标题和
+   * 添加时间回查数据库行。这样旧空壳记录也能通过当前卡片正常删除。
+   */
+  public async deleteComicByLibraryIdentity(
+    comicId: string,
+    sourceId: string,
+    title: string,
+    addTime: number
+  ): Promise<string> {
+    const normalizedComicId: string = comicId.trim();
+    if (normalizedComicId.length > 0) {
+      const existingComic: ComicInfo | null = await this.getComicById(normalizedComicId);
+      if (existingComic !== null) {
+        await this.deleteComic(normalizedComicId);
+        const remainingComic: ComicInfo | null = await this.getComicById(normalizedComicId);
+        if (remainingComic === null) {
+          return normalizedComicId;
+        }
+        logger.warn(TAG, `按内部ID删除后记录仍存在，继续使用书架身份兜底: ${normalizedComicId}`);
+      } else {
+        const existingOnlineComic: OnlineComicInfo | null = await this.getOnlineComicInfoById(normalizedComicId);
+        if (existingOnlineComic !== null) {
+          await this.deleteComic(normalizedComicId);
+          return normalizedComicId;
+        }
+        const favoriteRecords: DatabaseRecord[] = await this.databaseManager.querySql(
+          'SELECT id FROM favorite WHERE comicId = ? LIMIT 1',
+          [normalizedComicId]
+        );
+        if (favoriteRecords.length > 0) {
+          await this.deleteComic(normalizedComicId);
+          return normalizedComicId;
+        }
+      }
+    }
+
+    const normalizedSourceId: string = sourceId.trim();
+    const normalizedTitle: string = title.trim();
+    const whereParts: string[] = [];
+    const args: DatabaseValue[] = [];
+    if (normalizedSourceId.length > 0) {
+      whereParts.push('sourceId = ?');
+      args.push(normalizedSourceId);
+    }
+    if (normalizedTitle.length > 0) {
+      whereParts.push('title = ?');
+      args.push(normalizedTitle);
+    }
+    if (addTime > 0) {
+      whereParts.push('addTime = ?');
+      args.push(addTime);
+    }
+    if (whereParts.length <= 0) {
+      throw new Error('漫画缺少可用于删除的数据库身份');
+    }
+
+    const records: DatabaseRecord[] = await this.databaseManager.querySql(
+      `SELECT rowid AS localRowId, id, title, sourceId, addTime FROM comic_info WHERE ${whereParts.join(' AND ')} ORDER BY rowid DESC LIMIT 2`,
+      args
+    );
+    if (records.length !== 1) {
+      throw new Error(`无法唯一定位待删除漫画: title=${normalizedTitle}, matches=${records.length}`);
+    }
+    const record: LocalComicCleanupRecord = records[0] as LocalComicCleanupRecord;
+    const resolvedComicId: string = String(record.id || '').trim();
+    if (resolvedComicId.length > 0) {
+      await this.deleteComic(resolvedComicId);
+      const remainingRecords: DatabaseRecord[] = await this.databaseManager.querySql(
+        'SELECT id FROM comic_info WHERE rowid = ? LIMIT 1',
+        [Number(record.localRowId)]
+      );
+      if (remainingRecords.length > 0) {
+        await this.forceDeleteLocalComicRow(Number(record.localRowId), resolvedComicId);
+      }
+      return resolvedComicId;
+    }
+    await this.forceDeleteLocalComicRow(Number(record.localRowId), '');
+    return '';
+  }
+
+  /**
+   * 清理由本地/Download 导入中断产生的空壳：没有任何有效页面的漫画不会
+   * 被视为成功导入。保留短暂宽限时间，避免与仍在执行的导入任务竞争。
+   */
+  public async cleanupIncompleteLocalImports(
+    minimumAgeMs: number = 30 * 1000
+  ): Promise<IncompleteLocalImportCleanupResult> {
+    const result: IncompleteLocalImportCleanupResult = {
+      deletedCount: 0,
+      deletedComicIds: []
+    };
+    const cutoffTime: number = Date.now() - Math.max(0, minimumAgeMs);
+    const records: DatabaseRecord[] = await this.databaseManager.querySql(
+      `SELECT ci.rowid AS localRowId, ci.id, ci.title, ci.sourceId, ci.addTime
+       FROM comic_info ci
+       WHERE ci.sourceId IN ('local_import', 'download_import')
+         AND ci.addTime <= ?
+         AND NOT EXISTS (
+           SELECT 1 FROM chapter c
+           INNER JOIN page p ON p.chapterId = c.id
+           WHERE c.comicId = ci.id
+         )
+       ORDER BY ci.rowid ASC`,
+      [cutoffTime]
+    );
+
+    for (let index: number = 0; index < records.length; index++) {
+      const record: LocalComicCleanupRecord = records[index] as LocalComicCleanupRecord;
+      const comicId: string = String(record.id || '').trim();
+      try {
+        if (comicId.length > 0) {
+          await this.deleteComic(comicId);
+          result.deletedComicIds.push(comicId);
+        } else {
+          await this.forceDeleteLocalComicRow(Number(record.localRowId), '');
+        }
+        result.deletedCount += 1;
+        logger.warn(TAG, `已清理不完整本地导入: id=${comicId}, title=${record.title}`);
+      } catch (error) {
+        logger.error(TAG, `清理不完整本地导入失败: id=${comicId}, title=${record.title}`, String(error));
+      }
+    }
+    return result;
+  }
+
   /**
    * 删除漫画及其所有相关数据
    * @param comicId 漫画ID
@@ -3650,7 +3917,28 @@ export class DataManager {
       const onlineComicInfo = await this.getOnlineComicInfoById(comicId);
       
       if (!comicInfo && !onlineComicInfo) {
-        logger.warn(TAG, `漫画不存在: ${comicId}`);
+        logger.warn(TAG, `漫画主记录不存在，清理书架孤儿数据: ${comicId}`);
+        await this.databaseManager.beginTransaction();
+        try {
+          await this.databaseManager.executeSql('DELETE FROM read_history WHERE comicId = ?', [comicId]);
+          await this.databaseManager.executeSql('DELETE FROM online_read_history WHERE comicId = ?', [comicId]);
+          await this.databaseManager.executeSql('DELETE FROM favorite WHERE comicId = ?', [comicId]);
+          await this.databaseManager.executeSql('DELETE FROM download_task WHERE comicId = ?', [comicId]);
+          await this.databaseManager.commit();
+        } catch (orphanCleanupError) {
+          try {
+            await this.databaseManager.rollBack();
+          } catch (rollbackError) {
+            logger.error(TAG, `清理书架孤儿数据回滚失败: ${comicId}`, String(rollbackError));
+          }
+          throw orphanCleanupError as Error;
+        }
+        try {
+          await getUnifiedAnnotationManager().deleteContentAnnotations(UnifiedContentType.MANGA, comicId);
+        } catch (annotationError) {
+          logger.warn(TAG, `清理孤儿漫画统一标注失败: ${comicId}`, String(annotationError));
+        }
+        logger.info(TAG, `已清理书架孤儿数据: ${comicId}`);
         return;
       }
       
@@ -3662,42 +3950,53 @@ export class DataManager {
         await this.getOnlineComicChapters(comicId) : 
         await this.getComicChapters(comicId);
       
-      // 3. 删除数据库中的所有相关记录
-      if (isOnlineManga) {
-        // 删除在线漫画相关表
-        await this.databaseManager.executeSql('DELETE FROM online_page WHERE chapterId IN (SELECT id FROM online_chapter WHERE comicId = ?)', [comicId]);
-        logger.debug(TAG, `删除在线漫画页面记录: ${comicId}`);
-        
-        await this.databaseManager.executeSql('DELETE FROM online_chapter WHERE comicId = ?', [comicId]);
-        logger.debug(TAG, `删除在线漫画章节记录: ${comicId}`);
-        
-        await this.databaseManager.executeSql('DELETE FROM online_comic_info WHERE id = ?', [comicId]);
-        logger.debug(TAG, `删除在线漫画信息记录: ${comicId}`);
-      } else {
-        // 删除本地漫画相关表
-        await this.databaseManager.executeSql('DELETE FROM page WHERE chapterId IN (SELECT id FROM chapter WHERE comicId = ?)', [comicId]);
-        logger.debug(TAG, `删除本地漫画页面记录: ${comicId}`);
-        
-        await this.databaseManager.executeSql('DELETE FROM chapter WHERE comicId = ?', [comicId]);
-        logger.debug(TAG, `删除本地漫画章节记录: ${comicId}`);
-        
-        await this.databaseManager.executeSql('DELETE FROM comic_info WHERE id = ?', [comicId]);
-        logger.debug(TAG, `删除本地漫画信息记录: ${comicId}`);
+      // 3. 删除数据库中的所有相关记录。先删依赖表，再删章节和漫画主表，
+      // 全部步骤放入同一事务，避免失败时留下半删除状态。
+      await this.databaseManager.beginTransaction();
+      try {
+        await this.databaseManager.executeSql('DELETE FROM read_history WHERE comicId = ?', [comicId]);
+        logger.debug(TAG, `删除漫画阅读历史: ${comicId}`);
+        await this.databaseManager.executeSql('DELETE FROM favorite WHERE comicId = ?', [comicId]);
+        logger.debug(TAG, `删除漫画收藏记录: ${comicId}`);
+        await this.databaseManager.executeSql('DELETE FROM download_task WHERE comicId = ?', [comicId]);
+        logger.debug(TAG, `删除漫画下载任务: ${comicId}`);
+
+        if (isOnlineManga) {
+          await this.databaseManager.executeSql('DELETE FROM online_page WHERE chapterId IN (SELECT id FROM online_chapter WHERE comicId = ?)', [comicId]);
+          logger.debug(TAG, `删除在线漫画页面记录: ${comicId}`);
+          await this.databaseManager.executeSql('DELETE FROM online_read_history WHERE comicId = ?', [comicId]);
+          logger.debug(TAG, `删除在线漫画阅读历史: ${comicId}`);
+          await this.databaseManager.executeSql('DELETE FROM online_chapter_cache_state WHERE comicId = ?', [comicId]);
+          logger.debug(TAG, `删除在线漫画章节缓存状态: ${comicId}`);
+          await this.databaseManager.executeSql('DELETE FROM online_chapter WHERE comicId = ?', [comicId]);
+          logger.debug(TAG, `删除在线漫画章节记录: ${comicId}`);
+          await this.databaseManager.executeSql('DELETE FROM online_comic_info WHERE id = ?', [comicId]);
+          logger.debug(TAG, `删除在线漫画信息记录: ${comicId}`);
+        } else {
+          await this.databaseManager.executeSql('DELETE FROM page WHERE chapterId IN (SELECT id FROM chapter WHERE comicId = ?)', [comicId]);
+          logger.debug(TAG, `删除本地漫画页面记录: ${comicId}`);
+          await this.databaseManager.executeSql('DELETE FROM chapter WHERE comicId = ?', [comicId]);
+          logger.debug(TAG, `删除本地漫画章节记录: ${comicId}`);
+          await this.databaseManager.executeSql('DELETE FROM comic_info WHERE id = ?', [comicId]);
+          logger.debug(TAG, `删除本地漫画信息记录: ${comicId}`);
+        }
+        await this.databaseManager.commit();
+      } catch (transactionError) {
+        try {
+          await this.databaseManager.rollBack();
+        } catch (rollbackError) {
+          logger.error(TAG, `删除漫画事务回滚失败: ${String(rollbackError)}`);
+        }
+        throw transactionError as Error;
       }
-      
-      // 删除通用表（阅读历史、收藏、下载任务）
-      await this.databaseManager.executeSql('DELETE FROM read_history WHERE comicId = ?', [comicId]);
-      logger.debug(TAG, `删除漫画阅读历史: ${comicId}`);
-      
-      await this.databaseManager.executeSql('DELETE FROM favorite WHERE comicId = ?', [comicId]);
-      logger.debug(TAG, `删除漫画收藏记录: ${comicId}`);
-      
-      await this.databaseManager.executeSql('DELETE FROM download_task WHERE comicId = ?', [comicId]);
-      logger.debug(TAG, `删除漫画下载任务: ${comicId}`);
 
       // 删除统一标注，避免遗留孤儿标注数据。
-      await getUnifiedAnnotationManager().deleteContentAnnotations(UnifiedContentType.MANGA, comicId);
-      logger.debug(TAG, `删除漫画统一标注: ${comicId}`);
+      try {
+        await getUnifiedAnnotationManager().deleteContentAnnotations(UnifiedContentType.MANGA, comicId);
+        logger.debug(TAG, `删除漫画统一标注: ${comicId}`);
+      } catch (annotationError) {
+        logger.warn(TAG, `删除漫画统一标注失败，继续完成主记录删除: ${comicId}`, String(annotationError));
+      }
 
       // 4. 删除本地文件
       try {
@@ -3709,10 +4008,23 @@ export class DataManager {
           
           if (isDownloadImport) {
             // Download目录导入的漫画：直接删除章节目录
+            const mangaPaths: string[] = [];
             for (const chapter of chapters) {
               logger.info(TAG, `章节信息: title=${chapter.title}, downloadPath=${chapter.downloadPath}`);
               if (chapter.downloadPath) {
+                const chapterPath: string = chapter.downloadPath.replace(/\\/g, '/').replace(/\/+$/g, '');
+                const separatorIndex: number = chapterPath.lastIndexOf('/');
+                if (separatorIndex > 0) {
+                  const parentPath: string = chapterPath.substring(0, separatorIndex);
+                  if (!mangaPaths.includes(parentPath)) {
+                    mangaPaths.push(parentPath);
+                  }
+                }
                 try {
+                  if (await this.isChapterStoragePathReferenced(chapter.downloadPath)) {
+                    logger.warn(TAG, `章节目录仍被其他记录引用，跳过删除: ${chapter.downloadPath}`);
+                    continue;
+                  }
                   SafeFileUtils.accessSync(chapter.downloadPath);
                   logger.info(TAG, `开始删除章节目录: ${chapter.downloadPath}`);
                   // 递归删除目录
@@ -3724,84 +4036,73 @@ export class DataManager {
               }
             }
             
-            // [修复] 尝试多种方式找到漫画目录并删除
-            let mangaPath = '';
-            
-            // 方式1：从章节的downloadPath推断
-            if (chapters.length > 0 && chapters[0].downloadPath) {
-              mangaPath = chapters[0].downloadPath.substring(0, chapters[0].downloadPath.lastIndexOf('/'));
-            }
-            
-            // 方式2：从coverLocalPath推断（仅本地漫画有此字段）
-            const localComicInfo = actualComicInfo as ComicInfo;
-            if (!mangaPath && localComicInfo.coverLocalPath) {
-              const coverPath: string = localComicInfo.coverLocalPath;
-              // 封面路径格式可能是: /Download/漫匣/漫画名/cover.jpg 或 /Download/漫匣/manga/漫画名/cover.jpg
-              const pathParts: string[] = coverPath.split('/');
-              // 找到漫画名所在的目录
-              for (let i = pathParts.length - 2; i >= 0; i--) {
-                if (pathParts[i] === actualComicInfo.title || 
-                    pathParts[i] === this.sanitizeFileName(actualComicInfo.title)) {
-                  mangaPath = pathParts.slice(0, i + 1).join('/');
-                  break;
-                }
-              }
-            }
-            
-            // 方式3：从Download同步目录直接构建路径
-            if (!mangaPath) {
-              const downloadDirPath = AppStorage.get<string>('downloadSyncDirPath');
-              if (downloadDirPath) {
-                const sanitizedTitle = this.sanitizeFileName(actualComicInfo.title);
-                // 检查manga子目录
-                const mangaSubPath = `${downloadDirPath}/manga/${sanitizedTitle}`;
-                if (SafeFileUtils.accessSync(mangaSubPath)) {
-                  mangaPath = mangaSubPath;
-                } else {
-                  // 检查根目录
-                  const rootPath = `${downloadDirPath}/${sanitizedTitle}`;
-                  if (SafeFileUtils.accessSync(rootPath)) {
-                    mangaPath = rootPath;
+            // 只根据章节快照推断父目录；章节为空时绝不按标题猜路径。
+            if (mangaPaths.length > 0) {
+              try {
+                for (const candidatePath of mangaPaths) {
+                  if (!SafeFileUtils.accessSync(candidatePath)) {
+                    continue;
+                  }
+                  const remainingEntries: string[] = SafeFileUtils.listFileSync(candidatePath);
+                  if (remainingEntries.length === 0) {
+                    this.deleteDirectoryRecursive(candidatePath);
+                    logger.info(TAG, `删除Download漫画目录: ${candidatePath}`);
+                  } else {
+                    logger.info(TAG, `保留含有其他内容的Download漫画目录: ${candidatePath}`);
                   }
                 }
-              }
-            }
-            
-            // 删除漫画主目录
-            if (mangaPath) {
-              try {
-                if (SafeFileUtils.accessSync(mangaPath)) {
-                  this.deleteDirectoryRecursive(mangaPath);
-                  logger.info(TAG, `删除Download漫画目录: ${mangaPath}`);
-                }
               } catch (e) {
-                logger.warn(TAG, `删除Download漫画目录失败: ${mangaPath}, 错误: ${String(e)}`);
+                logger.warn(TAG, `删除Download漫画目录失败: ${String(e)}`);
               }
             } else {
               logger.warn(TAG, `无法确定Download漫画目录路径: ${actualComicInfo.title}`);
             }
           } else {
             // 沙箱目录的漫画：使用原有逻辑
-            const comicsDir = this.sandboxManager.getDirectory('comics');
-            const sourceName = this.sanitizeFileName(actualComicInfo.sourceId || 'local');
-            const comicName = this.sanitizeFileName(actualComicInfo.title);
-            const comicPath = `${comicsDir}/${sourceName}/${comicName}`;
+            const mangaPaths: string[] = [];
+            for (const chapter of chapters) {
+              if (!chapter.downloadPath) {
+                continue;
+              }
+              const chapterPath: string = chapter.downloadPath.replace(/\\/g, '/').replace(/\/+$/g, '');
+              const separatorIndex: number = chapterPath.lastIndexOf('/');
+              if (separatorIndex > 0) {
+                const parentPath: string = chapterPath.substring(0, separatorIndex);
+                if (!mangaPaths.includes(parentPath)) {
+                  mangaPaths.push(parentPath);
+                }
+              }
+            }
             
             // 检查目录是否存在，如果存在则删除
-            if (await this.sandboxManager.exists(comicPath)) {
+            if (mangaPaths.length > 0) {
               // 删除所有章节目录及其内容
               for (const chapter of chapters) {
                 if (chapter.downloadPath && await this.sandboxManager.exists(chapter.downloadPath)) {
+                  if (await this.isChapterStoragePathReferenced(chapter.downloadPath)) {
+                    logger.warn(TAG, `章节目录仍被其他记录引用，跳过删除: ${chapter.downloadPath}`);
+                    continue;
+                  }
                   await this.sandboxManager.deleteDirectory(chapter.downloadPath, true);
                   logger.debug(TAG, `删除章节目录: ${chapter.downloadPath}`);
                 }
               }
               
-              // 删除漫画主目录
-              await this.sandboxManager.deleteDirectory(comicPath, true);
-              logger.info(TAG, `删除漫画文件目录: ${comicPath}`);
+              // 只删除清空后的目录，避免同标题漫画共用根目录时误删其他章节。
+              for (const candidatePath of mangaPaths) {
+                if (!await this.sandboxManager.exists(candidatePath)) {
+                  continue;
+                }
+                const remainingEntries: string[] = await this.sandboxManager.listDirectory(candidatePath);
+                if (remainingEntries.length === 0) {
+                  await this.sandboxManager.deleteDirectory(candidatePath, true);
+                  logger.info(TAG, `删除漫画文件目录: ${candidatePath}`);
+                } else {
+                  logger.info(TAG, `保留含有其他内容的漫画目录: ${candidatePath}`);
+                }
+              }
             } else {
-              logger.debug(TAG, `漫画文件目录不存在: ${comicPath}`);
+              logger.debug(TAG, `漫画文件目录不存在或没有可追踪章节: ${actualComicInfo.title}`);
             }
           }
 
@@ -3819,6 +4120,28 @@ export class DataManager {
           for (const coverCandidate of coverCandidates) {
             if (LibraryCoverManager.deleteManagedCoverIfExists(coverCandidate, filesDir)) {
               logger.debug(TAG, `删除受管封面文件: ${coverCandidate}`);
+              continue;
+            }
+            const normalizedCoverPath: string = coverCandidate.replace(/\\/g, '/');
+            const coverFileName: string = normalizedCoverPath.substring(normalizedCoverPath.lastIndexOf('/') + 1);
+            const isOwnedImportCover: boolean = coverFileName.startsWith(`cover_${comicId}.`) ||
+              coverFileName.startsWith(`cover_${comicId}_`);
+            if (isOwnedImportCover && this.isLocalCoverPath(coverCandidate)) {
+              const isReferenced: boolean = await this.isCoverReferencedByOtherComic(coverCandidate, comicId);
+              const coverExists: boolean = await this.sandboxManager.exists(coverCandidate);
+              if (isReferenced || !coverExists) {
+                continue;
+              }
+              await this.sandboxManager.deleteFile(coverCandidate);
+              logger.debug(TAG, `删除漫画专属封面文件: ${coverCandidate}`);
+              const separatorIndex: number = normalizedCoverPath.lastIndexOf('/');
+              if (separatorIndex > 0) {
+                const parentPath: string = normalizedCoverPath.substring(0, separatorIndex);
+                const remainingEntries: string[] = await this.sandboxManager.listDirectory(parentPath);
+                if (remainingEntries.length === 0) {
+                  await this.sandboxManager.deleteDirectory(parentPath, false);
+                }
+              }
             }
           }
 
@@ -3882,6 +4205,51 @@ export class DataManager {
       return true;
     }
     return /^[a-zA-Z]:[\\/]/.test(path);
+  }
+
+  private async isCoverReferencedByOtherComic(coverPath: string, comicId: string): Promise<boolean> {
+    try {
+      const localReferences = await this.databaseManager.querySql(
+        'SELECT id FROM comic_info WHERE id <> ? AND (coverUrl = ? OR coverLocalPath = ?) LIMIT 1',
+        [comicId, coverPath, coverPath]
+      );
+      if (localReferences.length > 0) {
+        return true;
+      }
+      const onlineReferences = await this.databaseManager.querySql(
+        'SELECT id FROM online_comic_info WHERE id <> ? AND coverUrl = ? LIMIT 1',
+        [comicId, coverPath]
+      );
+      return onlineReferences.length > 0;
+    } catch (error) {
+      logger.warn(TAG, `检查封面引用失败，保留文件: ${coverPath}`, String(error));
+      return true;
+    }
+  }
+
+  private async isChapterStoragePathReferenced(chapterPath: string): Promise<boolean> {
+    const normalizedPath: string = chapterPath.replace(/\\/g, '/').replace(/\/+$/g, '');
+    if (normalizedPath.length <= 0) {
+      return true;
+    }
+    const descendantPattern: string = `${normalizedPath}/%`;
+    try {
+      const localReferences = await this.databaseManager.querySql(
+        'SELECT id FROM chapter WHERE downloadPath = ? OR downloadPath LIKE ? LIMIT 1',
+        [normalizedPath, descendantPattern]
+      );
+      if (localReferences.length > 0) {
+        return true;
+      }
+      const onlineReferences = await this.databaseManager.querySql(
+        'SELECT id FROM online_chapter WHERE downloadPath = ? OR downloadPath LIKE ? LIMIT 1',
+        [normalizedPath, descendantPattern]
+      );
+      return onlineReferences.length > 0;
+    } catch (error) {
+      logger.warn(TAG, `检查章节目录引用失败，保留目录: ${chapterPath}`, String(error));
+      return true;
+    }
   }
 
   private sanitizeFileName(fileName: string): string {
