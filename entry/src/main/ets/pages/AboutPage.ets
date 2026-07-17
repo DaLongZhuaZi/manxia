@@ -23,6 +23,7 @@ import { SettingsPageTitleBarManager } from './settings/SettingsPageTitleBarMana
 import { GlobalBackgroundLayerMode } from '../Framework/Components/GlobalBackgroundLayer';
 import { SharedPageBackgroundLayer } from '../Framework/Components/SharedPageBackgroundLayer';
 import { SettingsPanelSurfaceHelper } from './settings/SettingsPanelSurfaceHelper';
+import { SupporterDataManager } from '../Framework/Managers/SupporterDataManager';
 
 const TAG = 'AboutPage';
 const TITLE_BAR_HEIGHT_MINI: number = 56;
@@ -221,6 +222,8 @@ struct AboutPage {
   }
 
   onPageShow(): void {
+    const context = this.getUIContext().getHostContext() as common.UIAbilityContext;
+    void SupporterDataManager.getInstance().refreshSilently(context);
     try {
       const stack = AppStorage.get<NavPathStack>('GlobalNavStack');
       if (stack) {

@@ -13,6 +13,8 @@ import { PageLifecycleManager } from '../Framework/Lifecycle';
 import { DisplayMode } from '../Utils/WindowManager';
 import { PageWindowCoordinator } from '../Utils/PageWindowCoordinator';
 import { ngfPagePolicyHostFacade } from '../Framework/NGF/uiShell/index';
+import { common } from '@kit.AbilityKit';
+import { SupporterDataManager, SupporterRecord } from '../Framework/Managers/SupporterDataManager';
 
 const TAG = 'SupportersPage';
 const TITLE_BAR_HEIGHT_MINI: number = 56;
@@ -33,11 +35,6 @@ interface MeteorParticle {
 /**
  * 支持者信息
  */
-interface SupporterInfo {
-  name: string;
-  level?: string;  // 支持等级（可选）
-}
-
 @Component
 export struct SupportersPage {
   @State pathStack: NavPathStack = new NavPathStack();
@@ -66,27 +63,8 @@ export struct SupportersPage {
 
   // ==================== 支持者名单 ====================
   // 在此处添加支持者，格式：{ name: '用户名', level: '等级（可选）' }
-  private supporters: SupporterInfo[] = [
-    { name: '柠檬玥' , level: '￥10'},
-    { name: 'Ring' , level: '￥6.66'},
-    { name: '据我所知' , level: '￥6.66'},
-    { name: 'kironal' , level: '￥10'},
-    { name: 'CCTV' , level: '￥1.88'},
-    { name: '王冠' , level: '￥6.66'},
-    { name: '神秘支持者' , level: '￥18'},
-    { name: 'Dove_Tech' , level: '￥6.66'},
-    { name: '神秘支持者' , level: '￥1.88'},
-    { name: '方城峰' , level: '￥6.66'},
-    { name: '慕小乐' , level: '￥6.66'},
-    { name: '神秘支持者' , level: '￥6.66'},
-    { name: '神秘支持者' , level: '￥20'},
-    { name: '别打了我是酱油' , level: '￥18'},
-    { name: '王二牛' , level: '￥10'}
-    // 示例：
-    // { name: '张三', level: '金牌支持者' },
-    // { name: '李四', level: '银牌支持者' },
-    // { name: '王五' },
-  ];
+  @State private supporters: SupporterRecord[] = [];
+  @StorageProp('supporters_data_revision') @Watch('onSupportersRevisionChanged') supportersDataRevision: number = 0;
   // ==================================================
 
   private isNgfUiShellIntegrated(): boolean {
@@ -134,6 +112,16 @@ export struct SupportersPage {
         this.fontState = newState;
       }
     );
+    void this.loadSupporters();
+  }
+
+  private async loadSupporters(): Promise<void> {
+    const context = this.getUIContext().getHostContext() as common.UIAbilityContext;
+    this.supporters = await SupporterDataManager.getInstance().load(context);
+  }
+
+  onSupportersRevisionChanged(): void {
+    void this.loadSupporters();
   }
 
   private lifecycle = new PageLifecycleManager('SupportersPage', { enableDebug: true });
@@ -296,7 +284,7 @@ export struct SupportersPage {
    * 构建支持者卡片
    */
   @Builder
-  buildSupporterCard(supporter: SupporterInfo, index: number) {
+  buildSupporterCard(supporter: SupporterRecord, index: number) {
     Row({ space: 12 }) {
       // 头像占位（使用首字母）
       Column() {
@@ -451,9 +439,9 @@ export struct SupportersPage {
           Scroll() {
             Column({ space: 12 }) {
               if (this.supporters.length > 0) {
-                ForEach(this.supporters, (supporter: SupporterInfo, index: number) => {
+                ForEach(this.supporters, (supporter: SupporterRecord, index: number) => {
                   this.buildSupporterCard(supporter, index)
-                }, (supporter: SupporterInfo, index: number) => `${supporter.name}-${index}`)
+                }, (supporter: SupporterRecord, index: number) => `${supporter.name}-${index}`)
               } else {
                 this.buildEmptyState()
               }

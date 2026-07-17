@@ -151,6 +151,7 @@ export struct NovelReaderPage {
   // 内容状态
   @StorageProp('statusBarHeight') statusBarHeight: number = 0;
   @StorageProp('navigationBarHeight') navigationBarHeight: number = 0;
+  @State private stableToolbarStatusBarHeight: number = -1;
 
   // 内容状态
   @State content: string = '';
@@ -917,6 +918,7 @@ export struct NovelReaderPage {
   * 显示工具栏（带动画）
   */
   private showToolbarWithAnimation(): void {
+    this.captureToolbarSafeArea();
     this.clearToolbarAutoHideTimer();
     this.showTopToolbar = true;
     this.showBottomToolbar = true;
@@ -2372,6 +2374,17 @@ export struct NovelReaderPage {
       `target=${chapterIndex}`
     );
     void this.handleReaderChapterChange(chapterIndex, switchIntent);
+  }
+
+  private captureToolbarSafeArea(): void {
+    const nextHeight = this.statusBarHeight > 0 ? this.statusBarHeight : ReaderSafeAreaUtils.DEFAULT_STATUS_BAR_INSET;
+    if (Math.abs(this.stableToolbarStatusBarHeight - nextHeight) > 0.5) {
+      this.stableToolbarStatusBarHeight = nextHeight;
+    }
+  }
+
+  private getToolbarStatusBarHeight(): number {
+    return this.stableToolbarStatusBarHeight > 0 ? this.stableToolbarStatusBarHeight : this.statusBarHeight;
   }
 
   private async handleReaderChapterChange(chapterIndex: number, switchIntent: TextChapterSwitchIntent): Promise<void> {
@@ -4505,8 +4518,8 @@ export struct NovelReaderPage {
       })
     }
     .width('100%')
-    .height(ReaderSafeAreaUtils.getTopToolbarHeight(this.statusBarHeight))
-    .padding({ left: 8, right: 8, top: ReaderSafeAreaUtils.getStatusBarInset(this.statusBarHeight) })
+    .height(ReaderSafeAreaUtils.getTopToolbarHeight(this.getToolbarStatusBarHeight()))
+    .padding({ left: 8, right: 8, top: ReaderSafeAreaUtils.getStatusBarInset(this.getToolbarStatusBarHeight()) })
     .backgroundColor(this.themeManager.getGlassBackgroundResource())
     .backgroundBlurStyle(this.themeManager.getGlassBlurStyle())
     .shadow({ radius: this.themeManager.getGlassRadius(), color: this.themeManager.getGlassShadowColor(), offsetX: 0, offsetY: 4 })

@@ -792,6 +792,9 @@ export struct PageSettingsSubPage {
           })
       }
       .width('100%')
+      .id('page_background_blur')
+      .backgroundColor(SettingsSearchSupport.getHighlightOverlayBackground(this.themeState.currentTheme, this.activeSearchAnchorId, 'page_background_blur'))
+      .border({ width: SettingsSearchSupport.isHighlightActive(this.activeSearchAnchorId, 'page_background_blur') ? 1 : 0, color: SettingsSearchSupport.getHighlightOverlayBorder(this.themeState.currentTheme, this.activeSearchAnchorId, 'page_background_blur') })
 
       if (this.backgroundBlurEnabled) {
         Row() {
@@ -1276,6 +1279,9 @@ export struct PageSettingsSubPage {
                   })
               }
               .width('100%')
+              .id('page_reader_multiton')
+              .backgroundColor(SettingsSearchSupport.getHighlightOverlayBackground(this.themeState.currentTheme, this.activeSearchAnchorId, 'page_reader_multiton'))
+              .border({ width: SettingsSearchSupport.isHighlightActive(this.activeSearchAnchorId, 'page_reader_multiton') ? 2 : SettingsPanelSurfaceHelper.getBorderWidth(this.themeState.currentTheme), color: SettingsSearchSupport.isHighlightActive(this.activeSearchAnchorId, 'page_reader_multiton') ? SettingsSearchSupport.getHighlightOverlayBorder(this.themeState.currentTheme, this.activeSearchAnchorId, 'page_reader_multiton') : SettingsPanelSurfaceHelper.getBorderColor(this.themeState.currentTheme) })
               .padding({ left: 16, right: 16, top: 14, bottom: 14 })
               .backgroundColor(SettingsPanelSurfaceHelper.getBackground(this.themeState.currentTheme))
               .linearGradient(SettingsPanelSurfaceHelper.getSurfaceGradient(this.themeState.currentTheme))
@@ -1290,6 +1296,8 @@ export struct PageSettingsSubPage {
                 offsetX: 0,
                 offsetY: 8
               })
+              .backgroundColor(SettingsSearchSupport.getHighlightOverlayBackground(this.themeState.currentTheme, this.activeSearchAnchorId, 'page_reader_multiton'))
+              .border({ width: SettingsSearchSupport.isHighlightActive(this.activeSearchAnchorId, 'page_reader_multiton') ? 2 : SettingsPanelSurfaceHelper.getBorderWidth(this.themeState.currentTheme), color: SettingsSearchSupport.isHighlightActive(this.activeSearchAnchorId, 'page_reader_multiton') ? SettingsSearchSupport.getHighlightOverlayBorder(this.themeState.currentTheme, this.activeSearchAnchorId, 'page_reader_multiton') : SettingsPanelSurfaceHelper.getBorderColor(this.themeState.currentTheme) })
               .onClick(() => {
                 this.readerPageMultitonEnabled = !this.readerPageMultitonEnabled;
                 this.saveSettings();
@@ -1389,7 +1397,7 @@ export struct PageSettingsSubPage {
 
               Row() {
                 Column({ space: 4 }) {
-                  Text('非主页面全局背景')
+                  Text('全局自定义背景')
                     .fontSize(15)
                     .fontWeight(FontWeight.Medium)
                     .fontFamily(this.appFontFamily)
@@ -1413,6 +1421,9 @@ export struct PageSettingsSubPage {
                   })
               }
               .width('100%')
+              .id('page_global_background')
+              .backgroundColor(SettingsSearchSupport.getHighlightOverlayBackground(this.themeState.currentTheme, this.activeSearchAnchorId, 'page_global_background'))
+              .border({ width: SettingsSearchSupport.isHighlightActive(this.activeSearchAnchorId, 'page_global_background') ? 1 : 0, color: SettingsSearchSupport.getHighlightOverlayBorder(this.themeState.currentTheme, this.activeSearchAnchorId, 'page_global_background') })
               .padding({ left: 16, right: 16, top: 14, bottom: 14 })
               .backgroundColor(SettingsPanelSurfaceHelper.getBackground(this.themeState.currentTheme))
               .linearGradient(SettingsPanelSurfaceHelper.getSurfaceGradient(this.themeState.currentTheme))
@@ -1420,7 +1431,7 @@ export struct PageSettingsSubPage {
               .backgroundEffect(SettingsPanelSurfaceHelper.getBackgroundEffect(this.themeState.currentTheme))
               .borderRadius(SettingsPanelSurfaceHelper.getRadius(this.themeState.currentTheme))
               .clip(true)
-              .border({ width: SettingsPanelSurfaceHelper.getBorderWidth(this.themeState.currentTheme), color: SettingsPanelSurfaceHelper.getBorderColor(this.themeState.currentTheme) })
+              .border({ width: SettingsSearchSupport.isHighlightActive(this.activeSearchAnchorId, 'page_global_background') ? 2 : SettingsPanelSurfaceHelper.getBorderWidth(this.themeState.currentTheme), color: SettingsSearchSupport.isHighlightActive(this.activeSearchAnchorId, 'page_global_background') ? SettingsSearchSupport.getHighlightOverlayBorder(this.themeState.currentTheme, this.activeSearchAnchorId, 'page_global_background') : SettingsPanelSurfaceHelper.getBorderColor(this.themeState.currentTheme) })
               .shadow({
                 radius: SettingsPanelSurfaceHelper.getRadius(this.themeState.currentTheme) + 4,
                 color: SettingsPanelSurfaceHelper.getShadowColor(this.themeState.currentTheme),

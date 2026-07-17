@@ -203,7 +203,7 @@ struct SupportProjectPage {
   @Builder
   buildQrcodeSection() {
     Column({ space: 16 }) {
-      Text('扫码赞赏')
+      Text('扫码赞赏（推荐）')
         .fontSize(18)
         .fontWeight(FontWeight.Bold)
         .fontFamily(this.appFontFamily)

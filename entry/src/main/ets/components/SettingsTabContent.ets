@@ -314,6 +314,16 @@ export struct SettingsTabContent {
 
         // 设置选项列表
         Column() {
+          this.buildSettingItem('漫匣支持者计划', '支持项目并解锁独有功能', $r('sys.symbol.star'), () => {
+            try {
+              this.pathStack.pushPathByName('SupporterPlanPage', null);
+              logger.info(TAG, '导航到漫匣支持者计划页面');
+            } catch (error) {
+              logger.error(TAG, '导航到漫匣支持者计划页面失败', String(error));
+              this.showToast('打开支持者计划失败');
+            }
+          }, 'guide_main_setting_supporter')
+
           this.buildSettingItem('主题设置', '自定义背景、强调色', $r('sys.symbol.paintpalette'), () => {
             try {
               const navigationPath: NavigationPath = {

@@ -611,6 +611,7 @@ export struct MangaReaderPage {
   @State componentHeight: number = 0;
   // 沉浸式安全区高度（遵循沉浸式显示规范）
   @State private isLandscapeMode: boolean = false;
+  @State private stableToolbarStatusBarHeight: number = -1;
   // 响应式布局相关
   @StorageProp('statusBarHeight') statusBarHeight: number = 0;
   @StorageProp('navigationBarHeight') navigationBarHeight: number = 0;
@@ -6377,6 +6378,17 @@ private onlineDownloadedLocalFastPathActive: boolean = false;
     this.fullscreenRestoreTimer = restoreTimerId;
   }
 
+  private captureToolbarSafeArea(): void {
+    const nextHeight = this.statusBarHeight > 0 ? this.statusBarHeight : ReaderSafeAreaUtils.DEFAULT_STATUS_BAR_INSET;
+    if (Math.abs(this.stableToolbarStatusBarHeight - nextHeight) > 0.5) {
+      this.stableToolbarStatusBarHeight = nextHeight;
+    }
+  }
+
+  private getToolbarStatusBarHeight(): number {
+    return this.stableToolbarStatusBarHeight > 0 ? this.stableToolbarStatusBarHeight : this.statusBarHeight;
+  }
+
   private restoreNormalMode(): void {
     try {
       // 使用WindowManager恢复默认显示模式
@@ -6574,6 +6586,7 @@ private onlineDownloadedLocalFastPathActive: boolean = false;
    * 显示工具栏动画
     */
   private showToolbarsWithAnimation(): void {
+    this.captureToolbarSafeArea();
     // 先设置可见性，让组件渲染出来
     this.showTopToolbar = true;
     this.showBottomToolbar = true;
@@ -9729,7 +9742,7 @@ private onlineDownloadedLocalFastPathActive: boolean = false;
     }
     
     // 规则3：如果工具栏已显示，检查点击是否在工具栏区域内
-    const topToolbarHeight = ReaderSafeAreaUtils.getTopToolbarHeight(this.statusBarHeight) + 16;
+    const topToolbarHeight = ReaderSafeAreaUtils.getTopToolbarHeight(this.getToolbarStatusBarHeight()) + 16;
     const bottomToolbarHeight = this.navigationBarHeight + 120;
     
     if (this.showTopToolbar && clickY < topToolbarHeight) {
@@ -11296,8 +11309,8 @@ private onlineDownloadedLocalFastPathActive: boolean = false;
         })
     }
     .width('100%')
-    .height(ReaderSafeAreaUtils.getTopToolbarHeight(this.statusBarHeight))
-    .padding({ left: 8, right: 8, top: ReaderSafeAreaUtils.getStatusBarInset(this.statusBarHeight) })
+    .height(ReaderSafeAreaUtils.getTopToolbarHeight(this.getToolbarStatusBarHeight()))
+    .padding({ left: 8, right: 8, top: ReaderSafeAreaUtils.getStatusBarInset(this.getToolbarStatusBarHeight()) })
     .backgroundColor(ThemeManager.getInstance().getGlassBackgroundResource())
     .backgroundBlurStyle(ThemeManager.getInstance().getGlassBlurStyle())
     .shadow({ radius: ThemeManager.getInstance().getGlassRadius(), color: ThemeManager.getInstance().getGlassShadowColor(), offsetX: 0, offsetY: 4 })
@@ -12464,7 +12477,7 @@ private onlineDownloadedLocalFastPathActive: boolean = false;
               .scale({ x: this.moreMenuScale, y: this.moreMenuScale })
               .translate({ y: this.moreMenuTranslateY })
               .align(Alignment.TopEnd)
-              .margin({ top: ReaderSafeAreaUtils.getTopToolbarHeight(this.statusBarHeight) + 8, right: 12 })
+              .margin({ top: ReaderSafeAreaUtils.getTopToolbarHeight(this.getToolbarStatusBarHeight()) + 8, right: 12 })
               .constraintSize({ maxWidth: 260 })
               .zIndex(1100)
             }

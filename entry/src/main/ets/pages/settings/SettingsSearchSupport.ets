@@ -68,9 +68,10 @@ export class SettingsSearchSupport {
 
     // 页面设置
     { id: 'page_detail_type', title: '详情页类型', description: '漫画/电子书/小说详情页类型与统一详情页', targetPage: 'PageSettingsSubPage', anchorId: 'page_detail', scrollOffset: 0, keywords: ['详情页设置', '漫画详情页', '电子书详情页', '小说详情页', '统一详情页'] },
-    { id: 'page_reader_multiton', title: '阅读器页面多开', description: '控制漫画/电子书/小说阅读器是否使用独立任务实例', targetPage: 'PageSettingsSubPage', anchorId: 'page_detail', scrollOffset: 360, keywords: ['阅读器页面多开', '阅读器多开', '独立实例', '主实例'] },
+    { id: 'page_reader_multiton', title: '阅读器页面多开', description: '控制漫画/电子书/小说阅读器是否使用独立任务实例', targetPage: 'PageSettingsSubPage', anchorId: 'page_reader_multiton', scrollOffset: 360, keywords: ['阅读器页面多开', '阅读器多开', '独立实例', '主实例'] },
     { id: 'page_recommendation', title: '相关推荐', description: '统一详情页相关推荐开关', targetPage: 'PageSettingsSubPage', anchorId: 'page_detail', scrollOffset: 0, keywords: ['相关推荐', '同书架内容'] },
-    { id: 'page_background_blur', title: '后台模糊遮罩', description: '多任务界面隐私保护模糊遮罩与图标类型', targetPage: 'PageSettingsSubPage', anchorId: 'page_detail', scrollOffset: 0, keywords: ['后台模糊遮罩', '隐私遮罩', '后台遮罩', '遮罩图标', '锁定图标', '应用Logo'] },
+    { id: 'page_background_blur', title: '后台模糊遮罩', description: '多任务界面隐私保护模糊遮罩与图标类型', targetPage: 'PageSettingsSubPage', anchorId: 'page_background_blur', scrollOffset: 1180, keywords: ['后台模糊遮罩', '隐私遮罩', '后台遮罩', '遮罩图标', '锁定图标', '应用Logo'] },
+    { id: 'page_global_background', title: '全局自定义背景', description: '为非主页面启用全局背景', targetPage: 'PageSettingsSubPage', anchorId: 'page_global_background', scrollOffset: 980, keywords: ['全局自定义背景', '非主页面背景', '自定义背景层'] },
     { id: 'shortcut_tip', title: '快捷方式说明', description: '桌面长按菜单最多显示4项，可长按拖动快捷方式到桌面', targetPage: 'ShortcutSettingsSubPage', anchorId: 'shortcut_info', scrollOffset: 0, keywords: ['快捷方式', '长按', '拖动到桌面', '桌面快捷'] },
     { id: 'shortcut_select', title: '快捷方式选择', description: '从5个预设中选择最多4个展示项', targetPage: 'ShortcutSettingsSubPage', anchorId: 'shortcut_core', scrollOffset: 380, keywords: ['快捷方式选择', '最多4个', '阅读报告', '全局搜索', '继续阅读', '继续听书', '灵感'] },
     { id: 'main_menu_library_view', title: '主页面书库显示模式', description: '平铺/书架视图切换，重启后生效', targetPage: 'MainMenuSettingsSubPage', anchorId: 'main_menu_behavior', scrollOffset: 0, keywords: ['书库默认视图', '书架视图', '默认视图', '分类书架', '主页面书库显示模式', '平铺', '书架'] },
@@ -139,6 +140,7 @@ export class SettingsSearchSupport {
 
     // 高级设置
     { id: 'advanced_debug', title: '调试设置', description: '高级模式、日志、布局、SFW、更新与日志等级', targetPage: 'AdvancedSettingsSubPage', anchorId: 'advanced_debug', scrollOffset: 0, keywords: ['调试设置', '高级模式', '日志悬浮窗', '强制平板模式', '强制横屏模式', '预加载调试信息', 'SFW模式', '自动检查更新', '日志等级'] },
+    { id: 'advanced_epub_webview', title: 'EPUB WebView 渲染引擎', description: '文字型 EPUB 的 WebView 排版渲染开关', targetPage: 'AdvancedSettingsSubPage', anchorId: 'advanced_debug', scrollOffset: 420, keywords: ['EPUB WebView 渲染引擎', 'EPUB渲染', 'WebView渲染', 'MD渲染', 'HTML渲染'] },
     { id: 'advanced_tools', title: '开发者工具', description: '日志管理、系统资源预览', targetPage: 'AdvancedSettingsSubPage', anchorId: 'advanced_tools', scrollOffset: 930, keywords: ['开发者工具', '日志管理', '系统资源预览'] },
     { id: 'advanced_actions', title: '高级其他操作', description: '重播引导页面等操作', targetPage: 'AdvancedSettingsSubPage', anchorId: 'advanced_actions', scrollOffset: 1560, keywords: ['其他操作', '重播引导页面', '需要重启应用'] },
 

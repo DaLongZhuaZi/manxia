@@ -244,7 +244,7 @@ export class SettingKeys {
   static readonly READER_PAGE_MULTITON_ENABLED = 'reader_page_multiton_enabled'; // 阅读器页面多开开关（默认开启）
   static readonly READER_KIT_ENABLED = 'reader_kit_enabled'; // ReaderKit 能力开关（默认开启）
   static readonly EPUB_WEBVIEW_RENDERER_ENABLED = 'epub_webview_renderer_enabled'; // 文字型 EPUB 使用 WebView 渲染引擎（默认关闭）
-  static readonly NON_MAIN_PAGE_GLOBAL_BACKGROUND_ENABLED = 'non_main_page_global_background_enabled'; // 非主页面全局背景开关（默认开启）
+  static readonly NON_MAIN_PAGE_GLOBAL_BACKGROUND_ENABLED = 'non_main_page_global_background_enabled'; // 全局自定义背景开关（默认开启）
 
   // 内容重复检测设置
   static readonly DUPLICATE_DETECTION_ENABLED = 'duplicate_detection_enabled'; // 启用重复检测（默认关闭）

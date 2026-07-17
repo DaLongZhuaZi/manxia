@@ -108,6 +108,8 @@ import { LogManagerPage } from './LogManagerPage';
 import { OpenSourceLicensePage } from './OpenSourceLicensePage';
 import { SupportersPage } from './SupportersPage';
 import { SupportProjectPage } from './SupportProjectPage';
+import { SupporterPlanPage } from './SupporterPlanPage';
+import { SupporterAgreementPage } from './SupporterAgreementPage';
 import { DeveloperAppsPage } from './DeveloperAppsPage';
 import { UserAgreementPage } from './UserAgreementPage';
 import { PrivacyPolicyPage } from './PrivacyPolicyPage';
@@ -32825,6 +32827,10 @@ struct MainMenuPage {
         SupportersPage()
       } else if (name === 'SupportProjectPage') {
         SupportProjectPage()
+      } else if (name === 'SupporterPlanPage') {
+        SupporterPlanPage()
+      } else if (name === 'SupporterAgreementPage') {
+        SupporterAgreementPage()
       } else if (name === 'DeveloperAppsPage') {
         DeveloperAppsPage()
       } else if (name === 'UserAgreementPage') {
