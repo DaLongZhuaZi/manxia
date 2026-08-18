@@ -113,3 +113,69 @@ response.json
 /entry/src/main/cpp/avif/build_windows
 /copymanga-copy20
 extensions-source
+
+# Legado compatibility controller runtime artifacts. The controller writes
+# only local, redacted evidence and machine state; generated Markdown remains
+# versioned as the user-facing progress ledger.
+/tools/legado-compat/state/
+/tools/legado-compat/evidence/
+/tools/legado-compat/device-evidence/
+
+# ===== manxia cleanup 2026 (safe: untrack only, disk untouched) =====
+# Junk / backups / decompiled third-party sources
+/tmp/
+/copymanga-copy20/
+/251224Baka Manhua_1.4.50/
+/251224Baka Manhua_1.4.82/
+/manxiaBackup/
+/backup/
+/TachiJ2K++/
+/HarmonyOS+实况通知样式模板/
+
+# Agent/IDE tool dirs (rules consolidated in AGENTS.md)
+/.codex/
+/.workbuddy/
+/.trae/
+/.lingma/
+/.reasonix/
+/.dsh-filess/
+
+# Local machine-specific & scratch
+/feedback-center/
+/reports/
+/screenshot/
+/.uploads/
+/.hdc_logs/
+/.npm_cache/
+/hs_err_pid*.log
+/.tmp_*.py
+/.tmp_*.jpeg
+/.tmp_*.jpg
+/.tmp_verify*/
+/.tmp_rollback_*
+
+# Local hvigor / build caches
+/.hvigor_local2/
+/tmp_hvigor_home/
+/tmp_hvigor_user/
+
+# Docs logs & backups
+/docs/**/*.txt
+/docs/**/*.bak
+
+# Stray root artifacts
+/fix.js
+/fix_ui.py
+/analyze_hap.ps1
+/build-warning-*.txt
+/build-warning-*.log
+/build-legado-assembleHap.log
+/response.json
+
+# Backup files (editorial history, not versioned source)
+*.bak_*
+# Orphan submodule checkouts (external repos vendored on disk; fetched by build scripts / manual clone)
+/legado/
+/tpc_c_cplusplus/
+/entry/src/main/cpp/avif/build_windows/aom/
+/entry/src/main/cpp/avif/build_windows/zlib/
