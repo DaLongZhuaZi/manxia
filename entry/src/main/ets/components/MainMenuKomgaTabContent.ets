@@ -50,6 +50,12 @@ type KomgaColorKey =
   'accent_blue' | 'background_dark' | 'comp_background_tertiary' |
   'panel_background' | 'panel_border' | 'text_muted' | 'text_primary';
 
+interface KomgaChipBuilderParams {
+  label: string;
+  selected: boolean;
+  action: () => void;
+}
+
 @Component
 export struct MainMenuKomgaTabContent {
   @Consume('NavPathStack') pathStack: NavPathStack;
@@ -899,17 +905,18 @@ export struct MainMenuKomgaTabContent {
     }
   }
 
+  // 使用 $$ 让调用处的 @State 表达式按引用参与局部刷新。
   @Builder
-  private buildChip(label: string, selected: boolean, action: () => void) {
-    Text(label)
+  private buildChip($$: KomgaChipBuilderParams) {
+    Text($$.label)
       .fontSize(13)
-      .fontColor(selected ? Color.White : this.color('text_primary'))
+      .fontColor($$.selected ? Color.White : this.color('text_primary'))
       .fontFamily(this.appFontFamily)
       .padding({ left: 12, right: 12, top: 6, bottom: 6 })
-      .backgroundColor(selected ? this.color('accent_blue') : this.color('comp_background_tertiary'))
+      .backgroundColor($$.selected ? this.color('accent_blue') : this.color('comp_background_tertiary'))
       .borderRadius(16)
       .margin({ right: 8, bottom: 8 })
-      .onClick(() => action())
+      .onClick(() => $$.action())
   }
 
   @Builder
@@ -1149,16 +1156,16 @@ export struct MainMenuKomgaTabContent {
 
               Scroll() {
                 Row({ space: 0 }) {
-                  this.buildChip('库', this.browseMode === 'library', () => { this.setBrowseMode('library'); })
-                  this.buildChip('发现', this.browseMode === 'discover', () => { this.setBrowseMode('discover'); })
-                  this.buildChip('系列', this.contentType === 'SERIES', () => { this.setContentType('SERIES'); })
-                  this.buildChip('阅读列表', this.contentType === 'READLISTS', () => { this.setContentType('READLISTS'); })
-                  this.buildChip('书籍', this.contentType === 'BOOKS', () => { this.setContentType('BOOKS'); })
+                  this.buildChip({ label: '库', selected: this.browseMode === 'library', action: () => { this.setBrowseMode('library'); } })
+                  this.buildChip({ label: '发现', selected: this.browseMode === 'discover', action: () => { this.setBrowseMode('discover'); } })
+                  this.buildChip({ label: '系列', selected: this.contentType === 'SERIES', action: () => { this.setContentType('SERIES'); } })
+                  this.buildChip({ label: '阅读列表', selected: this.contentType === 'READLISTS', action: () => { this.setContentType('READLISTS'); } })
+                  this.buildChip({ label: '书籍', selected: this.contentType === 'BOOKS', action: () => { this.setContentType('BOOKS'); } })
                   if (this.browseMode === 'discover' && this.searchQuery.trim().length <= 0) {
-                    this.buildChip('热门', this.feedType === 'POPULAR', () => { this.setFeedType('POPULAR'); })
-                    this.buildChip('最新', this.feedType === 'LATEST', () => { this.setFeedType('LATEST'); })
+                    this.buildChip({ label: '热门', selected: this.feedType === 'POPULAR', action: () => { this.setFeedType('POPULAR'); } })
+                    this.buildChip({ label: '最新', selected: this.feedType === 'LATEST', action: () => { this.setFeedType('LATEST'); } })
                   }
-                  this.buildChip(this.getFilterChipLabel(), this.showFilters, () => { this.toggleFilterPanel(); })
+                  this.buildChip({ label: this.getFilterChipLabel(), selected: this.showFilters, action: () => { this.toggleFilterPanel(); } })
                 }
               }
               .scrollable(ScrollDirection.Horizontal)
@@ -1197,8 +1204,10 @@ export struct MainMenuKomgaTabContent {
                     this.buildPanelTitle('书库范围')
                     Flex({ wrap: FlexWrap.Wrap }) {
                       ForEach(this.filterOptions.libraries, (library: KomgaLibraryOption) => {
-                        this.buildChip(library.name, this.filters.selectedLibraryIds.includes(library.id), () => {
-                          this.toggleLibraryFilter(library.id);
+                        this.buildChip({
+                          label: library.name,
+                          selected: this.filters.selectedLibraryIds.includes(library.id),
+                          action: () => { this.toggleLibraryFilter(library.id); }
                         })
                       }, (library: KomgaLibraryOption) => library.id)
                     }
@@ -1206,26 +1215,28 @@ export struct MainMenuKomgaTabContent {
 
                   this.buildPanelTitle('阅读进度')
                   Flex({ wrap: FlexWrap.Wrap }) {
-                    this.buildChip('全部进度', this.filters.readStatusMode === 'ANY', () => { this.setReadStatusMode('ANY'); })
-                    this.buildChip('未读', this.filters.readStatusMode === 'UNREAD', () => { this.setReadStatusMode('UNREAD'); })
-                    this.buildChip('阅读中', this.filters.readStatusMode === 'IN_PROGRESS', () => { this.setReadStatusMode('IN_PROGRESS'); })
-                    this.buildChip('已读', this.filters.readStatusMode === 'READ', () => { this.setReadStatusMode('READ'); })
+                    this.buildChip({ label: '全部进度', selected: this.filters.readStatusMode === 'ANY', action: () => { this.setReadStatusMode('ANY'); } })
+                    this.buildChip({ label: '未读', selected: this.filters.readStatusMode === 'UNREAD', action: () => { this.setReadStatusMode('UNREAD'); } })
+                    this.buildChip({ label: '阅读中', selected: this.filters.readStatusMode === 'IN_PROGRESS', action: () => { this.setReadStatusMode('IN_PROGRESS'); } })
+                    this.buildChip({ label: '已读', selected: this.filters.readStatusMode === 'READ', action: () => { this.setReadStatusMode('READ'); } })
                   }
 
                   this.buildPanelTitle('排序')
                   Flex({ wrap: FlexWrap.Wrap }) {
                     ForEach(KOMGA_SORT_OPTIONS, (option: KomgaSortOption) => {
-                      this.buildChip(option.label, this.filters.sortKey === option.key, () => { this.setSortKey(option.key); })
+                      this.buildChip({ label: option.label, selected: this.filters.sortKey === option.key, action: () => { this.setSortKey(option.key); } })
                     }, (option: KomgaSortOption) => option.key)
                   }
 
                   if (this.contentType === 'SERIES' && this.filterOptions.collections.length > 0) {
                     this.buildPanelTitle('收藏集')
                     Flex({ wrap: FlexWrap.Wrap }) {
-                      this.buildChip('全部收藏集', this.filters.collectionId.length <= 0, () => { this.setCollectionFilter(''); })
+                      this.buildChip({ label: '全部收藏集', selected: this.filters.collectionId.length <= 0, action: () => { this.setCollectionFilter(''); } })
                       ForEach(this.filterOptions.collections, (collection: KomgaCollectionOption) => {
-                        this.buildChip(collection.name, this.filters.collectionId === collection.id, () => {
-                          this.setCollectionFilter(collection.id);
+                        this.buildChip({
+                          label: collection.name,
+                          selected: this.filters.collectionId === collection.id,
+                          action: () => { this.setCollectionFilter(collection.id); }
                         })
                       }, (collection: KomgaCollectionOption) => collection.id)
                     }
@@ -1235,7 +1246,7 @@ export struct MainMenuKomgaTabContent {
                     this.buildPanelTitle('流派')
                     Flex({ wrap: FlexWrap.Wrap }) {
                       ForEach(this.filterOptions.genres, (genre: string) => {
-                        this.buildChip(genre, this.filters.selectedGenres.includes(genre), () => { this.toggleGenreFilter(genre); })
+                        this.buildChip({ label: genre, selected: this.filters.selectedGenres.includes(genre), action: () => { this.toggleGenreFilter(genre); } })
                       }, (genre: string) => genre)
                     }
                   }
@@ -1244,7 +1255,7 @@ export struct MainMenuKomgaTabContent {
                     this.buildPanelTitle('标签')
                     Flex({ wrap: FlexWrap.Wrap }) {
                       ForEach(this.filterOptions.tags, (tag: string) => {
-                        this.buildChip(tag, this.filters.selectedTags.includes(tag), () => { this.toggleTagFilter(tag); })
+                        this.buildChip({ label: tag, selected: this.filters.selectedTags.includes(tag), action: () => { this.toggleTagFilter(tag); } })
                       }, (tag: string) => tag)
                     }
                   }
@@ -1253,7 +1264,7 @@ export struct MainMenuKomgaTabContent {
                     this.buildPanelTitle('出版社')
                     Flex({ wrap: FlexWrap.Wrap }) {
                       ForEach(this.filterOptions.publishers, (publisher: string) => {
-                        this.buildChip(publisher, this.filters.selectedPublishers.includes(publisher), () => { this.togglePublisherFilter(publisher); })
+                        this.buildChip({ label: publisher, selected: this.filters.selectedPublishers.includes(publisher), action: () => { this.togglePublisherFilter(publisher); } })
                       }, (publisher: string) => publisher)
                     }
                   }
@@ -1261,15 +1272,15 @@ export struct MainMenuKomgaTabContent {
                   if (this.getAuthorRoleKeys().length > 0) {
                     this.buildPanelTitle('作者')
                     Flex({ wrap: FlexWrap.Wrap }) {
-                      this.buildChip('全部角色', this.filters.selectedAuthorRole.length <= 0, () => { this.clearAuthorRoleFilter(); })
+                      this.buildChip({ label: '全部角色', selected: this.filters.selectedAuthorRole.length <= 0, action: () => { this.clearAuthorRoleFilter(); } })
                       ForEach(this.getAuthorRoleKeys(), (role: string) => {
-                        this.buildChip(role, this.filters.selectedAuthorRole === role, () => { this.setAuthorRoleFilter(role); })
+                        this.buildChip({ label: role, selected: this.filters.selectedAuthorRole === role, action: () => { this.setAuthorRoleFilter(role); } })
                       }, (role: string) => role)
                     }
                     if (this.filters.selectedAuthorRole.length > 0) {
                       Flex({ wrap: FlexWrap.Wrap }) {
                         ForEach(this.getAuthorNamesForSelectedRole(), (authorName: string) => {
-                          this.buildChip(authorName, this.filters.selectedAuthorName === authorName, () => { this.toggleAuthorNameFilter(authorName); })
+                          this.buildChip({ label: authorName, selected: this.filters.selectedAuthorName === authorName, action: () => { this.toggleAuthorNameFilter(authorName); } })
                         }, (authorName: string) => authorName)
                       }
                     }

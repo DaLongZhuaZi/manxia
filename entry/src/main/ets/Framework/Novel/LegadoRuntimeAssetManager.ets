@@ -24,7 +24,11 @@ const LEGADO_RUNTIME_ACTIVE_DIR = 'active';
 const LEGADO_RUNTIME_ROLLBACK_DIR = 'rollback';
 const LEGADO_RUNTIME_STATUS_FILE = 'active.json';
 const LEGADO_RUNTIME_UPDATE_STATE_FILE = 'update_state.json';
-const LEGADO_RUNTIME_SUPPORTED_API = 1;
+// API 2 establishes the V2 bridge contract. Runtime API 1 predates the
+// contract registry and can silently load a stale java.* surface after an app
+// update, so it must fall back to the bundled runtime instead of being reused.
+const LEGADO_RUNTIME_MINIMUM_API = 3;
+const LEGADO_RUNTIME_SUPPORTED_API = 3;
 const LEGADO_RUNTIME_DEFAULT_ENTRY = 'legado_runtime.html';
 const LEGADO_RUNTIME_RHINO_ENTRY = 'rhino_sandbox/index.html';
 const DAILY_CHECK_INTERVAL_MS = 24 * 60 * 60 * 1000;
@@ -214,10 +218,16 @@ export class LegadoRuntimeAssetManager {
       if (!SafeFileUtils.accessSync(this.activeDir)) {
         return this.createFallbackStatus('active 目录不存在');
       }
+      const runtimeApi = typeof parsed.runtimeApi === 'number' ? parsed.runtimeApi : 0;
+      if (runtimeApi < LEGADO_RUNTIME_MINIMUM_API) {
+        return this.createFallbackStatus(
+          `云端运行时 API 过低: remote=${runtimeApi}, required=${LEGADO_RUNTIME_MINIMUM_API}`
+        );
+      }
       return {
         installed: parsed.installed === true,
         healthOk: parsed.healthOk === true,
-        runtimeApi: typeof parsed.runtimeApi === 'number' ? parsed.runtimeApi : 0,
+        runtimeApi: runtimeApi,
         code: typeof parsed.code === 'number' ? parsed.code : 0,
         version: typeof parsed.version === 'string' ? parsed.version : '',
         activePath: this.activeDir,
@@ -604,6 +614,9 @@ export class LegadoRuntimeAssetManager {
   }
 
   private async ensureRuntimeCompatible(index: LegadoRuntimeAssetIndex): Promise<void> {
+    if (index.runtimeApi < LEGADO_RUNTIME_MINIMUM_API) {
+      throw new Error(`运行时 API 过低: remote=${index.runtimeApi}, required=${LEGADO_RUNTIME_MINIMUM_API}`);
+    }
     if (index.runtimeApi > LEGADO_RUNTIME_SUPPORTED_API) {
       throw new Error(`运行时 API 不兼容: remote=${index.runtimeApi}, supported=${LEGADO_RUNTIME_SUPPORTED_API}`);
     }

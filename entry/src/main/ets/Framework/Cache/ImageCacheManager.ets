@@ -88,6 +88,7 @@ export interface LoadOptions {
   skipMemoryCache?: boolean;
   skipDiskCache?: boolean;
   forceRefresh?: boolean;
+  skipFailureTtl?: boolean;
   headers?: RequestHeaders;
   sourceId?: number;
   loadingMethod?: ImageLoadingMethod;
@@ -224,21 +225,22 @@ export class ImageCacheManager {
   public async loadImage(url: string, options?: LoadOptions): Promise<image.PixelMap | null> {
     try {
       const cacheKey = this.generateCacheKey(url, options);
+      const taskKey: string = options?.forceRefresh ? `${cacheKey}|force_refresh` : cacheKey;
       
       // 检查是否正在加载
-      if (this.loadingTasks.has(cacheKey)) {
-        return await this.loadingTasks.get(cacheKey)!;
+      if (this.loadingTasks.has(taskKey)) {
+        return await this.loadingTasks.get(taskKey)!;
       }
       
       // 创建加载任务
       const loadTask = this.performImageLoad(url, cacheKey, options);
-      this.loadingTasks.set(cacheKey, loadTask);
+      this.loadingTasks.set(taskKey, loadTask);
       
       try {
         const result = await loadTask;
         return result;
       } finally {
-        this.loadingTasks.delete(cacheKey);
+        this.loadingTasks.delete(taskKey);
       }
       
     } catch (error) {
@@ -458,7 +460,7 @@ export class ImageCacheManager {
 
   private buildOnlineLoadOptions(options?: LoadOptions): OnlineLoadOptions {
     const priority: number = options?.priority || 1;
-    return {
+    const onlineOptions: OnlineLoadOptions = {
       width: options?.width,
       height: options?.height,
       headers: this.buildOnlineHeaders(options?.headers),
@@ -468,6 +470,9 @@ export class ImageCacheManager {
       visibleLoad: priority >= 10,
       prefetch: priority <= 0
     } as OnlineLoadOptions;
+    onlineOptions.forceRefresh = options?.forceRefresh;
+    onlineOptions.skipFailureTtl = options?.skipFailureTtl;
+    return onlineOptions;
   }
 
   private cloneRequestHeaderEntries(entries?: RequestHeaderEntry[]): RequestHeaderEntry[] | undefined {
@@ -579,6 +584,7 @@ export class ImageCacheManager {
       forced.contentType = options.contentType;
     }
     forced.forceRefresh = true;
+    forced.skipFailureTtl = true;
     return forced;
   }
 
@@ -607,6 +613,10 @@ export class ImageCacheManager {
           }
         }
 
+        if (options?.forceRefresh && !cacheManager.invalidatePageCache(mangaKey, chapterKey, pageIndex)) {
+          return null;
+        }
+
         const cached = await cacheManager.cachePage(mangaKey, chapterKey, pageIndex, url, headers);
         if (!cached) {
           return null;
@@ -622,6 +632,9 @@ export class ImageCacheManager {
           if (cachedPath && cachedPath.length > 0) {
             return cachedPath;
           }
+        }
+        if (options?.forceRefresh && !cacheManager.invalidatePageCache(mangaKey, chapterKey, pageIndex)) {
+          return null;
         }
         return await cacheManager.cachePage(mangaKey, chapterKey, pageIndex, url, headers);
       }
@@ -1769,34 +1782,20 @@ export class ImageCacheManager {
       
       logger.debug(TAG, `开始预加载图片: ${url.substring(0, 80)}`);
       
-      // 使用OnlineImageLoader下载图片到缓存
+      // 使用与可见页相同的标准 Header 投影，避免预加载路径丢失
+      // Authorization、Cache-Control、Sec-Fetch-* 等 Legado 字段。
       const onlineLoader = OnlineImageLoader.getInstance();
-      
-      // 构建请求头
-      let onlineHeaders: OnlineRequestHeaders | undefined = undefined;
-      if (options?.headers) {
-          const headers: OnlineRequestHeaders = {
-            userAgent: options.headers.userAgent || '',
-            referer: options.headers.referer || '',
-            origin: options.headers.origin || '',
-            cookie: options.headers.cookie || '',
-            accept: options.headers.accept || 'image/webp,image/apng,image/*,*/*;q=0.8',
-            acceptLanguage: options.headers.acceptLanguage || 'zh-CN,zh;q=0.9,en;q=0.8',
-            cachePartition: options.headers.cachePartition || '',
-            extraHeaders: this.cloneRequestHeaderEntries(options.headers.extraHeaders)
-          };
-
-        onlineHeaders = headers;
-      }
-      
-       const loadOptions: OnlineLoadOptions = {
-         headers: onlineHeaders,
-         sourceId: options?.sourceId,
-         priority: 0,  // 低优先级，不影响正常加载
-         partitionKey: options?.partitionKey,
-         visibleLoad: false,
-         prefetch: true
-       };
+      const onlineHeaders: OnlineRequestHeaders | undefined = this.buildOnlineHeaders(options?.headers);
+      const loadOptions: OnlineLoadOptions = {
+        headers: onlineHeaders,
+        sourceId: options?.sourceId,
+        priority: 0,
+        partitionKey: options?.partitionKey,
+        visibleLoad: false,
+        prefetch: true,
+        forceRefresh: options?.forceRefresh,
+        skipFailureTtl: options?.skipFailureTtl
+      };
 
       
       // 下载图片（会自动缓存）

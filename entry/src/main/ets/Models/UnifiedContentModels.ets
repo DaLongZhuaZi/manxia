@@ -195,6 +195,21 @@ export interface UnifiedDetailPageParams {
   cachedCover?: string;
   cachedAuthor?: string;
   cachedManga?: Manga;
+  /**
+   * A fresh single-source search result must exercise the current novel
+   * detail workflow instead of being satisfied by an older local book row.
+   * This is set only by the search-result navigation path; shelf/offline
+   * navigation keeps its existing cache-first behavior.
+   */
+  forceNovelNetworkRefresh?: boolean;
+  /** Opaque, in-memory-only V2 request-carrier identity from a search result. */
+  novelRequestCarrierKey?: string;
+  /**
+   * In-memory-only V2 book rule-data snapshot from the selected search result.
+   * It is never persisted or logged; BookInfo restores it so java.put/get keeps
+   * the same book scope after navigation reconstruction.
+   */
+  novelBookVariable?: string;
   // 换源相关参数
   isFromChangeSource?: boolean;       // 是否来自换源
   originalBookInfo?: OriginalBookInfo; // 原书信息（仅当isFromChangeSource为true时有效）

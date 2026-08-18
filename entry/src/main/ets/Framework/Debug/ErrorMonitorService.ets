@@ -1,4 +1,4 @@
-﻿import { SafeFileUtils } from '../../Utils/SafeFileUtils';
+import { SafeFileUtils } from '../../Utils/SafeFileUtils';
 // 文件路径: entry/src/main/ets/Framework/Debug/ErrorMonitorService.ets
 /**
  * 错误监控服务
@@ -14,6 +14,10 @@ import { DownloadDirManager } from '../Storage/DownloadDirManager';
 import { ErrorCategory, ErrorRecordManager } from './ErrorRecordManager';
 import { deviceInfo } from '@kit.BasicServicesKit';
 import { ngfEventBusFacade, NGFEventPayload, NGFInitializationEventName } from '../NGF';
+import {
+  getNetworkTransportFailureCoordinator,
+  NetworkTransportFailureCoordinator
+} from '../Network/NetworkTransportFailureCoordinator';
 
 const TAG = 'ErrorMonitorService';
 
@@ -138,6 +142,8 @@ export class ErrorMonitorService {
   private static instance: ErrorMonitorService;
   private context: common.UIAbilityContext | null = null;
   private logCollector: LogCollector = LogCollector.getInstance();
+  private transportFailureCoordinator: NetworkTransportFailureCoordinator =
+    getNetworkTransportFailureCoordinator();
   private isStarted: boolean = false;
   private errorLogsDir: string = '';
   private logListener: ((entry: LogEntry) => void) | null = null;
@@ -152,7 +158,8 @@ export class ErrorMonitorService {
 
   private static readonly EXCLUDED_TAGS: string[] = [
     'ErrorMonitorService',
-    'CrashRecorderService'
+    'CrashRecorderService',
+    'SafeFileUtils'
   ];
 
   private constructor() {}
@@ -195,21 +202,12 @@ export class ErrorMonitorService {
       return;
     }
 
-    try {
-      // 若路径存在且是目录，listFileSync 可正常执行
-      SafeFileUtils.listFileSync(this.errorLogsDir);
-      return;
-    } catch {
-      // 路径不存在或不是目录，继续修复
-    }
-
-    try {
-      // 若存在同名文件，先尝试删除
-      SafeFileUtils.unlinkSync(this.errorLogsDir);
-    } catch {
-      // 忽略，可能本来就不存在
-    }
-
+    // [修复] 原实现依赖 listFileSync 抛异常来判断“目录缺失”，但 SafeFileUtils.listFileSync
+    // 会吞掉异常并返回空数组（目录缺失与空目录无法区分），导致目录从未被真正创建；
+    // 目录缺失时后续 openSync 全部失败，失败日志又被本服务再次捕获，形成
+    // “记录失败→再记录”的反馈死循环（主线程被占满，页面白屏）。
+    // 改为无条件先删同名文件（对目录会静默失败）再递归创建目录，幂等且兜底目录缺失。
+    SafeFileUtils.unlinkSync(this.errorLogsDir);
     SafeFileUtils.mkdirSync(this.errorLogsDir, true);
   }
 
@@ -225,6 +223,9 @@ export class ErrorMonitorService {
     const isNetwork = this.isNetworkError(entry);
 
     const now = Date.now();
+    if (isNetwork && !this.transportFailureCoordinator.claimLedgerRecord(entry.message, now)) {
+      return;
+    }
     if (entry.message === this.lastErrorMessage && (now - this.lastErrorTime) < this.DEBOUNCE_INTERVAL) {
       return;
     }
@@ -498,33 +499,45 @@ export class ErrorMonitorService {
         }
       }
 
-      this.cleanOldErrorLogs();
     } catch (error) {
       const msg = error instanceof Error ? error.message : String(error);
       const filesDir = this.context ? this.context.filesDir : 'null';
       console.error(`[NGF] ${TAG}: 写入错误日志失败: ${msg}; path=${sandboxPath}; dir=${this.errorLogsDir}; filesDir=${filesDir}; started=${this.isStarted}`);
+    } finally {
+      this.cleanOldErrorLogs();
     }
   }
 
   private tryCopyToDownload(sourcePath: string, fileName: string): void {
+    let logsDir: string = '';
     try {
       const downloadDirManager = DownloadDirManager.getInstance();
       if (!downloadDirManager.isReady()) {
         return;
       }
-      const logsDir = downloadDirManager.ensureDirectory('logs');
+      logsDir = downloadDirManager.ensureDirectory('logs');
       const targetPath = `${logsDir}/${fileName}`;
       SafeFileUtils.copyFileSync(sourcePath, targetPath);
       console.log(`[NGF] ${TAG}: 错误日志已复制到 Download 目录`);
     } catch {
       // 复制失败不影响主流程
+    } finally {
+      this.cleanManagedErrorLogs(logsDir);
     }
   }
 
   private cleanOldErrorLogs(): void {
+    this.cleanManagedErrorLogs(this.errorLogsDir);
+  }
+
+  private cleanManagedErrorLogs(directory: string): void {
+    if (directory.length <= 0) {
+      return;
+    }
+
     try {
-      const files = SafeFileUtils.listFileSync(this.errorLogsDir);
-      const errorFiles = files.filter((f: string) => f.startsWith('error_') && f.endsWith('.txt'));
+      const files = SafeFileUtils.listFileSync(directory);
+      const errorFiles = files.filter((f: string) => f.startsWith('error_') && f.endsWith('.txt')).filter((f: string) => !f.startsWith('error_detail_') && !f.startsWith('error_report_') && !f.startsWith('error_logs_'));
 
       if (errorFiles.length <= 20) {
         return;
@@ -534,7 +547,7 @@ export class ErrorMonitorService {
       const toDelete = errorFiles.slice(0, errorFiles.length - 20);
       for (const fileName of toDelete) {
         try {
-          SafeFileUtils.unlinkSync(`${this.errorLogsDir}/${fileName}`);
+          SafeFileUtils.unlinkSync(`${directory}/${fileName}`);
         } catch {
           // ignore
         }

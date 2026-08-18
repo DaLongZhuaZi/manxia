@@ -690,7 +690,9 @@ export struct KomgaReaderPage {
                 imageHeight: '100%',
                 objectFit: ImageFit.Contain,
                 imgBorderRadius: 0,
-                requestHeaders: this.executor.getImageHeaders(this.instanceId)
+                requestHeaders: this.executor.getImageHeaders(this.instanceId),
+                cacheKey: `reader_${this.chapterId}_${index}`,
+                enableRetry: true
               })
 
             }

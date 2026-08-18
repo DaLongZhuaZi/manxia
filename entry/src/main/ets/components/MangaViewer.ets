@@ -28,7 +28,6 @@ import {
   DoublePagePortraitLayout,
   DoublePageVerticalDirection
 } from '../Models/MangaModels';
-import { colorMap } from '../Data/ResourceMap';
 import {
   curves,
   UIContext,
@@ -72,12 +71,24 @@ import { MangaAssetRequestContext, MangaAssetRequestFactory } from '../Framework
 import {
   MangaAssetLoadReason,
   MangaAssetLoadRequest,
-  MangaAssetLoadResult
+  MangaAssetLoadResult,
+  MangaAssetRetryMode
 } from '../Framework/Reader/MangaAssetTypes';
+import {
+  buildMangaImageRetryKey,
+  MangaImageRetryCoordinator,
+  MangaImageRetryDecision
+} from '../Framework/Reader/MangaImageRetryCoordinator';
 import {
   MangaReaderSessionGuard,
   MangaReaderSessionSnapshot
 } from '../Framework/Reader/MangaReaderSessionGuard';
+import {
+  getNetworkTransportFailureCoordinator,
+  NetworkTransportFailureCoordinator,
+  NetworkTransportFailureDescriptor,
+  NetworkTransportFailureKind
+} from '../Framework/Network/NetworkTransportFailureCoordinator';
 import {
   MangaAssetLoadContextInput,
   MangaAssetLoadContextResolver
@@ -351,6 +362,8 @@ export struct MangaViewer {
   @Prop sourceId: number = 0;
   @Prop mangaId: string = '';
   @Prop readFlowSessionId: string = '';
+  @Prop useLegadoV2ImageTransport: boolean = false;
+  @Prop legadoSourceRawSha256: string = '';
   @Prop onlineDownloadedWarmupState: string = '';
   @Prop onlineDownloadedArchivePath: string = '';
   @Prop onlineDownloadedExtractDir: string = '';
@@ -426,6 +439,8 @@ export struct MangaViewer {
   private mangaDisplayInputResolver: MangaDisplayInputResolver = new MangaDisplayInputResolver();
   private mangaReaderCacheMonitor: MangaReaderCacheMonitor = new MangaReaderCacheMonitor();
   private mangaReadFlowMonitor: MangaReadFlowMonitor = MangaReadFlowMonitor.getInstance();
+  private transportFailureCoordinator: NetworkTransportFailureCoordinator =
+    getNetworkTransportFailureCoordinator();
   private mangaReadFlowSessionBridge: MangaReadFlowSessionBridge = new MangaReadFlowSessionBridge();
   private mangaScrollableReadFlowReporter: MangaScrollableReadFlowReporter = new MangaScrollableReadFlowReporter();
   private mangaReaderCacheOwnershipLogged: boolean = false;
@@ -439,6 +454,7 @@ export struct MangaViewer {
   @State private imageLoadStates: Map<string, ImageLoadState> = new Map();
   @State private pagePixelMaps: Map<string, image.PixelMap> = new Map();
   @State private pixelMapEpochByPage: Map<string, number> = new Map();
+  @State private imageRenderEpochByPage: Map<string, number> = new Map();
   @State private pageImageBindings: Map<number, string> = new Map();
   @State private singlePageImageInput: Resource | string | image.PixelMap = $r('app.media.ic_image');
   @State private singlePagePageId: string = '';
@@ -694,6 +710,10 @@ export struct MangaViewer {
     new MangaAssetLoadCoordinator(new MangaAssetLoader(), new MangaAssetMonitor());
   private mangaAssetRequestFactory: MangaAssetRequestFactory = new MangaAssetRequestFactory();
   private mangaReaderSessionGuard: MangaReaderSessionGuard = new MangaReaderSessionGuard();
+  private mangaImageRetryCoordinator: MangaImageRetryCoordinator = new MangaImageRetryCoordinator();
+  private mangaImageRetryStartedAt: Map<string, number> = new Map();
+  private pageLoadGenerationById: Map<string, number> = new Map();
+  private localWebtoonFallbackPages: Set<string> = new Set();
   
   // [新增] 滚动方向跟踪（用于智能缓存清理）
   private lastScrollDirection: 'up' | 'down' = 'down';
@@ -806,6 +826,12 @@ export struct MangaViewer {
     // 释放所有PixelMap资源后再清空
     this.releaseAllPagePixelMaps();
     this.imageLoadStates.clear();
+    this.imageRenderEpochByPage.clear();
+    this.imageRenderEpochByPage = new Map(this.imageRenderEpochByPage);
+    this.mangaImageRetryCoordinator.resetAll();
+    this.mangaImageRetryStartedAt.clear();
+    this.pageLoadGenerationById.clear();
+    this.localWebtoonFallbackPages.clear();
     this.preloadManager.clearAll();
     this.imageLoadStateManager.clearAll();
     this.webtoonPageRefById.clear();
@@ -1208,6 +1234,11 @@ export struct MangaViewer {
 
     // 清理图片缓存
     this.clearImageCache();
+    this.mangaImageRetryCoordinator.resetAll();
+    this.mangaImageRetryStartedAt.clear();
+    this.pageLoadGenerationById.clear();
+    this.imageRenderEpochByPage.clear();
+    this.localWebtoonFallbackPages.clear();
     this.invalidateMangaReaderSession('disappear');
   }
 
@@ -1436,51 +1467,39 @@ export struct MangaViewer {
    * 加载单个图片（带优先级）
    */
   private loadImageWithPriority(page: MangaPage, priority: number): void {
-    // 设置优先级到page对象（用于ImageCacheManager）
-    if (!page.priority) {
-      page.priority = priority;
-    }
-    // 调用原有的loadImage方法
-    this.loadImage(page);
+    this.loadImage(page, priority);
   }
 
   /**
    * 新增：重试加载页面
    */
   private retryLoadPage(page: MangaPage): void {
-    logger.info(TAG, `重试加载页面: pageId=${page.id}, url=${page.imageUrl}`);
-    
-    // 清除旧的错误状态
-    const oldState = this.imageLoadStates.get(page.id);
-    if (oldState) {
-      oldState.error = undefined;
-      oldState.isLoading = false;
-      oldState.isLoaded = false;
-      this.imageLoadStates.set(page.id, oldState);
-      this.imageLoadStates = new Map(this.imageLoadStates);
+    const retryKey: string = this.getMangaImageRetryKey(page);
+    const decision: MangaImageRetryDecision = this.mangaImageRetryCoordinator.beginManualRetry(retryKey);
+    if (!decision.shouldRetry) {
+      logger.debug(TAG, `忽略重复单图重试点击: pageId=${page.id}`);
+      return;
     }
-    
-    // 清除新状态管理器中的状态
-    this.imageLoadStateManager.clearPage(page.id);
-    this.preloadManager.clearPage(this.getPageIndexById(page.id));
-    
-    // 清除 PixelMap
-    this.dropPagePixelMapReference(page.id, true);
-    
-    // 重新初始化页面状态
-    this.imageLoadStateManager.initPage(page.id, this.getPageIndexById(page.id));
-    
-    // 重新加载图片
-    this.loadImage(page);
-    
-    // 更新显示
-    this.updateSinglePageDisplay();
+    logger.info(TAG, `单图手动重试: pageId=${page.id}, mode=${decision.retryMode}, attempt=${decision.attempt}`);
+    this.recordReadFlowAssetEvent(
+      MangaReadFlowEventType.ASSET_REQUEST,
+      page,
+      this.resolveManagedPageIndex(page),
+      decision.retryMode === MangaAssetRetryMode.FORCE_REFRESH ? 'manual_force_refresh' : 'manual_cache_first',
+      0,
+      true,
+      String(page.sourceType),
+      ''
+    );
+    this.executePageRetry(page, decision.retryMode, false, decision.attempt, 'manual').catch((error: Error) => {
+      this.handlePageLoadFailure(page, error.message, 'manual_retry_exception');
+    });
   }
 
   /**
    * 加载单个图片
    */
-  private loadImage(page: MangaPage): void {
+  private loadImage(page: MangaPage, priority: number = -1): void {
     // [新增] 强校验：如果是 Komiic 源且 Referer 为空，挂起请求
     const isKomiic = (this.networkHeaders?.referer?.includes('komiic')) ||
       (page.imageUrl.includes('komiic.com'));
@@ -1523,28 +1542,15 @@ export struct MangaViewer {
 
     // 触发实际 Image 组件加载流程由 UI 构建时完成。
     // 这里仅记录诊断日志，避免与真实生命周期脱节。
-    logger.debug(TAG, `开始加载图片: id=${page.id}, src=${String(this.getImageResource(page))}, priority=${page.priority || 1}`);
+    const requestPriority: number = priority >= 0 ? priority : (this.isPageCurrentlyVisible(page) ? 10 : 1);
+    logger.debug(TAG, `开始加载图片: id=${page.id}, src=${String(this.getImageResource(page))}, priority=${requestPriority}`);
     this.verifyLocalFileAndLog(page, 'start');
-    this.ensurePixelMapLoaded(page);
+    const loadGeneration: number = this.nextPageLoadGeneration(page.id);
+    this.ensurePixelMapLoaded(page, MangaAssetRetryMode.NONE, requestPriority, loadGeneration);
 
     // 仅在页面可视时启动超时定时器，避免不可视页面被误判为超时
     if (this.isPageCurrentlyVisible(page)) {
-      const timeoutMs: number = 15000;
-      const timerId: number = setTimeout(() => {
-        const st = this.imageLoadStates.get(page.id);
-        if (st && st.isLoading && !st.isLoaded) {
-          this.imageLoadStates.set(page.id, {
-            isLoading: false,
-            isLoaded: false,
-            error: '加载超时'
-          } as ImageLoadState);
-          this.imageLoadStates = new Map(this.imageLoadStates);
-          logger.warn(TAG, `图片加载超时: id=${page.id}, src=${String(this.getImageResource(page))}`);
-          this.logTimeoutDiagnosis(page);
-        }
-        this.pendingLoadTimers.delete(page.id);
-      }, timeoutMs);
-      this.pendingLoadTimers.set(page.id, timerId);
+      this.startPageLoadTimeout(page, loadGeneration);
     } else {
       logger.debug(TAG, `跳过超时定时器（页面不可视）: id=${page.id}`);
     }
@@ -3739,6 +3745,8 @@ export struct MangaViewer {
     input.sourceId = this.sourceId;
     input.mangaId = this.mangaId;
     input.contentType = this.contentType;
+    input.useLegadoV2ImageTransport = this.useLegadoV2ImageTransport;
+    input.legadoSourceRawSha256 = this.legadoSourceRawSha256;
     input.screenWidth = this.screenWidth > 0 ? this.screenWidth : 1080;
     input.isWebtoonMode = this.isWebtoonMode();
     return input;
@@ -3790,7 +3798,9 @@ export struct MangaViewer {
   private buildMangaAssetLoadRequest(
     page: MangaPage,
     pageIndex: number,
-    reason: MangaAssetLoadReason
+    reason: MangaAssetLoadReason,
+    retryMode: MangaAssetRetryMode = MangaAssetRetryMode.NONE,
+    priority: number = -1
   ): MangaAssetLoadRequest {
     const requestContext: MangaAssetRequestContext = this.mangaAssetLoadContextResolver.build(
       page,
@@ -3798,6 +3808,24 @@ export struct MangaViewer {
       reason,
       this.createMangaAssetLoadContextInput()
     );
+    requestContext.retryMode = retryMode;
+    if (priority >= 0) {
+      requestContext.priority = priority;
+    } else if (reason === MangaAssetLoadReason.VISIBLE ||
+      reason === MangaAssetLoadReason.WEBTOON ||
+      reason === MangaAssetLoadReason.RETRY) {
+      requestContext.priority = 10;
+    } else if (reason === MangaAssetLoadReason.NEIGHBOR) {
+      requestContext.priority = 5;
+    } else {
+      requestContext.priority = 1;
+    }
+    if (retryMode === MangaAssetRetryMode.FORCE_REFRESH &&
+      this.contentType === 'OnlineDownloaded' &&
+      this.isHttpImageUrl(page.imageUrl)) {
+      requestContext.imageUrl = page.imageUrl;
+      requestContext.sourceTypeOverride = ImageSourceType.NETWORK;
+    }
     return this.mangaAssetRequestFactory.build(page, pageIndex, requestContext);
   }
 
@@ -4180,10 +4208,18 @@ export struct MangaViewer {
   private async loadPixelMapWithAssetPipeline(
     page: MangaPage,
     pageIndex: number,
-    reason: MangaAssetLoadReason
+    reason: MangaAssetLoadReason,
+    retryMode: MangaAssetRetryMode = MangaAssetRetryMode.NONE,
+    priority: number = -1
   ): Promise<MangaAssetLoadResult> {
     this.mangaAssetLoadCoordinator.setPixivImageLoader(this.loadPixivImageCallback ? this.loadPixivImageCallback : null);
-    const request: MangaAssetLoadRequest = this.buildMangaAssetLoadRequest(page, pageIndex, reason);
+    const request: MangaAssetLoadRequest = this.buildMangaAssetLoadRequest(
+      page,
+      pageIndex,
+      reason,
+      retryMode,
+      priority
+    );
     this.recordReadFlowAssetEvent(
       MangaReadFlowEventType.ASSET_REQUEST,
       page,
@@ -4215,15 +4251,13 @@ export struct MangaViewer {
   private markPagePixelMapLoaded(page: MangaPage, pixelMap: image.PixelMap): void {
     this.commitPagePixelMap(page.id, pixelMap);
     this.incrementPixelMapEpoch(page.id);
-    const prev: ImageLoadState | undefined = this.imageLoadStates.get(page.id);
-    const newState: ImageLoadState = {
-      isLoading: false,
-      isLoaded: true,
-      dimensions: prev && prev.dimensions ? prev.dimensions : undefined,
-      error: undefined
-    } as ImageLoadState;
-    this.imageLoadStates.set(page.id, newState);
-    this.imageLoadStates = new Map(this.imageLoadStates);
+    this.imageLoadStateManager.initPage(page.id, this.resolveManagedPageIndex(page));
+    this.imageLoadStates = this.mangaLoadStateCommitter.markLoaded(
+      page.id,
+      pixelMap,
+      this.imageLoadStates,
+      this.imageLoadStateManager
+    );
     this.clearPendingLoadTimer(page.id);
     this.notifyPixelMapLoaded(page);
     this.recordReadFlowEvent(
@@ -4237,31 +4271,7 @@ export struct MangaViewer {
   }
 
   private markPagePixelMapLoadFailed(page: MangaPage, errorMessage: string): void {
-    const st: ImageLoadState | undefined = this.imageLoadStates.get(page.id);
-    if (st) {
-      st.isLoading = false;
-      st.isLoaded = false;
-      st.error = errorMessage;
-      this.imageLoadStates.set(page.id, st);
-    } else {
-      this.imageLoadStates.set(page.id, {
-        isLoading: false,
-        isLoaded: false,
-        error: errorMessage
-      } as ImageLoadState);
-    }
-    this.imageLoadStates = new Map(this.imageLoadStates);
-    this.clearPendingLoadTimer(page.id);
-    this.recordReadFlowAssetEvent(
-      MangaReadFlowEventType.ASSET_LOADED,
-      page,
-      this.resolveManagedPageIndex(page),
-      this.isPageCurrentlyVisible(page) ? 'visible' : 'preload',
-      0,
-      false,
-      'failed_state',
-      errorMessage
-    );
+    this.handlePageLoadFailure(page, errorMessage, 'asset_pipeline');
   }
 
   private isPagePixelMapUsable(pageId: string): boolean {
@@ -4300,91 +4310,251 @@ export struct MangaViewer {
     }
 
     if (this.readingSettings.readingMode === ReadingMode.DOUBLE_PAGE) {
-      this.updateDoublePageDisplay();
+      this.refreshDoublePageDisplayForPage(page);
       return;
     }
 
     this.updateSinglePageDisplay();
   }
 
-  private handleImageComponentError(page: MangaPage, error: ImageError, context: string): void {
-    this.logDetailedImageError(page, error);
+  private refreshDoublePageDisplayForPage(page: MangaPage): void {
+    const imageInput: Resource | string | image.PixelMap = this.getDisplayImageInput(page);
+    if (page.id === this.doubleLeftPageId) {
+      this.doubleLeftImageInput = imageInput;
+    }
+    if (page.id === this.doubleRightPageId) {
+      this.doubleRightImageInput = imageInput;
+    }
+    if (page.id === this.verticalDoubleTopPageId) {
+      this.verticalDoubleTopImageInput = imageInput;
+    }
+    if (page.id === this.verticalDoubleBottomPageId) {
+      this.verticalDoubleBottomImageInput = imageInput;
+    }
+  }
+
+  private getMangaImageRetryKey(page: MangaPage): string {
+    const pageRef: WebtoonPageRef | undefined = this.webtoonPageRefById.get(page.id);
+    const chapterId: string = pageRef
+      ? pageRef.chapterId
+      : (this.chapter && this.chapter.id ? this.chapter.id : '');
+    return buildMangaImageRetryKey(chapterId, page.id);
+  }
+
+  private getImageRenderEpoch(pageId: string): number {
+    return this.imageRenderEpochByPage.get(pageId) || 0;
+  }
+
+  private incrementImageRenderEpoch(pageId: string): void {
+    const nextEpoch: number = this.getImageRenderEpoch(pageId) + 1;
+    this.imageRenderEpochByPage.set(pageId, nextEpoch);
+    this.imageRenderEpochByPage = new Map(this.imageRenderEpochByPage);
+  }
+
+  private isHttpImageUrl(url: string): boolean {
+    return url.startsWith('https://') || url.startsWith('http://');
+  }
+
+  private getPageLoadGeneration(pageId: string): number {
+    return this.pageLoadGenerationById.get(pageId) || 0;
+  }
+
+  private nextPageLoadGeneration(pageId: string): number {
+    const generation: number = this.getPageLoadGeneration(pageId) + 1;
+    this.pageLoadGenerationById.set(pageId, generation);
+    return generation;
+  }
+
+  private isPageLoadGenerationCurrent(pageId: string, generation: number): boolean {
+    return this.getPageLoadGeneration(pageId) === generation;
+  }
+
+  private startPageLoadTimeout(page: MangaPage, generation: number): void {
     this.clearPendingLoadTimer(page.id);
+    const timeoutMs: number = 15000;
+    const timerId: number = setTimeout(() => {
+      const state: ImageLoadState | undefined = this.imageLoadStates.get(page.id);
+      this.pendingLoadTimers.delete(page.id);
+      if (state && state.isLoading && !state.isLoaded && this.isPageLoadGenerationCurrent(page.id, generation)) {
+        this.nextPageLoadGeneration(page.id);
+        logger.warn(TAG, `图片加载超时: id=${page.id}, src=${String(this.getImageResource(page))}`);
+        this.logTimeoutDiagnosis(page);
+        this.handlePageLoadFailure(page, '加载超时', 'timeout');
+      }
+    }, timeoutMs);
+    this.pendingLoadTimers.set(page.id, timerId);
+  }
 
-    if (this.isPagePixelMapUsable(page.id)) {
-      logger.warn(TAG, `忽略显示层图片错误，PixelMap仍有效: context=${context}, id=${page.id}`);
+  private handlePageLoadFailure(page: MangaPage, errorMessage: string, context: string): void {
+    if (!this.mangaPageLoadResolver.isPageResolvable(page, this.createMangaPageResolveContext())) {
+      logger.debug(TAG, `忽略已失效页面加载失败: page=${page.id}, context=${context}`);
+      return;
+    }
+    const currentState: ImageLoadState | undefined = this.imageLoadStates.get(page.id);
+    if (page.sourceType !== ImageSourceType.NETWORK &&
+      currentState?.isLoaded === true &&
+      (context === 'asset_pipeline' || context === 'managed_asset_load')) {
+      logger.debug(TAG, `忽略已成功直接渲染页面的并行解码失败: page=${page.id}, context=${context}`);
       return;
     }
 
-    if (page.sourceType === ImageSourceType.NETWORK) {
-      if (this.pagePixelMaps.has(page.id)) {
-        this.dropPagePixelMapReference(page.id, true);
-      }
-
-      const managedPageIndex: number = this.resolveManagedPageIndex(page);
-      this.imageLoadStateManager.clearPage(page.id);
-      this.imageLoadStateManager.initPage(page.id, managedPageIndex >= 0 ? managedPageIndex : 0);
-
-      const prev: ImageLoadState | undefined = this.imageLoadStates.get(page.id);
-      const resetState: ImageLoadState = {
-        isLoading: false,
-        isLoaded: false,
-        dimensions: prev && prev.dimensions ? prev.dimensions : undefined,
-        error: undefined
-      } as ImageLoadState;
-      this.imageLoadStates.set(page.id, resetState);
-      this.imageLoadStates = new Map(this.imageLoadStates);
-
-      if (this.isPageCurrentlyVisible(page)) {
-        logger.warn(TAG, `显示层图片错误，已清理失效PixelMap并重新加载: context=${context}, id=${page.id}`);
-        this.recordReadFlowAssetEvent(
-          MangaReadFlowEventType.ERROR,
-          page,
-          managedPageIndex,
-          context,
-          0,
-          false,
-          'image_component_retry',
-          '显示层图片错误，触发网络图重载'
-        );
-        this.loadImage(page);
-        this.refreshVisibleDisplayForPage(page);
-      } else {
-        logger.debug(TAG, `忽略不可见页面显示错误，等待下次可见时重载: context=${context}, id=${page.id}`);
-        this.recordReadFlowAssetEvent(
-          MangaReadFlowEventType.ERROR,
-          page,
-          managedPageIndex,
-          context,
-          0,
-          false,
-          'image_component_deferred',
-          '不可见页面显示错误，延迟重载'
-        );
-      }
-      return;
-    }
-
-    const prev: ImageLoadState | undefined = this.imageLoadStates.get(page.id);
-    const newState: ImageLoadState = {
-      isLoading: false,
-      isLoaded: false,
-      dimensions: prev && prev.dimensions ? prev.dimensions : undefined,
-      error: '图片加载失败'
-    } as ImageLoadState;
-    this.imageLoadStates.set(page.id, newState);
-    this.imageLoadStates = new Map(this.imageLoadStates);
-    this.logImageDisplayAfter(page, false);
+    this.clearPendingLoadTimer(page.id);
+    const retryKey: string = this.getMangaImageRetryKey(page);
+    const decision: MangaImageRetryDecision = this.mangaImageRetryCoordinator.recordFailure(
+      retryKey,
+      errorMessage,
+      this.isPageCurrentlyVisible(page)
+    );
+    const managedPageIndex: number = this.resolveManagedPageIndex(page);
+    const retryStartedAt: number | undefined = this.mangaImageRetryStartedAt.get(retryKey);
+    const retryElapsedMs: number = retryStartedAt !== undefined ? Date.now() - retryStartedAt : 0;
     this.recordReadFlowAssetEvent(
       MangaReadFlowEventType.ERROR,
       page,
-      this.resolveManagedPageIndex(page),
+      managedPageIndex,
       context,
-      0,
+      retryElapsedMs,
       false,
-      'image_component',
-      '图片加载失败'
+      decision.shouldRetry ? 'automatic_retry' : 'terminal_failure',
+      errorMessage
     );
+
+    if (decision.shouldRetry) {
+      logger.warn(TAG, `单图自动重试: page=${page.id}, context=${context}, attempt=${decision.attempt}`);
+      const previousState: ImageLoadState | undefined = this.imageLoadStates.get(page.id);
+      this.imageLoadStates.set(page.id, {
+        isLoading: true,
+        isLoaded: false,
+        dimensions: previousState && previousState.dimensions ? previousState.dimensions : undefined,
+        error: undefined
+      } as ImageLoadState);
+      this.imageLoadStates = new Map(this.imageLoadStates);
+      this.executePageRetry(page, decision.retryMode, true, decision.attempt, context).catch((error: Error) => {
+        this.handlePageLoadFailure(page, error.message, 'automatic_retry_exception');
+      });
+      return;
+    }
+
+    this.imageLoadStates = this.mangaLoadStateCommitter.markFailed(
+      page.id,
+      managedPageIndex >= 0 ? managedPageIndex : 0,
+      errorMessage,
+      this.imageLoadStates,
+      this.imageLoadStateManager,
+      this.preloadManager
+    );
+    this.mangaImageRetryStartedAt.delete(retryKey);
+    this.logAssetPipelineFailure(
+      `单图最终失败: page=${page.id}, context=${context}`,
+      errorMessage
+    );
+    this.refreshVisibleDisplayForPage(page);
+  }
+
+  private logAssetPipelineFailure(summary: string, errorMessage: string): void {
+    if (this.transportFailureCoordinator.isRecognizedFailureMessage(errorMessage)) {
+      logger.warn(TAG, `${summary}, error=${errorMessage}`);
+      return;
+    }
+    logger.error(TAG, `${summary}, error=${errorMessage}`);
+  }
+
+  private async executePageRetry(
+    page: MangaPage,
+    retryMode: MangaAssetRetryMode,
+    automatic: boolean,
+    attempt: number,
+    context: string
+  ): Promise<void> {
+    const managedPageIndex: number = this.resolveManagedPageIndex(page);
+    if (managedPageIndex < 0) {
+      throw new Error('重试页面已失效');
+    }
+
+    const startedAt: number = Date.now();
+    this.mangaImageRetryStartedAt.set(this.getMangaImageRetryKey(page), startedAt);
+    const loadGeneration: number = this.nextPageLoadGeneration(page.id);
+    this.clearPendingLoadTimer(page.id);
+    this.imageLoadStateManager.clearPage(page.id);
+    this.preloadManager.clearPage(managedPageIndex);
+    this.dropPagePixelMapReference(page.id, true);
+    this.localWebtoonFallbackPages.delete(page.id);
+    if (retryMode === MangaAssetRetryMode.FORCE_REFRESH) {
+      this.localImageCache.remove(page.id);
+      this.removeFromImageCache(page.imageUrl);
+    }
+    this.imageLoadStateManager.initPage(page.id, managedPageIndex);
+    this.incrementImageRenderEpoch(page.id);
+
+    this.imageLoadStates = this.mangaLoadStateCommitter.markLoading(
+      page.id,
+      managedPageIndex,
+      this.imageLoadStates,
+      this.imageLoadStateManager,
+      this.preloadManager
+    );
+    this.refreshVisibleDisplayForPage(page);
+    this.startPageLoadTimeout(page, loadGeneration);
+
+    logger.info(TAG, `执行单图重试: page=${page.id}, mode=${retryMode}, automatic=${automatic}, attempt=${attempt}, context=${context}`);
+    if (page.sourceType === ImageSourceType.RAWFILE ||
+      page.sourceType === ImageSourceType.RESOURCE ||
+      (this.isWebtoonMode() && page.sourceType === ImageSourceType.LOCAL)) {
+      return;
+    }
+
+    await this.ensurePixelMapLoaded(page, retryMode, 10, loadGeneration);
+  }
+
+  private handleImageComponentError(page: MangaPage, error: ImageError, context: string): void {
+    this.logDetailedImageError(page, error);
+    this.clearPendingLoadTimer(page.id);
+    if (this.pagePixelMaps.has(page.id)) {
+      this.dropPagePixelMapReference(page.id, true);
+    }
+    this.logImageDisplayAfter(page, false);
+    this.handlePageLoadFailure(page, '图片渲染失败', context);
+  }
+
+  private markPageRenderSuccess(page: MangaPage, context: string): void {
+    if (page.sourceType === ImageSourceType.NETWORK && !this.isPagePixelMapUsable(page.id)) {
+      logger.debug(TAG, `忽略网络占位图完成事件: page=${page.id}, context=${context}`);
+      return;
+    }
+    const retryKey: string = this.getMangaImageRetryKey(page);
+    const retryStartedAt: number | undefined = this.mangaImageRetryStartedAt.get(retryKey);
+    const retryElapsedMs: number = retryStartedAt !== undefined ? Date.now() - retryStartedAt : 0;
+    const retryPhase: string = String(this.mangaImageRetryCoordinator.getPhase(retryKey));
+    if (retryStartedAt !== undefined) {
+      this.recordReadFlowRecovered(
+        page,
+        this.resolveManagedPageIndex(page),
+        'single_image_retry_recovered',
+        `phase=${retryPhase}, context=${context}, source=${page.sourceType}, elapsed=${retryElapsedMs}ms`
+      );
+    }
+    this.mangaImageRetryCoordinator.markSuccess(retryKey);
+    this.mangaImageRetryStartedAt.delete(retryKey);
+    this.clearPendingLoadTimer(page.id);
+    const previousState: ImageLoadState | undefined = this.imageLoadStates.get(page.id);
+    this.imageLoadStates.set(page.id, {
+      isLoading: false,
+      isLoaded: true,
+      dimensions: previousState && previousState.dimensions ? previousState.dimensions : undefined,
+      error: undefined
+    } as ImageLoadState);
+    this.imageLoadStates = new Map(this.imageLoadStates);
+    if (!this.pagePixelMaps.has(page.id)) {
+      const managedPageIndex: number = this.resolveManagedPageIndex(page);
+      if (managedPageIndex >= 0) {
+        this.preloadManager.onLoadComplete(managedPageIndex, true);
+      }
+      this.imageLoadStateManager.clearPage(page.id);
+    }
+    logger.info(TAG, `单图加载恢复成功: page=${page.id}, context=${context}, elapsed=${retryElapsedMs}ms`);
+    if (retryElapsedMs > 0) {
+      logger.performance(TAG, 'manga_single_image_retry_elapsed', retryElapsedMs, 'ms');
+    }
   }
 
   /**
@@ -4926,7 +5096,7 @@ export struct MangaViewer {
       if (this.previewPrevPageId && this.previewPrevPageId.length > 0) {
         Stack() {
           Image(this.previewPrevImageInput)
-            .key(`${this.previewPrevPageId}_preview_prev_${this.viewCurrentPageIndex}_${this.renderEpoch}_${this.getPixelMapEpoch(this.previewPrevPageId)}`)
+            .key(`${this.previewPrevPageId}_preview_prev_${this.viewCurrentPageIndex}_${this.renderEpoch}_${this.getPixelMapEpoch(this.previewPrevPageId)}_${this.getImageRenderEpoch(this.previewPrevPageId)}`)
             .width('100%')
             .height('100%')
             .objectFit(this.getImageFitMode(this.getPageById(this.previewPrevPageId)!))
@@ -4943,7 +5113,7 @@ export struct MangaViewer {
             })
             .onError((error: ImageError) => {
               const pg = this.getPageById(this.previewPrevPageId);
-              if (pg) { this.logDetailedImageError(pg, error); this.logImageDisplayAfter(pg, false); }
+              if (pg) { this.handleImageComponentError(pg, error, 'single_preview_prev'); }
             })
         }
         .width('100%')
@@ -4956,7 +5126,7 @@ export struct MangaViewer {
       if (this.previewNextPageId && this.previewNextPageId.length > 0) {
         Stack() {
           Image(this.previewNextImageInput)
-            .key(`${this.previewNextPageId}_preview_next_${this.viewCurrentPageIndex}_${this.renderEpoch}_${this.getPixelMapEpoch(this.previewNextPageId)}`)
+            .key(`${this.previewNextPageId}_preview_next_${this.viewCurrentPageIndex}_${this.renderEpoch}_${this.getPixelMapEpoch(this.previewNextPageId)}_${this.getImageRenderEpoch(this.previewNextPageId)}`)
             .width('100%')
             .height('100%')
             .objectFit(this.getImageFitMode(this.getPageById(this.previewNextPageId)!))
@@ -4973,7 +5143,7 @@ export struct MangaViewer {
             })
             .onError((error: ImageError) => {
               const pg = this.getPageById(this.previewNextPageId);
-              if (pg) { this.logDetailedImageError(pg, error); this.logImageDisplayAfter(pg, false); }
+              if (pg) { this.handleImageComponentError(pg, error, 'single_preview_next'); }
             })
         }
         .width('100%')
@@ -5171,7 +5341,7 @@ export struct MangaViewer {
           Stack() {
             if (this.previewPrevLeftPageId && this.previewPrevLeftPageId.length > 0) {
               Image(this.previewPrevLeftImageInput)
-                .key(`${this.previewPrevLeftPageId}_preview_prev_single_${this.leftPageIndex}_${this.rightPageIndex}_${this.renderEpoch}_${this.getPixelMapEpoch(this.previewPrevLeftPageId)}`)
+                .key(`${this.previewPrevLeftPageId}_preview_prev_single_${this.leftPageIndex}_${this.rightPageIndex}_${this.renderEpoch}_${this.getPixelMapEpoch(this.previewPrevLeftPageId)}_${this.getImageRenderEpoch(this.previewPrevLeftPageId)}`)
                 .width('100%')
                 .height('100%')
                 .objectFit(this.getImageFitMode(this.getPageById(this.previewPrevLeftPageId)!))
@@ -5188,7 +5358,7 @@ export struct MangaViewer {
                 })
                 .onError((error: ImageError) => {
                   const pg = this.getPageById(this.previewPrevLeftPageId);
-                  if (pg) { this.logDetailedImageError(pg, error); this.logImageDisplayAfter(pg, false); }
+                  if (pg) { this.handleImageComponentError(pg, error, 'double_preview_prev_single'); }
                 })
             }
           }
@@ -5199,7 +5369,7 @@ export struct MangaViewer {
           Row({ space: 0 }) {
             if (this.previewPrevLeftPageId && this.previewPrevLeftPageId.length > 0) {
               Image(this.previewPrevLeftImageInput)
-                .key(`${this.previewPrevLeftPageId}_preview_prev_left_${this.leftPageIndex}_${this.rightPageIndex}_${this.renderEpoch}_${this.getPixelMapEpoch(this.previewPrevLeftPageId)}`)
+                .key(`${this.previewPrevLeftPageId}_preview_prev_left_${this.leftPageIndex}_${this.rightPageIndex}_${this.renderEpoch}_${this.getPixelMapEpoch(this.previewPrevLeftPageId)}_${this.getImageRenderEpoch(this.previewPrevLeftPageId)}`)
                 .width('50%')
                 .height('100%')
                 .objectFit(this.getImageFitMode(this.getPageById(this.previewPrevLeftPageId)!))
@@ -5216,14 +5386,14 @@ export struct MangaViewer {
                 })
                 .onError((error: ImageError) => {
                   const pg = this.getPageById(this.previewPrevLeftPageId);
-                  if (pg) { this.logDetailedImageError(pg, error); this.logImageDisplayAfter(pg, false); }
+                  if (pg) { this.handleImageComponentError(pg, error, 'double_preview_prev_left'); }
                 })
             } else {
               Column().width('50%').height('100%')
             }
             if (this.previewPrevRightPageId && this.previewPrevRightPageId.length > 0) {
               Image(this.previewPrevRightImageInput)
-                .key(`${this.previewPrevRightPageId}_preview_prev_right_${this.leftPageIndex}_${this.rightPageIndex}_${this.renderEpoch}_${this.getPixelMapEpoch(this.previewPrevRightPageId)}`)
+                .key(`${this.previewPrevRightPageId}_preview_prev_right_${this.leftPageIndex}_${this.rightPageIndex}_${this.renderEpoch}_${this.getPixelMapEpoch(this.previewPrevRightPageId)}_${this.getImageRenderEpoch(this.previewPrevRightPageId)}`)
                 .width('50%')
                 .height('100%')
                 .objectFit(this.getImageFitMode(this.getPageById(this.previewPrevRightPageId)!))
@@ -5240,7 +5410,7 @@ export struct MangaViewer {
                 })
                 .onError((error: ImageError) => {
                   const pg = this.getPageById(this.previewPrevRightPageId);
-                  if (pg) { this.logDetailedImageError(pg, error); this.logImageDisplayAfter(pg, false); }
+                  if (pg) { this.handleImageComponentError(pg, error, 'double_preview_prev_right'); }
                 })
             } else {
               Column().width('50%').height('100%')
@@ -5256,7 +5426,7 @@ export struct MangaViewer {
           Stack() {
             if (this.previewNextLeftPageId && this.previewNextLeftPageId.length > 0) {
               Image(this.previewNextLeftImageInput)
-                .key(`${this.previewNextLeftPageId}_preview_next_single_${this.leftPageIndex}_${this.rightPageIndex}_${this.renderEpoch}_${this.getPixelMapEpoch(this.previewNextLeftPageId)}`)
+                .key(`${this.previewNextLeftPageId}_preview_next_single_${this.leftPageIndex}_${this.rightPageIndex}_${this.renderEpoch}_${this.getPixelMapEpoch(this.previewNextLeftPageId)}_${this.getImageRenderEpoch(this.previewNextLeftPageId)}`)
                 .width('100%')
                 .height('100%')
                 .objectFit(this.getImageFitMode(this.getPageById(this.previewNextLeftPageId)!))
@@ -5273,7 +5443,7 @@ export struct MangaViewer {
                 })
                 .onError((error: ImageError) => {
                   const pg = this.getPageById(this.previewNextLeftPageId);
-                  if (pg) { this.logDetailedImageError(pg, error); this.logImageDisplayAfter(pg, false); }
+                  if (pg) { this.handleImageComponentError(pg, error, 'double_preview_next_single'); }
                 })
             }
           }
@@ -5284,7 +5454,7 @@ export struct MangaViewer {
           Row({ space: 0 }) {
             if (this.previewNextLeftPageId && this.previewNextLeftPageId.length > 0) {
               Image(this.previewNextLeftImageInput)
-                .key(`${this.previewNextLeftPageId}_preview_next_left_${this.leftPageIndex}_${this.rightPageIndex}_${this.renderEpoch}_${this.getPixelMapEpoch(this.previewNextLeftPageId)}`)
+                .key(`${this.previewNextLeftPageId}_preview_next_left_${this.leftPageIndex}_${this.rightPageIndex}_${this.renderEpoch}_${this.getPixelMapEpoch(this.previewNextLeftPageId)}_${this.getImageRenderEpoch(this.previewNextLeftPageId)}`)
                 .width('50%')
                 .height('100%')
                 .objectFit(this.getImageFitMode(this.getPageById(this.previewNextLeftPageId)!))
@@ -5301,14 +5471,14 @@ export struct MangaViewer {
                 })
                 .onError((error: ImageError) => {
                   const pg = this.getPageById(this.previewNextLeftPageId);
-                  if (pg) { this.logDetailedImageError(pg, error); this.logImageDisplayAfter(pg, false); }
+                  if (pg) { this.handleImageComponentError(pg, error, 'double_preview_next_left'); }
                 })
             } else {
               Column().width('50%').height('100%')
             }
             if (this.previewNextRightPageId && this.previewNextRightPageId.length > 0) {
               Image(this.previewNextRightImageInput)
-                .key(`${this.previewNextRightPageId}_preview_next_right_${this.leftPageIndex}_${this.rightPageIndex}_${this.renderEpoch}_${this.getPixelMapEpoch(this.previewNextRightPageId)}`)
+                .key(`${this.previewNextRightPageId}_preview_next_right_${this.leftPageIndex}_${this.rightPageIndex}_${this.renderEpoch}_${this.getPixelMapEpoch(this.previewNextRightPageId)}_${this.getImageRenderEpoch(this.previewNextRightPageId)}`)
                 .width('50%')
                 .height('100%')
                 .objectFit(this.getImageFitMode(this.getPageById(this.previewNextRightPageId)!))
@@ -5325,7 +5495,7 @@ export struct MangaViewer {
                 })
                 .onError((error: ImageError) => {
                   const pg = this.getPageById(this.previewNextRightPageId);
-                  if (pg) { this.logDetailedImageError(pg, error); this.logImageDisplayAfter(pg, false); }
+                  if (pg) { this.handleImageComponentError(pg, error, 'double_preview_next_right'); }
                 })
             } else {
               Column().width('50%').height('100%')
@@ -5341,8 +5511,11 @@ export struct MangaViewer {
       if (this.isDoublePageSingleDisplayActive()) {
         Stack() {
           if (this.leftPageIndex >= 0 && this.leftPageIndex < this.chapter.pages.length) {
-            Image(this.doubleLeftImageInput)
-              .key(`${this.doubleLeftPageId}_${this.leftPageIndex}_${this.renderEpoch}_${this.getPixelMapEpoch(this.doubleLeftPageId)}_${this.pagePixelMaps.has(this.doubleLeftPageId) ? 'pm' : 'url'}_single`)
+            if (this.getPageLoadState(this.chapter.pages[this.leftPageIndex])?.error) {
+              this.buildImageFailureOverlay(this.chapter.pages[this.leftPageIndex], true, '100%')
+            } else {
+              Image(this.doubleLeftImageInput)
+              .key(`${this.doubleLeftPageId}_${this.leftPageIndex}_${this.renderEpoch}_${this.getPixelMapEpoch(this.doubleLeftPageId)}_${this.getImageRenderEpoch(this.doubleLeftPageId)}_${this.pagePixelMaps.has(this.doubleLeftPageId) ? 'pm' : 'url'}_single`)
               .width('100%')
               .height('100%')
               .objectFit(ImageFit.Contain)
@@ -5369,6 +5542,7 @@ export struct MangaViewer {
                   this.imageLoadStates.set(page.id, newState);
                   this.imageLoadStates = new Map(this.imageLoadStates);
                   this.logImageDisplayAfter(page, true);
+                  this.markPageRenderSuccess(page, 'double_single');
                 }
               })
               .onError((error: ImageError) => {
@@ -5377,6 +5551,7 @@ export struct MangaViewer {
                   this.handleImageComponentError(page, error, 'double_single');
                 }
               })
+            }
           }
         }
         .width('100%')
@@ -5393,10 +5568,13 @@ export struct MangaViewer {
         Row({ space: 0 }) {
         // 左页（不存在时填充占位）
         // 左页（固定占据50%宽度，图片靠右对齐紧贴书脊）
-        if (this.leftPageIndex >= 0) {
+        if (this.leftPageIndex >= 0 && this.leftPageIndex < this.chapter.pages.length) {
           Stack() {
-            Image(this.doubleLeftImageInput)
-              .key(`${this.doubleLeftPageId}_${this.leftPageIndex}_${this.rightPageIndex}_${this.renderEpoch}_${this.getPixelMapEpoch(this.doubleLeftPageId)}_${this.pagePixelMaps.has(this.doubleLeftPageId) ? 'pm' : 'url'}`)
+            if (this.getPageLoadState(this.chapter.pages[this.leftPageIndex])?.error) {
+              this.buildImageFailureOverlay(this.chapter.pages[this.leftPageIndex], true, '100%')
+            } else {
+              Image(this.doubleLeftImageInput)
+              .key(`${this.doubleLeftPageId}_${this.leftPageIndex}_${this.rightPageIndex}_${this.renderEpoch}_${this.getPixelMapEpoch(this.doubleLeftPageId)}_${this.getImageRenderEpoch(this.doubleLeftPageId)}_${this.pagePixelMaps.has(this.doubleLeftPageId) ? 'pm' : 'url'}`)
               .height('100%')
               // 使用Contain保持图片比例，以高度为基准缩放
               .objectFit(ImageFit.Contain)
@@ -5424,6 +5602,7 @@ export struct MangaViewer {
                   this.imageLoadStates.set(lp.id, newState);
                   this.imageLoadStates = new Map(this.imageLoadStates);
                   this.logImageDisplayAfter(lp, true);
+                  this.markPageRenderSuccess(lp, 'double_left');
                 }
               })
               .onError((error: ImageError) => {
@@ -5432,6 +5611,7 @@ export struct MangaViewer {
                   this.handleImageComponentError(lp, error, 'double_left');
                 }
               })
+            }
           }
           .onDisAppear(() => {
             logger.debug(TAG, `左页消失: index=${this.leftPageIndex}`);
@@ -5456,8 +5636,11 @@ export struct MangaViewer {
         // 右页（固定占据50%宽度，图片靠左对齐紧贴书脊）
         if (this.rightPageIndex >= 0 && this.rightPageIndex < this.chapter.pages.length) {
           Stack() {
-            Image(this.doubleRightImageInput)
-              .key(`${this.doubleRightPageId}_${this.leftPageIndex}_${this.rightPageIndex}_${this.renderEpoch}_${this.getPixelMapEpoch(this.doubleRightPageId)}_${this.pagePixelMaps.has(this.doubleRightPageId) ? 'pm' : 'url'}`)
+            if (this.getPageLoadState(this.chapter.pages[this.rightPageIndex])?.error) {
+              this.buildImageFailureOverlay(this.chapter.pages[this.rightPageIndex], true, '100%')
+            } else {
+              Image(this.doubleRightImageInput)
+              .key(`${this.doubleRightPageId}_${this.leftPageIndex}_${this.rightPageIndex}_${this.renderEpoch}_${this.getPixelMapEpoch(this.doubleRightPageId)}_${this.getImageRenderEpoch(this.doubleRightPageId)}_${this.pagePixelMaps.has(this.doubleRightPageId) ? 'pm' : 'url'}`)
               .height('100%')
               // 使用Contain保持图片比例，以高度为基准缩放
               .objectFit(ImageFit.Contain)
@@ -5485,6 +5668,7 @@ export struct MangaViewer {
                   this.imageLoadStates.set(rp.id, newState);
                   this.imageLoadStates = new Map(this.imageLoadStates);
                   this.logImageDisplayAfter(rp, true);
+                  this.markPageRenderSuccess(rp, 'double_right');
                 }
               })
               .onError((error: ImageError) => {
@@ -5493,6 +5677,7 @@ export struct MangaViewer {
                   this.handleImageComponentError(rp, error, 'double_right');
                 }
               })
+            }
           }
           .onDisAppear(() => {
             logger.debug(TAG, `右页消失: index=${this.rightPageIndex}`);
@@ -5826,6 +6011,7 @@ export struct MangaViewer {
     this.imageLoadStates = new Map(this.imageLoadStates);
     this.clearPendingLoadTimer(page.id);
     this.logImageDisplayAfter(page, true);
+    this.markPageRenderSuccess(page, 'double_vertical');
   }
 
   private handleVerticalDoublePageImageError(pageIndex: number, pageId: string, error: ImageError, keyPrefix: string): void {
@@ -5844,10 +6030,10 @@ export struct MangaViewer {
       LoadingProgress()
         .width(44)
         .height(44)
-        .color(colorMap.accent)
+        .color($r('app.color.accent'))
       Text('加载中...')
         .fontSize(13)
-        .fontColor(colorMap.textSecondary)
+        .fontColor($r('app.color.reader_text_secondary'))
         .margin({ top: 8 })
     }
     .width('100%')
@@ -5857,28 +6043,9 @@ export struct MangaViewer {
 
   @Builder
   private buildVerticalDoublePageFailure(pageIndex: number, heightValue: number) {
-    Column() {
-      Image($r('app.media.ic_image'))
-        .width(52)
-        .height(52)
-        .objectFit(ImageFit.Contain)
-        .opacity(0.68)
-      Text('加载失败')
-        .fontSize(14)
-        .fontColor(colorMap.textPrimary)
-        .fontWeight(FontWeight.Medium)
-        .margin({ top: 8 })
-      Text(this.getVerticalDoublePageErrorText(pageIndex))
-        .fontSize(12)
-        .fontColor(colorMap.textSecondary)
-        .margin({ top: 4 })
-        .maxLines(2)
-        .textOverflow({ overflow: TextOverflow.Ellipsis })
+    if (this.isValidVerticalDoublePageIndex(pageIndex)) {
+      this.buildImageFailureOverlay(this.chapter.pages[pageIndex], true, heightValue)
     }
-    .width('100%')
-    .height(heightValue)
-    .justifyContent(FlexAlign.Center)
-    .padding(16)
   }
 
   @Builder
@@ -5892,7 +6059,7 @@ export struct MangaViewer {
       Stack() {
         if (this.shouldRenderVerticalDoublePageImage(pageIndex)) {
           Image(this.getVerticalDoublePageDisplayInput(pageIndex, imageInput))
-            .key(`${pageId}_${keyPrefix}_${this.viewCurrentPageIndex}_${this.renderEpoch}_${this.getPixelMapEpoch(pageId)}`)
+            .key(`${pageId}_${keyPrefix}_${this.viewCurrentPageIndex}_${this.renderEpoch}_${this.getPixelMapEpoch(pageId)}_${this.getImageRenderEpoch(pageId)}`)
             .width('100%')
             .height(this.getVerticalDoublePageImageHeight(pageIndex))
             .objectFit(ImageFit.Contain)
@@ -6263,7 +6430,7 @@ export struct MangaViewer {
       Column()
         .width(this.getVerticalDoublePageEdgeHintLineWidth(edge))
         .height(this.getVerticalDoublePageEdgeHintLineHeight(edge))
-        .backgroundColor(colorMap.accent)
+        .backgroundColor($r('app.color.accent'))
         .borderRadius(3)
     }
     .width('100%')
@@ -6276,9 +6443,9 @@ export struct MangaViewer {
       Row() {
         Text(this.getVerticalDoublePageEdgeHintText(edge))
           .fontSize(12)
-          .fontColor(colorMap.textOnAccent)
+          .fontColor($r('app.color.reader_text_primary'))
           .fontWeight(FontWeight.Medium)
-          .backgroundColor(colorMap.backgroundOverlay)
+          .backgroundColor($r('app.color.reader_overlay_background'))
           .borderRadius(12)
           .padding({ left: 10, right: 10, top: 4, bottom: 4 })
           .maxLines(1)
@@ -6379,20 +6546,36 @@ export struct MangaViewer {
     if (this.isDoublePageSingleDisplayActive()) {
       Stack() {
         if (this.leftPageIndex >= 0 && this.leftPageIndex < this.chapter.pages.length) {
-          Image(this.doubleLeftImageInput)
-            .key(`${this.doubleLeftPageId}_portrait_h_single_${this.viewCurrentPageIndex}_${this.renderEpoch}_${this.getPixelMapEpoch(this.doubleLeftPageId)}`)
-            .width('100%')
-            .height('100%')
-            .objectFit(ImageFit.Contain)
-            .padding(0)
-            .margin(0)
-            .borderWidth(0)
-            .brightness(this.getFilterBrightness())
-            .contrast(this.getFilterContrast())
-            .saturate(this.getFilterSaturation())
-            .grayscale(this.getFilterGrayscale())
-            .invert(this.getFilterInvert())
-            .sepia(this.getFilterSepia())
+          if (this.getPageLoadState(this.chapter.pages[this.leftPageIndex])?.error) {
+            this.buildImageFailureOverlay(this.chapter.pages[this.leftPageIndex], true, '100%')
+          } else {
+            Image(this.doubleLeftImageInput)
+              .key(`${this.doubleLeftPageId}_portrait_h_single_${this.viewCurrentPageIndex}_${this.renderEpoch}_${this.getPixelMapEpoch(this.doubleLeftPageId)}_${this.getImageRenderEpoch(this.doubleLeftPageId)}`)
+              .width('100%')
+              .height('100%')
+              .objectFit(ImageFit.Contain)
+              .padding(0)
+              .margin(0)
+              .borderWidth(0)
+              .brightness(this.getFilterBrightness())
+              .contrast(this.getFilterContrast())
+              .saturate(this.getFilterSaturation())
+              .grayscale(this.getFilterGrayscale())
+              .invert(this.getFilterInvert())
+              .sepia(this.getFilterSepia())
+              .onComplete(() => {
+                const page: MangaPage | undefined = this.getPageById(this.doubleLeftPageId);
+                if (page) {
+                  this.markPageRenderSuccess(page, 'double_portrait_horizontal_single');
+                }
+              })
+              .onError((error: ImageError) => {
+                const page: MangaPage | undefined = this.getPageById(this.doubleLeftPageId);
+                if (page) {
+                  this.handleImageComponentError(page, error, 'double_portrait_horizontal_single');
+                }
+              })
+          }
         }
       }
       .width('100%')
@@ -6405,42 +6588,82 @@ export struct MangaViewer {
       Row({ space: 0 }) {
       // 左侧页面
       if (this.leftPageIndex >= 0 && this.leftPageIndex < this.chapter.pages.length) {
-        Image(this.doubleLeftImageInput)
-          .key(`${this.doubleLeftPageId}_portrait_h_left_${this.viewCurrentPageIndex}_${this.renderEpoch}_${this.getPixelMapEpoch(this.doubleLeftPageId)}`)
-          .width('50%')
-          .height('100%')
-          .objectFit(ImageFit.Contain)
-          .padding(0)
-          .margin(0)
-          .borderWidth(0)
-          // 应用滤镜效果
-          .brightness(this.getFilterBrightness())
-          .contrast(this.getFilterContrast())
-          .saturate(this.getFilterSaturation())
-          .grayscale(this.getFilterGrayscale())
-          .invert(this.getFilterInvert())
-          .sepia(this.getFilterSepia())
+        Stack() {
+          if (this.getPageLoadState(this.chapter.pages[this.leftPageIndex])?.error) {
+            this.buildImageFailureOverlay(this.chapter.pages[this.leftPageIndex], true, '100%')
+          } else {
+            Image(this.doubleLeftImageInput)
+              .key(`${this.doubleLeftPageId}_portrait_h_left_${this.viewCurrentPageIndex}_${this.renderEpoch}_${this.getPixelMapEpoch(this.doubleLeftPageId)}_${this.getImageRenderEpoch(this.doubleLeftPageId)}`)
+              .width('100%')
+              .height('100%')
+              .objectFit(ImageFit.Contain)
+              .padding(0)
+              .margin(0)
+              .borderWidth(0)
+              // 应用滤镜效果
+              .brightness(this.getFilterBrightness())
+              .contrast(this.getFilterContrast())
+              .saturate(this.getFilterSaturation())
+              .grayscale(this.getFilterGrayscale())
+              .invert(this.getFilterInvert())
+              .sepia(this.getFilterSepia())
+              .onComplete(() => {
+                const page: MangaPage | undefined = this.getPageById(this.doubleLeftPageId);
+                if (page) {
+                  this.markPageRenderSuccess(page, 'double_portrait_horizontal_left');
+                }
+              })
+              .onError((error: ImageError) => {
+                const page: MangaPage | undefined = this.getPageById(this.doubleLeftPageId);
+                if (page) {
+                  this.handleImageComponentError(page, error, 'double_portrait_horizontal_left');
+                }
+              })
+          }
+        }
+        .width('50%')
+        .height('100%')
       } else {
         // 左页不存在时的占位
         Column().width('50%').height('100%')
       }
       // 右侧页面
       if (this.rightPageIndex >= 0 && this.rightPageIndex < this.chapter.pages.length) {
-        Image(this.doubleRightImageInput)
-          .key(`${this.doubleRightPageId}_portrait_h_right_${this.viewCurrentPageIndex}_${this.renderEpoch}_${this.getPixelMapEpoch(this.doubleRightPageId)}`)
-          .width('50%')
-          .height('100%')
-          .objectFit(ImageFit.Contain)
-          .padding(0)
-          .margin(0)
-          .borderWidth(0)
-          // 应用滤镜效果
-          .brightness(this.getFilterBrightness())
-          .contrast(this.getFilterContrast())
-          .saturate(this.getFilterSaturation())
-          .grayscale(this.getFilterGrayscale())
-          .invert(this.getFilterInvert())
-          .sepia(this.getFilterSepia())
+        Stack() {
+          if (this.getPageLoadState(this.chapter.pages[this.rightPageIndex])?.error) {
+            this.buildImageFailureOverlay(this.chapter.pages[this.rightPageIndex], true, '100%')
+          } else {
+            Image(this.doubleRightImageInput)
+              .key(`${this.doubleRightPageId}_portrait_h_right_${this.viewCurrentPageIndex}_${this.renderEpoch}_${this.getPixelMapEpoch(this.doubleRightPageId)}_${this.getImageRenderEpoch(this.doubleRightPageId)}`)
+              .width('100%')
+              .height('100%')
+              .objectFit(ImageFit.Contain)
+              .padding(0)
+              .margin(0)
+              .borderWidth(0)
+              // 应用滤镜效果
+              .brightness(this.getFilterBrightness())
+              .contrast(this.getFilterContrast())
+              .saturate(this.getFilterSaturation())
+              .grayscale(this.getFilterGrayscale())
+              .invert(this.getFilterInvert())
+              .sepia(this.getFilterSepia())
+              .onComplete(() => {
+                const page: MangaPage | undefined = this.getPageById(this.doubleRightPageId);
+                if (page) {
+                  this.markPageRenderSuccess(page, 'double_portrait_horizontal_right');
+                }
+              })
+              .onError((error: ImageError) => {
+                const page: MangaPage | undefined = this.getPageById(this.doubleRightPageId);
+                if (page) {
+                  this.handleImageComponentError(page, error, 'double_portrait_horizontal_right');
+                }
+              })
+          }
+        }
+        .width('50%')
+        .height('100%')
       } else {
         // 右页不存在时的占位
         Column().width('50%').height('100%')
@@ -6586,6 +6809,77 @@ export struct MangaViewer {
     }
   }
 
+  private getLocalizedImageFailureMessage(page: MangaPage): string {
+    const state: ImageLoadState | undefined = this.getPageLoadState(page);
+    const rawMessage: string = state && state.error ? state.error : '';
+    const descriptor: NetworkTransportFailureDescriptor = this.transportFailureCoordinator.describe(
+      page.imageUrl || '',
+      rawMessage
+    );
+    if (descriptor.kind === NetworkTransportFailureKind.DNS) {
+      return '域名解析失败，请检查网络后重试';
+    }
+    if (descriptor.kind === NetworkTransportFailureKind.TLS) {
+      return '安全连接失败，请稍后重试';
+    }
+    if (descriptor.kind === NetworkTransportFailureKind.TIMEOUT) {
+      return '请求超时，请稍后重试';
+    }
+    if (descriptor.kind === NetworkTransportFailureKind.HTTP) {
+      return '图片服务返回错误，请稍后重试';
+    }
+    if (descriptor.kind === NetworkTransportFailureKind.NETWORK) {
+      return '网络连接失败，请检查网络后重试';
+    }
+    return '图片暂时无法加载，请重试';
+  }
+
+  /**
+   * 构建统一的图片加载失败状态层。
+   */
+  @Builder
+  private buildImageFailureOverlay(page: MangaPage, compact: boolean, overlayHeight: Length) {
+    Column() {
+      SymbolGlyph($r('sys.symbol.exclamationmark_circle_fill'))
+        .fontSize(compact ? 32 : 48)
+        .fontColor([$r('app.color.color_error')])
+      Text('加载失败')
+        .fontSize(compact ? 12 : 14)
+        .fontColor($r('app.color.reader_text_primary'))
+        .fontWeight(FontWeight.Medium)
+        .margin({ top: compact ? 4 : 8 })
+      Text(this.getLocalizedImageFailureMessage(page))
+        .width('100%')
+        .fontSize(compact ? 10 : 12)
+        .fontColor($r('app.color.reader_text_secondary'))
+        .margin({ top: compact ? 2 : 4 })
+        .padding({ left: compact ? 4 : 24, right: compact ? 4 : 24 })
+        .textAlign(TextAlign.Center)
+        .maxLines(2)
+        .textOverflow({ overflow: TextOverflow.Ellipsis })
+      Button('重试')
+        .fontSize(compact ? 12 : 14)
+        .fontColor($r('app.color.reader_text_primary'))
+        .backgroundColor($r('app.color.accent'))
+        .borderRadius(compact ? 6 : 8)
+        .padding({
+          left: compact ? 16 : 24,
+          right: compact ? 16 : 24,
+          top: compact ? 4 : 8,
+          bottom: compact ? 4 : 8
+        })
+        .margin({ top: compact ? 8 : 12 })
+        .enabled(!this.mangaImageRetryCoordinator.isLoading(this.getMangaImageRetryKey(page)))
+        .onClick(() => {
+          this.retryLoadPage(page);
+        })
+    }
+    .width('100%')
+    .height(overlayHeight)
+    .justifyContent(FlexAlign.Center)
+    .padding(compact ? 12 : 16)
+  }
+
   /**
    * 构建连续滚动模式下的单个页面图片
    * [修复] 每个页面独立计算图片源，避免使用共享的singlePageImageInput
@@ -6599,6 +6893,7 @@ export struct MangaViewer {
       // 按优先级选择图片源：PixelMap > 本地缓存 > 原始资源
       if (this.pagePixelMaps.has(page.id)) {
         Image(this.pagePixelMaps.get(page.id))
+          .key(`continuous_pm_${page.id}_${this.getImageRenderEpoch(page.id)}_${this.getPixelMapEpoch(page.id)}`)
           .width('100%')
           .height(isHorizontal ? '100%' : undefined)
           .objectFit(ImageFit.Contain)
@@ -6609,9 +6904,16 @@ export struct MangaViewer {
           .grayscale(this.getFilterGrayscale())
           .invert(this.getFilterInvert())
           .sepia(this.getFilterSepia())
+          .onComplete(() => {
+            this.markPageRenderSuccess(page, 'continuous_pixelmap');
+          })
+          .onError((error: ImageError) => {
+            this.handleImageComponentError(page, error, 'continuous_pixelmap');
+          })
       } else if (page.sourceType === ImageSourceType.LOCAL) {
         if (this.localImageCache.has(page.id)) {
           Image(this.localImageCache.get(page.id)!)
+            .key(`continuous_local_cache_${page.id}_${this.getImageRenderEpoch(page.id)}`)
             .width('100%')
             .height(isHorizontal ? '100%' : undefined)
             .objectFit(ImageFit.Contain)
@@ -6625,8 +6927,15 @@ export struct MangaViewer {
             .onAppear(() => {
               this.triggerLocalImageLoad(page, this.chapter.id, pageIndex);
             })
+            .onComplete(() => {
+              this.markPageRenderSuccess(page, 'continuous_local_cache');
+            })
+            .onError((error: ImageError) => {
+              this.handleImageComponentError(page, error, 'continuous_local_cache');
+            })
         } else {
           Image(this.getImageResource(page))
+            .key(`continuous_local_file_${page.id}_${this.getImageRenderEpoch(page.id)}`)
             .width('100%')
             .height(isHorizontal ? '100%' : undefined)
             .objectFit(ImageFit.Contain)
@@ -6639,6 +6948,12 @@ export struct MangaViewer {
             .sepia(this.getFilterSepia())
             .onAppear(() => {
               this.triggerLocalImageLoad(page, this.chapter.id, pageIndex);
+            })
+            .onComplete(() => {
+              this.markPageRenderSuccess(page, 'continuous_local_file');
+            })
+            .onError((error: ImageError) => {
+              this.handleImageComponentError(page, error, 'continuous_local_file');
             })
         }
       } else if (page.sourceType === ImageSourceType.NETWORK) {
@@ -6650,6 +6965,7 @@ export struct MangaViewer {
           .draggable(false)
       } else {
         Image(this.getImageResource(page))
+          .key(`continuous_direct_${page.id}_${this.getImageRenderEpoch(page.id)}`)
           .width('100%')
           .height(isHorizontal ? '100%' : undefined)
           .objectFit(ImageFit.Contain)
@@ -6660,6 +6976,12 @@ export struct MangaViewer {
           .grayscale(this.getFilterGrayscale())
           .invert(this.getFilterInvert())
           .sepia(this.getFilterSepia())
+          .onComplete(() => {
+            this.markPageRenderSuccess(page, 'continuous_direct');
+          })
+          .onError((error: ImageError) => {
+            this.handleImageComponentError(page, error, 'continuous_direct');
+          })
       }
 
       // 加载动画
@@ -6668,10 +6990,10 @@ export struct MangaViewer {
           LoadingProgress()
             .width(48)
             .height(48)
-            .color(colorMap.accent)
+            .color($r('app.color.accent'))
           Text('加载中...')
             .fontSize(14)
-            .fontColor(colorMap.textSecondary)
+            .fontColor($r('app.color.reader_text_secondary'))
             .margin({ top: 8 })
         }
         .justifyContent(FlexAlign.Center)
@@ -6679,30 +7001,13 @@ export struct MangaViewer {
 
       // 加载失败提示
       if (this.getPageLoadState(page)?.error) {
-        Column() {
-          Image($r('sys.symbol.exclamationmark_circle_fill'))
-            .width(48)
-            .height(48)
-            .fillColor(colorMap.error)
-          Text('加载失败')
-            .fontSize(14)
-            .fontColor(colorMap.textSecondary)
-            .margin({ top: 8 })
-          Text('点击重试')
-            .fontSize(12)
-            .fontColor(colorMap.accent)
-            .margin({ top: 4 })
-        }
-        .justifyContent(FlexAlign.Center)
-        .onClick(() => {
-          this.retryLoadPage(page);
-        })
+        this.buildImageFailureOverlay(page, false, isHorizontal ? '100%' : this.getEstimatedImageHeight(page))
       }
     }
     .width(isHorizontal ? this.getStableContinuousHorizontalItemWidth(page) : '100%')
     .height(isHorizontal ? '100%' : undefined)
     .alignContent(Alignment.Center)
-    .key(`continuous_${page.id}`)
+    .key(`continuous_${page.id}_${this.getImageRenderEpoch(page.id)}`)
     .margin(isHorizontal ? { right: this.readingSettings.pageSpacing } : { bottom: this.readingSettings.pageSpacing })
     .onAppear((): void => {
       const state: ImageLoadState | undefined = this.getPageLoadState(page);
@@ -6730,7 +7035,7 @@ export struct MangaViewer {
       this.readingSettings.readingMode === ReadingMode.WEBTOON ||
       this.readingSettings.readingMode === ReadingMode.WEBTOON_WITH_GAP) ? 'auto' : '100%')
     .alignContent(Alignment.Center)
-    .key(page.id)
+    .key(`${page.id}_${this.getImageRenderEpoch(page.id)}`)
     .padding(0)
     .margin(0)
     .borderWidth(0)
@@ -6828,7 +7133,7 @@ export struct MangaViewer {
     Stack() {
       // 网络图片：仅在有PixelMap或已加载完成时显示Image，加载中/失败时完全隐藏
       // 本地图片：始终显示
-      if (page.sourceType === ImageSourceType.LOCAL
+      if (page.sourceType !== ImageSourceType.NETWORK
         || this.pagePixelMaps.has(page.id)
         || (this.getPageLoadState(page)?.isLoaded === true)) {
         Image(this.singlePageImageInput)
@@ -6879,6 +7184,7 @@ export struct MangaViewer {
             const timerId = this.pendingLoadTimers.get(page.id);
             if (typeof timerId === 'number') { clearTimeout(timerId); }
             this.pendingLoadTimers.delete(page.id);
+            this.markPageRenderSuccess(page, 'single_page');
           })
           .onError((error: ImageError) => {
             this.handleImageComponentError(page, error, 'single_page');
@@ -6891,10 +7197,10 @@ export struct MangaViewer {
           LoadingProgress()
             .width(48)
             .height(48)
-            .color(colorMap.accent)
+            .color($r('app.color.accent'))
           Text('加载中...')
             .fontSize(14)
-            .fontColor(colorMap.textSecondary)
+            .fontColor($r('app.color.reader_text_secondary'))
             .margin({ top: 8 })
         }
         .justifyContent(FlexAlign.Center)
@@ -6902,36 +7208,7 @@ export struct MangaViewer {
 
       // 显示加载失败提示（增强版：添加重试按钮）
       if (this.getPageLoadState(page)?.error) {
-        Column() {
-          Image($r('sys.symbol.exclamationmark_circle_fill'))
-            .width(48)
-            .height(48)
-            .fillColor(colorMap.error)
-          Text('加载失败')
-            .fontSize(14)
-            .fontColor(colorMap.textPrimary)
-            .fontWeight(FontWeight.Medium)
-            .margin({ top: 8 })
-          Text(this.getPageLoadState(page)?.error || '图片加载失败')
-            .fontSize(12)
-            .fontColor(colorMap.textSecondary)
-            .margin({ top: 4 })
-            .maxLines(2)
-            .textOverflow({ overflow: TextOverflow.Ellipsis })
-          Button('重试')
-            .fontSize(14)
-            .fontColor(Color.White)
-            .backgroundColor(colorMap.accent)
-            .borderRadius(8)
-            .padding({ left: 24, right: 24, top: 8, bottom: 8 })
-            .margin({ top: 12 })
-            .onClick(() => {
-              logger.info(TAG, `用户点击重试加载: pageId=${page.id}`);
-              this.retryLoadPage(page);
-            })
-        }
-        .justifyContent(FlexAlign.Center)
-        .padding(16)
+        this.buildImageFailureOverlay(page, false, '100%')
       }
     }
   }
@@ -6940,7 +7217,7 @@ export struct MangaViewer {
   buildPageImagePreview(page: MangaPage) {
     Stack() {
       Image(this.computeImageInputForPage(page))
-        .key(`${page.id}_preview_${this.renderEpoch}_${this.getPixelMapEpoch(page.id)}`)
+        .key(`${page.id}_preview_${this.renderEpoch}_${this.getPixelMapEpoch(page.id)}_${this.getImageRenderEpoch(page.id)}`)
         .width('100%')
         .height('100%')
         .objectFit(this.getImageFitMode(page))
@@ -6954,8 +7231,7 @@ export struct MangaViewer {
           this.logImageDisplayAfter(page, true);
         })
         .onError((error: ImageError) => {
-          this.logDetailedImageError(page, error);
-          this.logImageDisplayAfter(page, false);
+          this.handleImageComponentError(page, error, 'page_preview');
         })
     }
   }
@@ -6970,11 +7246,11 @@ export struct MangaViewer {
     Stack() {
       // 网络图片：仅在有PixelMap或已加载完成时显示Image，加载中/失败时完全隐藏
       // 本地图片：始终显示
-      if (page.sourceType === ImageSourceType.LOCAL
+      if (page.sourceType !== ImageSourceType.NETWORK
         || this.pagePixelMaps.has(page.id)
         || (this.getPageLoadState(page)?.isLoaded === true)) {
         Image(this.getDisplayImageInput(page))
-          .key(`${page.id}_${this.leftPageIndex}_${this.rightPageIndex}_${this.renderEpoch}_${this.getPixelMapEpoch(page.id)}`)
+          .key(`${page.id}_${this.leftPageIndex}_${this.rightPageIndex}_${this.renderEpoch}_${this.getPixelMapEpoch(page.id)}_${this.getImageRenderEpoch(page.id)}`)
           .width('100%')
           .height('100%')
           .objectFit(ImageFit.Contain)
@@ -7004,6 +7280,7 @@ export struct MangaViewer {
             const timerId = this.pendingLoadTimers.get(page.id);
             if (typeof timerId === 'number') { clearTimeout(timerId); }
             this.pendingLoadTimers.delete(page.id);
+            this.markPageRenderSuccess(page, 'double_page');
           })
           .onError((error: ImageError) => {
             this.handleImageComponentError(page, error, 'double_page_content');
@@ -7015,46 +7292,17 @@ export struct MangaViewer {
           LoadingProgress()
             .width(32)
             .height(32)
-            .color(colorMap.accent)
+            .color($r('app.color.accent'))
           Text('加载中...')
             .fontSize(12)
-            .fontColor(colorMap.textSecondary)
+            .fontColor($r('app.color.reader_text_secondary'))
             .margin({ top: 4 })
         }
         .justifyContent(FlexAlign.Center)
       }
 
       if (this.getPageLoadState(page)?.error) {
-        Column() {
-          Image($r('sys.symbol.exclamationmark_circle_fill'))
-            .width(32)
-            .height(32)
-            .fillColor(colorMap.error)
-          Text('加载失败')
-            .fontSize(12)
-            .fontColor(colorMap.textPrimary)
-            .fontWeight(FontWeight.Medium)
-            .margin({ top: 4 })
-          Text(this.getPageLoadState(page)?.error || '图片加载失败')
-            .fontSize(10)
-            .fontColor(colorMap.textSecondary)
-            .margin({ top: 2 })
-            .maxLines(2)
-            .textOverflow({ overflow: TextOverflow.Ellipsis })
-          Button('重试')
-            .fontSize(12)
-            .fontColor(Color.White)
-            .backgroundColor(colorMap.accent)
-            .borderRadius(6)
-            .padding({ left: 16, right: 16, top: 4, bottom: 4 })
-            .margin({ top: 8 })
-            .onClick(() => {
-              logger.info(TAG, `用户点击重试加载(双页): pageId=${page.id}`);
-              this.retryLoadPage(page);
-            })
-        }
-        .justifyContent(FlexAlign.Center)
-        .padding(12)
+        this.buildImageFailureOverlay(page, true, '100%')
       }
     }
   }
@@ -8068,11 +8316,12 @@ export struct MangaViewer {
 
   private getSinglePageContentKey(page: MangaPage): string {
     const pixelEpoch: number = this.getPixelMapEpoch(page.id);
+    const imageEpoch: number = this.getImageRenderEpoch(page.id);
     const sourceState: string = this.pagePixelMaps.has(page.id) ? 'pm' : 'url';
     if (this.shouldUseAlbumNoneTransition()) {
-      return `${page.id}_${pixelEpoch}_${sourceState}`;
+      return `${page.id}_${pixelEpoch}_${imageEpoch}_${sourceState}`;
     }
-    return `${page.id}_${this.viewCurrentPageIndex}_${this.renderEpoch}_${pixelEpoch}_${sourceState}`;
+    return `${page.id}_${this.viewCurrentPageIndex}_${this.renderEpoch}_${pixelEpoch}_${imageEpoch}_${sourceState}`;
   }
 
   private getVerticalDoublePageCurrentContentKey(): string {
@@ -8888,8 +9137,22 @@ export struct MangaViewer {
     Stack() {
       // [修复①③] 真实图片只设宽度，不设高度，让图片按原始比例等宽自适应高度
       // 之前设固定 height + ImageFit.Contain 导致图片居中产生上下空白
-      if (page.sourceType !== ImageSourceType.LOCAL && this.pagePixelMaps.has(page.id)) {
+      if (page.sourceType === ImageSourceType.LOCAL &&
+        this.localWebtoonFallbackPages.has(page.id) &&
+        this.localImageCache.has(page.id)) {
+        Image(this.localImageCache.get(page.id)!)
+          .key(`local_webtoon_fallback_${page.id}_${this.getImageRenderEpoch(page.id)}`)
+          .width('100%')
+          .draggable(false)
+          .onComplete(() => {
+            this.handleWebtoonImageLoad(page, chapterId, pageIndex);
+          })
+          .onError((error: ImageError) => {
+            this.handleImageComponentError(page, error, `webtoon_local_fallback_${pageIndex}`);
+          })
+      } else if (page.sourceType !== ImageSourceType.LOCAL && this.pagePixelMaps.has(page.id)) {
         Image(this.pagePixelMaps.get(page.id))
+          .key(`webtoon_pixel_${page.id}_${this.getImageRenderEpoch(page.id)}_${this.getPixelMapEpoch(page.id)}`)
           .width('100%')
           .draggable(false)
           .onComplete(() => {
@@ -8897,7 +9160,6 @@ export struct MangaViewer {
           })
           .onError((error: ImageError) => {
             this.handleImageComponentError(page, error, `webtoon_pixel_${pageIndex}`);
-            this.triggerWebtoonImageLoadIfNeeded(page, chapterId, pageIndex);
           })
       } else if (page.sourceType === ImageSourceType.LOCAL) {
         // 本地+条漫专用路径：保持 file:// 数据源稳定，避免 file/cache 源切换闪烁
@@ -8920,6 +9182,7 @@ export struct MangaViewer {
         }
       } else {
         Image(this.getImageResource(page))
+          .key(`webtoon_direct_${page.id}_${this.getImageRenderEpoch(page.id)}`)
           .width('100%')
           .draggable(false)
           .onAppear(() => {
@@ -8929,6 +9192,7 @@ export struct MangaViewer {
             this.handleWebtoonImageLoad(page, chapterId, pageIndex);
           })
           .onError((error: ImageError) => {
+            this.logDetailedImageError(page, error);
             this.handleWebtoonImageError(page, chapterId, pageIndex);
           })
       }
@@ -8939,10 +9203,10 @@ export struct MangaViewer {
           LoadingProgress()
             .width(48)
             .height(48)
-            .color(colorMap.accent)
+            .color($r('app.color.accent'))
           Text('加载中...')
             .fontSize(14)
-            .fontColor(colorMap.textSecondary)
+            .fontColor($r('app.color.reader_text_secondary'))
             .margin({ top: 8 })
         }
         .width('100%')
@@ -8952,38 +9216,7 @@ export struct MangaViewer {
 
       // 加载失败提示（保留预估高度占位）
       if (this.getPageLoadState(page)?.error) {
-        Column() {
-          Image($r('sys.symbol.exclamationmark_circle_fill'))
-            .width(48)
-            .height(48)
-            .fillColor(colorMap.error)
-          Text('加载失败')
-            .fontSize(14)
-            .fontColor(colorMap.textPrimary)
-            .fontWeight(FontWeight.Medium)
-            .margin({ top: 8 })
-          Text(this.getPageLoadState(page)?.error || '图片加载失败')
-            .fontSize(12)
-            .fontColor(colorMap.textSecondary)
-            .margin({ top: 4 })
-            .maxLines(2)
-            .textOverflow({ overflow: TextOverflow.Ellipsis })
-          Button('重试')
-            .fontSize(14)
-            .fontColor(Color.White)
-            .backgroundColor(colorMap.accent)
-            .borderRadius(8)
-            .padding({ left: 24, right: 24, top: 8, bottom: 8 })
-            .margin({ top: 12 })
-            .onClick(() => {
-              logger.info(TAG, `用户点击重试加载(条漫): pageId=${page.id}`);
-              this.retryLoadPage(page);
-            })
-        }
-        .width('100%')
-        .height(this.getEstimatedImageHeight(page))
-        .justifyContent(FlexAlign.Center)
-        .padding(16)
+        this.buildImageFailureOverlay(page, false, this.getEstimatedImageHeight(page))
       }
     }
     .width('100%')
@@ -8992,7 +9225,7 @@ export struct MangaViewer {
   @Builder
   private buildStableLocalImageForWebtoon(page: MangaPage, chapterId: string, pageIndex: number) {
     Image(this.getImageResource(page))
-      .key(`local_webtoon_${page.id}`)
+      .key(`local_webtoon_${page.id}_${this.getImageRenderEpoch(page.id)}`)
       .width('100%')
       .draggable(false)
       .onAppear(() => {
@@ -9002,7 +9235,8 @@ export struct MangaViewer {
       .onComplete(() => {
         this.handleWebtoonImageLoad(page, chapterId, pageIndex);
       })
-      .onError((_error: ImageError) => {
+      .onError((error: ImageError) => {
+        this.logDetailedImageError(page, error);
         this.handleWebtoonImageError(page, chapterId, pageIndex);
       })
       .transition(TransitionEffect.IDENTITY)
@@ -9160,16 +9394,7 @@ export struct MangaViewer {
    * [性能优化] 条漫模式图片加载完成处理
    */
   private handleWebtoonImageLoad(page: MangaPage, chapterId: string, pageIndex: number): void {
-    const loadState = this.imageLoadStates.get(page.id);
-    if (loadState) {
-      loadState.isLoading = false;
-      if (page.sourceType !== ImageSourceType.LOCAL) {
-        loadState.isLoaded = true;
-      }
-      loadState.error = undefined;
-      this.imageLoadStates.set(page.id, loadState);
-      // 不触发整个Map的响应式更新，减少不必要的重绘
-    }
+    this.markPageRenderSuccess(page, 'webtoon');
     this.recordReadFlowEvent(
       MangaReadFlowEventType.DISPLAY_COMMITTED,
       page,
@@ -9187,33 +9412,46 @@ export struct MangaViewer {
    */
   private handleWebtoonImageError(page: MangaPage, chapterId: string, pageIndex: number): void {
     if (page.sourceType === ImageSourceType.LOCAL) {
-      // 检查 LocalImageCacheManager 中是否已有缓存（可能是 Image 组件的 file:// 加载失败，但缓存已就绪）
-      if (this.localImageCache.has(page.id)) {
-        // 本地+条漫专用：不触发条目刷新，保持渲染源稳定避免闪烁
-        logger.debug(TAG, `本地图片 file:// 加载失败但缓存已就绪: ${page.id}`);
-        return;
-      }
-
-      // 缓存中也没有，尝试通过 LocalImageCacheManager 重新加载
-      if (!this.localImageCache.isLoading(page.id)) {
-        logger.info(TAG, `本地图片加载失败，尝试重新加载: ${page.id}`);
-        this.triggerLocalImageLoad(page, chapterId, pageIndex);
-        return;
-      }
-
-      // 正在加载中，等待完成即可
-      logger.debug(TAG, `本地图片正在通过缓存加载中，等待完成: ${page.id}`);
+      this.recoverLocalWebtoonImage(page, chapterId, pageIndex).catch((error: Error) => {
+        this.handlePageLoadFailure(page, error.message, 'webtoon_local_recovery_exception');
+      });
       return;
     }
-    
-    const loadState = this.imageLoadStates.get(page.id);
-    if (loadState) {
-      loadState.isLoading = false;
-      loadState.isLoaded = false;
-      loadState.error = '加载失败';
-      this.imageLoadStates.set(page.id, loadState);
+    this.handlePageLoadFailure(page, '条漫图片渲染失败', `webtoon_${chapterId}_${pageIndex}`);
+  }
+
+  private async recoverLocalWebtoonImage(page: MangaPage, chapterId: string, pageIndex: number): Promise<void> {
+    const filePath: string | undefined = this.getFsPathFromPage(page);
+    if (!filePath) {
+      this.handlePageLoadFailure(page, '本地图片路径无效', 'webtoon_local_path');
+      return;
     }
-    logger.warn(TAG, `条漫图片加载失败: ${chapterId}_${page.id}`);
+
+    const cachedPixelMap: image.PixelMap | null = await this.localImageCache.loadImage(page.id, filePath, {
+      maxWidth: this.screenWidth > 0 ? this.screenWidth : 1080,
+      suppressFailureLog: true
+    });
+    if (!cachedPixelMap) {
+      this.handlePageLoadFailure(page, '本地图片解码失败', 'webtoon_local_decode');
+      return;
+    }
+
+    this.localWebtoonFallbackPages.add(page.id);
+    this.incrementImageRenderEpoch(page.id);
+    const dataIndex: number = this.findWebtoonDataIndex(page.id);
+    if (dataIndex >= 0) {
+      this.webtoonDataSource.notifyDataChange(dataIndex);
+    }
+    this.recordReadFlowAssetEvent(
+      MangaReadFlowEventType.ASSET_LOADED,
+      page,
+      this.resolveManagedPageIndex(page, pageIndex),
+      'webtoon_local_cache_fallback',
+      0,
+      true,
+      `local_cache_${chapterId}`,
+      ''
+    );
   }
 
   /**
@@ -9625,9 +9863,17 @@ export struct MangaViewer {
     } catch (_e) {
     }
   }
-  private async ensurePixelMapLoaded(page: MangaPage): Promise<void> {
+  private async ensurePixelMapLoaded(
+    page: MangaPage,
+    retryMode: MangaAssetRetryMode = MangaAssetRetryMode.NONE,
+    priority: number = -1,
+    expectedGeneration: number = -1
+  ): Promise<void> {
+    const loadGeneration: number = expectedGeneration >= 0
+      ? expectedGeneration
+      : this.nextPageLoadGeneration(page.id);
     const existed: image.PixelMap | undefined = this.pagePixelMaps.get(page.id);
-    if (existed) {
+    if (existed && retryMode !== MangaAssetRetryMode.FORCE_REFRESH) {
       // 【修复】验证 PixelMap 是否仍然有效（可能已被 ImageCacheManager LRU 淘汰后释放）
       try {
         const info = existed.getImageInfoSync();
@@ -9640,7 +9886,7 @@ export struct MangaViewer {
       logger.warn(TAG, `PixelMap已失效，重新加载: id=${page.id}`);
       this.dropPagePixelMapReference(page.id, false);
     }
-    if (this.isWebtoonMode() && page.sourceType === ImageSourceType.NETWORK) {
+    if (retryMode === MangaAssetRetryMode.NONE && this.isWebtoonMode() && page.sourceType === ImageSourceType.NETWORK) {
       this.queueWebtoonNetworkPageLoad(page);
       return;
     }
@@ -9654,22 +9900,28 @@ export struct MangaViewer {
     const sessionSnapshot: MangaReaderSessionSnapshot = this.captureMangaReaderSession();
 
     try {
+      const loadReason: MangaAssetLoadReason = retryMode === MangaAssetRetryMode.NONE
+        ? this.resolveAssetLoadReason(page)
+        : MangaAssetLoadReason.RETRY;
       const result: MangaAssetLoadResult = await this.loadPixelMapWithAssetPipeline(
         page,
         managedPageIndex,
-        this.resolveAssetLoadReason(page)
+        loadReason,
+        retryMode,
+        priority
       );
       this.recordReadFlowAssetEvent(
         MangaReadFlowEventType.ASSET_LOADED,
         page,
         managedPageIndex,
-        this.resolveAssetLoadReason(page),
+        loadReason,
         result.elapsedMs,
         result.success,
         String(result.source),
         result.errorMessage
       );
-      if (!this.isMangaReaderSessionActive(sessionSnapshot, page)) {
+      if (!this.isMangaReaderSessionActive(sessionSnapshot, page) ||
+        !this.isPageLoadGenerationCurrent(page.id, loadGeneration)) {
         logger.warn(TAG, `丢弃过期漫画资产加载结果: ${this.mangaReaderSessionGuard.describePage(page)}`);
         this.recordReadFlowEvent(
           MangaReadFlowEventType.CLEANUP,
@@ -9686,16 +9938,17 @@ export struct MangaViewer {
       } else {
         const errMsg: string = result.errorMessage.length > 0 ? result.errorMessage : '图片加载失败';
         this.markPagePixelMapLoadFailed(page, errMsg);
-        logger.error(TAG, `统一资产管线加载失败: id=${page.id}, url=${page.imageUrl}, error=${errMsg}`);
+        this.logAssetPipelineFailure(`统一资产管线加载失败: id=${page.id}`, errMsg);
       }
     } catch (err) {
-      if (!this.isMangaReaderSessionActive(sessionSnapshot, page)) {
+      if (!this.isMangaReaderSessionActive(sessionSnapshot, page) ||
+        !this.isPageLoadGenerationCurrent(page.id, loadGeneration)) {
         logger.warn(TAG, `忽略过期漫画资产加载异常: ${this.mangaReaderSessionGuard.describePage(page)}`);
         return;
       }
       const errMsg: string = '加载异常: ' + String(err);
       this.markPagePixelMapLoadFailed(page, errMsg);
-      logger.error(TAG, `统一资产管线加载异常: id=${page.id}, error=${String(err)}`);
+      this.logAssetPipelineFailure(`统一资产管线加载异常: id=${page.id}`, String(err));
     }
   }
   private cleanupInvisiblePixelMaps(): void {
@@ -9861,6 +10114,12 @@ export struct MangaViewer {
     }
 
     logger.info(TAG, `PixelMap加载完成且页面可见，刷新UI: id=${page.id}, idx=${pageIdx}`);
+
+    if (this.readingSettings.readingMode === ReadingMode.DOUBLE_PAGE &&
+      this.mangaImageRetryCoordinator.isLoading(this.getMangaImageRetryKey(page))) {
+      this.refreshDoublePageDisplayForPage(page);
+      return;
+    }
 
     if (plan.shouldRefreshWebtoonItem) {
       const dataIndex = this.findWebtoonDataIndex(page.id);
@@ -10827,10 +11086,11 @@ export struct MangaViewer {
       Stack() {
         // 网络图片：仅在有PixelMap或已加载完成时显示Image，加载中/失败时完全隐藏
         // 本地图片：始终显示
-        if (page.sourceType === ImageSourceType.LOCAL
+        if (page.sourceType !== ImageSourceType.NETWORK
           || this.pagePixelMaps.has(page.id)
           || (this.getPageLoadState(page)?.isLoaded === true)) {
           Image(this.getDisplayImageInput(page))
+            .key(`optimized_${page.id}_${this.getImageRenderEpoch(page.id)}_${this.getPixelMapEpoch(page.id)}`)
             .width('100%')
             .objectFit(this.getImageFitMode(page))
             .onAppear(() => {
@@ -10841,6 +11101,7 @@ export struct MangaViewer {
               // 图片加载完成后，添加到缓存
               this.addToImageCache(page.imageUrl, index);
               this.logImageDisplayAfter(page, true);
+              this.markPageRenderSuccess(page, 'optimized');
             })
             .onError((error: ImageError) => {
               this.handleImageComponentError(page, error, `optimized_${index}`);
@@ -10854,10 +11115,10 @@ export struct MangaViewer {
             LoadingProgress()
               .width(48)
               .height(48)
-              .color(colorMap.accent)
+              .color($r('app.color.accent'))
             Text('加载中...')
               .fontSize(14)
-              .fontColor(colorMap.textSecondary)
+              .fontColor($r('app.color.reader_text_secondary'))
               .margin({ top: 8 })
           }
           .width('100%')
@@ -10867,38 +11128,7 @@ export struct MangaViewer {
         
         // 显示加载失败提示
         if (this.getPageLoadState(page)?.error) {
-          Column() {
-            Image($r('sys.symbol.exclamationmark_circle_fill'))
-              .width(48)
-              .height(48)
-              .fillColor(colorMap.error)
-            Text('加载失败')
-              .fontSize(14)
-              .fontColor(colorMap.textPrimary)
-              .fontWeight(FontWeight.Medium)
-              .margin({ top: 8 })
-            Text(this.getPageLoadState(page)?.error || '图片加载失败')
-              .fontSize(12)
-              .fontColor(colorMap.textSecondary)
-              .margin({ top: 4 })
-              .maxLines(2)
-              .textOverflow({ overflow: TextOverflow.Ellipsis })
-            Button('重试')
-              .fontSize(14)
-              .fontColor(Color.White)
-              .backgroundColor(colorMap.accent)
-              .borderRadius(8)
-              .padding({ left: 24, right: 24, top: 8, bottom: 8 })
-              .margin({ top: 12 })
-              .onClick(() => {
-                logger.info(TAG, `用户点击重试加载(优化图片): pageId=${page.id}`);
-                this.retryLoadPage(page);
-              })
-          }
-          .width('100%')
-          .height(this.getEstimatedImageHeight(page))
-          .justifyContent(FlexAlign.Center)
-          .padding(16)
+          this.buildImageFailureOverlay(page, false, this.getEstimatedImageHeight(page))
         }
       }
       .width('100%')
@@ -11110,7 +11340,7 @@ export struct MangaViewer {
 
       const loadQueueIndex: number = resolved.loadQueueIndex >= 0 ? resolved.loadQueueIndex : task.pageIndex;
       this.mangaPreloadTaskCoordinator.markTaskReady(this.imageLoadStateManager, task);
-      this.loadImageWithNewManager(page, loadQueueIndex).catch((error: Error) => {
+      this.loadImageWithNewManager(page, loadQueueIndex, task.priority).catch((error: Error) => {
         logger.warn(TAG, `预加载任务执行异常: pageId=${task.pageId}, error=${error.message}`);
       });
     }
@@ -11135,8 +11365,14 @@ export struct MangaViewer {
    * 确保所有网络图片都转换为PixelMap后才显示
    * [性能修复] 本地图片在条漫模式下委托给 LocalImageCacheManager，避免双重PixelMap
    */
-  private async loadImageWithNewManager(page: MangaPage, pageIndex: number): Promise<void> {
+  private async loadImageWithNewManager(
+    page: MangaPage,
+    pageIndex: number,
+    priority: number = 1,
+    retryMode: MangaAssetRetryMode = MangaAssetRetryMode.NONE
+  ): Promise<void> {
     const pageId = page.id;
+    const loadGeneration: number = this.nextPageLoadGeneration(pageId);
     const requestUrl = page.sourceType === ImageSourceType.LOCAL
       ? (this.getFsPathFromPage(page) || page.imageUrl || '')
       : (page.imageUrl || '');
@@ -11161,14 +11397,7 @@ export struct MangaViewer {
 
     if (!requestUrl || requestUrl.length === 0) {
       const errorMsg = '图片URL为空';
-      this.imageLoadStates = this.mangaLoadStateCommitter.markFailed(
-        pageId,
-        pageIndex,
-        errorMsg,
-        this.imageLoadStates,
-        this.imageLoadStateManager,
-        this.preloadManager
-      );
+      this.handlePageLoadFailure(page, errorMsg, 'empty_url');
       this.scheduleProcessPreloadQueue(50);
       return;
     }
@@ -11180,11 +11409,16 @@ export struct MangaViewer {
       this.imageLoadStateManager,
       this.preloadManager
     );
+    if (this.isPageCurrentlyVisible(page)) {
+      this.startPageLoadTimeout(page, loadGeneration);
+    }
     const sessionSnapshot: MangaReaderSessionSnapshot = this.captureMangaReaderSession();
 
     try {
       // 1. 检查内存缓存（pagePixelMaps）
-      const memCached = this.pagePixelMaps.get(pageId);
+      const memCached: image.PixelMap | undefined = retryMode === MangaAssetRetryMode.FORCE_REFRESH
+        ? undefined
+        : this.pagePixelMaps.get(pageId);
       if (memCached) {
         logger.debug(TAG, `[架构] 内存缓存命中: P${pageIndex + 1}`);
         this.imageLoadStates = this.mangaLoadStateCommitter.markMemCacheHit(
@@ -11203,7 +11437,11 @@ export struct MangaViewer {
       const result: MangaAssetLoadResult = await this.loadPixelMapWithAssetPipeline(
         page,
         pageIndex,
-        this.isPageCurrentlyVisible(page) ? MangaAssetLoadReason.VISIBLE : MangaAssetLoadReason.PRELOAD
+        retryMode === MangaAssetRetryMode.NONE
+          ? (this.isPageCurrentlyVisible(page) ? MangaAssetLoadReason.VISIBLE : MangaAssetLoadReason.PRELOAD)
+          : MangaAssetLoadReason.RETRY,
+        retryMode,
+        retryMode === MangaAssetRetryMode.NONE && !this.isPageCurrentlyVisible(page) ? priority : 10
       );
       this.recordReadFlowAssetEvent(
         MangaReadFlowEventType.ASSET_LOADED,
@@ -11215,7 +11453,8 @@ export struct MangaViewer {
         String(result.source),
         result.errorMessage
       );
-      if (!this.isMangaReaderSessionActive(sessionSnapshot, page)) {
+      if (!this.isMangaReaderSessionActive(sessionSnapshot, page) ||
+        !this.isPageLoadGenerationCurrent(page.id, loadGeneration)) {
         logger.warn(TAG, `[架构] 丢弃过期预加载结果: P${pageIndex + 1}, id=${pageId}`);
         this.recordReadFlowEvent(
           MangaReadFlowEventType.CLEANUP,
@@ -11250,31 +11489,14 @@ export struct MangaViewer {
       throw new Error(resultError);
       
     } catch (error) {
-      if (!this.isMangaReaderSessionActive(sessionSnapshot, page)) {
+      if (!this.isMangaReaderSessionActive(sessionSnapshot, page) ||
+        !this.isPageLoadGenerationCurrent(page.id, loadGeneration)) {
         logger.warn(TAG, `[架构] 忽略过期预加载异常: P${pageIndex + 1}, id=${pageId}`);
         return;
       }
       const errorMsg: string = String(error);
-      logger.error(TAG, `[架构] 加载失败: P${pageIndex + 1}, error=${errorMsg}`);
-      this.imageLoadStates = this.mangaLoadStateCommitter.markFailed(
-        pageId,
-        pageIndex,
-        errorMsg,
-        this.imageLoadStates,
-        this.imageLoadStateManager,
-        this.preloadManager
-      );
-      
-      if (!this.isWebtoonMode() && pageIndex === this.viewCurrentPageIndex) {
-        this.updateSinglePageDisplay();
-      }
-
-      if (this.isWebtoonMode() && this.isPageCurrentlyVisible(page)) {
-        const dataIndex = this.findWebtoonDataIndex(pageId);
-        if (dataIndex >= 0) {
-          this.webtoonDataSource.notifyDataChange(dataIndex);
-        }
-      }
+      this.logAssetPipelineFailure(`[架构] 加载失败: P${pageIndex + 1}`, errorMsg);
+      this.handlePageLoadFailure(page, errorMsg, 'managed_asset_load');
     } finally {
       this.scheduleProcessPreloadQueue(50);
     }
@@ -11790,7 +12012,7 @@ export struct MangaViewer {
       Divider()
         .width('80%')
         .height(1)
-        .color(colorMap.divider)
+        .color($r('app.color.reader_divider'))
         .margin({ bottom: 16 })
 
       // 章节信息区域
@@ -11799,11 +12021,11 @@ export struct MangaViewer {
           // 上一章结束提示
           Text('— 上一章 —')
             .fontSize(12)
-            .fontColor(colorMap.textSecondary)
+            .fontColor($r('app.color.reader_text_secondary'))
             .margin({ bottom: 8 })
           Text(item.chapterTitle || '未知章节')
             .fontSize(16)
-            .fontColor(colorMap.textPrimary)
+            .fontColor($r('app.color.reader_text_primary'))
             .fontWeight(FontWeight.Medium)
             .maxLines(2)
             .textOverflow({ overflow: TextOverflow.Ellipsis })
@@ -11812,11 +12034,11 @@ export struct MangaViewer {
           // 下一章开始提示
           Text('— 下一章 —')
             .fontSize(12)
-            .fontColor(colorMap.textSecondary)
+            .fontColor($r('app.color.reader_text_secondary'))
             .margin({ bottom: 8 })
           Text(item.chapterTitle || '未知章节')
             .fontSize(16)
-            .fontColor(colorMap.textPrimary)
+            .fontColor($r('app.color.reader_text_primary'))
             .fontWeight(FontWeight.Medium)
             .maxLines(2)
             .textOverflow({ overflow: TextOverflow.Ellipsis })
@@ -11829,7 +12051,7 @@ export struct MangaViewer {
       Divider()
         .width('80%')
         .height(1)
-        .color(colorMap.divider)
+        .color($r('app.color.reader_divider'))
         .margin({ top: 16 })
     }
     .width('100%')
@@ -11849,7 +12071,7 @@ export struct MangaViewer {
       Column() {
         Text('↑ 再次上滑加载上一章 ↑')
           .fontSize(15)
-          .fontColor(colorMap.accent)
+          .fontColor($r('app.color.accent'))
           .fontWeight(FontWeight.Medium)
       }
       .width('100%')
@@ -11862,7 +12084,7 @@ export struct MangaViewer {
       Column() {
         Text(direction === 'prev' ? '— 已是第一章 —' : '— 已是最后一章 —')
           .fontSize(14)
-          .fontColor(colorMap.textSecondary)
+          .fontColor($r('app.color.reader_text_secondary'))
       }
       .width('100%')
       .height(60)
@@ -11874,10 +12096,10 @@ export struct MangaViewer {
         LoadingProgress()
           .width(32)
           .height(32)
-          .color(colorMap.accent)
+          .color($r('app.color.accent'))
         Text(direction === 'prev' ? '正在加载上一章...' : '正在加载下一章...')
           .fontSize(14)
-          .fontColor(colorMap.textSecondary)
+          .fontColor($r('app.color.reader_text_secondary'))
           .margin({ top: 12 })
       }
       .width('100%')
@@ -12783,36 +13005,36 @@ export struct MangaViewer {
       Row() {
         Text(this.getDoublePageIndicatorFirstLabel())
           .fontSize(12)
-          .fontColor(colorMap.textOnAccent)
+          .fontColor($r('app.color.reader_text_primary'))
           .fontWeight(FontWeight.Bold)
 
         if (!this.isDoublePageSingleDisplayActive()) {
           Text(' | ')
             .fontSize(10)
-            .fontColor(colorMap.textSecondary)
+            .fontColor($r('app.color.reader_text_secondary'))
 
           Text(this.getDoublePageIndicatorSecondLabel())
             .fontSize(12)
-            .fontColor(colorMap.textOnAccent)
+            .fontColor($r('app.color.reader_text_primary'))
             .fontWeight(FontWeight.Bold)
         }
 
         Text(' / ')
           .fontSize(10)
-          .fontColor(colorMap.textSecondary)
+          .fontColor($r('app.color.reader_text_secondary'))
           .margin({ left: 4 })
 
         Text(`${this.chapter.pages.length}`)
           .fontSize(10)
-          .fontColor(colorMap.textSecondary)
+          .fontColor($r('app.color.reader_text_secondary'))
       }
 
       Text(this.getDoublePageIndicatorLayoutStatus())
         .fontSize(9)
-        .fontColor(colorMap.accent)
+        .fontColor($r('app.color.accent'))
         .margin({ top: 2 })
     }
-    .backgroundColor(colorMap.backgroundOverlay)
+    .backgroundColor($r('app.color.reader_overlay_background'))
     .borderRadius(12)
     .padding({ left: 8, right: 8, top: 4, bottom: 4 })
     .position({ x: '50%', y: '90%' })
@@ -12832,14 +13054,14 @@ export struct MangaViewer {
           Text(this.getActiveProgressChapterTitle())
             .layoutWeight(1)
             .fontSize(10)
-            .fontColor(colorMap.accent)
+            .fontColor($r('app.color.accent'))
             .maxLines(1)
             .textOverflow({ overflow: TextOverflow.Ellipsis })
             .textAlign(TextAlign.Start)
 
           Text(this.getWebtoonProgressPercentText())
             .fontSize(10)
-            .fontColor(colorMap.textSecondary)
+            .fontColor($r('app.color.reader_text_secondary'))
         }
         .margin({ bottom: 4 })
         .width('100%')
@@ -12848,7 +13070,7 @@ export struct MangaViewer {
           .width('100%')
           .textAlign(this.shouldReverseWebtoonProgressLayout() ? TextAlign.End : TextAlign.Start)
           .fontSize(12)
-          .fontColor(colorMap.textSecondary)
+          .fontColor($r('app.color.reader_text_secondary'))
           .margin({ bottom: 4 })
 
         Progress({
@@ -12858,13 +13080,13 @@ export struct MangaViewer {
         })
           .width('100%')
           .height(3)
-          .color(colorMap.primary)
-          .backgroundColor(colorMap.backgroundSecondary)
+          .color($r('app.color.accent'))
+          .backgroundColor($r('app.color.reader_progress_track'))
           .scale({ x: this.shouldReverseWebtoonProgressLayout() ? -1 : 1, y: 1 })
       }
       .width(168)
       .padding({ left: 12, right: 12, top: 8, bottom: 8 })
-      .backgroundColor(colorMap.backgroundOverlay)
+      .backgroundColor($r('app.color.reader_overlay_background'))
       .borderRadius(16)
       .position({ x: '50%', y: '10%' })
       .translate({ x: '-50%', y: '0%' })
@@ -12900,7 +13122,7 @@ export struct MangaViewer {
         // 快速跳转按钮
         Button('跳转')
           .fontSize(12)
-          .fontColor(colorMap.accent)
+          .fontColor($r('app.color.accent'))
           .backgroundColor(Color.Transparent)
           .borderRadius(12)
           .padding({ left: 8, right: 8, top: 4, bottom: 4 })
@@ -12920,9 +13142,9 @@ export struct MangaViewer {
           })
             .width(20)
             .height(200)
-            .trackColor(colorMap.backgroundSecondary)
-            .selectedColor(colorMap.primary)
-            .blockColor(colorMap.accent)
+            .trackColor($r('app.color.reader_progress_track'))
+            .selectedColor($r('app.color.accent'))
+            .blockColor($r('app.color.accent'))
             .onChange((value: number) => {
               const targetProgress = value / 100;
               if (this.readingSettings.readingMode === ReadingMode.CONTINUOUS_SCROLL) {
@@ -13044,8 +13266,8 @@ export struct MangaViewer {
       if (this.readingSettings.showPageInfo && this.isSinglePageMode()) {
         Text(`${this.viewCurrentPageIndex + 1} / ${this.chapter.pages.length}`)
           .fontSize(12)
-          .fontColor(colorMap.textOnAccent)
-          .backgroundColor(colorMap.backgroundOverlay)
+          .fontColor($r('app.color.reader_text_primary'))
+          .backgroundColor($r('app.color.reader_overlay_background'))
           .padding({ left: 8, right: 8, top: 4, bottom: 4 })
           .borderRadius(12)
           .position({ x: '50%', y: '90%' })

@@ -7,6 +7,7 @@
  */
 
 import { HdsNavDestination } from '@kit.UIDesignKit';
+import { promptAction } from '@kit.ArkUI';
 import { logger } from '../Utils/Logger';
 import { PageLifecycleManager } from '../Framework/Lifecycle';
 import { getNovelSourceManager, NovelSourceManager } from '../Framework/Novel/NovelSourceManager';
@@ -14,15 +15,16 @@ import { NovelSearchResult, NovelSourceInfo } from '../Models/NovelModels';
 import { ThemeAwareState, ThemeAwareHelper } from '../Framework/Components/ThemeAware';
 import { ThemeManager, ThemeType } from '../Framework/Managers/ThemeManager';
 import { FontAwareHelper, FontAwareState } from '../Framework/Components/FontAware';
-import { NovelDetailPageParams } from './NovelBookshelfPage';
-import { LegadoWebViewComponent } from '../Framework/Novel/LegadoWebViewComponent';
-import { PageSettingsHelper, DetailPageType } from './settings/PageSettingsSubPage';
-import { UnifiedDetailPageParams, UnifiedContentType } from '../Models/UnifiedContentModels';
 import { GlobalBackgroundLayerMode } from '../Framework/Components/GlobalBackgroundLayer';
 import { SharedPageBackgroundLayer } from '../Framework/Components/SharedPageBackgroundLayer';
 import { SettingsImmersiveTitleBar } from './settings/SettingsImmersiveTitleBar';
 import { SettingsPanelSurfaceHelper } from './settings/SettingsPanelSurfaceHelper';
 import { SettingsPageTitleBarManager } from './settings/SettingsPageTitleBarManager';
+import {
+  LegadoExploreDetailOpenResult,
+  LegadoExploreDetailOpenStatus,
+  openLegadoExploreDetail
+} from '../Framework/Novel/LegadoExploreDetailNavigator';
 
 const TAG = 'NovelExplorePage';
 
@@ -80,6 +82,20 @@ export struct NovelExplorePage {
   
   private sourceManager: NovelSourceManager = getNovelSourceManager();
   private sourceListScroller: Scroller = new Scroller();
+  // Every source/kind selection starts a new generation. Async requests must
+  // prove they still belong to that generation before mutating this page.
+  private exploreSelectionGeneration: number = 0;
+
+  private beginExploreSelection(sourceId: string): number {
+    this.exploreSelectionGeneration++;
+    logger.debug(TAG,
+      '发现页选择代次更新: generation=' + String(this.exploreSelectionGeneration) + ';source=' + sourceId);
+    return this.exploreSelectionGeneration;
+  }
+
+  private isExploreSelectionCurrent(sourceId: string, generation: number): boolean {
+    return generation === this.exploreSelectionGeneration && sourceId === this.selectedSourceId;
+  }
 
   /**
    * 切换到下一个分类（支持循环）
@@ -126,21 +142,39 @@ export struct NovelExplorePage {
     if (this.exploreSources.length > 0 && !this.selectedSourceId) {
       this.selectedSourceId = this.exploreSources[0].id;
       this.selectedSourceName = this.exploreSources[0].name;
-      this.loadExploreKinds();
+      const generation = this.beginExploreSelection(this.selectedSourceId);
+      this.resetExploreResults();
+      void this.loadExploreKinds(this.selectedSourceId, generation);
     } else if (this.selectedSourceId) {
       // 如果已有选中的书源ID，找到对应的名称
       const source = this.exploreSources.find(s => s.id === this.selectedSourceId);
       if (source) {
         this.selectedSourceName = source.name;
-        this.loadExploreKinds();
+        const generation = this.beginExploreSelection(source.id);
+        this.resetExploreResults();
+        void this.loadExploreKinds(source.id, generation);
       } else {
+        this.beginExploreSelection(this.selectedSourceId);
+        this.exploreKinds = [];
+        this.books = [];
         this.isLoading = false;
       }
     } else {
+      this.beginExploreSelection('');
+      this.exploreKinds = [];
+      this.books = [];
       this.isLoading = false;
     }
   }
 
+  private resetExploreResults(): void {
+    this.exploreKinds = [];
+    this.selectedKindIndex = 0;
+    this.books = [];
+    this.currentPage = 1;
+    this.hasMore = true;
+    this.isLoading = true;
+  }
   filterSources(): void {
     if (!this.searchKeyword.trim()) {
       this.allFilteredSources = this.exploreSources;
@@ -195,57 +229,109 @@ export struct NovelExplorePage {
     }
   }
 
-  async loadExploreKinds(): Promise<void> {
-    if (!this.selectedSourceId) {
-      this.isLoading = false;
+  async loadExploreKinds(
+    requestSourceId: string = this.selectedSourceId,
+    requestGeneration: number = this.exploreSelectionGeneration
+  ): Promise<void> {
+    if (!requestSourceId || !this.isExploreSelectionCurrent(requestSourceId, requestGeneration)) {
       return;
     }
-    
-    const kinds = await this.sourceManager.getExploreKindsAsync(this.selectedSourceId);
-    this.exploreKinds = kinds;
-    this.selectedKindIndex = 0;
-    
-    if (kinds.length > 0) {
-      this.loadBooks();
-    } else {
+
+    try {
+      const kinds = await this.sourceManager.getExploreKindsAsync(requestSourceId);
+      if (!this.isExploreSelectionCurrent(requestSourceId, requestGeneration)) {
+        logger.debug(TAG,
+          '丢弃过期发现分类结果: generation=' + String(requestGeneration) + ';source=' + requestSourceId);
+        return;
+      }
+      this.exploreKinds = kinds;
+      this.selectedKindIndex = 0;
+      this.currentPage = 1;
+
+      if (kinds.length > 0) {
+        void this.loadBooks(requestSourceId, requestGeneration, 0, 1);
+      } else {
+        this.books = [];
+        this.hasMore = false;
+        this.isLoading = false;
+      }
+    } catch (error) {
+      if (!this.isExploreSelectionCurrent(requestSourceId, requestGeneration)) {
+        logger.debug(TAG,
+          '忽略过期发现分类异常: generation=' + String(requestGeneration) + ';source=' + requestSourceId);
+        return;
+      }
+      logger.error(TAG, '加载发现分类失败: ' + String(error));
+      this.exploreKinds = [];
+      this.books = [];
+      this.hasMore = false;
       this.isLoading = false;
     }
   }
 
-  async loadBooks(): Promise<void> {
-    if (!this.selectedSourceId || this.exploreKinds.length === 0) {
-      this.isLoading = false;
+  async loadBooks(
+    requestSourceId: string = this.selectedSourceId,
+    requestGeneration: number = this.exploreSelectionGeneration,
+    requestKindIndex: number = this.selectedKindIndex,
+    requestPage: number = this.currentPage
+  ): Promise<void> {
+    if (!requestSourceId || !this.isExploreSelectionCurrent(requestSourceId, requestGeneration) ||
+      this.exploreKinds.length === 0) {
+      return;
+    }
+
+    const kind = this.exploreKinds[requestKindIndex];
+    if (!kind) {
+      if (this.isExploreSelectionCurrent(requestSourceId, requestGeneration)) {
+        this.isLoading = false;
+      }
       return;
     }
 
     this.isLoading = true;
-    const kind = this.exploreKinds[this.selectedKindIndex];
-    
     try {
-      const results = await this.sourceManager.explore(
-        this.selectedSourceId, 
-        kind.url, 
-        this.currentPage
-      );
-      
-      if (this.currentPage === 1) {
+      const results = await this.sourceManager.explore(requestSourceId, kind.url, requestPage);
+      if (!this.isExploreSelectionCurrent(requestSourceId, requestGeneration)) {
+        logger.debug(TAG,
+          '丢弃过期发现书籍结果: generation=' + String(requestGeneration) + ';source=' + requestSourceId);
+        return;
+      }
+      for (const result of results) {
+        if (result.sourceId !== requestSourceId) {
+          logger.error(TAG,
+            '发现结果身份不一致，拒绝写入列表: expected=' + requestSourceId + ';actual=' + result.sourceId);
+          return;
+        }
+      }
+
+      if (requestPage === 1) {
         this.books = results;
       } else {
         this.books = [...this.books, ...results];
       }
-      
       this.hasMore = results.length >= 20;
     } catch (error) {
-      logger.error(TAG, `加载发现页失败: ${String(error)}`);
+      if (!this.isExploreSelectionCurrent(requestSourceId, requestGeneration)) {
+        logger.debug(TAG,
+          '忽略过期发现书籍异常: generation=' + String(requestGeneration) + ';source=' + requestSourceId);
+        return;
+      }
+      logger.error(TAG, '加载发现页失败: ' + String(error));
+    } finally {
+      if (this.isExploreSelectionCurrent(requestSourceId, requestGeneration)) {
+        this.isLoading = false;
+      }
     }
-    
-    this.isLoading = false;
   }
-
   loadMore(): void {
     if (!this.isLoading && this.hasMore) {
       this.currentPage++;
-      this.loadBooks();
+      void this.loadBooks(
+        this.selectedSourceId,
+        this.exploreSelectionGeneration,
+        this.selectedKindIndex,
+        this.currentPage
+      );
     }
   }
 
@@ -253,10 +339,10 @@ export struct NovelExplorePage {
     if (this.selectedSourceId !== source.id) {
       this.selectedSourceId = source.id;
       this.selectedSourceName = source.name;
-      this.currentPage = 1;
-      this.books = [];
+      const generation = this.beginExploreSelection(source.id);
+      this.resetExploreResults();
       this.showSourcePicker = false;
-      this.loadExploreKinds();
+      void this.loadExploreKinds(source.id, generation);
     } else {
       this.showSourcePicker = false;
     }
@@ -264,13 +350,15 @@ export struct NovelExplorePage {
 
   selectKind(index: number): void {
     if (this.selectedKindIndex !== index) {
+      const requestSourceId = this.selectedSourceId;
+      const requestGeneration = this.beginExploreSelection(requestSourceId);
       this.selectedKindIndex = index;
       this.currentPage = 1;
       this.books = [];
-      this.loadBooks();
+      this.hasMore = true;
+      void this.loadBooks(requestSourceId, requestGeneration, index, 1);
     }
   }
-
   /**
    * 规范化封面路径：本地文件添加file://前缀
    */
@@ -287,47 +375,25 @@ export struct NovelExplorePage {
     return path;
   }
 
-  openBookDetail(book: NovelSearchResult): void {
-    // 根据页面设置决定使用哪个详情页
-    const pageType = PageSettingsHelper.getNovelDetailPageType();
-    
-    if (pageType === DetailPageType.UNIFIED) {
-      // 使用统一详情页
-      const unifiedParams: UnifiedDetailPageParams = {
-        contentType: UnifiedContentType.NOVEL,
-        contentId: book.bookUrl,
-        sourceId: book.sourceId,
-        sourceName: book.sourceName,
-        cachedTitle: book.name,
-        cachedCover: book.coverUrl,
-        cachedAuthor: book.author
-      };
-      this.pathStack.pushPathByName('UnifiedDetailPage', unifiedParams);
-    } else {
-      // 使用原有小说详情页
-      const params: NovelDetailPageParams = {
-        sourceId: book.sourceId,
-        bookUrl: book.bookUrl,
-        bookName: book.name,
-        // 传递完整fallback信息
-        author: book.author,
-        kind: book.kind,
-        intro: book.intro,
-        coverUrl: book.coverUrl,
-        latestChapterTitle: book.latestChapterTitle,
-        wordCount: book.wordCount,
-        sourceName: book.sourceName
-      };
-      this.pathStack.pushPathByName('NovelDetailPage', params);
+  private async openBookDetail(book: NovelSearchResult): Promise<void> {
+    if (book.sourceId.length === 0 || book.sourceId !== this.selectedSourceId) {
+      logger.error(
+        TAG,
+        '拒绝打开跨书源发现结果: selected=' + this.selectedSourceId + ';result=' + book.sourceId
+      );
+      promptAction.showToast({ message: '书源结果已过期，请刷新后重试' });
+      return;
+    }
+    const selectedSourceIdAtOpen = this.selectedSourceId;
+    const result: LegadoExploreDetailOpenResult =
+      await openLegadoExploreDetail(this.pathStack, selectedSourceIdAtOpen, book);
+    if (result.status === LegadoExploreDetailOpenStatus.REJECTED) {
+      promptAction.showToast({ message: result.userMessage });
     }
   }
-
   build() {
     HdsNavDestination() {
       Stack() {
-        // 隐藏的WebView组件，用于Legado书源JS执行
-        LegadoWebViewComponent()
-        
         // 背景层：扩展到系统栏区域，实现完全沉浸式背景
         SharedPageBackgroundLayer({
           defaultBackgroundColor: ThemeAwareHelper.getTestManagementThemedColor('background', this.themeState.currentTheme),
@@ -933,6 +999,8 @@ export struct NovelExplorePage {
       offsetY: 8
     })
     .margin({ bottom: 8 })
-    .onClick(() => this.openBookDetail(book))
+    .onClick(() => {
+      void this.openBookDetail(book);
+    })
   }
 }

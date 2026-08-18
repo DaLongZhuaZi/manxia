@@ -1,4 +1,4 @@
-﻿import { SafeFileUtils } from '../Utils/SafeFileUtils';
+import { SafeFileUtils } from '../Utils/SafeFileUtils';
 import { logger } from '../Utils/Logger';
 import { ReaderSafeAreaUtils } from '../Utils/ReaderSafeAreaUtils';
 import { common } from '@kit.AbilityKit';
@@ -66,6 +66,8 @@ import {
 } from '../Framework/Adapters/EBookImageReaderAdapter';
 import { EBookReaderParams } from './EBookReaderRouteTypes';
 import { READER_ABILITY_HOST_MULTITON } from '../Framework/Reader/MangaReaderAbilityConstants';
+import { distributedReadingService } from '../Framework/Distributed/DistributedReadingService';
+import { distributedDataSyncManager, SyncReadingState } from '../Framework/Distributed/DistributedDataSyncManager';
 import { MangaReadFlowMonitor } from '../Framework/Reader/MangaReadFlowMonitor';
 import {
   MangaReadFlowEvent,
@@ -195,14 +197,33 @@ struct EBookImageReaderPage {
   private mangaReadFlowMonitor: MangaReadFlowMonitor = MangaReadFlowMonitor.getInstance();
   private mangaReadFlowSessionId: string = '';
   private mangaReadFlowLoadStartedAt: number = 0;
+  private lastRemoteInstructionTimestamp: number = 0;
+  private remoteCallbacksRegistered: boolean = false;
+  private pendingContinuationPageIndex: number = -1;
 
   aboutToAppear(): void {
     this.isPageVisible = true;
     this.updateScreenMetrics();
+    // [修复] 图片 EPUB 阅读器接入跨端接续状态机：前台标志 + 接续快照 + 遥控监听
+    // （此前缺失导致 onContinue 读到旧书状态而拒绝流转 / 遥控指令无人响应）
+    AppStorage.setOrCreate('currentReaderHostPage', 'EBookImageReaderPage');
+    const continuationSessionId = AppStorage.get<string>('continuationSessionId');
+    if (continuationSessionId && continuationSessionId.length > 0) {
+      const snapshot = distributedReadingService.readContinuationSnapshot();
+      if (snapshot && snapshot.pageIndex >= 0) {
+        this.pendingContinuationPageIndex = snapshot.pageIndex;
+        logger.info(TAG, `[Distributed] 图片电子书接续快照待应用: chapterIndex=${snapshot.chapterIndex}, pageIndex=${snapshot.pageIndex}`);
+      }
+      this.registerRemoteControlListener();
+      // 图片路径为最终消费方：消费后清理接续标志，防止残留导致下次打开误触发
+      distributedReadingService.clearContinuationFlags();
+    }
   }
 
   aboutToDisappear(): void {
     this.isPageVisible = false;
+    AppStorage.setOrCreate('currentReaderHostPage', '');
+    this.unregisterRemoteControlListener();
     this.clearToolbarAutoHideTimer();
     this.clearFullscreenRestoreTimer();
     this.clearInteractionResumeTimer();
@@ -677,12 +698,27 @@ struct EBookImageReaderPage {
       this.syncDeviceOrientationLock('settings_loaded');
       this.currentPageIndex = runtime.initialPageIndex;
       this.initialViewerPageIndex = runtime.initialPageIndex;
+      // [修复] 跨端接续：用源端 wantParam 快照页索引覆盖本地进度（图片 EPUB 全局页索引）
+      if (this.pendingContinuationPageIndex >= 0) {
+        const totalPages = this.getTotalPages();
+        const continuationPage = Math.max(0, Math.min(this.pendingContinuationPageIndex, Math.max(0, totalPages - 1)));
+        this.currentPageIndex = continuationPage;
+        this.initialViewerPageIndex = continuationPage;
+        logger.info(TAG, `[Distributed] 已应用图片电子书接续快照: pageIndex=${continuationPage}, totalPages=${totalPages}`);
+        this.pendingContinuationPageIndex = -1;
+      }
       this.viewerZoomScale = 1;
       this.updatePreloadDebugInfo(runtime.initialPageIndex);
       this.sessionStartTimestamp = Date.now();
       this.lastProgressSaveTime = 0;
       this.lastSavedPageIndex = -1;
       this.syncAutoPageTurnStateFromSettings(false);
+      // [修复] 加载完成立即同步一次阅读状态：打开书籍后未翻页就触发接续时，
+      // onContinue 守卫依赖 currentRead*（此前该状态只随进度保存更新，会误判拒绝流转）
+      const loadedPageEntry = this.getCurrentPageEntry();
+      const loadedChapterIndex = loadedPageEntry ? loadedPageEntry.ebookChapterIndex : 0;
+      distributedReadingService.syncProgress(ebook.id, loadedChapterIndex, this.currentPageIndex, 0, 'ebook');
+      logger.info(TAG, `阅读状态已就绪: bookId=${ebook.id}, chapter=${loadedChapterIndex}, page=${this.currentPageIndex}`);
       this.refreshCurrentEBookBookmarkState('load_complete');
       this.isLoading = false;
       this.recordReadFlowEvent(
@@ -990,6 +1026,9 @@ struct EBookImageReaderPage {
 
     await this.ebookDataManager.saveReadingProgress(progress);
     ebook.readingProgress = progress;
+    // [修复] 同步跨端接续阅读状态（currentRead* + 独立通道推送），
+    // 图片 EPUB 阅读器此前缺失该调用，导致 onContinue 打包旧书状态被拒绝
+    distributedReadingService.syncProgress(ebook.id, progress.currentChapterIndex, progress.currentPosition, 0, 'ebook');
     this.recordReadFlowEvent(
       MangaReadFlowEventType.PROGRESS_SAVED,
       trigger,
@@ -1027,6 +1066,91 @@ struct EBookImageReaderPage {
     void this.saveReadingProgressInternal(trigger).catch((error: Error) => {
       logger.error(TAG, `保存图片阅读进度失败[${trigger}]: ${error.message}`);
     });
+  }
+
+  /**
+   * [修复] 图片 EPUB 被控端遥控指令监听（与文本阅读器一致）：
+   * 翻页/章节切换/自动翻页开关，执行后回 ack。
+   */
+  private onRemoteDataChanged = (state: SyncReadingState) => {
+    if (!state.instructionType || state.instructionType === 'none' || state.instructionType === 'ack') {
+      return;
+    }
+    if (state.timestamp <= this.lastRemoteInstructionTimestamp) {
+      return;
+    }
+    this.lastRemoteInstructionTimestamp = state.timestamp;
+    logger.info(TAG, `[RemoteControl] 收到图片电子书遥控指令: ${state.instructionType}`);
+    switch (state.instructionType) {
+      case 'cmd:next_page':
+        this.jumpToPage(this.currentPageIndex + 1, 'remote_next_page');
+        break;
+      case 'cmd:prev_page':
+        this.jumpToPage(this.currentPageIndex - 1, 'remote_prev_page');
+        break;
+      case 'cmd:next_chapter':
+        this.jumpToImageChapterRelative(1, 'remote_next_chapter');
+        break;
+      case 'cmd:prev_chapter':
+        this.jumpToImageChapterRelative(-1, 'remote_prev_chapter');
+        break;
+      case 'cmd:toggle_auto_read':
+        this.setAutoPageTurnEnabled(!this.autoPageTurnEnabled);
+        break;
+      default:
+        logger.warn(TAG, `[RemoteControl] 未知图片电子书指令: ${state.instructionType}`);
+        break;
+    }
+    distributedDataSyncManager.sendInstruction('ack', '');
+  };
+
+  private onRemoteStatusChanged = (status: 'online' | 'offline' | 'restored' | 'error', message?: string) => {
+    if (status === 'offline') {
+      logger.info(TAG, '[RemoteControl] 遥控器已断开');
+      if (this.remoteCallbacksRegistered) {
+        this.getUIContext().getPromptAction().showToast({ message: '遥控器已断开' });
+      }
+    }
+  };
+
+  private registerRemoteControlListener(): void {
+    if (this.remoteCallbacksRegistered) {
+      return;
+    }
+    logger.info(TAG, '[RemoteControl] 图片电子书被控端已注册遥控器指令监听');
+    this.remoteCallbacksRegistered = true;
+    this.getUIContext().getPromptAction().showToast({ message: '遥控已连接' });
+    distributedDataSyncManager.addOnDataChangedCallback(this.onRemoteDataChanged);
+    distributedDataSyncManager.addOnStatusChangedCallback(this.onRemoteStatusChanged);
+    distributedDataSyncManager.diagnoseSession('图片电子书被控端注册');
+  }
+
+  private unregisterRemoteControlListener(): void {
+    if (!this.remoteCallbacksRegistered) {
+      return;
+    }
+    this.remoteCallbacksRegistered = false;
+    distributedDataSyncManager.removeOnDataChangedCallback(this.onRemoteDataChanged);
+    distributedDataSyncManager.removeOnStatusChangedCallback(this.onRemoteStatusChanged);
+  }
+
+  private jumpToImageChapterRelative(delta: number, trigger: string): void {
+    const entry = this.getCurrentPageEntry();
+    if (!entry) {
+      return;
+    }
+    const targetChapter = Math.max(0, entry.ebookChapterIndex + delta);
+    if (targetChapter === entry.ebookChapterIndex) {
+      return;
+    }
+    for (let index = 0; index < this.imageEntries.length; index++) {
+      const candidate = this.imageEntries[index];
+      if (candidate.ebookChapterIndex === targetChapter) {
+        this.jumpToPage(index, trigger);
+        return;
+      }
+    }
+    logger.warn(TAG, `[RemoteControl] 未找到目标章节起始页: chapter=${targetChapter}`);
   }
 
   private clampAutoPageTurnInterval(value: number): number {

@@ -368,6 +368,21 @@ export class SuwayomiCacheManager {
     }
   }
 
+  public invalidatePageCache(mangaTitle: string, chapterTitle: string, pageIndex: number): boolean {
+    try {
+      const pagePath: string = this.getPageCachePath(mangaTitle, chapterTitle, pageIndex);
+      if (!SafeFileUtils.accessSync(pagePath)) {
+        return true;
+      }
+      SafeFileUtils.unlinkSync(pagePath);
+      logger.info(TAG, `单页缓存已失效: page=${pageIndex + 1}, path=${pagePath}`);
+      return true;
+    } catch (error) {
+      logger.warn(TAG, `单页缓存失效失败: page=${pageIndex + 1}, error=${String(error)}`);
+      return false;
+    }
+  }
+
   /**
    * 从URL中提取文件扩展名
    */

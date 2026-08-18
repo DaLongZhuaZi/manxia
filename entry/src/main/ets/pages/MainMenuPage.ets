@@ -129,7 +129,6 @@ import { MangaIdentityResolver, MangaIdentityResolveResult } from '../Framework/
 import { openEBookReaderInIsolatedAbility } from '../Framework/Reader/EBookReaderAbilityLauncher';
 import { openNovelReaderInIsolatedAbility } from '../Framework/Reader/NovelReaderAbilityLauncher';
 import { openReadAloudPlayerInIsolatedAbility } from '../Framework/ReadAloud/ReadAloudPlayerAbilityLauncher';
-import { openRemoteControlInIsolatedAbility } from '../Framework/RemoteControl/RemoteControlAbilityLauncher';
 import { openSourceDetailInIsolatedAbility } from '../Framework/Source/SourceDetailAbilityLauncher';
 import { buildNovelReaderParamsFromTxtEBook } from '../Framework/Adapters/LocalTextNovelAdapter';
 import { ThemeSettingsPage } from './ThemeSettingsPage';
@@ -167,6 +166,7 @@ import { NovelSettingsPage } from './NovelSettingsPage';
 import { NovelSourceDebugPage } from './NovelSourceDebugPage';
 import { NovelTxtTocRulePage } from './NovelTxtTocRulePage';
 import { NovelDictRulePage } from './NovelDictRulePage';
+import { LegadoWebViewComponent } from '../Framework/Novel/LegadoWebViewComponent';
 import { getNovelSourceRepositoryManager, NovelSourceRepositoryUpdateStatus } from '../Framework/Novel/NovelSourceRepositoryManager';
 import { getLegadoRuntimeAssetManager, LegadoRuntimeRepositoryUpdateStatus } from '../Framework/Novel/LegadoRuntimeAssetManager';
 import { RssSubscriptionPage } from './RssSubscriptionPage';
@@ -227,6 +227,8 @@ import { getHomeCoverFailureTtlCache, HomeCoverFailureTtlCache } from '../Framew
 
 // 示例数据已移除，使用手册通过 WelcomeGuideManager 初始化
 import { MangaReaderPageParams, MangaReaderContentType } from './MangaReaderPage';
+import { distributedReadingService } from '../Framework/Distributed/DistributedReadingService';
+import { distributedPermissionManager } from '../Framework/Distributed/DistributedPermissionManager';
 import { Manga, MangaChapter, MangaMetadata, ReadingProgress, ReadingSettings, FilterSettings, ImageSourceType,
   ReadingMode,
   ReadingDirection,
@@ -261,8 +263,9 @@ import { EBookSettingsPage } from './EBookSettingsPage';
 // 导入小说相关模型
 import { NovelBook, NovelReadStatus, NovelSearchResult, NovelSourceInfo } from '../Models/NovelModels';
 import { getNovelDataManager, NovelDataManager } from '../Framework/Novel/NovelDataManager';
+import { RemoteControlSocketChannel } from '../Framework/Distributed/RemoteControlSocketChannel';
 import { getNovelSourceManager, NovelSourceManager } from '../Framework/Novel/NovelSourceManager';
-import { LegadoBook, LegadoBookSource, LegadoSourceImportResult, LegadoBookSourceType } from '../Framework/Novel/LegadoSourceTypes';
+import { LegadoBook, LegadoBookSource, LegadoBookSourceType } from '../Framework/Novel/LegadoSourceTypes';
 import { LegadoMangaSourceBridge } from '../Framework/Novel/LegadoMangaSourceBridge';
 import { getNovelInitializer } from '../Framework/Novel/NovelInitializer';
 import { FontManager } from '../Framework/Managers/FontManager';
@@ -1729,6 +1732,9 @@ struct MainMenuPage {
   @StorageProp('deepLinkTrigger') @Watch('onDeepLinkTriggerChanged') private deepLinkTrigger: number = 0;
   @StorageProp('sourceAutoCheckNavigationTrigger') @Watch('onSourceAutoCheckNavigationTriggerChanged')
   private sourceAutoCheckNavigationTrigger: number = 0;
+  // [修复] 接续转交通知：阅读器/听书 Ability 接续启动后转交 EntryAbility，触发主页消费接续导航标志
+  @StorageProp('continuationNavigationTrigger') @Watch('onContinuationNavigationTriggerChanged')
+  private continuationNavigationTrigger: number = 0;
   private deepLinkHandling: boolean = false;
   private deepLinkRetryTimer: number = -1;
   private deepLinkRetryCount: number = 0;
@@ -2179,6 +2185,10 @@ struct MainMenuPage {
   }
 
   aboutToAppear() {
+    // 主页已就绪：解除「设备发现和连接」权限后台检查点抑制。
+    // 首次启动时新手引导的权限步骤负责首次请求（引导完成后进入主页即解除）；
+    // 非首次启动（无引导）直接进入主页，由本页 onPageShow 检查点接管请求
+    distributedPermissionManager.setOnboardingGuideActive(false);
     uiContextManager.setUIContext(this.uiContext);
     void FontManager.getInstance().registerCustomFontsForCurrentUIContext();
     this.startNavStackReturnWatch();
@@ -2762,15 +2772,39 @@ struct MainMenuPage {
   private async navigateFromWidgetContinueRead(contentType: string, contentId: string): Promise<void> {
     if (!contentType || !contentId) {
       logger.warn(TAG, `卡片继续阅读参数缺失: type=${contentType}, id=${contentId}`);
+      // [修复] 参数缺失时清理残留接续标志，防止后续阅读器误触发接续
+      distributedReadingService.clearContinuationFlags();
       return;
     }
 
     try {
       const continuationSessionId = AppStorage.get<string>('continuationSessionId');
       const isContinuation = !!continuationSessionId;
+      logger.info(TAG, `继续阅读导航: type=${contentType}, id=${contentId}, isContinuation=${isContinuation}`);
 
       if (contentType === 'manga') {
-        const manga = await this.resolveWidgetManga(contentId);
+        let manga = await this.resolveWidgetManga(contentId);
+        // [修复] 本地漫画跨端接续：目标端没有该漫画记录时，经独立连接通道从源端
+        // 拉取漫画元数据与图片文件并入库，随后按源端 bookId 命中继续阅读。
+        if (!manga && isContinuation) {
+          manga = await this.recoverContinuationManga(contentId);
+        } else if (manga && isContinuation) {
+          // [修复] 目标端残留上次接续的残缺数据（例如旧版本把整章压缩成 1 页）时，
+          // 本地漫画会直接命中而跳过重新传输；这里校验页面完整性，不完整则重新从源端同步。
+          try {
+            const dataManager = DataManager.getInstance();
+            const localComicRow = await dataManager.getComicInfo(contentId);
+            if (localComicRow) {
+              const pagesComplete = await dataManager.hasCompleteChapterPages(contentId);
+              if (!pagesComplete) {
+                logger.warn(TAG, `接续本地漫画页面数据不完整，从源设备重新同步: comicId=${contentId}`);
+                manga = await this.recoverContinuationManga(contentId);
+              }
+            }
+          } catch (healthCheckError) {
+            logger.warn(TAG, `接续漫画页面完整性检查异常: ${String(healthCheckError)}`);
+          }
+        }
         if (manga) {
           if (isContinuation) {
             const continuationIsLocal = AppStorage.get<boolean>('continuationIsLocal') || false;
@@ -2826,10 +2860,14 @@ struct MainMenuPage {
       }
 
       logger.warn(TAG, `卡片继续阅读目标未找到: type=${contentType}, id=${contentId}`);
+      // [修复] 接续目标未找到时清理接续标志，防止残留导致后续误触发
+      distributedReadingService.clearContinuationFlags();
       this.showToast('未找到对应内容，已打开书库');
       this.fallbackWidgetContinueRead(contentType);
     } catch (error) {
       logger.error(TAG, `卡片继续阅读跳转失败: ${String(error)}`);
+      // [修复] 跳转失败时清理接续标志，防止残留导致后续误触发
+      distributedReadingService.clearContinuationFlags();
       this.showToast('跳转失败，已打开书库');
       this.fallbackWidgetContinueRead(contentType);
     }
@@ -2887,6 +2925,39 @@ struct MainMenuPage {
     }
 
     return null;
+  }
+
+  /**
+   * [跨端接续] 本地漫画在目标端缺失时，经独立连接通道从源端拉取
+   * 漫画元数据 + 图片文件并入库，然后重新解析返回可打开的 Manga。
+   */
+  private async recoverContinuationManga(comicId: string): Promise<Manga | null> {
+    try {
+      this.showToast('本地漫画正在从源设备传输…');
+      const channel = RemoteControlSocketChannel.getInstance();
+      const receiveResult = await channel.requestMangaBundle(comicId);
+      if (!receiveResult || !receiveResult.bundle) {
+        logger.warn(TAG, `从源设备传输漫画失败: comicId=${comicId}`);
+        this.showToast('本地漫画传输失败，请确认源设备遥控通道正常');
+        return null;
+      }
+      const dataManager = DataManager.getInstance();
+      await dataManager.importRemoteComicData(
+        receiveResult.bundle.comic,
+        receiveResult.bundle.chapters,
+        receiveResult.bundle.chapterPages
+      );
+      try {
+        await DataService.getInstance().addToFavorites(comicId, receiveResult.bundle.comic.tags || []);
+      } catch (favoriteError) {
+        logger.warn(TAG, `接续漫画收藏写入失败: ${String(favoriteError)}`);
+      }
+      this.showToast('本地漫画已从源设备同步完成');
+      return await this.resolveWidgetManga(comicId);
+    } catch (error) {
+      logger.warn(TAG, `恢复接续漫画失败: comicId=${comicId}, error=${String(error)}`);
+      return null;
+    }
   }
 
   private async resolveWidgetEBook(contentId: string): Promise<EBook | null> {
@@ -9182,6 +9253,15 @@ struct MainMenuPage {
   }
 
   /**
+   * [修复] @Watch回调：阅读器/听书 Ability 接续启动后转交 EntryAbility，
+   * 触发主页消费 continuation* 接续导航标志（app 在前台时 onPageShow 不会重新触发）
+   */
+  private onContinuationNavigationTriggerChanged(): void {
+    logger.info(TAG, '📣 收到接续转交通知，检查接续导航');
+    void this.handleWidgetNavigationIfPresent(false);
+  }
+
+  /**
    * @Watch回调：响应深度链接触发器
    * 有效外部链接直接处理导航；无具体路由时弹出预填充对话框兜底。
    */
@@ -9483,24 +9563,25 @@ struct MainMenuPage {
     try {
       logger.info(TAG, `导入JSON为书源: ${jsonUri}`);
       const readablePath = this.resolveReadableImportPath(jsonUri);
-      
-      // 读取JSON文件内容
-      const file = SafeFileUtils.openSync(readablePath, fs.OpenMode.READ_ONLY);
-      const stat = SafeFileUtils.statSync(file.fd);
-      const buffer = new ArrayBuffer(stat.size);
-      SafeFileUtils.readSync(file.fd, buffer);
-      SafeFileUtils.closeSync(file);
-      
-      // 转换为字符串
-      const textDecoder = util.TextDecoder.create('utf-8');
-      const jsonContent = textDecoder.decodeToString(new Uint8Array(buffer));
-      
-      // 使用NovelSourceManager导入
       const novelSourceManager = getNovelSourceManager();
-      const results = await novelSourceManager.importFromJSON(jsonContent);
-      
-      const successCount = results.filter((r: LegadoSourceImportResult) => r.success).length;
-      const failCount = results.length - successCount;
+      // Keep the main-menu share/open flow on the same lossless streaming V2
+      // import route as both source-management pages. This prevents a shared
+      // package from being decoded differently solely because it entered from
+      // a different UI surface.
+      const importResult = await novelSourceManager.importFromLargeFile(readablePath, {
+        onFileReadProgress: (percent: number, _bytesRead: number, _totalBytes: number): void => {
+          logger.debug(TAG, `主菜单 V2 书源文件读取: ${percent}%`);
+        },
+        onParseProgress: (parsedCount: number, _sourceName: string): void => {
+          logger.debug(TAG, `主菜单 V2 书源解析: ${parsedCount}`);
+        },
+        onImportProgress: (importedCount: number, totalCount: number, _sourceName: string): void => {
+          const progressText = totalCount > 0 ? `${importedCount}/${totalCount}` : `${importedCount}/scanning`;
+          logger.debug(TAG, `主菜单 V2 书源无损写入: ${progressText}`);
+        }
+      });
+      const successCount = importResult.successCount;
+      const failCount = importResult.failedCount + importResult.skippedCount;
       
       if (successCount > 0) {
         this.showToast(`成功导入 ${successCount} 个书源${failCount > 0 ? `，${failCount} 个失败` : ''}`);
@@ -10439,30 +10520,10 @@ struct MainMenuPage {
 
   private onContinuationTriggered = (payload: IEventPayload) => {
     const data = payload as ContinuationTriggeredPayload;
-    logger.info(TAG, `收到设备流转触发事件: sessionId=${data.sessionId}`);
-    
-    this.getUIContext().showAlertDialog({
-      title: '流转成功',
-      message: '内容已流转至新设备，是否进入遥控器模式以控制对方设备的阅读？',
-      autoCancel: true,
-      primaryButton: {
-        value: '进入遥控器',
-        action: () => {
-          openRemoteControlInIsolatedAbility(
-            this.getUIContext(),
-            this.pathStack,
-            data,
-            'continuation_triggered'
-          );
-        }
-      },
-      secondaryButton: {
-        value: '继续本机阅读',
-        action: () => {
-          logger.info(TAG, '用户选择不进入遥控器模式');
-        }
-      }
-    });
+    // [修复] 源端接续成功后遥控器由 ContinuationStateHelper 自动拉起（不再弹窗询问），
+    // 本事件仅用于通知与日志：阅读器 Ability 被系统迁移销毁后，主页可能处于后台，
+    // 弹窗无法可靠展示，且等待用户点击会导致源端停留在桌面。
+    logger.info(TAG, `收到设备流转触发事件: sessionId=${data.sessionId}（遥控器由接续状态助手自动拉起）`);
   }
 
   private onFileEditorSaved = (payload: IEventPayload) => {
@@ -10793,8 +10854,32 @@ struct MainMenuPage {
    * 确保从任何页面返回时都能正确显示最新的阅读情况
    * 使用静默刷新避免闪屏
    */
+  /**
+   * [修复] 稳定提起分布式数据同步权限请求（主页检查点）
+   * 窗口已完全就绪，弹窗不会被启动时序打断；未授权时每次回到主页都会再次请求
+   * （权限被系统固定拒绝时会自动引导前往设置开启）
+   */
+  private requestDistributedDataSyncPermission(): void {
+    try {
+      const hostContext = this.getUIContext().getHostContext() as common.UIAbilityContext;
+      if (!hostContext) {
+        logger.warn(TAG, '分布式权限请求跳过：无法获取 UIAbilityContext');
+        return;
+      }
+      setTimeout(() => {
+        void distributedPermissionManager.ensurePermission(hostContext);
+      }, 600);
+    } catch (error) {
+      logger.warn(TAG, `分布式权限请求异常: ${String(error)}`);
+    }
+  }
+
   onPageShow(): void {
     logger.lifecycle(TAG, '📱 页面显示，静默刷新数据');
+    // [修复] 主页显示是窗口完全就绪的可靠时机：稳定提起分布式数据同步权限请求。
+    // DistributedPermissionManager 无冷却：未授权即请求；权限被系统固定拒绝时
+    // 自动引导前往设置开启；新手引导期间由引导页权限步骤统一负责（此处会被抑制）。
+    this.requestDistributedDataSyncPermission();
     this.scheduleLegadoCloudUpdateCheckAfterShow('onPageShow');
     void this.holdingAwarenessManager.resume();
     this.logHoldingAwareFloatingSearchDecision('页面显示');
@@ -34521,6 +34606,11 @@ struct MainMenuPage {
 
   build() {
     Stack() {
+    // V2 ArkWeb is application-scoped. Navigation destinations must not
+    // compete to replace the singleton controller while a source request is
+    // active, so the host lives with the persistent main navigation root.
+    LegadoWebViewComponent()
+
     // 仅在 MainMenu 根页面显示全局背景，避免子页面状态栏透出 MainMenu 背景层
     if (this.showMainMenuGlobalBackground) {
       GlobalBackgroundLayer({

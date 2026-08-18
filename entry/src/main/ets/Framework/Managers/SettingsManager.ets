@@ -25,6 +25,8 @@ export class SettingKeys {
   static readonly GLOBAL_SEARCH_V2_ENABLED = 'global_search_v2_enabled';
   static readonly GLOBAL_SEARCH_DEBUG_METRICS_ENABLED = 'global_search_debug_metrics_enabled';
   static readonly GLOBAL_SEARCH_ONLINE_CACHE_ENABLED = 'global_search_online_cache_enabled';
+  /** Global routing policy for all Legado V2 book-source workflows. */
+  static readonly LEGADO_V2_EXECUTION_POLICY = 'legado_v2_execution_policy';
   
   // 生命周期监控
   static readonly LIFECYCLE_MONITOR_ENABLED = 'lifecycle_monitor_enabled'; // 启用生命周期监控
@@ -485,6 +487,17 @@ export class SettingsManager {
 
   async setGlobalSearchOnlineCacheEnabled(enabled: boolean): Promise<void> {
     await this.setBoolean(SettingKeys.GLOBAL_SEARCH_ONLINE_CACHE_ENABLED, enabled);
+  }
+
+  getLegadoV2ExecutionPolicy(): string {
+    // V2 is the production default. `legacy_only` remains an explicit
+    // operator-selected recovery mode and is never selected merely because a
+    // fresh install does not have a persisted value yet.
+    return this.getString(SettingKeys.LEGADO_V2_EXECUTION_POLICY, 'v2_full_cutover');
+  }
+
+  async setLegadoV2ExecutionPolicy(policy: string): Promise<void> {
+    await this.setString(SettingKeys.LEGADO_V2_EXECUTION_POLICY, policy);
   }
 
   /**

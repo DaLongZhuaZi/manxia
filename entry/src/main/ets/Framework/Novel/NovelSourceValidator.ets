@@ -9,9 +9,12 @@
  */
 
 import { logger } from '../../Utils/Logger';
-import { LegadoBookSource, LegadoBook, LegadoChapter, LegadoSearchBook, LegadoBookSourceType } from './LegadoSourceTypes';
-import { NovelSourceExecutor, SearchErrorType } from './NovelSourceExecutor';
+import { LegadoBookSource, LegadoBook, LegadoChapter, LegadoBookSourceType } from './LegadoSourceTypes';
 import { getNovelSourceManager, NovelSourceManager } from './NovelSourceManager';
+import { LegadoExecutionErrorCode, LegadoV2ExecutionPolicy } from './LegadoCompatibilityTypes';
+import { LegadoExecutionCancellationToken } from './LegadoExecutionCancellation';
+import { awaitNovelSourceValidationTask } from './NovelSourceValidationDeadline';
+import { NovelSearchResult } from '../../Models/NovelModels';
 import { AppNotificationManager } from '../Managers/NotificationManager';
 import { SettingKeys, SettingsManager } from '../Managers/SettingsManager';
 import { BackgroundTaskHelper } from '../Task/BackgroundTaskHelper';
@@ -176,6 +179,8 @@ export interface BatchValidationResult {
  * 书源校验器
  */
 export class NovelSourceValidator {
+  private static readonly BATCH_CANCEL_REASON = 'validation_batch_cancelled';
+  private static readonly SOURCE_TIMEOUT_REASON = 'validation_source_timeout';
   private static readonly DEFAULT_VALIDATION_CONCURRENCY = 10;
   private static readonly MIN_VALIDATION_CONCURRENCY = 1;
   private static readonly MAX_VALIDATION_CONCURRENCY = 50;
@@ -198,6 +203,10 @@ export class NovelSourceValidator {
   private static instance: NovelSourceValidator | null = null;
   private isValidating: boolean = false;
   private shouldCancel: boolean = false;
+  private currentBatchToken: LegadoExecutionCancellationToken | null = null;
+  private readonly activeSourceTokens: Map<number, LegadoExecutionCancellationToken> = new Map();
+  private nextSourceTokenId: number = 1;
+  private validationGeneration: number = 0;
   private config: ValidationConfig = this.createDefaultConfig();
   private notificationManager: AppNotificationManager = AppNotificationManager.getInstance();
   private currentValidationTaskId: string = '';
@@ -292,9 +301,14 @@ export class NovelSourceValidator {
   /**
    * 校验单个书源（完整流程）
    */
-  async validateSource(source: LegadoBookSource, config?: Partial<ValidationConfig>): Promise<SourceValidationResult> {
+  async validateSource(
+    source: LegadoBookSource,
+    config?: Partial<ValidationConfig>,
+    cancellationToken?: LegadoExecutionCancellationToken
+  ): Promise<SourceValidationResult> {
     const validationConfig = this.mergeConfig(config);
-    const result: SourceValidationResult = {
+    const token = cancellationToken || new LegadoExecutionCancellationToken();
+    const workingResult: SourceValidationResult = {
       sourceId: source.bookSourceUrl,
       sourceName: source.bookSourceName,
       isValid: false,
@@ -305,55 +319,67 @@ export class NovelSourceValidator {
     const startTime = Date.now();
 
     try {
-      // 使用Promise.race实现超时控制
-      await Promise.race([
-        this.doValidateSource(source, validationConfig, result),
-        this.timeoutPromise(validationConfig.timeout, result)
-      ]);
+      await awaitNovelSourceValidationTask(
+        (): Promise<void> => this.doValidateSource(source, validationConfig, workingResult, token),
+        validationConfig.timeout,
+        token,
+        NovelSourceValidator.SOURCE_TIMEOUT_REASON
+      );
     } catch (error) {
       const errorStr = String(error);
-      result.error = errorStr;
-      
+      workingResult.error = errorStr;
+
+      if (token.isCancelled() && token.getReason() === NovelSourceValidator.BATCH_CANCEL_REASON) {
+        workingResult.error = '校验已取消';
+      } else if (token.isCancelled() && token.getReason() === NovelSourceValidator.SOURCE_TIMEOUT_REASON) {
+        workingResult.error = '校验超时';
+        workingResult.errorType = ValidationErrorType.TIMEOUT;
+        this.addErrorGroup(workingResult, ValidationErrorType.TIMEOUT);
       // 判断错误类型
-      if (errorStr.includes('timeout') || errorStr.includes('超时')) {
-        result.errorType = ValidationErrorType.TIMEOUT;
-        this.addErrorGroup(result, ValidationErrorType.TIMEOUT);
+      } else if (errorStr.includes('timeout') || errorStr.includes('超时')) {
+        workingResult.errorType = ValidationErrorType.TIMEOUT;
+        this.addErrorGroup(workingResult, ValidationErrorType.TIMEOUT);
       } else if (errorStr.includes('script') || errorStr.includes('js') || errorStr.includes('JavaScript')) {
-        result.errorType = ValidationErrorType.JS_ERROR;
-        this.addErrorGroup(result, ValidationErrorType.JS_ERROR);
+        workingResult.errorType = ValidationErrorType.JS_ERROR;
+        this.addErrorGroup(workingResult, ValidationErrorType.JS_ERROR);
       } else if (errorStr.includes('network') || errorStr.includes('网络') || errorStr.includes('connect')) {
-        result.errorType = ValidationErrorType.NETWORK_ERROR;
-        this.addErrorGroup(result, ValidationErrorType.NETWORK_ERROR);
+        workingResult.errorType = ValidationErrorType.NETWORK_ERROR;
+        this.addErrorGroup(workingResult, ValidationErrorType.NETWORK_ERROR);
       } else {
-        result.errorType = ValidationErrorType.UNKNOWN;
-        this.addErrorGroup(result, ValidationErrorType.UNKNOWN);
+        workingResult.errorType = ValidationErrorType.UNKNOWN;
+        this.addErrorGroup(workingResult, ValidationErrorType.UNKNOWN);
       }
-      
-      logger.warn(TAG, `校验书源失败 [${source.bookSourceName}]: ${result.error}`);
+
+      logger.warn(TAG, `校验书源失败 [${source.bookSourceName}]: ${workingResult.error}`);
     }
 
-    result.searchTime = Date.now() - startTime;
-    result.isValid = !this.hasFatalErrorGroup(result.errorGroups);
-    if (result.isValid && result.errorGroups.length > 0) {
+    workingResult.searchTime = Date.now() - startTime;
+    const batchCancelled = token.isCancelled() &&
+      token.getReason() === NovelSourceValidator.BATCH_CANCEL_REASON;
+    workingResult.isValid = !batchCancelled && !this.hasFatalErrorGroup(workingResult.errorGroups);
+    if (workingResult.isValid && workingResult.errorGroups.length > 0) {
       logger.info(
         TAG,
-        `校验通过（非致命问题） [${source.bookSourceName}]: ${result.errorGroups.join(',')}`
+        `校验通过（非致命问题） [${source.bookSourceName}]: ${workingResult.errorGroups.join(',')}`
       );
     }
-    
-    return result;
+
+    return this.cloneValidationResult(workingResult);
   }
 
-  /**
-   * 超时Promise
-   */
-  private timeoutPromise(timeout: number, result: SourceValidationResult): Promise<void> {
-    return new Promise((_, reject) => {
-      setTimeout(() => {
-        this.addErrorGroup(result, ValidationErrorType.TIMEOUT);
-        reject(new Error('校验超时'));
-      }, timeout);
-    });
+  private cloneValidationResult(result: SourceValidationResult): SourceValidationResult {
+    const cloned: SourceValidationResult = {
+      sourceId: result.sourceId,
+      sourceName: result.sourceName,
+      isValid: result.isValid,
+      errorGroups: result.errorGroups.slice(),
+      checkedItems: result.checkedItems.slice()
+    };
+    if (result.searchTime !== undefined) cloned.searchTime = result.searchTime;
+    if (result.bookCount !== undefined) cloned.bookCount = result.bookCount;
+    if (result.error !== undefined) cloned.error = result.error;
+    if (result.errorType !== undefined) cloned.errorType = result.errorType;
+    return cloned;
   }
 
   /**
@@ -392,13 +418,20 @@ export class NovelSourceValidator {
   /**
    * 解析用于发现校验的首个可用URL
    */
-  private async resolveDiscoveryValidationUrl(source: LegadoBookSource, executor: NovelSourceExecutor): Promise<string | null> {
+  private async resolveDiscoveryValidationUrl(
+    source: LegadoBookSource,
+    cancellationToken: LegadoExecutionCancellationToken
+  ): Promise<string | null> {
+    cancellationToken.throwIfCancelled();
     if (!source.exploreUrl) {
       return null;
     }
 
-    const trimmedExploreUrl = source.exploreUrl.trim();
-    const exploreKinds = await executor.getExploreKindsAsync();
+    const exploreKinds = await this.sourceManager.getExploreKindsAsync(
+      source.bookSourceUrl,
+      cancellationToken
+    );
+    cancellationToken.throwIfCancelled();
     for (let i = 0; i < exploreKinds.length; i++) {
       const kindUrl = exploreKinds[i].url ? exploreKinds[i].url.trim() : '';
       if (kindUrl.length > 0 && !this.isDynamicRuleUrl(kindUrl)) {
@@ -469,40 +502,37 @@ export class NovelSourceValidator {
       lower.includes('}}');
   }
   
-  /**
-   * 将搜索错误类型映射到校验错误类型
-   */
-  private mapSearchErrorToValidation(searchError: SearchErrorType): ValidationErrorType {
-    switch (searchError) {
-      case SearchErrorType.TIMEOUT:
-        return ValidationErrorType.TIMEOUT;
-      case SearchErrorType.SSL_ERROR:
-        return ValidationErrorType.SSL_ERROR;
-      case SearchErrorType.NETWORK_ERROR:
-        return ValidationErrorType.NETWORK_ERROR;
-      case SearchErrorType.HTTP_404:
-        return ValidationErrorType.HTTP_404;
-      case SearchErrorType.HTTP_403:
-        return ValidationErrorType.HTTP_403;
-      case SearchErrorType.HTTP_5XX:
-        return ValidationErrorType.HTTP_5XX;
-      case SearchErrorType.HTTP_OTHER:
-        return ValidationErrorType.HTTP_OTHER;
-      case SearchErrorType.JS_SOURCE_UNDEFINED:
-        return ValidationErrorType.JS_SOURCE_UNDEFINED;
-      case SearchErrorType.JS_FUNCTION_UNDEFINED:
-        return ValidationErrorType.JS_FUNCTION_UNDEFINED;
-      case SearchErrorType.JS_ERROR:
-        return ValidationErrorType.JS_ERROR;
-      case SearchErrorType.URL_PARSE_ERROR:
-        return ValidationErrorType.URL_PARSE_ERROR;
-      case SearchErrorType.PARSE_ERROR:
-        return ValidationErrorType.SEARCH_PARSE_ERROR;
-      case SearchErrorType.NONE:
-        return ValidationErrorType.SEARCH_FAILED;
-      default:
-        return ValidationErrorType.SEARCH_FAILED;
+  /** Classifies the trace emitted by the same globally selected runtime. */
+  private mapLastTraceToValidation(sourceId: string): ValidationErrorType {
+    const trace = this.sourceManager.getLastExecutionTrace(sourceId);
+    if (trace === null) {
+      return ValidationErrorType.SEARCH_FAILED;
     }
+    if (trace.response.errorCode === LegadoExecutionErrorCode.HTTP) {
+      if (trace.response.statusCode === 404) {
+        return ValidationErrorType.HTTP_404;
+      }
+      if (trace.response.statusCode === 403) {
+        return ValidationErrorType.HTTP_403;
+      }
+      if (trace.response.statusCode >= 500) {
+        return ValidationErrorType.HTTP_5XX;
+      }
+      return ValidationErrorType.HTTP_OTHER;
+    }
+    if (trace.response.errorCode === LegadoExecutionErrorCode.NETWORK ||
+      trace.response.errorCode === LegadoExecutionErrorCode.WEB_VIEW) {
+      return ValidationErrorType.NETWORK_ERROR;
+    }
+    if (trace.response.errorCode === LegadoExecutionErrorCode.UNSUPPORTED_API ||
+      trace.response.errorCode === LegadoExecutionErrorCode.NEEDS_INTERACTION ||
+      trace.response.errorCode === LegadoExecutionErrorCode.POLICY_BLOCKED) {
+      return ValidationErrorType.JS_ERROR;
+    }
+    if (trace.response.errorCode === LegadoExecutionErrorCode.RULE) {
+      return ValidationErrorType.SEARCH_PARSE_ERROR;
+    }
+    return ValidationErrorType.SEARCH_FAILED;
   }
 
   /**
@@ -511,10 +541,24 @@ export class NovelSourceValidator {
   private async doValidateSource(
     source: LegadoBookSource,
     config: ValidationConfig,
-    result: SourceValidationResult
+    result: SourceValidationResult,
+    cancellationToken: LegadoExecutionCancellationToken
   ): Promise<void> {
-    const executor = new NovelSourceExecutor(source);
+    cancellationToken.throwIfCancelled();
+    if (this.sourceManager.getV2ExecutionPolicy() !== LegadoV2ExecutionPolicy.V2_FULL_CUTOVER) {
+      this.addErrorGroup(result, ValidationErrorType.UNKNOWN);
+      result.error = '批量校验只允许使用 V2_FULL_CUTOVER，已拒绝旧执行器回退。';
+      logger.warn(TAG, `校验拒绝非 V2_FULL_CUTOVER 路由: ${source.bookSourceName}`);
+      return;
+    }
+    if (this.sourceManager.getSource(source.bookSourceUrl) === null) {
+      this.addErrorGroup(result, ValidationErrorType.UNKNOWN);
+      result.error = '书源未进入统一路由，拒绝使用旧执行器校验。请先重新导入书源。';
+      logger.warn(TAG, `校验拒绝绕过 V2 路由: ${source.bookSourceName}`);
+      return;
+    }
     const isAudioSource = this.isAudioSource(source);
+    const hasExplore = !!source.exploreUrl && source.exploreUrl.trim().length > 0;
     const validationKeyword = this.resolveValidationKeyword(source, config.keyword);
     if (validationKeyword !== config.keyword) {
       logger.debug(
@@ -526,16 +570,13 @@ export class NovelSourceValidator {
     let exploreBook: LegadoBook | null = null;
 
     // 检查是否已取消
-    if (this.shouldCancel) {
-      result.error = '校验已取消';
-      return;
-    }
+    cancellationToken.throwIfCancelled();
 
     // 1. 校验搜索
     if (config.checkSearch) {
       result.checkedItems.push('搜索');
       if (!source.searchUrl) {
-        if (isAudioSource && executor.hasExplore()) {
+        if (isAudioSource && hasExplore) {
           logger.debug(TAG, `听书书源无搜索入口，跳过搜索校验并使用发现兜底 [${source.bookSourceName}]`);
         } else {
           this.addErrorGroup(result, ValidationErrorType.SEARCH_EMPTY);
@@ -543,27 +584,29 @@ export class NovelSourceValidator {
       } else {
         this.removeErrorGroup(result, ValidationErrorType.SEARCH_EMPTY);
         try {
-          const searchResult = await executor.searchWithError(validationKeyword, 1, {
-            maxResults: NovelSourceValidator.VALIDATION_SEARCH_MAX_RESULTS,
-            maxElementScan: NovelSourceValidator.VALIDATION_SEARCH_MAX_ELEMENT_SCAN,
-            disableItemDomBridge: true
-          });
-          result.bookCount = searchResult.books.length;
+          const searchResults = await this.sourceManager.search(
+            source.bookSourceUrl,
+            validationKeyword,
+            1,
+            undefined,
+            cancellationToken
+          );
+          cancellationToken.throwIfCancelled();
+          result.bookCount = searchResults.length;
           
-          if (searchResult.books.length === 0) {
-            // 根据详细错误类型添加分组
-            const errorType = this.mapSearchErrorToValidation(searchResult.errorType);
+          if (searchResults.length === 0) {
+            const errorType = this.mapLastTraceToValidation(source.bookSourceUrl);
             this.addErrorGroup(result, errorType);
-            logger.debug(TAG, `搜索失败 [${source.bookSourceName}]: ${searchResult.errorType} - ${searchResult.errorMessage}`);
+            logger.debug(TAG, `搜索失败 [${source.bookSourceName}]: ${errorType}`);
           } else {
             this.removeErrorGroup(result, ValidationErrorType.SEARCH_FAILED);
             this.removeErrorGroup(result, ValidationErrorType.SEARCH_PARSE_ERROR);
             this.removeErrorGroup(result, ValidationErrorType.SEARCH_EMPTY);
             // 使用第一个搜索结果进行后续校验
-            const firstResult = searchResult.books[0];
-            searchBook = this.searchBookToBook(firstResult);
+            searchBook = this.searchResultToBook(source, searchResults[0]);
           }
         } catch (error) {
+          cancellationToken.throwIfCancelled();
           this.addErrorGroup(result, ValidationErrorType.SEARCH_FAILED);
           logger.warn(TAG, `搜索校验失败 [${source.bookSourceName}]: ${String(error)}`);
         }
@@ -571,17 +614,15 @@ export class NovelSourceValidator {
     }
 
     // 检查是否已取消
-    if (this.shouldCancel) {
-      result.error = '校验已取消';
-      return;
-    }
+    cancellationToken.throwIfCancelled();
 
     // 2. 校验发现
-    if (config.checkDiscovery && executor.hasExplore()) {
+    if (config.checkDiscovery && hasExplore) {
       result.checkedItems.push('发现');
       try {
         // 解析发现URL获取第一个分类
-        const discoveryUrl = await this.resolveDiscoveryValidationUrl(source, executor);
+        const discoveryUrl = await this.resolveDiscoveryValidationUrl(source, cancellationToken);
+        cancellationToken.throwIfCancelled();
         if (!discoveryUrl) {
           if (isAudioSource) {
             this.removeErrorGroup(result, ValidationErrorType.DISCOVERY_EMPTY);
@@ -591,19 +632,25 @@ export class NovelSourceValidator {
             logger.debug(TAG, `发现校验跳过 [${source.bookSourceName}]: 未找到可用发现URL`);
           }
         } else {
-          const exploreResults = await executor.explore(discoveryUrl, 1);
+          const exploreResults = await this.sourceManager.explore(
+            source.bookSourceUrl,
+            discoveryUrl,
+            1,
+            cancellationToken
+          );
+          cancellationToken.throwIfCancelled();
           if (exploreResults.length === 0) {
             this.addErrorGroup(result, ValidationErrorType.DISCOVERY_FAILED);
           } else {
             this.removeErrorGroup(result, ValidationErrorType.DISCOVERY_FAILED);
             this.removeErrorGroup(result, ValidationErrorType.DISCOVERY_EMPTY);
             if (!searchBook) {
-              const firstExplore = exploreResults[0];
-              exploreBook = this.searchBookToBook(firstExplore);
+              exploreBook = this.searchResultToBook(source, exploreResults[0]);
             }
           }
         }
       } catch (error) {
+        cancellationToken.throwIfCancelled();
         if (isAudioSource) {
           logger.warn(TAG, `听书书源发现校验已跳过 [${source.bookSourceName}]: ${String(error)}`);
         } else {
@@ -627,16 +674,18 @@ export class NovelSourceValidator {
     }
 
     // 检查是否已取消
-    if (this.shouldCancel) {
-      result.error = '校验已取消';
-      return;
-    }
+    cancellationToken.throwIfCancelled();
 
     // 3. 校验详情
     if (config.checkInfo) {
       result.checkedItems.push('详情');
       try {
-        const bookInfo = await executor.getBookInfo(bookToCheck.bookUrl);
+        const bookInfo = await this.sourceManager.getBookInfo(
+          source.bookSourceUrl,
+          bookToCheck.bookUrl,
+          cancellationToken
+        );
+        cancellationToken.throwIfCancelled();
         if (!bookInfo) {
           this.addErrorGroup(result, ValidationErrorType.INFO_FAILED);
           logger.warn(TAG, `详情校验失败 [${source.bookSourceName}]: 未解析到详情信息`);
@@ -647,6 +696,7 @@ export class NovelSourceValidator {
         bookToCheck.author = bookInfo.author || bookToCheck.author;
         this.removeErrorGroup(result, ValidationErrorType.INFO_FAILED);
       } catch (error) {
+        cancellationToken.throwIfCancelled();
         this.addErrorGroup(result, ValidationErrorType.INFO_FAILED);
         logger.warn(TAG, `详情校验失败 [${source.bookSourceName}]: ${String(error)}`);
         return; // 详情失败则无法继续校验目录和正文
@@ -654,33 +704,37 @@ export class NovelSourceValidator {
     }
 
     // 检查是否已取消
-    if (this.shouldCancel) {
-      result.error = '校验已取消';
-      return;
-    }
+    cancellationToken.throwIfCancelled();
 
     // 4. 校验目录
     if (config.checkCategory) {
       result.checkedItems.push('目录');
       try {
-        const chapters = await executor.getChapterList(bookToCheck);
+        const chapters = await this.sourceManager.getChapterList(
+          source.bookSourceUrl,
+          bookToCheck,
+          cancellationToken
+        );
+        cancellationToken.throwIfCancelled();
         if (chapters.length === 0) {
           this.addErrorGroup(result, ValidationErrorType.TOC_FAILED);
         } else {
           this.removeErrorGroup(result, ValidationErrorType.TOC_FAILED);
           
           // 检查是否已取消
-          if (this.shouldCancel) {
-            result.error = '校验已取消';
-            return;
-          }
+          cancellationToken.throwIfCancelled();
           
           // 5. 校验正文
           if (config.checkContent && chapters.length > 0) {
             result.checkedItems.push(isAudioSource ? '音频' : '正文');
             try {
               const firstChapter = chapters[0];
-              const content = await executor.getContent(firstChapter);
+              const content = await this.sourceManager.getContent(
+                source.bookSourceUrl,
+                firstChapter,
+                cancellationToken
+              );
+              cancellationToken.throwIfCancelled();
               if (isAudioSource) {
                 const resolvedAudioUrl = this.resolveAudioSourceUrl(content, firstChapter.url);
                 if (resolvedAudioUrl.length <= 0) {
@@ -697,12 +751,14 @@ export class NovelSourceValidator {
                 }
               }
             } catch (error) {
+              cancellationToken.throwIfCancelled();
               this.addErrorGroup(result, ValidationErrorType.CONTENT_FAILED);
               logger.warn(TAG, `${isAudioSource ? '音频' : '正文'}校验失败 [${source.bookSourceName}]: ${String(error)}`);
             }
           }
         }
       } catch (error) {
+        cancellationToken.throwIfCancelled();
         this.addErrorGroup(result, ValidationErrorType.TOC_FAILED);
         logger.warn(TAG, `目录校验失败 [${source.bookSourceName}]: ${String(error)}`);
       }
@@ -911,47 +967,93 @@ export class NovelSourceValidator {
 
     this.isValidating = true;
     this.shouldCancel = false;
-    
-    // 生成唯一的校验任务ID
-    this.currentValidationTaskId = `validation_${Date.now()}`;
+    this.validationGeneration += 1;
+    const generation = this.validationGeneration;
+    const batchToken = new LegadoExecutionCancellationToken();
+    this.currentBatchToken = batchToken;
+    this.activeSourceTokens.clear();
+
+    const taskId = `validation_${Date.now()}_${generation}`;
+    this.currentValidationTaskId = taskId;
     this.lastNotificationTime = 0;
 
+    const pendingSourceIds = sourceIds.slice();
     const validationConfig = this.mergeConfig(config);
-    const resultsByIndex: Array<SourceValidationResult | undefined> = new Array(sourceIds.length);
+    const resultsByIndex: Array<SourceValidationResult | undefined> = new Array(pendingSourceIds.length);
     let valid = 0;
     let invalid = 0;
     let completedCount = 0;
     let nextIndex = 0;
-    const workerCount = this.calculateRuntimeConcurrency(validationConfig, sourceIds.length);
-
-    // 有上下文时申请 DATA_TRANSFER 后台长时任务
-    if (this.context) {
-      await BackgroundTaskHelper.startDataTransferTask(this.context, this.currentValidationTaskId);
-    }
-
-    // 发送开始通知
-    if (showNotification) {
-      await this.sendProgressNotification(0, sourceIds.length, 0, 0);
-    }
+    const workerCount = this.calculateRuntimeConcurrency(validationConfig, pendingSourceIds.length);
+    const taskContext = this.context;
+    let backgroundTaskStarted = false;
 
     try {
+      if (taskContext !== null) {
+        try {
+          await BackgroundTaskHelper.startDataTransferTask(taskContext, taskId);
+          backgroundTaskStarted = true;
+        } catch (error) {
+          logger.warn(TAG, `申请校验后台任务失败，继续前台校验: ${String(error)}`);
+        }
+      }
+
+      if (showNotification) {
+        try {
+          await this.sendProgressNotification(0, pendingSourceIds.length, 0, 0);
+        } catch (error) {
+          logger.warn(TAG, `发送校验开始通知失败: ${String(error)}`);
+        }
+      }
+
       const worker = async (): Promise<void> => {
         while (true) {
-          if (this.shouldCancel) {
+          if (batchToken.isCancelled() || generation !== this.validationGeneration) {
             return;
           }
 
           const currentIndex = nextIndex;
           nextIndex++;
-          if (currentIndex >= sourceIds.length) {
+          if (currentIndex >= pendingSourceIds.length) {
             return;
           }
 
-          const result = await this.validateSourceById(
-            sourceIds[currentIndex],
-            validationConfig,
-            autoUpdateGroups
-          );
+          const sourceTokenId = this.nextSourceTokenId;
+          this.nextSourceTokenId += 1;
+          const sourceToken = new LegadoExecutionCancellationToken();
+          const batchListenerId = batchToken.register((reason: string): void => {
+            sourceToken.cancel(reason);
+          });
+          this.activeSourceTokens.set(sourceTokenId, sourceToken);
+          let result: SourceValidationResult;
+          try {
+            result = await this.validateSourceById(
+              pendingSourceIds[currentIndex],
+              validationConfig,
+              autoUpdateGroups,
+              sourceToken
+            );
+          } catch (error) {
+            if (batchToken.isCancelled() || generation !== this.validationGeneration) {
+              return;
+            }
+            result = {
+              sourceId: pendingSourceIds[currentIndex],
+              sourceName: this.sourceManager.getSource(pendingSourceIds[currentIndex])?.bookSourceName || '未知书源',
+              isValid: false,
+              error: String(error),
+              errorType: ValidationErrorType.UNKNOWN,
+              errorGroups: [ERROR_GROUP_NAMES[ValidationErrorType.UNKNOWN]],
+              checkedItems: []
+            };
+          } finally {
+            batchToken.unregister(batchListenerId);
+            this.activeSourceTokens.delete(sourceTokenId);
+          }
+          if (batchToken.isCancelled() || generation !== this.validationGeneration ||
+            this.isBatchCancellation(sourceToken)) {
+            return;
+          }
           resultsByIndex[currentIndex] = result;
           completedCount++;
 
@@ -961,10 +1063,20 @@ export class NovelSourceValidator {
             invalid++;
           }
 
-          onProgress?.(completedCount, sourceIds.length, result);
+          if (onProgress !== undefined) {
+            try {
+              onProgress(completedCount, pendingSourceIds.length, result);
+            } catch (error) {
+              logger.warn(TAG, `校验进度回调失败: ${String(error)}`);
+            }
+          }
 
           if (showNotification) {
-            await this.sendProgressNotification(completedCount, sourceIds.length, valid, invalid);
+            try {
+              await this.sendProgressNotification(completedCount, pendingSourceIds.length, valid, invalid);
+            } catch (error) {
+              logger.warn(TAG, `发送校验进度通知失败: ${String(error)}`);
+            }
           }
 
           // 主动让出事件循环，避免并发校验导致主线程长期饥饿
@@ -980,21 +1092,44 @@ export class NovelSourceValidator {
       }
       await Promise.all(workers);
 
-      if (this.shouldCancel) {
+      if (batchToken.isCancelled()) {
         logger.info(TAG, '校验已取消');
         if (showNotification) {
-          await this.notificationManager.sendValidationCancelledNotification(
-            this.currentValidationTaskId,
-            completedCount,
-            sourceIds.length
+          try {
+            await this.notificationManager.sendValidationCancelledNotification(
+              taskId,
+              completedCount,
+              pendingSourceIds.length
+            );
+          } catch (error) {
+            logger.warn(TAG, `发送校验取消通知失败: ${String(error)}`);
+          }
+        }
+      } else if (showNotification) {
+        try {
+          await this.notificationManager.sendValidationCompleteNotification(
+            taskId,
+            pendingSourceIds.length,
+            valid,
+            invalid
           );
+        } catch (error) {
+          logger.warn(TAG, `发送校验完成通知失败: ${String(error)}`);
         }
       }
     } finally {
-      this.isValidating = false;
-      // 校验完成（无论正常结束还是异常）后停止后台长时任务
-      if (this.context) {
-        await BackgroundTaskHelper.stopDataTransferTask(this.context, this.currentValidationTaskId);
+      try {
+        if (backgroundTaskStarted && taskContext !== null) {
+          await BackgroundTaskHelper.stopDataTransferTask(taskContext, taskId);
+        }
+      } catch (error) {
+        logger.warn(TAG, `停止校验后台任务失败: ${String(error)}`);
+      } finally {
+        if (generation === this.validationGeneration) {
+          this.currentBatchToken = null;
+          this.activeSourceTokens.clear();
+          this.isValidating = false;
+        }
       }
     }
 
@@ -1006,25 +1141,15 @@ export class NovelSourceValidator {
     }
 
     const batchResult: BatchValidationResult = {
-      total: sourceIds.length,
+      total: pendingSourceIds.length,
       valid,
       invalid,
       results
     };
 
-    // 发送完成通知（如果没有被取消）
-    if (showNotification && !this.shouldCancel) {
-      await this.notificationManager.sendValidationCompleteNotification(
-        this.currentValidationTaskId,
-        sourceIds.length,
-        valid,
-        invalid
-      );
-    }
-
     logger.info(
       TAG,
-      `批量校验完成: ${valid}/${sourceIds.length} 有效, 并发数(请求/运行): ${validationConfig.concurrency}/${workerCount}`
+      `批量校验完成: ${valid}/${pendingSourceIds.length} 有效, 并发数(请求/运行): ${validationConfig.concurrency}/${workerCount}`
     );
     return batchResult;
   }
@@ -1032,8 +1157,10 @@ export class NovelSourceValidator {
   private async validateSourceById(
     sourceId: string,
     config: ValidationConfig,
-    autoUpdateGroups: boolean
+    autoUpdateGroups: boolean,
+    cancellationToken: LegadoExecutionCancellationToken
   ): Promise<SourceValidationResult> {
+    cancellationToken.throwIfCancelled();
     const source = this.sourceManager.getSource(sourceId);
     if (!source) {
       return {
@@ -1046,7 +1173,8 @@ export class NovelSourceValidator {
       };
     }
 
-    const result = await this.validateSource(source, config);
+    const result = await this.validateSource(source, config, cancellationToken);
+    this.throwIfBatchCancellation(cancellationToken);
 
     if (result.isValid) {
       if (autoUpdateGroups) {
@@ -1055,18 +1183,33 @@ export class NovelSourceValidator {
         } else {
           await this.updateSourceWarningGroups(source, result.errorGroups);
         }
+        this.throwIfBatchCancellation(cancellationToken);
       }
     } else {
       if (autoUpdateGroups) {
         await this.updateSourceErrorGroups(source, result.errorGroups);
+        this.throwIfBatchCancellation(cancellationToken);
       }
     }
 
     if (result.searchTime !== undefined) {
+      this.throwIfBatchCancellation(cancellationToken);
       await this.sourceManager.updateSourceRespondTime(sourceId, result.searchTime);
+      this.throwIfBatchCancellation(cancellationToken);
     }
 
     return result;
+  }
+
+  private isBatchCancellation(cancellationToken: LegadoExecutionCancellationToken): boolean {
+    return cancellationToken.isCancelled() &&
+      cancellationToken.getReason() === NovelSourceValidator.BATCH_CANCEL_REASON;
+  }
+
+  private throwIfBatchCancellation(cancellationToken: LegadoExecutionCancellationToken): void {
+    if (this.isBatchCancellation(cancellationToken)) {
+      cancellationToken.throwIfCancelled();
+    }
   }
   
   /**
@@ -1194,7 +1337,13 @@ export class NovelSourceValidator {
   cancelValidation(): void {
     if (this.isValidating) {
       this.shouldCancel = true;
-      logger.info(TAG, '请求取消校验');
+      if (this.currentBatchToken !== null) {
+        this.currentBatchToken.cancel(NovelSourceValidator.BATCH_CANCEL_REASON);
+      }
+      for (const sourceToken of this.activeSourceTokens.values()) {
+        sourceToken.cancel(NovelSourceValidator.BATCH_CANCEL_REASON);
+      }
+      logger.info(TAG, `请求取消校验，已通知 ${this.activeSourceTokens.size} 个活动 V2 任务`);
     }
   }
 
@@ -1258,14 +1407,12 @@ export class NovelSourceValidator {
     return this.normalizeValidationConcurrency(configured);
   }
 
-  /**
-   * 将LegadoSearchBook转换为LegadoBook
-   */
-  private searchBookToBook(searchBook: LegadoSearchBook): LegadoBook {
+  /** Converts the globally routed search result into the validation model. */
+  private searchResultToBook(source: LegadoBookSource, searchBook: NovelSearchResult): LegadoBook {
     const book: LegadoBook = {
-      id: `${searchBook.origin}_${searchBook.bookUrl}`,
-      origin: searchBook.origin,
-      originName: searchBook.originName,
+      id: `${source.bookSourceUrl}_${searchBook.bookUrl}`,
+      origin: source.bookSourceUrl,
+      originName: source.bookSourceName,
       bookUrl: searchBook.bookUrl,
       name: searchBook.name,
       author: searchBook.author,
@@ -1274,9 +1421,7 @@ export class NovelSourceValidator {
       coverUrl: searchBook.coverUrl,
       latestChapterTitle: searchBook.latestChapterTitle,
       wordCount: searchBook.wordCount,
-      type: searchBook.type,
-      variable: searchBook.variable,
-      infoHtml: searchBook.infoHtml
+      type: source.bookSourceType
     };
     return book;
   }

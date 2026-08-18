@@ -7,6 +7,10 @@ import {
   MangaReadFlowSnapshot,
   MangaReadFlowSummary
 } from './MangaReadFlowTypes';
+import {
+  getNetworkTransportFailureCoordinator,
+  NetworkTransportFailureCoordinator
+} from '../Network/NetworkTransportFailureCoordinator';
 
 const TAG = 'MangaReadFlowMonitor';
 
@@ -26,6 +30,8 @@ export class MangaReadFlowMonitor {
   private failedEvents: MangaReadFlowEvent[] = new Array<MangaReadFlowEvent>();
   private slowEvents: MangaReadFlowEvent[] = new Array<MangaReadFlowEvent>();
   private sequence: number = 0;
+  private transportFailureCoordinator: NetworkTransportFailureCoordinator =
+    getNetworkTransportFailureCoordinator();
 
   private constructor() {}
 
@@ -104,7 +110,6 @@ export class MangaReadFlowMonitor {
     }
     if (this.isFailureEvent(event)) {
       this.pushLimited(this.failedEvents, event, MangaReadFlowMonitor.MAX_FAILED_EVENTS);
-      this.logFailureEvent(event);
     }
 
     this.pushLimited(this.recentEvents, event, MangaReadFlowMonitor.MAX_RECENT_EVENTS);
@@ -248,7 +253,12 @@ export class MangaReadFlowMonitor {
     } else if (logSeverity === MangaReadFlowSeverity.WARN) {
       logger.warn(TAG, text);
     } else if (logSeverity === MangaReadFlowSeverity.ERROR) {
-      logger.error(TAG, text);
+      const errorText: string = event.errorMessage.length > 0 ? `${text}, error=${event.errorMessage}` : text;
+      if (this.transportFailureCoordinator.isRecognizedFailureMessage(event.errorMessage)) {
+        logger.warn(TAG, `阅读资产传输失败（已聚合）: ${errorText}`);
+      } else {
+        logger.error(TAG, errorText);
+      }
     } else {
       logger.info(TAG, text);
     }
@@ -259,10 +269,6 @@ export class MangaReadFlowMonitor {
 
   private logSlowEvent(event: MangaReadFlowEvent): void {
     logger.warn(TAG, `阅读流程慢事件: ${this.describeEvent(event)}, elapsed=${event.elapsedMs}ms`);
-  }
-
-  private logFailureEvent(event: MangaReadFlowEvent): void {
-    logger.error(TAG, `阅读流程失败事件: ${this.describeEvent(event)}, error=${event.errorMessage}`);
   }
 
   private describeEvent(event: MangaReadFlowEvent): string {

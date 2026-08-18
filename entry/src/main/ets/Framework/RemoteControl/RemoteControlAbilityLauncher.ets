@@ -78,3 +78,30 @@ export function openRemoteControlInIsolatedAbility(
 
   return true;
 }
+
+/**
+ * 用 Ability 上下文直接启动独立遥控器实例（无 UI 页面上下文场景使用，
+ * 如接续成功后源端自动拉起遥控器：此时阅读器 Ability 即将被系统迁移销毁）。
+ * 启动失败时回调 onLaunchFailed，由调用方决定重试或回退。
+ */
+export function openRemoteControlInIsolatedAbilityFromContext(
+  abilityContext: common.UIAbilityContext,
+  params: ContinuationTriggeredPayload,
+  sourceTag: string,
+  onLaunchFailed?: () => void
+): void {
+  const store = RemoteControlAbilityParamStore.getInstance();
+  const instanceId = store.register(params);
+  AppStorage.setOrCreate(REMOTE_CONTROL_ABILITY_REFRESH_TRIGGER_KEY, Date.now());
+  const want = buildRemoteControlWant(instanceId);
+
+  abilityContext.startAbility(want).then((): void => {
+    logger.info(TAG, `已启动独立遥控器实例: source=${sourceTag}, instanceId=${instanceId}, sessionId=${params.sessionId}`);
+  }).catch((error: Object | string | number | boolean): void => {
+    store.remove(instanceId);
+    logger.error(TAG, `独立遥控器启动失败: source=${sourceTag}, instanceId=${instanceId}, reason=${String(error)}`);
+    if (onLaunchFailed) {
+      onLaunchFailed();
+    }
+  });
+}

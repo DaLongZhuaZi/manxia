@@ -23,6 +23,7 @@ import { SuwayomiImage } from '../components/SuwayomiImage';
 import { AppGuideOverlay, GuideHighlightRect } from '../Framework/Components/AppGuideOverlay';
 import { resolveGuideHighlightRectInRoot } from '../Framework/Components/AppGuideSupport';
 import { AppGuideManager, AppGuidePageId, AppGuideStep } from '../Framework/Managers/AppGuideManager';
+import { BasicDataSource } from '../Utils/BasicDataSource';
 
 const TAG = 'SuwayomiBrowsePage';
 const TITLE_BAR_HEIGHT: number = 56;
@@ -78,7 +79,7 @@ export struct SuwayomiBrowsePage {
 
   // 缓存图片路径映射
   @State coverCachePaths: Map<string, string> = new Map();
-  @State sourceIconCachePaths: Map<string, string> = new Map();
+  @State filteredSourceCount: number = 0;
 
   // 图源管理
   @State pinnedSourceIds: string[] = [];
@@ -94,10 +95,17 @@ export struct SuwayomiBrowsePage {
   private executor: SuwayomiSourceExecutor = getSuwayomiSourceExecutor();
   private readonly PREFS_NAME = 'suwayomi_browse_prefs';
   private appGuideManager: AppGuideManager = AppGuideManager.getInstance();
+  private sourceListDataSource: BasicDataSource<SuwayomiExtensionSource> =
+    new BasicDataSource<SuwayomiExtensionSource>();
+  private sourceIconCacheEpoch: number = 0;
 
   aboutToAppear(): void {
     this.initialize();
     void this.refreshPageGuide('aboutToAppear');
+  }
+
+  aboutToDisappear(): void {
+    this.sourceIconCacheEpoch += 1;
   }
 
   private resolveGuideHighlightRect(anchorId?: string, borderRadius: number = 18): GuideHighlightRect | null {
@@ -311,8 +319,8 @@ export struct SuwayomiBrowsePage {
     try {
       this.sources = await this.executor.getAvailableSources();
       this.extractAvailableLanguages();
-      // 预加载图源图标缓存
-      this.cacheSourceIcons();
+      this.syncFilteredSources('refresh');
+      this.scheduleSourceIconCaching();
       this.showToast('刷新成功');
     } catch (error) {
       logger.error(TAG, `刷新图源失败: ${error}`);
@@ -347,41 +355,6 @@ export struct SuwayomiBrowsePage {
             }
           }).catch((error: Object | string | number | boolean) => {
             logger.warn(TAG, `封面缓存异常: mangaId=${manga.id}, error=${String(error)}`);
-          });
-        }
-      }
-    }
-  }
-
-  /**
-   * 缓存图源图标
-   */
-  private async cacheSourceIcons(): Promise<void> {
-    if (!DownloadDirManager.isReady()) {
-      return;
-    }
-    const headers = this.executor.getImageHeaders();
-    for (const source of this.sources) {
-      if (source.iconUrl && !this.sourceIconCachePaths.has(source.id)) {
-        const fullIconUrl = this.resolveSuwayomiAssetUrl(source.iconUrl);
-        if (!fullIconUrl) {
-          continue;
-        }
-        // 检查是否已缓存
-        const cachedPath = SuwayomiCacheManager.getCachedSourceIconPath(source.id, fullIconUrl);
-        if (cachedPath) {
-          this.sourceIconCachePaths.set(source.id, cachedPath);
-        } else {
-          // 异步缓存
-          SuwayomiCacheManager.cacheSourceIcon(source.id, fullIconUrl, headers).then((path) => {
-            if (path) {
-              this.sourceIconCachePaths.set(source.id, path);
-              this.sourceIconCachePaths = new Map(this.sourceIconCachePaths); // 触发UI更新
-            } else {
-              logger.warn(TAG, `图标缓存失败: sourceId=${source.id}, iconUrl=${fullIconUrl.substring(0, 120)}`);
-            }
-          }).catch((error: Object | string | number | boolean) => {
-            logger.warn(TAG, `图标缓存异常: sourceId=${source.id}, error=${String(error)}`);
           });
         }
       }
@@ -450,14 +423,47 @@ export struct SuwayomiBrowsePage {
    * 获取图源图标显示路径（优先使用缓存）
    */
   private getSourceIconUrl(source: SuwayomiExtensionSource): string {
-    const cachedPath = this.sourceIconCachePaths.get(source.id);
-    if (cachedPath) {
-      return `file://${cachedPath}`;
-    }
     if (source.iconUrl) {
-      return this.resolveSuwayomiAssetUrl(source.iconUrl);
+      const fullIconUrl = this.resolveSuwayomiAssetUrl(source.iconUrl);
+      const cachedPath = SuwayomiCacheManager.getCachedSourceIconPath(source.id, fullIconUrl);
+      return cachedPath ? `file://${cachedPath}` : fullIconUrl;
     }
     return '';
+  }
+
+  private scheduleSourceIconCaching(): void {
+    this.sourceIconCacheEpoch += 1;
+    const cacheEpoch = this.sourceIconCacheEpoch;
+    void this.cacheSourceIconsSequentially(cacheEpoch);
+  }
+
+  private async cacheSourceIconsSequentially(cacheEpoch: number): Promise<void> {
+    if (!DownloadDirManager.isReady()) {
+      return;
+    }
+    const headers = this.executor.getImageHeaders();
+    const sources = this.sources.concat();
+    let cachedCount = 0;
+    for (const source of sources) {
+      if (cacheEpoch !== this.sourceIconCacheEpoch) {
+        return;
+      }
+      if (!source.iconUrl) {
+        continue;
+      }
+      const fullIconUrl = this.resolveSuwayomiAssetUrl(source.iconUrl);
+      if (!fullIconUrl || SuwayomiCacheManager.getCachedSourceIconPath(source.id, fullIconUrl)) {
+        continue;
+      }
+      const cachedPath = await SuwayomiCacheManager.cacheSourceIcon(source.id, fullIconUrl, headers);
+      if (cacheEpoch !== this.sourceIconCacheEpoch) {
+        return;
+      }
+      if (cachedPath) {
+        cachedCount += 1;
+      }
+    }
+    logger.debug(TAG, `图源图标串行缓存完成: cached=${cachedCount}, total=${sources.length}`);
   }
 
   private async loadLibraryPaginated(reset: boolean = false): Promise<void> {
@@ -518,8 +524,8 @@ export struct SuwayomiBrowsePage {
       this.sources = await this.executor.getAvailableSources();
       // 提取可用语言
       this.extractAvailableLanguages();
-      // 缓存图源图标
-      this.cacheSourceIcons();
+      this.syncFilteredSources('load');
+      this.scheduleSourceIconCaching();
       logger.info(TAG, `加载源: ${this.sources.length} 个, 语言: ${this.availableLanguages.length} 种`);
     } catch (error) {
       logger.error(TAG, `加载源失败: ${error}`);
@@ -576,6 +582,13 @@ export struct SuwayomiBrowsePage {
     });
   }
 
+  private syncFilteredSources(reason: string): void {
+    const filteredSources = this.getFilteredSources();
+    this.sourceListDataSource.setData(filteredSources);
+    this.filteredSourceCount = filteredSources.length;
+    logger.debug(TAG, `刷新图源惰性列表: reason=${reason}, count=${filteredSources.length}`);
+  }
+
   private togglePinSource(sourceId: string): void {
     const index = this.pinnedSourceIds.indexOf(sourceId);
     if (index >= 0) {
@@ -584,6 +597,7 @@ export struct SuwayomiBrowsePage {
       this.pinnedSourceIds.push(sourceId);
     }
     this.pinnedSourceIds = [...this.pinnedSourceIds]; // 触发更新
+    this.syncFilteredSources('pin');
     this.savePreferences();
   }
 
@@ -960,6 +974,9 @@ export struct SuwayomiBrowsePage {
         .searchButton('搜索')
         .onChange((value: string) => {
           this.searchQuery = value;
+          if (this.browseMode === 'sources') {
+            this.syncFilteredSources('search');
+          }
         })
         .onSubmit(() => {
           if (this.browseMode === 'library') {
@@ -1015,6 +1032,7 @@ export struct SuwayomiBrowsePage {
             .fontFamily(this.appFontFamily)
             .onClick(() => {
               this.selectedLanguage = 'all';
+              this.syncFilteredSources('language');
               this.savePreferences();
             })
 
@@ -1032,6 +1050,7 @@ export struct SuwayomiBrowsePage {
               .fontFamily(this.appFontFamily)
               .onClick(() => {
                 this.selectedLanguage = lang;
+                this.syncFilteredSources('language');
                 this.savePreferences();
               })
           })
@@ -1170,7 +1189,7 @@ export struct SuwayomiBrowsePage {
               .padding({ left: 16, right: 16, bottom: 8 })
               .fontFamily(this.appFontFamily)
           } else if (this.browseMode === 'sources') {
-            Text(`共 ${this.getFilteredSources().length} 个图源`)
+            Text(`共 ${this.filteredSourceCount} 个图源`)
               .fontSize(12)
               .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_muted', this.themeState.currentTheme))
               .padding({ left: 16, right: 16, bottom: 8 })
@@ -1214,7 +1233,7 @@ export struct SuwayomiBrowsePage {
             .expandSafeArea([SafeAreaType.SYSTEM], [SafeAreaEdge.TOP, SafeAreaEdge.BOTTOM])
           } else if (this.browseMode === 'sources') {
             // 源列表
-            if (this.getFilteredSources().length === 0) {
+            if (this.filteredSourceCount === 0) {
               Column() {
                 Text('暂无图源')
                   .fontSize(14)
@@ -1228,30 +1247,23 @@ export struct SuwayomiBrowsePage {
             } else if (this.displayMode === 'grid') {
               // Grid模式
               Refresh({ refreshing: this.isRefreshing }) {
-                Scroll() {
-                  Column() {
-                    Grid() {
-                      ForEach(this.getFilteredSources(), (source: SuwayomiExtensionSource) => {
-                        GridItem() {
-                          this.buildSourceGridItem(source)
-                        }
-                      })
+                Grid() {
+                  LazyForEach(this.sourceListDataSource, (source: SuwayomiExtensionSource) => {
+                    GridItem() {
+                      this.buildSourceGridItem(source)
                     }
-                    .columnsTemplate('1fr 1fr 1fr 1fr')
-                    .columnsGap(8)
-                    .rowsGap(8)
-                    .width('100%')
-
-                    Blank().height(80)
-                  }
-                  .width('100%')
-                  .padding(16)
+                  }, (source: SuwayomiExtensionSource) => source.id)
                 }
+                .columnsTemplate('1fr 1fr 1fr 1fr')
+                .columnsGap(8)
+                .rowsGap(8)
+                .cachedCount(12)
                 .width('100%')
                 .height('100%')
+                .padding({ left: 16, right: 16, top: 16, bottom: 96 })
               }
               .onRefreshing(() => {
-                this.refreshSources();
+                void this.refreshSources();
               })
               .width('100%')
               .layoutWeight(1)
@@ -1259,21 +1271,20 @@ export struct SuwayomiBrowsePage {
             } else {
               // List模式
               Refresh({ refreshing: this.isRefreshing }) {
-                Scroll() {
-                  Column({ space: 8 }) {
-                    ForEach(this.getFilteredSources(), (source: SuwayomiExtensionSource) => {
+                List({ space: 8 }) {
+                  LazyForEach(this.sourceListDataSource, (source: SuwayomiExtensionSource) => {
+                    ListItem() {
                       this.buildSourceItem(source)
-                    })
-                    Blank().height(80)
-                  }
-                  .width('100%')
-                  .padding(16)
+                    }
+                  }, (source: SuwayomiExtensionSource) => source.id)
                 }
                 .width('100%')
                 .height('100%')
+                .cachedCount(8)
+                .padding({ left: 16, right: 16, top: 16, bottom: 96 })
               }
               .onRefreshing(() => {
-                this.refreshSources();
+                void this.refreshSources();
               })
               .width('100%')
               .layoutWeight(1)

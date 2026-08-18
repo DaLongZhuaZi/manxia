@@ -527,7 +527,8 @@ export struct ErrorManagementSubPage {
       crashLogsDir = `${filesDir}/crash_logs`;
     }
     const downloadDirManager = DownloadDirManager.getInstance();
-    const downloadLogsDir = downloadDirManager.isReady() ? `${downloadDirManager.getPath()}/logs` : '';
+    const downloadRoot = downloadDirManager.isReady() ? downloadDirManager.getManagedRootPath(false) : '';
+    const downloadLogsDir = downloadRoot.length > 0 ? `${downloadRoot}/logs` : '';
     const dirs: KnownLogDirs = new KnownLogDirs();
     dirs.errorLogsDir = errorLogsDir;
     dirs.crashLogsDir = crashLogsDir;

@@ -1,6 +1,8 @@
 import { AbilityConstant, UIAbility, Want } from '@kit.AbilityKit';
 import { window } from '@kit.ArkUI';
 import { logger } from './Utils/Logger';
+import { DataInitializer } from './Framework/Initialization/DataInitializer';
+import { SettingsManager } from './Framework/Managers/SettingsManager';
 import {
   EXTERNAL_FILE_TASK_ABILITY_INSTANCE_ID_KEY,
   EXTERNAL_FILE_TASK_ABILITY_PAGE
@@ -54,6 +56,34 @@ export default class ExternalFileTaskAbility extends UIAbility {
 
     const localStorage = new LocalStorage();
     localStorage.setOrCreate<string>(EXTERNAL_FILE_TASK_ABILITY_INSTANCE_ID_KEY, this.instanceId);
+
+    void this.prepareFeatureGateAndLoadContent(windowStage, localStorage);
+  }
+
+  /**
+   * An external file may launch this Ability without first bringing the entry
+   * Ability to foreground.  In that path AppStorage has not yet been hydrated
+   * from persisted settings, which would incorrectly hide the book-source
+   * choice from a user who already enabled it.  Synchronize settings before
+   * constructing the page so its StorageLink observes the persisted value on
+   * its first render.
+   */
+  private async prepareFeatureGateAndLoadContent(
+    windowStage: window.WindowStage,
+    localStorage: LocalStorage
+  ): Promise<void> {
+    try {
+      await DataInitializer.getInstance().initialize(this.context);
+      const settingsManager = SettingsManager.getInstance();
+      await settingsManager.initialize();
+      settingsManager.syncToAppStorage();
+      logger.info(TAG, '外部文件任务已同步持久化功能开关');
+    } catch (error) {
+      // Do not leave an external-file task on a blank window when optional
+      // settings hydration fails. The page retains its explicit fallback
+      // surface and the failure remains visible in the ability log.
+      logger.warn(TAG, `外部文件任务同步功能开关失败: ${String(error)}`);
+    }
 
     windowStage.loadContent(EXTERNAL_FILE_TASK_ABILITY_PAGE, localStorage, (err) => {
       if (err && err.code !== 0) {

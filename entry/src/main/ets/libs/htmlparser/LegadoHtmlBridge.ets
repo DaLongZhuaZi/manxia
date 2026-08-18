@@ -62,7 +62,8 @@ export class LegadoHtmlBridge {
    */
   querySelector(selector: string): HTMLElement | null {
     if (!this.root) return null;
-    return this.root.querySelector(selector);
+    const elements = this.root.select(selector);
+    return elements.length > 0 ? elements[0] : null;
   }
 
   /**
@@ -70,7 +71,7 @@ export class LegadoHtmlBridge {
    */
   querySelectorAll(selector: string): HTMLElement[] {
     if (!this.root) return [];
-    return this.root.querySelectorAll(selector);
+    return this.root.select(selector);
   }
 
   /**
@@ -82,14 +83,14 @@ export class LegadoHtmlBridge {
 
     if (rule.startsWith('class.')) {
       const className = rule.substring(6);
-      return this.root.querySelectorAll(`.${className}`);
+      return this.root.select(`.${className}`);
     } else if (rule.startsWith('id.')) {
       const idName = rule.substring(3);
-      const elem = this.root.querySelector(`#${idName}`);
+      const elem = this.root.select(`#${idName}`)[0];
       return elem ? [elem] : [];
     } else if (rule.startsWith('tag.')) {
       const tagName = rule.substring(4);
-      return this.root.getElementsByTagName(tagName);
+      return this.root.select(tagName);
     } else if (rule.startsWith('text.')) {
       const searchText = rule.substring(5);
       return this.findByText(searchText);
@@ -103,17 +104,7 @@ export class LegadoHtmlBridge {
    */
   private findByText(searchText: string): HTMLElement[] {
     if (!this.root) return [];
-    
-    const results: HTMLElement[] = [];
-    const allElements = this.root.getElementsByTagName('*');
-    
-    for (const elem of allElements) {
-      if (elem.text.includes(searchText)) {
-        results.push(elem);
-      }
-    }
-    
-    return results;
+    return this.findByTextInContext(this.root, searchText);
   }
 
   /**
@@ -192,19 +183,19 @@ export class LegadoHtmlBridge {
       results = context.children;
     } else if (selector.startsWith('class.')) {
       const className = selector.substring(6);
-      results = context.querySelectorAll(`.${className}`);
+      results = context.select(`.${className}`);
     } else if (selector.startsWith('id.')) {
       const idName = selector.substring(3);
-      const elem = context.querySelector(`#${idName}`);
+      const elem = context.select(`#${idName}`)[0];
       results = elem ? [elem] : [];
     } else if (selector.startsWith('tag.')) {
       const tagName = selector.substring(4);
-      results = context.querySelectorAll(tagName);
+      results = context.select(tagName);
     } else if (selector.startsWith('text.')) {
       const searchText = selector.substring(5);
       results = this.findByTextInContext(context, searchText);
     } else {
-      results = context.querySelectorAll(selector);
+      results = context.select(selector);
     }
 
     if (indexResult.hasIndex) {
@@ -219,10 +210,13 @@ export class LegadoHtmlBridge {
    */
   private findByTextInContext(context: HTMLElement, searchText: string): HTMLElement[] {
     const results: HTMLElement[] = [];
-    const allElements = context.getElementsByTagName('*');
+    // AnalyzeByJSoup maps text.xxx to Jsoup getElementsContainingOwnText.
+    // Use the Jsoup-style selection entry so a normal context element is a
+    // candidate, while the parser's synthetic Document root remains hidden.
+    const allElements = context.select('*');
     
     for (const elem of allElements) {
-      if (elem.text.includes(searchText)) {
+      if (elem.ownText.includes(searchText)) {
         results.push(elem);
       }
     }
@@ -278,17 +272,30 @@ export class LegadoHtmlBridge {
 
     switch (lowerAttr) {
       case 'text':
-      case 'textnodes':
-      case 'owntext':
         return elem.text;
+      case 'textnodes':
+        return elem.textNodes;
+      case 'owntext':
+        return elem.ownText;
       case 'html':
+        // AnalyzeByJSoup returns Elements.outerHtml() for @html after it has
+        // removed script/style nodes. Returning innerHTML loses the selected
+        // block wrapper, which is observable to HtmlFormatter as the missing
+        // leading reader indent.
+        return this.removeScriptAndStyleElements(elem.outerHTML);
       case 'all':
-        return elem.innerHTML;
+        return elem.outerHTML;
       case 'outerhtml':
         return elem.outerHTML;
       default:
         return elem.getAttribute(lowerAttr) || '';
     }
+  }
+
+  private removeScriptAndStyleElements(html: string): string {
+    return html
+      .replace(/<script[^>]*>[\s\S]*?<\/script>/gi, '')
+      .replace(/<style[^>]*>[\s\S]*?<\/style>/gi, '');
   }
 
   /**

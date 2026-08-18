@@ -1036,12 +1036,8 @@ export const MIGRATION_SCRIPTS: Record<number, string[]> = {
     'CREATE INDEX IF NOT EXISTS idx_chapter_external ON chapter (externalId, comicId)'
   ],
   5: [
-    // 版本5的升级脚本：重建表以确保externalId为NOT NULL
-    // 注意：这会清空现有数据，仅用于开发阶段
-    'DROP TABLE IF EXISTS page',
-    'DROP TABLE IF EXISTS chapter',
-    'DROP TABLE IF EXISTS comic_info',
-    // 表会通过CREATE_TABLE_SQL重新创建
+    // 版本5不再重建表。历史实现会删除阅读数据，当前表创建与
+    // ADD COLUMN 幂等迁移已经能够补齐 externalId，升级必须保留用户数据。
   ],
   6: [
     // 版本6的升级脚本：添加webUrl和apiUrl字段

@@ -153,6 +153,10 @@ export interface NovelSearchHistoryTable {
  */
 interface NovelCreateTableSql {
   NOVEL_SOURCE: string;
+  NOVEL_SOURCE_COMPATIBILITY: string;
+  NOVEL_SOURCE_COMPATIBILITY_VERIFICATION: string;
+  NOVEL_SOURCE_COMPATIBILITY_TRACE: string;
+  NOVEL_SOURCE_COMPATIBILITY_TRACE_WORKFLOW: string;
   NOVEL_BOOK: string;
   NOVEL_CHAPTER: string;
   NOVEL_CONTENT_CACHE: string;
@@ -187,6 +191,102 @@ export const NOVEL_CREATE_TABLE_SQL: NovelCreateTableSql = {
       isNSFW INTEGER DEFAULT 0,
       createTime INTEGER NOT NULL,
       updateTime INTEGER NOT NULL
+    )
+  `,
+
+  /** V2 raw import and compiler evidence, isolated from legacy configJson. */
+  NOVEL_SOURCE_COMPATIBILITY: `
+    CREATE TABLE IF NOT EXISTS novel_source_compatibility (
+      sourceUrl TEXT PRIMARY KEY,
+      rawJson TEXT NOT NULL,
+      rawSha256 TEXT NOT NULL,
+      compilerVersion INTEGER NOT NULL,
+      compileStatus TEXT NOT NULL,
+      engineMode TEXT NOT NULL,
+      capabilityJson TEXT NOT NULL,
+      diagnosticsJson TEXT NOT NULL,
+      compiledAt INTEGER NOT NULL,
+      updateTime INTEGER NOT NULL
+    )
+  `,
+
+  /**
+   * Verification evidence is isolated so an import/compiler migration can be
+   * rolled back by deleting this table without changing legacy source rows.
+   */
+  NOVEL_SOURCE_COMPATIBILITY_VERIFICATION: `
+    CREATE TABLE IF NOT EXISTS novel_source_compatibility_verification (
+      sourceUrl TEXT PRIMARY KEY,
+      rawSha256 TEXT NOT NULL,
+      workflows TEXT NOT NULL,
+      evidenceDigest TEXT NOT NULL,
+      verifiedAt INTEGER NOT NULL,
+      updateTime INTEGER NOT NULL
+    )
+  `,
+
+  /**
+   * Latest V2 user-path evidence per source. Only redacted, hash-bound
+   * summary fields are persisted; raw trace payloads never enter this table.
+   */
+  NOVEL_SOURCE_COMPATIBILITY_TRACE: `
+    CREATE TABLE IF NOT EXISTS novel_source_compatibility_trace (
+      sourceUrl TEXT PRIMARY KEY,
+      rawSha256 TEXT NOT NULL,
+      workflow TEXT NOT NULL,
+      transport TEXT NOT NULL,
+      statusCode INTEGER NOT NULL,
+      finalUrlObservation TEXT NOT NULL,
+      errorCode TEXT NOT NULL,
+      outputSummary TEXT NOT NULL,
+      optionCount INTEGER NOT NULL,
+      variableCount INTEGER NOT NULL,
+      requestTargetSha256 TEXT NOT NULL DEFAULT '',
+      requestUserAgentSha256 TEXT NOT NULL DEFAULT '',
+      responseContentType TEXT NOT NULL DEFAULT '',
+      redirectCount INTEGER NOT NULL DEFAULT 0,
+      contentDiagnosticStatus TEXT NOT NULL DEFAULT '',
+      contentCharacterCount INTEGER NOT NULL DEFAULT 0,
+      contentBridgeStatus TEXT NOT NULL DEFAULT '',
+      contentBridgeCharacterCount INTEGER NOT NULL DEFAULT 0,
+      contentBridgeFingerprint TEXT NOT NULL DEFAULT '',
+      contentFingerprint TEXT NOT NULL DEFAULT '',
+      occurredAt INTEGER NOT NULL,
+      updateTime INTEGER NOT NULL
+    )
+  `,
+
+  /**
+   * Latest redacted V2 evidence for every workflow of a source.  The legacy
+   * single-row trace table above remains as a backward-compatible "latest
+   * activity" projection; this table is the restart-safe proof used by the
+   * full-cutover user-path gate.
+   */
+  NOVEL_SOURCE_COMPATIBILITY_TRACE_WORKFLOW: `
+    CREATE TABLE IF NOT EXISTS novel_source_compatibility_trace_workflow (
+      sourceUrl TEXT NOT NULL,
+      rawSha256 TEXT NOT NULL,
+      workflow TEXT NOT NULL,
+      transport TEXT NOT NULL,
+      statusCode INTEGER NOT NULL,
+      finalUrlObservation TEXT NOT NULL,
+      errorCode TEXT NOT NULL,
+      outputSummary TEXT NOT NULL,
+      optionCount INTEGER NOT NULL,
+      variableCount INTEGER NOT NULL,
+      requestTargetSha256 TEXT NOT NULL DEFAULT '',
+      requestUserAgentSha256 TEXT NOT NULL DEFAULT '',
+      responseContentType TEXT NOT NULL DEFAULT '',
+      redirectCount INTEGER NOT NULL DEFAULT 0,
+      contentDiagnosticStatus TEXT NOT NULL DEFAULT '',
+      contentCharacterCount INTEGER NOT NULL DEFAULT 0,
+      contentBridgeStatus TEXT NOT NULL DEFAULT '',
+      contentBridgeCharacterCount INTEGER NOT NULL DEFAULT 0,
+      contentBridgeFingerprint TEXT NOT NULL DEFAULT '',
+      contentFingerprint TEXT NOT NULL DEFAULT '',
+      occurredAt INTEGER NOT NULL,
+      updateTime INTEGER NOT NULL,
+      PRIMARY KEY (sourceUrl, workflow)
     )
   `,
 
@@ -389,6 +489,9 @@ export const NOVEL_CREATE_INDEX_SQL = [
   'CREATE INDEX IF NOT EXISTS idx_novel_source_name ON novel_source(bookSourceName)',
   'CREATE INDEX IF NOT EXISTS idx_novel_source_group ON novel_source(bookSourceGroup)',
   'CREATE INDEX IF NOT EXISTS idx_novel_source_enabled ON novel_source(enabled)',
+  'CREATE INDEX IF NOT EXISTS idx_novel_source_compat_status ON novel_source_compatibility(compileStatus)',
+  'CREATE INDEX IF NOT EXISTS idx_novel_source_compat_trace_time ON novel_source_compatibility_trace(updateTime)',
+  'CREATE INDEX IF NOT EXISTS idx_novel_source_compat_trace_workflow_time ON novel_source_compatibility_trace_workflow(updateTime)',
   
   // 书籍索引
   'CREATE INDEX IF NOT EXISTS idx_novel_book_source ON novel_book(sourceId)',

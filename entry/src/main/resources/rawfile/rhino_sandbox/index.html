@@ -17,6 +17,10 @@
     <div id="status">Rhino Sandbox: Initializing...</div>
     <div id="console"></div>
     
+    <!-- 固定 Jsoup 1.16.2 实体数据必须先于所有解析器加载。 -->
+    <script src="jsoup_entity_data.js"></script>
+    <script src="jsoup_entity_decoder.js"></script>
+
     <!-- Jsoup纯JS实现（DOM解析） -->
     <script src="jsoup_impl.js"></script>
     

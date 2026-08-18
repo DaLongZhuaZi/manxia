@@ -105,6 +105,41 @@ export interface LegadoBookInfoRule {
 }
 
 /**
+ * A completed URL-option expression carried between Legado workflows.
+ *
+ * `identityUrl` is the URL used for book identity and cache keys. The
+ * `requestUrlTemplate` is retained only in memory until the request-owning
+ * workflow invokes AnalyzeUrl, so method/header/body/cookie/charset and
+ * WebView options are not evaluated during Search or Explore. This type must
+ * never be persisted or written to user-facing traces.
+ */
+export class LegadoRequestCarrier {
+  readonly sourceUrl: string;
+  readonly identityUrl: string;
+  readonly requestUrlTemplate: string;
+  readonly originWorkflow: string;
+  readonly createdAt: number;
+
+  constructor(
+    sourceUrl: string,
+    identityUrl: string,
+    requestUrlTemplate: string,
+    originWorkflow: string,
+    createdAt: number = Date.now()
+  ) {
+    this.sourceUrl = sourceUrl;
+    this.identityUrl = identityUrl;
+    this.requestUrlTemplate = requestUrlTemplate;
+    this.originWorkflow = originWorkflow;
+    this.createdAt = createdAt;
+  }
+
+  hasDeferredOptions(): boolean {
+    return this.requestUrlTemplate.length > this.identityUrl.length;
+  }
+}
+
+/**
  * 目录规则
  */
 export interface LegadoTocRule {
@@ -214,8 +249,11 @@ export interface LegadoBookSource {
   bookSourceName: string;
   /** 书源分组 */
   bookSourceGroup?: string;
-  /** 书源类型 */
-  bookSourceType: LegadoBookSourceType;
+  /**
+   * 书源类型。0-3 为 Legado 内建类型；其他数字必须原样保留，交给
+   * 兼容层显式标记为外部/插件候选，不能静默降级成文本书源。
+   */
+  bookSourceType: number;
   /** 详情页URL正则 */
   bookUrlPattern?: string;
   /** 手动排序编号 */
@@ -284,6 +322,10 @@ export interface LegadoBook {
   originName: string;
   /** 书籍URL */
   bookUrl: string;
+  /** Internal-only carrier for a completed Legado URL option. */
+  requestUrlTemplate?: string;
+  /** Internal-only, in-memory request carrier. Never persist or log. */
+  requestCarrier?: LegadoRequestCarrier;
   /** 书名 */
   name: string;
   /** 浣滆€?*/
@@ -297,14 +339,24 @@ export interface LegadoBook {
   coverLocalPath?: string;
   /** 目录URL */
   tocUrl?: string;
+  /** Internal-only carrier for the completed tocUrl option. */
+  tocRequestUrlTemplate?: string;
+  /** Internal-only carrier for the completed tocUrl option. Never persist. */
+  tocRequestCarrier?: LegadoRequestCarrier;
   /** 鏈€鏂扮珷鑺?*/
   latestChapterTitle?: string;
   /** 字数 */
   wordCount?: string;
   /** 更新时间 */
   updateTime?: number;
-  /** 书源类型 */
-  type: LegadoBookSourceType;
+  /** 书源类型，保留外部类型的原始数值。 */
+  type: number;
+  /**
+   * Legado FILE sources terminate at BookInfo with a non-empty download URL
+   * list. Keep the parsed URLs on the book model instead of leaving them only
+   * on a transient executor result.
+   */
+  downloadUrls?: string[];
   /** 鑷畾涔夊彉閲?*/
   variable?: string;
   /** 目录HTML（缓存） */
@@ -327,6 +379,10 @@ export interface LegadoChapter {
   bookUrl: string;
   /** 章节URL */
   url: string;
+  /** Internal-only carrier for the completed chapter URL option. */
+  requestUrlTemplate?: string;
+  /** Internal-only, in-memory request carrier. Never persist or log. */
+  requestCarrier?: LegadoRequestCarrier;
   /** 章节标题 */
   title: string;
   /** 章节索引 */
@@ -355,6 +411,10 @@ export interface LegadoSearchBook {
   originName: string;
   /** 书籍URL */
   bookUrl: string;
+  /** Execution-only request carrier. Never expose or persist this value. */
+  requestUrlTemplate?: string;
+  /** Internal-only, in-memory request carrier. Never persist or log. */
+  requestCarrier?: LegadoRequestCarrier;
   /** 书名 */
   name: string;
   /** 浣滆€?*/
@@ -369,8 +429,8 @@ export interface LegadoSearchBook {
   latestChapterTitle?: string;
   /** 字数 */
   wordCount?: string;
-  /** 书源类型 */
-  type: LegadoBookSourceType;
+  /** 书源类型，保留外部类型的原始数值。 */
+  type: number;
   /** 详情HTML（缓存） */
   infoHtml?: string;
   /** 鑷畾涔夊彉閲?*/
@@ -415,6 +475,7 @@ export interface LegadoParsedRule {
  * URL选项
  */
 export type LegadoHeaderOption = string | Record<string, string>;
+export type LegadoUrlOptionBody = string | Object;
 
 export interface LegadoUrlOption {
   /** 请求方法 */
@@ -426,7 +487,7 @@ export interface LegadoUrlOption {
   /** Legado别名：请求头 */
   header?: LegadoHeaderOption;
   /** 璇锋眰浣?*/
-  body?: string;
+  body?: LegadoUrlOptionBody;
   /** Legado别名：请求体 */
   data?: string | Record<string, string>;
   /** 重试次数 */
@@ -481,6 +542,14 @@ export interface LegadoSourceImportResult {
   sourceName?: string;
   /** 错误信息 */
   error?: string;
+  /** 原始 JSON 是否已保存到 V2 兼容存储。 */
+  preserved?: boolean;
+  /** V2 分层状态，避免把“已导入”误解为“可阅读”。 */
+  compatibilityStatus?: string;
+  /** 当前执行内核选择。 */
+  engineMode?: string;
+  /** 可展示的结构化诊断摘要。 */
+  diagnostics?: string[];
 }
 
 /**

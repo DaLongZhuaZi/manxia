@@ -11,6 +11,8 @@ export struct SettingsImmersiveTitleActionButton {
   @Prop themeState: SettingsImmersiveThemeState;
   @Prop glyph: Resource;
   @Prop buttonEnabled: boolean = true;
+  @Prop accessibilityLabel: string = '';
+  @Prop actionId: string = '';
   tapHandler: () => void = () => {};
   @State private isPressed: boolean = false;
 
@@ -116,6 +118,8 @@ export struct SettingsImmersiveTitleActionButton {
     .width(SettingsPageTitleBarManager.BUTTON_SIZE)
     .height(SettingsPageTitleBarManager.BUTTON_SIZE)
     .borderRadius(999)
+    .id(this.actionId)
+    .accessibilityText(this.accessibilityLabel)
     .opacity(this.buttonEnabled ? 1 : 0.42)
     .shadow({
       radius: SettingsPageTitleBarManager.getButtonShadowRadius(this.isPressed),
@@ -267,6 +271,7 @@ export struct SettingsImmersiveTitleBar {
         }
           .width('100%')
           .height(44)
+          .id(`title_action_${action.id}`)
           .enabled(action.enabled === false ? false : true)
           .opacity(action.enabled === false ? 0.42 : 1)
           .backgroundColor(Color.Transparent)
@@ -407,6 +412,8 @@ export struct SettingsImmersiveTitleBar {
             SettingsImmersiveTitleActionButton({
               themeState: this.themeState,
               glyph: $r('sys.symbol.chevron_left'),
+              accessibilityLabel: '返回',
+              actionId: 'title_action_back',
               tapHandler: () => {
                 this.goBack();
               }
@@ -428,6 +435,8 @@ export struct SettingsImmersiveTitleBar {
                 themeState: this.themeState,
                 glyph: action.symbol,
                 buttonEnabled: action.enabled === false ? false : true,
+                accessibilityLabel: action.label ? action.label : action.id,
+                actionId: `title_action_${action.id}`,
                 tapHandler: action.onClick
               })
             }, (action: SettingsImmersiveTitleActionItem) => this.getActionRenderKey(action))
@@ -436,6 +445,7 @@ export struct SettingsImmersiveTitleBar {
               SettingsImmersiveTitleActionButton({
                 themeState: this.themeState,
                 glyph: $r('sys.symbol.more'),
+                accessibilityLabel: '更多操作',
                 tapHandler: () => {
                   this.showOverflowMenu = true;
                 }

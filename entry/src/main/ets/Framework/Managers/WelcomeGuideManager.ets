@@ -30,7 +30,8 @@ export enum GuideStep {
   ANALYTICS_PERMISSION = 6, // 通知权限与使用场景
   LIBRARY_INTRO = 7,     // 隐私书库与SFW模式说明
   REMOTE_LIBRARY_GUIDE = 8, // Suwayomi 与 Komga 远程书库引导
-  COMPLETED = 9          // 完成
+  COMPLETED = 9,         // 完成
+  DISTRIBUTED_PERMISSION = 10 // 「设备发现和连接」权限引导（跨设备接续阅读）；追加在尾部编号，避免与已持久化的历史步骤值冲突
 }
 
 export enum GuideFlowMode {
@@ -110,6 +111,8 @@ export class WelcomeGuideManager {
       case GuideStep.CUSTOM_EXPERIENCE:
         return GuideStep.ANALYTICS_PERMISSION;
       case GuideStep.ANALYTICS_PERMISSION:
+        return GuideStep.DISTRIBUTED_PERMISSION;
+      case GuideStep.DISTRIBUTED_PERMISSION:
         return GuideStep.LIBRARY_INTRO;
       case GuideStep.LIBRARY_INTRO:
         return GuideStep.COMPLETED;

@@ -8,7 +8,8 @@ import { MangaSourceEngine } from '../WebView/MangaSourceEngine';
 import { WebViewSourceManager } from '../WebView/WebViewSourceManager';
 import { DataManager } from '../Data/DataManager';
 import { ComicSourceDatabaseRecord } from '../Database/DatabaseTypes';
-import { ImageCacheManager, LoadOptions, RequestHeaderEntry, RequestHeaders } from '../Cache/ImageCacheManager';
+import { ImageCacheManager, LoadOptions, RequestHeaders } from '../Cache/ImageCacheManager';
+import { MangaRequestHeaderContract } from '../Reader/MangaRequestHeaderContract';
 import { PageInfo } from '../WebView/MangaSourceTypes';
 
 const TAG = 'ChapterPreloadManager';
@@ -463,87 +464,8 @@ export class ChapterPreloadManager {
     return normalized;
   }
 
-  private appendExtraRequestHeader(target: RequestHeaders, headerName: string, headerValue: string): void {
-    const normalizedName = headerName.trim();
-    const normalizedValue = headerValue.trim();
-    if (normalizedName.length === 0 || normalizedValue.length === 0) {
-      return;
-    }
-    if (!target.extraHeaders) {
-      target.extraHeaders = [];
-    }
-    let index = 0;
-    while (index < target.extraHeaders.length) {
-      const entry = target.extraHeaders[index];
-      if (entry.name.toLowerCase() === normalizedName.toLowerCase()) {
-        entry.value = normalizedValue;
-        return;
-      }
-      index = index + 1;
-    }
-    target.extraHeaders.push({
-      name: normalizedName,
-      value: normalizedValue
-    } as RequestHeaderEntry);
-  }
-
   private applyConfiguredRequestHeader(target: RequestHeaders, headerName: string, headerValue: string): void {
-    const normalizedName = headerName.trim().toLowerCase();
-    const normalizedValue = headerValue.trim();
-    if (normalizedName.length === 0 || normalizedValue.length === 0) {
-      return;
-    }
-    switch (normalizedName) {
-      case 'user-agent':
-      case 'useragent':
-        target.userAgent = normalizedValue;
-        return;
-      case 'referer':
-        target.referer = normalizedValue;
-        return;
-      case 'origin':
-        target.origin = normalizedValue;
-        return;
-      case 'accept':
-        target.accept = normalizedValue;
-        return;
-      case 'cookie':
-        target.cookie = normalizedValue;
-        return;
-      case 'authorization':
-        target.authorization = normalizedValue;
-        return;
-      case 'accept-language':
-      case 'acceptlanguage':
-        target.acceptLanguage = normalizedValue;
-        return;
-      case 'cache-control':
-      case 'cachecontrol':
-        target.cacheControl = normalizedValue;
-        return;
-      case 'pragma':
-        target.pragma = normalizedValue;
-        return;
-      case 'sec-fetch-dest':
-      case 'secfetchdest':
-        target.secFetchDest = normalizedValue;
-        return;
-      case 'sec-fetch-mode':
-      case 'secfetchmode':
-        target.secFetchMode = normalizedValue;
-        return;
-      case 'sec-fetch-site':
-      case 'secfetchsite':
-        target.secFetchSite = normalizedValue;
-        return;
-      case 'cache-partition':
-      case 'cachepartition':
-        target.cachePartition = normalizedValue;
-        return;
-      default:
-        this.appendExtraRequestHeader(target, headerName, normalizedValue);
-        return;
-    }
+    MangaRequestHeaderContract.apply(target, headerName, headerValue);
   }
 
   private applyHeaderCandidate(headerName: string, headerValue?: string): void {
@@ -657,7 +579,7 @@ export class ChapterPreloadManager {
       let index = 0;
       while (index < source.extraHeaders.length) {
         const entry = source.extraHeaders[index];
-        this.appendExtraRequestHeader(target, entry.name, entry.value);
+        MangaRequestHeaderContract.apply(target, entry.name, entry.value);
         index = index + 1;
       }
     }

@@ -1825,32 +1825,41 @@ export struct GlobalSearchPage {
       }
       // 在线小说（书源）
       else if (item.contentType === SearchContentType.NOVEL && item.onlineSourceType === OnlineSourceType.NOVEL_SOURCE && item.rawNovelSearch) {
+        const rawNovelSearch = item.rawNovelSearch;
+        if (rawNovelSearch === undefined) {
+          logger.warn(TAG, '在线小说搜索结果缺少原始书籍数据，无法打开详情');
+          return;
+        }
         const pageType = PageSettingsHelper.getNovelDetailPageType();
         if (pageType === DetailPageType.UNIFIED) {
           const unifiedParam: UnifiedDetailPageParams = {
             contentType: UnifiedContentType.NOVEL,
-            contentId: item.rawNovelSearch.bookUrl,
-            sourceId: item.rawNovelSearch.sourceId,
+            contentId: rawNovelSearch.bookUrl,
+            sourceId: rawNovelSearch.sourceId,
             sourceName: item.sourceName,
             cachedTitle: item.title,
             cachedCoverPath: this.getUnifiedDetailCachedCoverPath(item),
             cachedCover: this.getUnifiedDetailCachedCover(item),
-            cachedAuthor: item.author
+            cachedAuthor: item.author,
+            novelRequestCarrierKey: rawNovelSearch.requestCarrierKey,
+            novelBookVariable: rawNovelSearch.variable
           };
           stack.pushPath({ name: 'UnifiedDetailPage', param: unifiedParam });
         } else {
           const navParam: NovelDetailPageParams = { 
-            sourceId: item.rawNovelSearch.sourceId,
-            bookUrl: item.rawNovelSearch.bookUrl,
-            bookName: item.rawNovelSearch.name,
-            author: item.rawNovelSearch.author,
-            coverUrl: item.rawNovelSearch.coverUrl,
-            intro: item.rawNovelSearch.intro,
-            sourceName: item.rawNovelSearch.sourceName
+            sourceId: rawNovelSearch.sourceId,
+            bookUrl: rawNovelSearch.bookUrl,
+            bookName: rawNovelSearch.name,
+            author: rawNovelSearch.author,
+            coverUrl: rawNovelSearch.coverUrl,
+            intro: rawNovelSearch.intro,
+            sourceName: rawNovelSearch.sourceName,
+            requestCarrierKey: rawNovelSearch.requestCarrierKey,
+            bookVariable: rawNovelSearch.variable
           };
           stack.pushPath({ name: 'NovelDetailPage', param: navParam });
         }
-        logger.debug(TAG, `导航到在线小说详情页: ${item.rawNovelSearch.name}, pageType=${pageType}`);
+        logger.debug(TAG, `导航到在线小说详情页: ${rawNovelSearch.name}, pageType=${pageType}`);
       }
     } catch (error) {
       logger.error(TAG, `打开详情页失败: ${error}`);

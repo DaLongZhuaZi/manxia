@@ -71,6 +71,25 @@ import {
   HomeLoadFlowSummary
 } from '../main/ets/Framework/Home/HomeLoadFlowTypes';
 import { getHomeCoverFailureTtlCache, HomeCoverFailureTtlCache } from '../main/ets/Framework/Home/HomeCoverFailureTtlCache';
+import {
+  buildMangaImageRetryKey,
+  MangaImageRetryCoordinator,
+  MangaImageRetryDecision,
+  MangaImageRetryPhase
+} from '../main/ets/Framework/Reader/MangaImageRetryCoordinator';
+import {
+  buildMangaAssetRequestKey,
+  MangaAssetLoadReason,
+  MangaAssetLoadRequest,
+  MangaAssetRetryMode
+} from '../main/ets/Framework/Reader/MangaAssetTypes';
+import {
+  MangaAssetRequestContext,
+  MangaAssetRequestFactory
+} from '../main/ets/Framework/Reader/MangaAssetRequestFactory';
+import { ImageSourceType, MangaChapter, MangaPage } from '../main/ets/Models/MangaModels';
+import { MangaPageLoadResolver, MangaPageResolveContext } from '../main/ets/components/MangaPageLoadResolver';
+import { WebtoonPageRef } from '../main/ets/components/MangaWebtoonTypes';
 
 function createTestChapter(id: string, title: string, index: number): UnifiedChapter {
   const chapter: UnifiedChapter = {
@@ -84,6 +103,20 @@ function createTestChapter(id: string, title: string, index: number): UnifiedCha
     originalType: UnifiedContentType.NOVEL
   };
   return chapter;
+}
+
+function createMangaAssetTestPage(): MangaPage {
+  const page: MangaPage = {
+    id: 'page-1',
+    index: 0,
+    sourceType: ImageSourceType.LOCAL,
+    imagePath: '/data/page-1.jpg',
+    imageUrl: 'https://example.test/page-1.jpg',
+    localPath: '/data/page-1.jpg',
+    isLoaded: false,
+    priority: 1
+  };
+  return page;
 }
 
 function createTestRule(id: string, pattern: string, serialNumber: number): TxtTocRule {
@@ -616,6 +649,115 @@ export default function localUnitTest() {
       cache.clearKey('cover-b');
       expect(cache.shouldSkipBackground('cover-b', false, 2000)).assertFalse();
       cache.clear();
+    });
+
+    it('mangaImageRetryCoordinatorTransitionsToForceRefresh', 0, () => {
+      const coordinator: MangaImageRetryCoordinator = new MangaImageRetryCoordinator();
+      const key: string = buildMangaImageRetryKey('chapter-1', 'page-1');
+
+      const automatic: MangaImageRetryDecision = coordinator.recordFailure(key, 'initial failed');
+      expect(automatic.shouldRetry).assertTrue();
+      expect(automatic.automatic).assertTrue();
+      expect(automatic.retryMode).assertEqual(MangaAssetRetryMode.CACHE_FIRST);
+      expect(coordinator.isLoading(key)).assertTrue();
+
+      const terminalAfterAutomatic: MangaImageRetryDecision = coordinator.recordFailure(key, 'automatic failed');
+      expect(terminalAfterAutomatic.shouldRetry).assertFalse();
+      expect(terminalAfterAutomatic.showTerminalError).assertTrue();
+      expect(coordinator.getPhase(key)).assertEqual(MangaImageRetryPhase.TERMINAL);
+
+      const firstManual: MangaImageRetryDecision = coordinator.beginManualRetry(key);
+      expect(firstManual.retryMode).assertEqual(MangaAssetRetryMode.CACHE_FIRST);
+      expect(firstManual.attempt).assertEqual(1);
+      coordinator.recordFailure(key, 'manual cache failed');
+
+      const secondManual: MangaImageRetryDecision = coordinator.beginManualRetry(key);
+      expect(secondManual.retryMode).assertEqual(MangaAssetRetryMode.FORCE_REFRESH);
+      expect(secondManual.attempt).assertEqual(2);
+    });
+
+    it('mangaImageRetryCoordinatorResetsAndIsolatesPages', 0, () => {
+      const coordinator: MangaImageRetryCoordinator = new MangaImageRetryCoordinator();
+      const firstKey: string = buildMangaImageRetryKey('chapter-1', 'page-1');
+      const secondKey: string = buildMangaImageRetryKey('chapter-1', 'page-2');
+
+      coordinator.recordFailure(firstKey, 'first failed');
+      expect(coordinator.getPhase(secondKey)).assertEqual(MangaImageRetryPhase.IDLE);
+      const firstManual: MangaImageRetryDecision = coordinator.beginManualRetry(firstKey);
+      expect(firstManual.shouldRetry).assertFalse();
+
+      coordinator.markSuccess(firstKey);
+      expect(coordinator.getPhase(firstKey)).assertEqual(MangaImageRetryPhase.IDLE);
+      const automaticAfterSuccess: MangaImageRetryDecision = coordinator.recordFailure(firstKey, 'failed again');
+      expect(automaticAfterSuccess.automatic).assertTrue();
+      expect(automaticAfterSuccess.attempt).assertEqual(1);
+    });
+
+    it('mangaAssetRequestFactoryCarriesRetryContract', 0, () => {
+      const factory: MangaAssetRequestFactory = new MangaAssetRequestFactory();
+      const page: MangaPage = createMangaAssetTestPage();
+      const context: MangaAssetRequestContext = new MangaAssetRequestContext();
+      context.chapterId = 'chapter-1';
+      context.chapterPageIndex = 0;
+      context.imageUrl = page.imageUrl;
+      context.contentType = 'OnlineDownloaded';
+      context.reason = MangaAssetLoadReason.RETRY;
+      context.retryMode = MangaAssetRetryMode.FORCE_REFRESH;
+      context.priority = 10;
+      context.sourceTypeOverride = ImageSourceType.NETWORK;
+      context.useLegadoV2ImageTransport = true;
+
+      const request: MangaAssetLoadRequest = factory.build(page, 7, context);
+      expect(request.retryMode).assertEqual(MangaAssetRetryMode.FORCE_REFRESH);
+      expect(request.reason).assertEqual(MangaAssetLoadReason.RETRY);
+      expect(request.priority).assertEqual(10);
+      expect(request.sourceType).assertEqual(ImageSourceType.NETWORK);
+      expect(request.imageUrl).assertEqual(page.imageUrl);
+      expect(request.loadOptions.forceRefresh === true).assertTrue();
+      expect(request.loadOptions.skipFailureTtl === true).assertTrue();
+      expect(request.loadOptions.pageIndex).assertEqual(0);
+      expect(request.useLegadoV2ImageTransport).assertTrue();
+
+      const forceKey: string = buildMangaAssetRequestKey(request);
+      const cacheFirstContext: MangaAssetRequestContext = new MangaAssetRequestContext();
+      cacheFirstContext.chapterId = context.chapterId;
+      cacheFirstContext.chapterPageIndex = context.chapterPageIndex;
+      cacheFirstContext.imageUrl = context.imageUrl;
+      cacheFirstContext.contentType = context.contentType;
+      cacheFirstContext.reason = MangaAssetLoadReason.RETRY;
+      cacheFirstContext.retryMode = MangaAssetRetryMode.CACHE_FIRST;
+      cacheFirstContext.priority = 10;
+      cacheFirstContext.sourceTypeOverride = ImageSourceType.NETWORK;
+      const cacheFirstRequest: MangaAssetLoadRequest = factory.build(page, 7, cacheFirstContext);
+      const cacheFirstKey: string = buildMangaAssetRequestKey(cacheFirstRequest);
+      expect(forceKey === cacheFirstKey).assertFalse();
+      expect(cacheFirstRequest.loadOptions.forceRefresh === true).assertFalse();
+      expect(cacheFirstRequest.loadOptions.skipFailureTtl === true).assertFalse();
+    });
+
+    it('mangaPageLoadResolverUsesWebtoonGlobalIndex', 0, () => {
+      const resolver: MangaPageLoadResolver = new MangaPageLoadResolver();
+      const page: MangaPage = createMangaAssetTestPage();
+      const chapter: MangaChapter = {} as MangaChapter;
+      chapter.id = 'chapter-1';
+      chapter.pages = [page];
+
+      const normalContext: MangaPageResolveContext = new MangaPageResolveContext();
+      normalContext.chapter = chapter;
+      expect(resolver.resolveManagedPageIndex(page, -1, normalContext)).assertEqual(0);
+
+      const webtoonContext: MangaPageResolveContext = new MangaPageResolveContext();
+      webtoonContext.chapter = chapter;
+      webtoonContext.isWebtoonMode = true;
+      const pageRef: WebtoonPageRef = {
+        page: page,
+        chapterId: chapter.id,
+        chapterPageIndex: 0,
+        itemIndex: 12,
+        orderIndex: 10
+      };
+      webtoonContext.webtoonPageRefById.set(page.id, pageRef);
+      expect(resolver.resolveManagedPageIndex(page, -1, webtoonContext)).assertEqual(12);
     });
   });
 }

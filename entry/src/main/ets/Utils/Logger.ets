@@ -265,14 +265,25 @@ class Logger {
       if (this.shouldSkipForBackgroundPause(LogLevel.WARN)) {
         return;
       }
-      const formattedMessage = this.formatMessageWithArgs(LogLevel.WARN, tag, message, args);
-      // 仅当hilog输出级别允许时才输出到hilog
-      if (this.shouldOutputToHilog(LogLevel.WARN)) {
-        hilog.warn(LOG_DOMAIN, Flag, `%{public}s`, formattedMessage);
-      }
-      // 同时发送到日志收集器
-      logCollector.addLog(LogLevel.WARN, tag, message, args);
+      this.outputWarn(tag, message, args, false);
     }
+  }
+
+  /**
+   * 输出必须保留的 WARN 级证据日志。
+   * 该入口不受日志级别或阅读器后台暂停影响，始终写入 hilog 与统一日志收集器。
+   */
+  public warnForEvidence(tag: string, message: string, ...args: (string | number | boolean)[]): void {
+    this.outputWarn(tag, message, args, true);
+  }
+
+  private outputWarn(tag: string, message: string, args: (string | number | boolean)[],
+    forceHilogOutput: boolean): void {
+    const formattedMessage = this.formatMessageWithArgs(LogLevel.WARN, tag, message, args);
+    if (forceHilogOutput || this.shouldOutputToHilog(LogLevel.WARN)) {
+      hilog.warn(LOG_DOMAIN, Flag, `%{public}s`, formattedMessage);
+    }
+    logCollector.addLog(LogLevel.WARN, tag, message, args);
   }
 
   /**

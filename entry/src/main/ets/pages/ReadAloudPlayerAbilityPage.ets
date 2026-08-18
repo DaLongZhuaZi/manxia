@@ -1,4 +1,5 @@
 import { common } from '@kit.AbilityKit';
+import { FrameCallback, UIContext } from '@kit.ArkUI';
 import { logger } from '../Utils/Logger';
 import { ReadAloudPlayerPage } from './ReadAloudPlayerPage';
 import {
@@ -10,28 +11,59 @@ import {
 const TAG: string = 'ReadAloudPlayerAbilityPage';
 let readAloudPlayerAbilityPageStorage: LocalStorage = new LocalStorage();
 
+class ReadAloudPlayerNavigationFrameCallback extends FrameCallback {
+  private callback: () => void;
+  private hasRun: boolean = false;
+
+  constructor(callback: () => void) {
+    super();
+    this.callback = callback;
+  }
+
+  onFrame(_frameTimeInNano: number): void {
+  }
+
+  onIdle(_timeLeftInNano: number): void {
+    if (this.hasRun) {
+      return;
+    }
+    this.hasRun = true;
+    this.callback();
+  }
+}
+
 @Entry(readAloudPlayerAbilityPageStorage)
 @Component
 struct ReadAloudPlayerAbilityPage {
   @LocalStorageProp('readAloudPlayerAbilityInstanceId') private playerAbilityInstanceId: string = '';
   @StorageProp('readAloudPlayerAbilityRefreshTrigger') @Watch('onRefreshTriggerChanged') private refreshTrigger: number = 0;
-  @State private pathStack: NavPathStack = new NavPathStack();
+  private pathStack: NavPathStack = new NavPathStack();
   @State private playerParams: ReadAloudPlayerAbilityParams = new ReadAloudPlayerAbilityParams();
   @State private routeVersion: number = 0;
   private hasOpenedPlayer: boolean = false;
+  private hasScheduledInitialPlayerOpen: boolean = false;
+  private navigationScheduleGeneration: number = 0;
+  private isPageActive: boolean = false;
+  private scheduledFrameCallback: ReadAloudPlayerNavigationFrameCallback | null = null;
   private lastRefreshTrigger: number = 0;
 
   aboutToAppear(): void {
+    this.isPageActive = true;
     this.resolvePlayerLaunchPayload('appear');
-    this.openInitialPlayer();
-    setTimeout((): void => {
-      this.resolvePlayerLaunchPayload('deferred');
-      this.openInitialPlayer();
-    }, 0);
+    this.scheduleInitialPlayerOpen();
   }
 
   onPageShow(): void {
+    this.isPageActive = true;
     this.handleRefreshTrigger('page_show');
+    this.scheduleInitialPlayerOpen();
+  }
+
+  aboutToDisappear(): void {
+    this.isPageActive = false;
+    this.navigationScheduleGeneration += 1;
+    this.hasScheduledInitialPlayerOpen = false;
+    this.scheduledFrameCallback = null;
   }
 
   onRefreshTriggerChanged(_changedPropertyName?: string): void {
@@ -49,6 +81,38 @@ struct ReadAloudPlayerAbilityPage {
     }
     this.resolvePlayerLaunchPayload(source);
     this.replacePlayerParams(source);
+  }
+
+  private scheduleInitialPlayerOpen(): void {
+    if (!this.isPageActive ||
+      this.hasOpenedPlayer ||
+      this.hasScheduledInitialPlayerOpen) {
+      return;
+    }
+    try {
+      const uiContext: UIContext = this.getUIContext();
+      const scheduleGeneration: number = this.navigationScheduleGeneration + 1;
+      this.navigationScheduleGeneration = scheduleGeneration;
+      this.hasScheduledInitialPlayerOpen = true;
+      const frameCallback = new ReadAloudPlayerNavigationFrameCallback((): void => {
+        if (scheduleGeneration !== this.navigationScheduleGeneration) {
+          return;
+        }
+        this.scheduledFrameCallback = null;
+        this.hasScheduledInitialPlayerOpen = false;
+        if (!this.isPageActive || this.hasOpenedPlayer) {
+          return;
+        }
+        this.resolvePlayerLaunchPayload('frame_idle');
+        this.openInitialPlayer();
+      });
+      this.scheduledFrameCallback = frameCallback;
+      uiContext.postFrameCallback(frameCallback);
+    } catch (error) {
+      this.scheduledFrameCallback = null;
+      this.hasScheduledInitialPlayerOpen = false;
+      logger.warn(TAG, `调度独立听书播放器初始路由失败: ${String(error)}`);
+    }
   }
 
   private resolvePlayerLaunchPayload(source: string): void {
@@ -103,18 +167,24 @@ struct ReadAloudPlayerAbilityPage {
     }
   }
 
-  private openInitialPlayer(): void {
+  private openInitialPlayer(): boolean {
     if (this.hasOpenedPlayer) {
-      return;
+      return true;
     }
-    this.hasOpenedPlayer = true;
-    this.pathStack.pushPathByName('ReadAloudPlayerPage', this.playerParams);
-    logger.info(TAG, `打开独立听书播放器目标页: instanceId=${this.playerAbilityInstanceId}`);
+    try {
+      this.pathStack.pushPathByName('ReadAloudPlayerPage', this.playerParams, false);
+      this.hasOpenedPlayer = true;
+      logger.info(TAG, `打开独立听书播放器目标页: instanceId=${this.playerAbilityInstanceId}`);
+      return true;
+    } catch (error) {
+      logger.error(TAG, `打开独立听书播放器目标页失败: instanceId=${this.playerAbilityInstanceId}, error=${String(error)}`);
+      return false;
+    }
   }
 
   private replacePlayerParams(source: string): void {
     if (!this.hasOpenedPlayer) {
-      this.openInitialPlayer();
+      this.scheduleInitialPlayerOpen();
       return;
     }
     try {

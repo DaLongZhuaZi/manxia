@@ -1,4 +1,5 @@
 import { common } from '@kit.AbilityKit';
+import { FrameCallback, UIContext } from '@kit.ArkUI';
 import { logger } from '../Utils/Logger';
 import { SourceDetailPage } from './SourceDetailPage';
 import type { SourceDetailParams } from './SourceDetailPage';
@@ -16,6 +17,27 @@ import {
 const TAG: string = 'SourceDetailAbilityPage';
 let sourceDetailAbilityPageStorage: LocalStorage = new LocalStorage();
 
+class SourceDetailNavigationFrameCallback extends FrameCallback {
+  private callback: () => void;
+  private hasRun: boolean = false;
+
+  constructor(callback: () => void) {
+    super();
+    this.callback = callback;
+  }
+
+  onFrame(_frameTimeInNano: number): void {
+  }
+
+  onIdle(_timeLeftInNano: number): void {
+    if (this.hasRun) {
+      return;
+    }
+    this.hasRun = true;
+    this.callback();
+  }
+}
+
 @Entry(sourceDetailAbilityPageStorage)
 @Component
 struct SourceDetailAbilityPage {
@@ -23,14 +45,63 @@ struct SourceDetailAbilityPage {
   @State private sourceDetailParams: SourceDetailParams | null = null;
   @LocalStorageProp(SOURCE_DETAIL_ABILITY_INSTANCE_ID_KEY) private sourceDetailInstanceId: string = '';
   private hasOpenedSourceDetail: boolean = false;
+  private hasScheduledInitialSourceDetailOpen: boolean = false;
+  private navigationScheduleGeneration: number = 0;
+  private isPageActive: boolean = false;
+  private scheduledFrameCallback: SourceDetailNavigationFrameCallback | null = null;
 
   aboutToAppear(): void {
+    this.isPageActive = true;
     this.resolveSourceDetailLaunchPayload('appear');
-    this.openInitialSourceDetail();
-    setTimeout((): void => {
-      this.resolveSourceDetailLaunchPayload('deferred');
-      this.openInitialSourceDetail();
-    }, 0);
+    this.scheduleInitialSourceDetailOpen();
+  }
+
+  onPageShow(): void {
+    this.isPageActive = true;
+    if (this.hasOpenedSourceDetail) {
+      return;
+    }
+    this.resolveSourceDetailLaunchPayload('page_show');
+    this.scheduleInitialSourceDetailOpen();
+  }
+
+  aboutToDisappear(): void {
+    this.isPageActive = false;
+    this.navigationScheduleGeneration += 1;
+    this.hasScheduledInitialSourceDetailOpen = false;
+    this.scheduledFrameCallback = null;
+  }
+
+  private scheduleInitialSourceDetailOpen(): void {
+    if (!this.isPageActive ||
+      this.hasOpenedSourceDetail ||
+      this.hasScheduledInitialSourceDetailOpen) {
+      return;
+    }
+    try {
+      const uiContext: UIContext = this.getUIContext();
+      const scheduleGeneration: number = this.navigationScheduleGeneration + 1;
+      this.navigationScheduleGeneration = scheduleGeneration;
+      this.hasScheduledInitialSourceDetailOpen = true;
+      const frameCallback = new SourceDetailNavigationFrameCallback((): void => {
+        if (scheduleGeneration !== this.navigationScheduleGeneration) {
+          return;
+        }
+        this.scheduledFrameCallback = null;
+        this.hasScheduledInitialSourceDetailOpen = false;
+        if (!this.isPageActive || this.hasOpenedSourceDetail) {
+          return;
+        }
+        this.resolveSourceDetailLaunchPayload('frame_idle');
+        this.openInitialSourceDetail();
+      });
+      this.scheduledFrameCallback = frameCallback;
+      uiContext.postFrameCallback(frameCallback);
+    } catch (error) {
+      this.scheduledFrameCallback = null;
+      this.hasScheduledInitialSourceDetailOpen = false;
+      logger.warn(TAG, `调度独立图源详情初始路由失败: ${String(error)}`);
+    }
   }
 
   private resolveSourceDetailLaunchPayload(source: string): void {
@@ -77,19 +148,20 @@ struct SourceDetailAbilityPage {
     }
   }
 
-  private openInitialSourceDetail(): void {
+  private openInitialSourceDetail(): boolean {
     if (this.hasOpenedSourceDetail) {
-      return;
+      return true;
     }
 
     if (!this.sourceDetailParams) {
       logger.error(TAG, `独立图源详情参数为空: instanceId=${this.sourceDetailInstanceId}`);
-      return;
+      return false;
     }
 
+    this.pathStack.pushPathByName('SourceDetailPage', this.sourceDetailParams, false);
     this.hasOpenedSourceDetail = true;
     logger.info(TAG, `打开独立图源详情目标页: instanceId=${this.sourceDetailInstanceId}, sourceId=${this.sourceDetailParams.sourceId}`);
-    this.pathStack.pushPathByName('SourceDetailPage', this.sourceDetailParams);
+    return true;
   }
 
   private buildIsolatedSourceDetailParams(source: SourceDetailParams | null): SourceDetailParams | null {

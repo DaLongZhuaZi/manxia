@@ -23,7 +23,16 @@ export struct RemoteControlPage {
   private callbacksRegistered: boolean = false;
 
   private onRemoteDataChanged = (state: SyncReadingState) => {
-    if (state.sessionId === this.sessionId && state.instructionType !== 'cmd:next_page'
+    if (state.sessionId !== this.sessionId) {
+      return;
+    }
+    // [修复] 目标端回执：当前书籍格式不支持自动朗读（仅 TXT 文本阅读器支持）
+    if (state.instructionType === 'ack_toggle_auto_read_unsupported') {
+      const formatText = state.instructionPayload.length > 0 ? state.instructionPayload : '当前格式';
+      this.getUIContext().getPromptAction().showToast({ message: `目标书籍不支持自动朗读（${formatText}，仅支持TXT）` });
+      return;
+    }
+    if (state.instructionType !== 'cmd:next_page'
       && state.instructionType !== 'cmd:prev_page'
       && state.instructionType !== 'cmd:next_chapter'
       && state.instructionType !== 'cmd:prev_chapter'
@@ -36,19 +45,24 @@ export struct RemoteControlPage {
   };
 
   private onRemoteStatusChanged = (status: 'online' | 'offline' | 'restored' | 'error', message?: string) => {
-    if (status === 'restored') {
-      this.connectionStatus = 'online';
-    } else {
-      this.connectionStatus = status;
-    }
+    // [修复] 仅在状态真正变化时提示/更新，避免 DataObject 与独立连接通道先后播报 online 造成重复 toast
+    const effectiveStatus: 'online' | 'offline' | 'error' = status === 'restored' ? 'online' : status;
+    const changed = this.connectionStatus !== effectiveStatus;
+    this.connectionStatus = effectiveStatus;
     
     if (status === 'error' && message) {
       this.errorMessage = message;
-      this.getUIContext().getPromptAction().showToast({ message: `连接异常: ${message}` });
+      if (changed) {
+        this.getUIContext().getPromptAction().showToast({ message: `连接异常: ${message}` });
+      }
     } else if (status === 'offline') {
-      this.getUIContext().getPromptAction().showToast({ message: '目标设备已离线' });
+      if (changed) {
+        this.getUIContext().getPromptAction().showToast({ message: '目标设备已离线' });
+      }
     } else if (status === 'online') {
-      this.getUIContext().getPromptAction().showToast({ message: '已连接目标设备' });
+      if (changed) {
+        this.getUIContext().getPromptAction().showToast({ message: '已连接目标设备' });
+      }
     }
   };
   
@@ -73,6 +87,7 @@ export struct RemoteControlPage {
       this.readingOffset = params.offset;
       this.isLocal = params.isLocal;
       this.sourceType = params.sourceType;
+      logger.info(TAG, `遥控页就绪: sessionId=${this.sessionId}, bookId=${this.bookId}, chapter=${this.chapterIndex}, page=${this.pageIndex}, offset=${this.readingOffset}, sourceType=${this.sourceType}`);
 
       // 遥控端（主设备）已持有分布式会话对象，无需重新 joinSession，
       // 只需重新挂载进度回调，接收被控端回传的最新状态。
@@ -81,9 +96,19 @@ export struct RemoteControlPage {
         this.chapterIndex = latestState.chapterIndex;
         this.pageIndex = latestState.pageIndex;
         this.readingOffset = latestState.offset;
+        logger.info(TAG, `遥控页已同步分布式会话最新状态: chapter=${this.chapterIndex}, page=${this.pageIndex}, offset=${this.readingOffset}`);
+      } else {
+        logger.warn(TAG, `遥控页未匹配到当前分布式会话状态（session 可能未建立或已失效）: currentSession=${latestState ? latestState.sessionId : '(none)'}`);
       }
 
       this.attachRemoteCallbacks();
+      // [修复] 写入页面就绪 token：源端 ContinuationStateHelper 据此区分
+      // "遥控器 Ability 已创建"与"遥控器页面真正渲染"——
+      // 接续握手期间发起的 0ms 启动可能只创建 Ability 而窗口被吞掉（僵尸实例），
+      // 只有页面就绪才算拉起成功。
+      AppStorage.setOrCreate('remoteControlPageReadyToken', Date.now());
+      // [诊断] 输出本端会话状态（会话对象、状态事件流水），用于判断 DataObject 会话是否跨设备建立
+      distributedDataSyncManager.diagnoseSession('遥控端就绪');
     }
   }
 

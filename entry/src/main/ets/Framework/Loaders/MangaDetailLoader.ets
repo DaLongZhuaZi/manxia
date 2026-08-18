@@ -232,16 +232,34 @@ export class MangaDetailLoader {
       let comicInfo = resolvedIdentity && resolvedIdentity.comicInfo
         ? resolvedIdentity.comicInfo
         : await this.dataManager.getComicById(params.mangaId);
-      if (comicInfo === null) {
-        comicInfo = await this.tryBuildFallbackLocalComicInfo(params, '[分阶段]');
-      }
 
-      const shouldLoadLegadoFromNetwork: boolean = this.currentSourceId > 0 &&
-        await getLegadoMangaSourceBridge().isLegadoMangaSourceId(this.currentSourceId) &&
-        (params.forceRefresh === true || comicInfo === null);
+      // Decide whether IMAGE traffic belongs to V2 before creating a visual
+      // fallback. The fallback (or an entry written by an earlier legacy
+      // execution) must never suppress a V2 detail/Toc workflow in full
+      // cutover mode.
+      const legadoMangaBridge = getLegadoMangaSourceBridge();
+      const isLegadoMangaSource: boolean = this.currentSourceId > 0 &&
+        await legadoMangaBridge.isLegadoMangaSourceId(this.currentSourceId);
+      const shouldForceLegadoNetworkDetail: boolean = isLegadoMangaSource &&
+        await legadoMangaBridge.shouldForceNetworkDetail(this.currentSourceId);
+      const shouldLoadLegadoFromNetwork: boolean = isLegadoMangaSource &&
+        (params.forceRefresh === true || comicInfo === null || shouldForceLegadoNetworkDetail);
+      // This deliberately carries only lengths and route decisions. It makes
+      // IMAGE detail dispatch auditable without persisting a book URL or title.
+      logger.warn(
+        TAG,
+        `[Legado漫画路由] sourceId=${this.currentSourceId};mangaIdLength=${params.mangaId.length};` +
+        `externalIdLength=${(params.externalMangaId || '').length};identity=${resolvedIdentity ? resolvedIdentity.reason : 'none'};` +
+        `hasCache=${comicInfo !== null};isLegado=${isLegadoMangaSource};forceNetwork=${shouldForceLegadoNetworkDetail};` +
+        `shouldLoadV2=${shouldLoadLegadoFromNetwork}`
+      );
       if (shouldLoadLegadoFromNetwork) {
         const legadoResult = await this.loadLegadoMangaWithProgress(params, callback);
         return legadoResult;
+      }
+
+      if (comicInfo === null) {
+        comicInfo = await this.tryBuildFallbackLocalComicInfo(params, '[分阶段]');
       }
       
       // [修复] 如果forceRefresh=true且有sourceId，强制从网络重新获取
@@ -834,6 +852,12 @@ export class MangaDetailLoader {
 
     try {
       const externalMangaId = params.externalMangaId || params.mangaId;
+      logger.warn(
+        TAG,
+        `[Legado漫画路由] V2详情桥接调用: sourceId=${this.currentSourceId};` +
+        `externalIdLength=${externalMangaId.length};cachedTitle=${(params.cachedTitle || '').length > 0};` +
+        `cachedCover=${(params.cachedCover || params.cachedCoverPath || '').length > 0}`
+      );
       const bridgeResult: LegadoMangaDetailResult | null =
         await getLegadoMangaSourceBridge().loadDetailWithChapters(
           this.currentSourceId,
@@ -843,6 +867,7 @@ export class MangaDetailLoader {
         );
 
       if (!bridgeResult) {
+        logger.warn(TAG, `[Legado漫画路由] V2详情桥接返回空: sourceId=${this.currentSourceId}`);
         result.errorMessage = 'Legado漫画桥接加载失败';
         if (callback.onError) {
           callback.onError(result.errorMessage);
@@ -860,6 +885,14 @@ export class MangaDetailLoader {
       result.coverHttpHeaders = this.coverHttpHeaders;
       result.isFavorite = await this.checkFavoriteStatus(bridgeResult.manga.id);
       result.success = true;
+
+      logger.warn(
+        TAG,
+        `[Legado漫画路由] V2详情桥接成功: sourceId=${this.currentSourceId};` +
+        `titleLength=${bridgeResult.manga.title.length};` +
+        `authorLength=${bridgeResult.manga.metadata && bridgeResult.manga.metadata.authors.length > 0 ? bridgeResult.manga.metadata.authors[0].length : 0};` +
+        `chapterCount=${bridgeResult.chapters.length}`
+      );
 
       if (callback.onBasicInfoLoaded) {
         await callback.onBasicInfoLoaded(bridgeResult.manga, result.isFavorite);

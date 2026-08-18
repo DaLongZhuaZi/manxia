@@ -8,6 +8,466 @@
 (function(global) {
     'use strict';
 
+    // Jsoup 1.16.2 text projection primitives. textContent is not equivalent
+    // to Element.text(): whitespace is normalized and block/br boundaries are
+    // represented by an ASCII space.
+    function legadoIsActuallyWhitespace(code) {
+        return code === 32 || code === 9 || code === 10 || code === 12 ||
+            code === 13 || code === 160;
+    }
+
+    function legadoCreateTextAccumulator() {
+        return { value: '', lastCharIsSpace: false };
+    }
+
+    function legadoAppendText(accumulator, value, preserveWhitespace) {
+        const text = String(value || '');
+        if (!text) return;
+        if (preserveWhitespace) {
+            accumulator.value += text;
+            accumulator.lastCharIsSpace = text.charAt(text.length - 1) === ' ';
+            return;
+        }
+        for (let index = 0; index < text.length; index++) {
+            const code = text.charCodeAt(index);
+            if (legadoIsActuallyWhitespace(code)) {
+                if (!accumulator.lastCharIsSpace) {
+                    accumulator.value += ' ';
+                    accumulator.lastCharIsSpace = true;
+                }
+                continue;
+            }
+            if (code === 8203 || code === 173) continue;
+            accumulator.value += text.charAt(index);
+            accumulator.lastCharIsSpace = false;
+        }
+    }
+
+    function legadoTrimJavaWhitespace(value) {
+        const text = String(value || '');
+        let start = 0;
+        let end = text.length;
+        while (start < end && text.charCodeAt(start) <= 32) start++;
+        while (end > start && text.charCodeAt(end - 1) <= 32) end--;
+        return text.substring(start, end);
+    }
+
+    function legadoAppendJsoupSpaceBoundary(accumulator) {
+        if (accumulator.value.length > 0 && !accumulator.lastCharIsSpace) {
+            accumulator.value += ' ';
+        }
+        accumulator.lastCharIsSpace = accumulator.value.length > 0 &&
+            accumulator.value.charAt(accumulator.value.length - 1) === ' ';
+    }
+
+    function legadoIsBlockTag(tagName) {
+        const normalized = String(tagName || '').toLowerCase();
+        const blocks = [
+            'html', 'head', 'body', 'frameset', 'script', 'noscript', 'style', 'meta',
+            'link', 'title', 'frame', 'noframes', 'section', 'nav', 'aside', 'hgroup',
+            'header', 'footer', 'p', 'h1', 'h2', 'h3', 'h4', 'h5', 'h6', 'ul', 'ol',
+            'pre', 'div', 'blockquote', 'hr', 'address', 'figure', 'figcaption', 'form',
+            'fieldset', 'ins', 'del', 'dl', 'dt', 'dd', 'li', 'table', 'caption', 'thead',
+            'tfoot', 'tbody', 'colgroup', 'col', 'tr', 'th', 'td', 'video', 'audio',
+            'canvas', 'details', 'menu', 'plaintext', 'template', 'article', 'main',
+            'svg', 'math', 'center', 'dir', 'applet', 'marquee', 'listing'
+        ];
+        return blocks.indexOf(normalized) >= 0;
+    }
+
+    function legadoIsFormatAsBlockTag(tagName) {
+        const normalized = String(tagName || '').toLowerCase();
+        const inline = [
+            'object', 'base', 'font', 'tt', 'i', 'b', 'u', 'big', 'small', 'em',
+            'strong', 'dfn', 'code', 'samp', 'kbd', 'var', 'cite', 'abbr', 'time',
+            'acronym', 'mark', 'ruby', 'rt', 'rp', 'rtc', 'a', 'img', 'br', 'wbr',
+            'map', 'q', 'sub', 'sup', 'bdo', 'iframe', 'embed', 'span', 'input',
+            'select', 'textarea', 'label', 'button', 'optgroup', 'option', 'legend',
+            'datalist', 'keygen', 'output', 'progress', 'meter', 'area', 'param',
+            'source', 'track', 'summary', 'command', 'device', 'basefont', 'bgsound',
+            'menuitem', 'data', 'bdi', 'strike', 'nobr', 'rb', 'text', 'mi', 'mo',
+            'msup', 'mn', 'mtext', 'title', 'p', 'h1', 'h2', 'h3', 'h4', 'h5', 'h6',
+            'pre', 'address', 'li', 'th', 'td', 'script', 'style', 'ins', 'del', 's'
+        ];
+        return inline.indexOf(normalized) < 0;
+    }
+
+    function legadoIsPreserveWhitespaceTag(tagName) {
+        const normalized = String(tagName || '').toLowerCase();
+        return normalized === 'pre' || normalized === 'plaintext' ||
+            normalized === 'title' || normalized === 'textarea';
+    }
+
+    function legadoIsPreserveWhitespaceNode(node) {
+        let current = node;
+        let depth = 0;
+        while (current && depth < 6) {
+            if (current.nodeType === 1) {
+                const name = String(current.localName || current.tagName || '').toLowerCase();
+                if (legadoIsPreserveWhitespaceTag(name)) return true;
+            }
+            current = current.parentNode;
+            depth++;
+        }
+        return false;
+    }
+
+    function legadoAppendElementText(node, accumulator) {
+        if (!node || !node.childNodes) return;
+        for (let index = 0; index < node.childNodes.length; index++) {
+            const child = node.childNodes[index];
+            if (!child) continue;
+            if (child.nodeType === 3) {
+                legadoAppendText(accumulator, child.nodeValue || child.textContent || '',
+                    legadoIsPreserveWhitespaceNode(child.parentNode));
+                continue;
+            }
+            if (child.nodeType !== 1) continue;
+            const tagName = String(child.localName || child.tagName || '').toLowerCase();
+            if (tagName === 'br') {
+                legadoAppendJsoupSpaceBoundary(accumulator);
+                continue;
+            }
+            const isBlock = legadoIsBlockTag(tagName);
+            if (isBlock && accumulator.value.length > 0 && !accumulator.lastCharIsSpace) {
+                legadoAppendJsoupSpaceBoundary(accumulator);
+            }
+            const isDataTag = tagName === 'script' || tagName === 'style';
+            if (!isDataTag) legadoAppendElementText(child, accumulator);
+            const nextSibling = child.nextSibling;
+            const nextIsInline = nextSibling && nextSibling.nodeType === 1 &&
+                !legadoIsFormatAsBlockTag(nextSibling.localName || nextSibling.tagName);
+            if (isBlock && nextSibling && (nextSibling.nodeType === 3 || nextIsInline)) {
+                legadoAppendJsoupSpaceBoundary(accumulator);
+            }
+        }
+    }
+
+    function legadoElementText(node) {
+        const nodeTagName = String(node && (node.localName || node.tagName) || '').toLowerCase();
+        if (nodeTagName === 'script' || nodeTagName === 'style') return '';
+        const accumulator = legadoCreateTextAccumulator();
+        legadoAppendElementText(node, accumulator);
+        return legadoTrimJavaWhitespace(accumulator.value);
+    }
+
+    function legadoElementOwnText(node) {
+        if (!node || !node.childNodes) return '';
+        const nodeTagName = String(node.localName || node.tagName || '').toLowerCase();
+        if (nodeTagName === 'script' || nodeTagName === 'style') return '';
+        const accumulator = legadoCreateTextAccumulator();
+        for (let index = 0; index < node.childNodes.length; index++) {
+            const child = node.childNodes[index];
+            if (!child) continue;
+            if (child.nodeType === 3) {
+                legadoAppendText(accumulator, child.nodeValue || child.textContent || '',
+                    legadoIsPreserveWhitespaceNode(child.parentNode));
+            } else if (child.nodeType === 1 &&
+                String(child.localName || child.tagName || '').toLowerCase() === 'br') {
+                legadoAppendJsoupSpaceBoundary(accumulator);
+            }
+        }
+        return legadoTrimJavaWhitespace(accumulator.value);
+    }
+
+    function legadoDirectTextNodeValues(node) {
+        const values = [];
+        if (!node || !node.childNodes) return values;
+        const nodeTagName = String(node.localName || node.tagName || '').toLowerCase();
+        if (nodeTagName === 'script' || nodeTagName === 'style') return values;
+        for (let index = 0; index < node.childNodes.length; index++) {
+            const child = node.childNodes[index];
+            if (!child || (child.nodeType !== 3 && child.nodeType !== 4)) continue;
+            values.push(String(child.nodeValue || child.textContent || ''));
+        }
+        return values;
+    }
+
+    function legadoNormalizeTextNode(value) {
+        const accumulator = legadoCreateTextAccumulator();
+        legadoAppendText(accumulator, value, false);
+        return accumulator.value;
+    }
+
+    function legadoTextNodeList(node) {
+        const rawValues = legadoDirectTextNodeValues(node);
+        const list = [];
+        for (let index = 0; index < rawValues.length; index++) {
+            const wholeText = rawValues[index];
+            const normalizedText = legadoNormalizeTextNode(wholeText);
+            list.push({
+                text: function() { return normalizedText; },
+                getWholeText: function() { return wholeText; },
+                toString: function() { return wholeText; }
+            });
+        }
+        list.size = function() { return list.length; };
+        list.get = function(index) { return list[Number(index) || 0] || null; };
+        list.first = function() { return list.length > 0 ? list[0] : null; };
+        list.last = function() { return list.length > 0 ? list[list.length - 1] : null; };
+        list.isEmpty = function() { return list.length === 0; };
+        list.toArray = function() { return list.slice(0); };
+        return list;
+    }
+
+    // Parserless Rhino environments still need a structured projection. A
+    // tag-stripping regex cannot distinguish direct text, descendants, or
+    // Jsoup block boundaries, so build the small tree required by these APIs.
+    function legadoDecodeFallbackEntities(value) {
+        if (typeof global.__legadoDecodeHtmlEntities !== 'function') {
+            throw new Error('Pinned Jsoup entity decoder is unavailable');
+        }
+        return global.__legadoDecodeHtmlEntities(value, false);
+    }
+
+    function legadoFallbackIsTagNameCharacter(character) {
+        return /[A-Za-z0-9:_-]/.test(character);
+    }
+
+    function legadoFallbackIsVoidTag(tagName) {
+        return [
+            'area', 'base', 'basefont', 'bgsound', 'br', 'col', 'command', 'device',
+            'embed', 'frame', 'hr', 'img', 'input', 'keygen', 'link', 'menuitem',
+            'meta', 'param', 'source', 'track', 'wbr'
+        ].indexOf(tagName) >= 0;
+    }
+
+    function legadoFallbackTokenize(value) {
+        const html = String(value || '');
+        const lower = html.toLowerCase();
+        const tokens = [];
+        let cursor = 0;
+        let rawTag = '';
+        while (cursor < html.length) {
+            if (rawTag) {
+                const closeStart = lower.indexOf('</' + rawTag, cursor);
+                if (closeStart < 0) break;
+                const boundary = html.charAt(closeStart + rawTag.length + 2);
+                if (boundary && !/[\s>]/.test(boundary)) {
+                    cursor = closeStart + rawTag.length + 2;
+                    continue;
+                }
+                const closeEnd = html.indexOf('>', closeStart + 2);
+                if (closeEnd < 0) break;
+                tokens.push({ kind: 'close', name: rawTag, selfClosing: false });
+                cursor = closeEnd + 1;
+                rawTag = '';
+                continue;
+            }
+
+            const tagStart = html.indexOf('<', cursor);
+            if (tagStart < 0) {
+                if (cursor < html.length) tokens.push({ kind: 'text', value: html.substring(cursor) });
+                break;
+            }
+            if (tagStart > cursor) {
+                tokens.push({ kind: 'text', value: html.substring(cursor, tagStart) });
+            }
+            if (html.substring(tagStart, tagStart + 4) === '<!--') {
+                const commentEnd = html.indexOf('-->', tagStart + 4);
+                tokens.push({ kind: 'comment' });
+                cursor = commentEnd < 0 ? html.length : commentEnd + 3;
+                continue;
+            }
+
+            let scan = tagStart + 1;
+            let quote = '';
+            while (scan < html.length) {
+                const character = html.charAt(scan);
+                if (quote) {
+                    if (character === quote) quote = '';
+                } else if (character === '"' || character === "'") {
+                    quote = character;
+                } else if (character === '>') {
+                    break;
+                }
+                scan++;
+            }
+            if (scan >= html.length) {
+                tokens.push({ kind: 'text', value: html.substring(tagStart) });
+                break;
+            }
+
+            const body = html.substring(tagStart + 1, scan);
+            let bodyCursor = 0;
+            while (bodyCursor < body.length && body.charCodeAt(bodyCursor) <= 32) bodyCursor++;
+            if (body.charAt(bodyCursor) === '!' || body.charAt(bodyCursor) === '?') {
+                tokens.push({ kind: 'comment' });
+                cursor = scan + 1;
+                continue;
+            }
+            const closing = body.charAt(bodyCursor) === '/';
+            if (closing) bodyCursor++;
+            while (bodyCursor < body.length && body.charCodeAt(bodyCursor) <= 32) bodyCursor++;
+            const nameStart = bodyCursor;
+            while (bodyCursor < body.length &&
+                legadoFallbackIsTagNameCharacter(body.charAt(bodyCursor))) {
+                bodyCursor++;
+            }
+            const name = body.substring(nameStart, bodyCursor).toLowerCase();
+            if (!name) {
+                tokens.push({ kind: 'text', value: html.substring(tagStart, scan + 1) });
+                cursor = scan + 1;
+                continue;
+            }
+            let tail = body.length - 1;
+            while (tail >= 0 && body.charCodeAt(tail) <= 32) tail--;
+            const selfClosing = !closing &&
+                (body.charAt(tail) === '/' || legadoFallbackIsVoidTag(name));
+            tokens.push({
+                kind: closing ? 'close' : 'open',
+                name: name,
+                selfClosing: selfClosing
+            });
+            cursor = scan + 1;
+            if (!closing && !selfClosing && (name === 'script' || name === 'style')) {
+                rawTag = name;
+            } else if (!closing && !selfClosing && name === 'plaintext') {
+                if (cursor < html.length) tokens.push({ kind: 'text', value: html.substring(cursor) });
+                cursor = html.length;
+            }
+        }
+        return tokens;
+    }
+
+    function legadoFallbackElement(name) {
+        return { kind: 'element', name: name, children: [], parent: null };
+    }
+
+    function legadoFallbackBuildTree(value, expectedTagName) {
+        const syntheticRoot = legadoFallbackElement(String(expectedTagName || '').toLowerCase());
+        const stack = [syntheticRoot];
+        const tokens = legadoFallbackTokenize(value);
+        for (let index = 0; index < tokens.length; index++) {
+            const token = tokens[index];
+            const parent = stack[stack.length - 1];
+            if (token.kind === 'text') {
+                if (token.value) {
+                    parent.children.push({
+                        kind: 'text',
+                        value: legadoDecodeFallbackEntities(token.value),
+                        parent: parent
+                    });
+                }
+                continue;
+            }
+            if (token.kind === 'comment') {
+                parent.children.push({ kind: 'comment', parent: parent });
+                continue;
+            }
+            if (token.kind === 'open') {
+                const element = legadoFallbackElement(token.name);
+                element.parent = parent;
+                parent.children.push(element);
+                if (!token.selfClosing) stack.push(element);
+                continue;
+            }
+            for (let stackIndex = stack.length - 1; stackIndex > 0; stackIndex--) {
+                if (stack[stackIndex].name === token.name) {
+                    stack.length = stackIndex;
+                    break;
+                }
+            }
+        }
+
+        const expected = String(expectedTagName || '').toLowerCase();
+        if (expected) {
+            for (let index = 0; index < syntheticRoot.children.length; index++) {
+                const child = syntheticRoot.children[index];
+                if (child.kind === 'text' && legadoTrimJavaWhitespace(child.value) === '') continue;
+                if (child.kind === 'element' && child.name === expected) return child;
+                break;
+            }
+        }
+        return syntheticRoot;
+    }
+
+    function legadoFallbackPreservesWhitespace(node) {
+        let current = node;
+        let depth = 0;
+        while (current && depth < 6) {
+            if (current.kind === 'element' && legadoIsPreserveWhitespaceTag(current.name)) {
+                return true;
+            }
+            current = current.parent;
+            depth++;
+        }
+        return false;
+    }
+
+    function legadoFallbackAppendChildren(node, accumulator) {
+        if (!node || !node.children) return;
+        for (let index = 0; index < node.children.length; index++) {
+            const child = node.children[index];
+            if (child.kind === 'text') {
+                legadoAppendText(accumulator, child.value, legadoFallbackPreservesWhitespace(child.parent));
+                continue;
+            }
+            if (child.kind !== 'element') continue;
+            if (child.name === 'br') {
+                legadoAppendJsoupSpaceBoundary(accumulator);
+                continue;
+            }
+            const isBlock = legadoIsBlockTag(child.name);
+            if (isBlock && accumulator.value.length > 0 && !accumulator.lastCharIsSpace) {
+                legadoAppendJsoupSpaceBoundary(accumulator);
+            }
+            if (child.name !== 'script' && child.name !== 'style') {
+                legadoFallbackAppendChildren(child, accumulator);
+            }
+            const next = node.children[index + 1];
+            const nextIsInline = next && (next.kind !== 'element' ||
+                !legadoIsFormatAsBlockTag(next.name));
+            if (isBlock && next && nextIsInline) {
+                legadoAppendJsoupSpaceBoundary(accumulator);
+            }
+        }
+    }
+
+    function legadoFallbackText(node) {
+        if (!node || node.name === 'script' || node.name === 'style') return '';
+        const accumulator = legadoCreateTextAccumulator();
+        legadoFallbackAppendChildren(node, accumulator);
+        return legadoTrimJavaWhitespace(accumulator.value);
+    }
+
+    function legadoFallbackOwnText(node) {
+        if (!node || node.name === 'script' || node.name === 'style') return '';
+        const accumulator = legadoCreateTextAccumulator();
+        for (let index = 0; index < node.children.length; index++) {
+            const child = node.children[index];
+            if (child.kind === 'text') {
+                legadoAppendText(accumulator, child.value, legadoFallbackPreservesWhitespace(child.parent));
+            } else if (child.kind === 'element' && child.name === 'br') {
+                legadoAppendJsoupSpaceBoundary(accumulator);
+            }
+        }
+        return legadoTrimJavaWhitespace(accumulator.value);
+    }
+
+    function legadoFallbackTextNodeList(node) {
+        const list = [];
+        if (!node || node.name === 'script' || node.name === 'style') return list;
+        for (let index = 0; index < node.children.length; index++) {
+            const child = node.children[index];
+            if (child.kind !== 'text') continue;
+            const wholeText = child.value;
+            const normalizedText = legadoNormalizeTextNode(wholeText);
+            list.push({
+                text: function() { return normalizedText; },
+                getWholeText: function() { return wholeText; },
+                toString: function() { return wholeText; }
+            });
+        }
+        list.size = function() { return list.length; };
+        list.get = function(index) { return list[Number(index) || 0] || null; };
+        list.first = function() { return list.length > 0 ? list[0] : null; };
+        list.last = function() { return list.length > 0 ? list[list.length - 1] : null; };
+        list.isEmpty = function() { return list.length === 0; };
+        list.toArray = function() { return list.slice(0); };
+        return list;
+    }
+
     /**
      * Jsoup主类
      */
@@ -294,6 +754,21 @@
          * 获取属性值
          */
         attr(attrName) {
+            if (attrName === 'text') {
+                return this.text();
+            }
+            if (attrName === 'ownText') {
+                return this.ownText();
+            }
+            if (attrName === 'textNodes') {
+                const nodes = this.textNodes();
+                const values = [];
+                for (let index = 0; index < nodes.length; index++) {
+                    const value = legadoTrimJavaWhitespace(nodes[index].text());
+                    if (value) values.push(value);
+                }
+                return values.join('\n');
+            }
             if (this._el) {
                 return this._el.getAttribute(attrName) || '';
             }
@@ -337,20 +812,10 @@
          */
         text() {
             if (this._el) {
-                return this._el.textContent || '';
+                return legadoElementText(this._el);
             }
-            // 从HTML中提取文本
-            return this._html
-                .replace(/<script\b[^<]*(?:(?!<\/script>)<[^<]*)*<\/script>/gi, '')
-                .replace(/<style\b[^<]*(?:(?!<\/style>)<[^<]*)*<\/style>/gi, '')
-                .replace(/<[^>]+>/g, '')
-                .replace(/&nbsp;/g, ' ')
-                .replace(/&lt;/g, '<')
-                .replace(/&gt;/g, '>')
-                .replace(/&amp;/g, '&')
-                .replace(/&quot;/g, '"')
-                .replace(/\s+/g, ' ')
-                .trim();
+            const tree = legadoFallbackBuildTree(this._html, this._tagName);
+            return legadoFallbackText(tree);
         }
 
         /**
@@ -358,15 +823,16 @@
          */
         ownText() {
             if (this._el) {
-                let text = '';
-                for (const node of this._el.childNodes) {
-                    if (node.nodeType === Node.TEXT_NODE) {
-                        text += node.textContent;
-                    }
-                }
-                return text.trim();
+                return legadoElementOwnText(this._el);
             }
-            return this.text();
+            const tree = legadoFallbackBuildTree(this._html, this._tagName);
+            return legadoFallbackOwnText(tree);
+        }
+
+        textNodes() {
+            if (this._el) return legadoTextNodeList(this._el);
+            const tree = legadoFallbackBuildTree(this._html, this._tagName);
+            return legadoFallbackTextNodeList(tree);
         }
 
         /**
@@ -654,6 +1120,17 @@
          */
         eachText() {
             return this._elements.map(el => el.text());
+        }
+
+        textNodes() {
+            const nodes = [];
+            this._elements.forEach(el => {
+                const textNodes = el.textNodes();
+                for (let index = 0; index < textNodes.length; index++) {
+                    nodes.push(textNodes[index]);
+                }
+            });
+            return nodes;
         }
 
         /**
@@ -989,4 +1466,4 @@
 
     console.log('[JsoupImpl] Jsoup JavaScript implementation loaded');
 
-})(typeof window !== 'undefined' ? window : global);
+})(window);

@@ -24,6 +24,9 @@ export default class RemoteControlAbility extends UIAbility {
 
   onCreate(want: Want, _launchParam: AbilityConstant.LaunchParam): void {
     this.instanceId = this.resolveInstanceId(want);
+    // 写入存活 token：源端 ContinuationStateHelper 据此判断遥控器已成功拉起，
+    // 避免重复启动尝试与入口 Ability 兜底拉起抢焦点
+    AppStorage.setOrCreate('remoteControlAbilityActiveToken', Date.now());
     logger.lifecycle(TAG, 'onCreate', `独立遥控器实例创建: instanceId=${this.instanceId}`);
   }
 

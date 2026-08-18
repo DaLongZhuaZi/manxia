@@ -12,6 +12,7 @@ import { TextNode } from './TextNode';
 import { CommentNode } from './CommentNode';
 import { HTMLElement, Attributes } from './HTMLElement';
 import { HtmlParserLogger } from './HtmlParserLogger';
+import { HtmlEntities } from './HtmlEntities';
 
 /**
  * 解析选项类
@@ -285,7 +286,7 @@ export class Parser {
         }
       }
       
-      attrs.set(attrName.toLowerCase(), attrValue);
+      attrs.set(attrName.toLowerCase(), HtmlEntities.decodeAttribute(attrValue));
     }
     
     const rawAttrs = this.html.substring(startPos, this.pos).trim();

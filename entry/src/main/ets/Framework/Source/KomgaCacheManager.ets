@@ -31,6 +31,21 @@ export class KomgaCacheManager {
     }
   }
 
+  public invalidateCoverCache(itemKey: string, coverUrl: string): boolean {
+    try {
+      const cachePath: string = this.getCoverCachePath(itemKey, coverUrl);
+      if (!SafeFileUtils.accessSync(cachePath)) {
+        return true;
+      }
+      SafeFileUtils.unlinkSync(cachePath);
+      logger.info(TAG, `Komga 单图缓存已失效: key=${itemKey}, path=${cachePath}`);
+      return true;
+    } catch (error) {
+      logger.warn(TAG, `Komga 单图缓存失效失败: key=${itemKey}, error=${String(error)}`);
+      return false;
+    }
+  }
+
   public getCachedPagePath(mangaKey: string, chapterKey: string, pageIndex: number): string | null {
     try {
       const cachePath = this.getPageCachePath(mangaKey, chapterKey, pageIndex);
@@ -40,6 +55,21 @@ export class KomgaCacheManager {
       return cachePath;
     } catch (_error) {
       return null;
+    }
+  }
+
+  public invalidatePageCache(mangaKey: string, chapterKey: string, pageIndex: number): boolean {
+    try {
+      const pagePath: string = this.getPageCachePath(mangaKey, chapterKey, pageIndex);
+      if (!SafeFileUtils.accessSync(pagePath)) {
+        return true;
+      }
+      SafeFileUtils.unlinkSync(pagePath);
+      logger.info(TAG, `Komga 单页缓存已失效: page=${pageIndex + 1}, path=${pagePath}`);
+      return true;
+    } catch (error) {
+      logger.warn(TAG, `Komga 单页缓存失效失败: page=${pageIndex + 1}, error=${String(error)}`);
+      return false;
     }
   }
 

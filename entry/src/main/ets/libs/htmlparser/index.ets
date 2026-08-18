@@ -31,6 +31,10 @@ export { Parser, parse, ParseOptions } from './Parser';
 
 // 导出 HTML 实体工具
 export { HtmlEntities } from './HtmlEntities';
+export { buildJsoupEntityCompatibilityScript } from './JsoupEntityScript';
+
+// Legado/Jsoup text projection primitives shared by DOM and string fallback.
+export { LegadoTextNormalization, LegadoTextAccumulator } from './LegadoTextNormalization';
 
 // 导出日志工具
 export { HtmlParserLogger } from './HtmlParserLogger';

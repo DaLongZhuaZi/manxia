@@ -1,4 +1,5 @@
 import { common } from '@kit.AbilityKit';
+import { FrameCallback, UIContext } from '@kit.ArkUI';
 import { logger } from '../Utils/Logger';
 import { FileEditorPage } from './FileEditorPage';
 import { ReaderAbilityBackgroundBlurOverlay } from '../Framework/Reader/ReaderAbilityBackgroundBlurOverlay';
@@ -10,21 +11,91 @@ import {
 
 const TAG: string = 'FileEditorAbilityPage';
 
+class FileEditorNavigationFrameCallback extends FrameCallback {
+  private callback: () => void;
+  private hasRun: boolean = false;
+
+  constructor(callback: () => void) {
+    super();
+    this.callback = callback;
+  }
+
+  onFrame(_frameTimeInNano: number): void {
+  }
+
+  onIdle(_timeLeftInNano: number): void {
+    if (this.hasRun) {
+      return;
+    }
+    this.hasRun = true;
+    this.callback();
+  }
+}
+
 @Entry
 @Component
 struct FileEditorAbilityPage {
-  @State private pathStack: NavPathStack = new NavPathStack();
+  private pathStack: NavPathStack = new NavPathStack();
   @State private editorParams: FileEditorOpenParams | null = null;
-  @State private editorInstanceId: string = '';
+  private editorInstanceId: string = '';
   private hasOpenedEditor: boolean = false;
+  private hasScheduledInitialEditorOpen: boolean = false;
+  private navigationScheduleGeneration: number = 0;
+  private isPageActive: boolean = false;
+  private scheduledFrameCallback: FileEditorNavigationFrameCallback | null = null;
 
   aboutToAppear(): void {
+    this.isPageActive = true;
     this.resolveEditorLaunchPayload('appear');
-    this.openInitialEditor();
-    setTimeout((): void => {
-      this.resolveEditorLaunchPayload('deferred');
-      this.openInitialEditor();
-    }, 0);
+    this.scheduleInitialEditorOpen();
+  }
+
+  onPageShow(): void {
+    this.isPageActive = true;
+    if (this.hasOpenedEditor) {
+      return;
+    }
+    this.resolveEditorLaunchPayload('page_show');
+    this.scheduleInitialEditorOpen();
+  }
+
+  aboutToDisappear(): void {
+    this.isPageActive = false;
+    this.navigationScheduleGeneration += 1;
+    this.hasScheduledInitialEditorOpen = false;
+    this.scheduledFrameCallback = null;
+  }
+
+  private scheduleInitialEditorOpen(): void {
+    if (!this.isPageActive ||
+      this.hasOpenedEditor ||
+      this.hasScheduledInitialEditorOpen) {
+      return;
+    }
+    try {
+      const uiContext: UIContext = this.getUIContext();
+      const scheduleGeneration: number = this.navigationScheduleGeneration + 1;
+      this.navigationScheduleGeneration = scheduleGeneration;
+      this.hasScheduledInitialEditorOpen = true;
+      const frameCallback = new FileEditorNavigationFrameCallback((): void => {
+        if (scheduleGeneration !== this.navigationScheduleGeneration) {
+          return;
+        }
+        this.scheduledFrameCallback = null;
+        this.hasScheduledInitialEditorOpen = false;
+        if (!this.isPageActive || this.hasOpenedEditor) {
+          return;
+        }
+        this.resolveEditorLaunchPayload('frame_idle');
+        this.openInitialEditor();
+      });
+      this.scheduledFrameCallback = frameCallback;
+      uiContext.postFrameCallback(frameCallback);
+    } catch (error) {
+      this.scheduledFrameCallback = null;
+      this.hasScheduledInitialEditorOpen = false;
+      logger.warn(TAG, `调度独立文件编辑器初始路由失败: ${String(error)}`);
+    }
   }
 
   private resolveEditorLaunchPayload(source: string): void {
@@ -61,19 +132,20 @@ struct FileEditorAbilityPage {
     }
   }
 
-  private openInitialEditor(): void {
+  private openInitialEditor(): boolean {
     if (this.hasOpenedEditor) {
-      return;
+      return true;
     }
 
     if (!this.editorParams) {
       logger.error(TAG, `独立文件编辑器参数为空: instanceId=${this.editorInstanceId}`);
-      return;
+      return false;
     }
 
+    this.pathStack.pushPathByName('FileEditorPage', this.editorParams, false);
     this.hasOpenedEditor = true;
     logger.info(TAG, `打开独立文件编辑器目标页: instanceId=${this.editorInstanceId}`);
-    this.pathStack.pushPathByName('FileEditorPage', this.editorParams);
+    return true;
   }
 
   @Builder

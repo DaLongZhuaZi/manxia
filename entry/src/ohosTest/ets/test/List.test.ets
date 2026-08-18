@@ -1,5 +1,11 @@
-import abilityTest from './Ability.test';
+import legadoCompatibilityConformanceTest from './LegadoCompatibilityConformance.test';
+import loggerBackgroundOutputConformanceTest from './LoggerBackgroundOutputConformance.test';
+import networkTransportFailureGovernanceTest from './NetworkTransportFailureGovernance.test';
+import legadoCancellationConformanceTest from './LegadoCancellationConformance.test';
 
 export default function testsuite() {
-  abilityTest();
+  legadoCompatibilityConformanceTest();
+  loggerBackgroundOutputConformanceTest();
+  networkTransportFailureGovernanceTest();
+  legadoCancellationConformanceTest();
 }

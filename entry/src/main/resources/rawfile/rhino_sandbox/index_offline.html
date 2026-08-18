@@ -17,7 +17,10 @@
     <div id="status">Rhino Sandbox (Offline): Initializing...</div>
     <div id="console"></div>
     
-    <!-- 离线模式：使用纯JavaScript模拟Rhino环境 -->
+    <!-- 离线模式：实体数据/解码器必须先加载，再加载 jsoup_impl.js，最后加载 rhino_offline.js -->
+    <script src="jsoup_entity_data.js"></script>
+    <script src="jsoup_entity_decoder.js"></script>
+    <script src="jsoup_impl.js"></script>
     <script src="rhino_offline.js"></script>
     
     <script>

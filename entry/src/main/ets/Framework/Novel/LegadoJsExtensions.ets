@@ -570,6 +570,47 @@ export class LegadoJsExtensions {
 
   // ==================== 工具函数 ====================
 
+  private padTimePart(value: number, width: number): string {
+    return value.toString().padStart(width, '0');
+  }
+
+  /**
+   * Legado uses java.text.SimpleDateFormat semantics for these APIs.  Keep
+   * the formatter deterministic instead of delegating to the device locale,
+   * whose toLocaleString output varies by language and region.
+   */
+  private formatJavaDate(date: Date, pattern: string, utc: boolean): string {
+    const year = utc ? date.getUTCFullYear() : date.getFullYear();
+    const month = (utc ? date.getUTCMonth() : date.getMonth()) + 1;
+    const day = utc ? date.getUTCDate() : date.getDate();
+    const hour24 = utc ? date.getUTCHours() : date.getHours();
+    const minute = utc ? date.getUTCMinutes() : date.getMinutes();
+    const second = utc ? date.getUTCSeconds() : date.getSeconds();
+    const millisecond = utc ? date.getUTCMilliseconds() : date.getMilliseconds();
+    const hour12 = hour24 % 12 === 0 ? 12 : hour24 % 12;
+    return pattern.replace(/yyyy|yy|MM|M|dd|d|HH|H|hh|h|mm|m|ss|s|SSS|S/g, (token: string): string => {
+      switch (token) {
+        case 'yyyy': return year.toString().padStart(4, '0');
+        case 'yy': return year.toString().slice(-2).padStart(2, '0');
+        case 'MM': return this.padTimePart(month, 2);
+        case 'M': return month.toString();
+        case 'dd': return this.padTimePart(day, 2);
+        case 'd': return day.toString();
+        case 'HH': return this.padTimePart(hour24, 2);
+        case 'H': return hour24.toString();
+        case 'hh': return this.padTimePart(hour12, 2);
+        case 'h': return hour12.toString();
+        case 'mm': return this.padTimePart(minute, 2);
+        case 'm': return minute.toString();
+        case 'ss': return this.padTimePart(second, 2);
+        case 's': return second.toString();
+        case 'SSS': return this.padTimePart(millisecond, 3);
+        case 'S': return millisecond.toString();
+        default: return token;
+      }
+    });
+  }
+
   /**
    * URL编码
    */
@@ -597,15 +638,17 @@ export class LegadoJsExtensions {
    */
   timeFormat(time: number): string {
     const date = new Date(time);
-    return date.toLocaleString();
+    return this.formatJavaDate(date, 'yyyy/MM/dd HH:mm', false);
   }
 
   /**
    * UTC时间格式化
    */
   timeFormatUTC(time: number, format: string, offset: number): string {
-    const date = new Date(time + offset * 3600 * 1000);
-    return date.toISOString();
+    // Legado passes `offset` directly to SimpleTimeZone as milliseconds.
+    // Preserve that observed API contract rather than guessing hours.
+    const date = new Date(time + offset);
+    return this.formatJavaDate(date, format, true);
   }
 
   /**

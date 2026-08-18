@@ -6,9 +6,10 @@ import {
   MangaImageRequestHeader,
   MangaPage
 } from '../Models/MangaModels';
-import { RequestHeaderEntry, RequestHeaders } from '../Framework/Cache/ImageCacheManager';
+import { RequestHeaders } from '../Framework/Cache/ImageCacheManager';
 import { MangaAssetRequestContext } from '../Framework/Reader/MangaAssetRequestFactory';
 import { MangaAssetLoadReason } from '../Framework/Reader/MangaAssetTypes';
+import { MangaRequestHeaderContract } from '../Framework/Reader/MangaRequestHeaderContract';
 import { MangaPagePathResolver } from './MangaPagePathResolver';
 import { WebtoonPageRef } from './MangaWebtoonTypes';
 
@@ -19,6 +20,8 @@ export class MangaAssetLoadContextInput {
   public sourceId: number | undefined = undefined;
   public mangaId: string | undefined = undefined;
   public contentType: string | undefined = undefined;
+  public useLegadoV2ImageTransport: boolean = false;
+  public legadoSourceRawSha256: string = '';
   public screenWidth: number = 1080;
   public isWebtoonMode: boolean = false;
 }
@@ -45,6 +48,8 @@ export class MangaAssetLoadContextResolver {
     requestContext.sourceId = input.sourceId;
     requestContext.mangaId = input.mangaId;
     requestContext.contentType = input.contentType;
+    requestContext.useLegadoV2ImageTransport = input.useLegadoV2ImageTransport;
+    requestContext.legadoSourceRawSha256 = input.legadoSourceRawSha256;
     requestContext.headers = this.buildPageNetworkHeaders(page, input.networkHeaders);
     requestContext.localMaxWidth = input.screenWidth > 0 ? input.screenWidth : 1080;
     requestContext.reason = reason;
@@ -65,13 +70,13 @@ export class MangaAssetLoadContextResolver {
       return undefined;
     }
 
-    const headers: RequestHeaders = this.cloneRequestHeaders(baseHeaders);
+    const headers: RequestHeaders = MangaRequestHeaderContract.clone(baseHeaders);
     if (pageHeaders && pageHeaders.length > 0) {
       let index: number = 0;
       while (index < pageHeaders.length) {
         const pageHeader: MangaImageRequestHeader = pageHeaders[index];
         if (pageHeader && pageHeader.name && pageHeader.value) {
-          this.upsertExtraRequestHeader(headers, String(pageHeader.name), String(pageHeader.value));
+          MangaRequestHeaderContract.apply(headers, String(pageHeader.name), String(pageHeader.value));
         }
         index = index + 1;
       }
@@ -79,60 +84,4 @@ export class MangaAssetLoadContextResolver {
     return headers;
   }
 
-  private cloneRequestHeaders(headers: RequestHeaders | undefined): RequestHeaders {
-    const cloned: RequestHeaders = {} as RequestHeaders;
-    if (!headers) {
-      return cloned;
-    }
-    cloned.userAgent = headers.userAgent;
-    cloned.accept = headers.accept;
-    cloned.referer = headers.referer;
-    cloned.origin = headers.origin;
-    cloned.cookie = headers.cookie;
-    cloned.authorization = headers.authorization;
-    cloned.acceptLanguage = headers.acceptLanguage;
-    cloned.cacheControl = headers.cacheControl;
-    cloned.pragma = headers.pragma;
-    cloned.secFetchDest = headers.secFetchDest;
-    cloned.secFetchMode = headers.secFetchMode;
-    cloned.secFetchSite = headers.secFetchSite;
-    cloned.cachePartition = headers.cachePartition;
-    if (headers.extraHeaders && headers.extraHeaders.length > 0) {
-      cloned.extraHeaders = [];
-      for (let i = 0; i < headers.extraHeaders.length; i++) {
-        const entry: RequestHeaderEntry = headers.extraHeaders[i];
-        if (entry && entry.name && entry.value) {
-          cloned.extraHeaders.push({
-            name: entry.name,
-            value: entry.value
-          } as RequestHeaderEntry);
-        }
-      }
-    }
-    return cloned;
-  }
-
-  private upsertExtraRequestHeader(headers: RequestHeaders, headerName: string, headerValue: string): void {
-    const normalizedName: string = headerName.trim();
-    const normalizedValue: string = headerValue.trim();
-    if (normalizedName.length === 0 || normalizedValue.length === 0) {
-      return;
-    }
-    if (!headers.extraHeaders) {
-      headers.extraHeaders = [];
-    }
-    let index: number = 0;
-    while (index < headers.extraHeaders.length) {
-      const entry: RequestHeaderEntry = headers.extraHeaders[index];
-      if (entry.name.toLowerCase() === normalizedName.toLowerCase()) {
-        entry.value = normalizedValue;
-        return;
-      }
-      index = index + 1;
-    }
-    headers.extraHeaders.push({
-      name: normalizedName,
-      value: normalizedValue
-    } as RequestHeaderEntry);
-  }
 }

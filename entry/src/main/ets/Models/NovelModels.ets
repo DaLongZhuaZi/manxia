@@ -121,6 +121,10 @@ export interface NovelSearchResult {
   wordCount?: string;
   /** 是否为NSFW内容（从源级别继承） */
   isNSFW?: boolean;
+  /** Legado 书级变量快照，保持 Search 到详情/目录/正文的作用域连续。 */
+  variable?: string;
+  /** Opaque lookup key; the potentially sensitive request carrier remains in memory. */
+  requestCarrierKey?: string;
 }
 
 /**
@@ -144,6 +148,12 @@ export interface NovelSourceInfo {
   isTop?: boolean;
   /** 是否为成人内容源（NSFW） */
   isNSFW?: boolean;
+  /** Legado V2 兼容分层状态。 */
+  compatibilityStatus?: string;
+  /** legacy / v2_shadow / v2_enabled。 */
+  engineMode?: string;
+  /** V2 全量策略下不允许回退时的明确阻断原因。 */
+  v2FullCutoverBlockReason?: string;
 }
 
 /**

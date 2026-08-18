@@ -1,9 +1,10 @@
-﻿import { SafeFileUtils } from '../../Utils/SafeFileUtils';
+import { SafeFileUtils } from '../../Utils/SafeFileUtils';
 import { fileIo as fs } from '@kit.CoreFileKit';
 import { EBook } from '../../Models/EBookModels';
 import { logger } from '../../Utils/Logger';
 import { EBookDataManager } from '../Data/EBookDataManager';
 import { EBookCoverExtractor, EBookParserFactory } from '../Parsers/EBookParser';
+import { getContext } from '../../GlobalContext';
 
 const TAG = 'OnlineEBookImportService';
 
@@ -134,5 +135,80 @@ export class OnlineEBookImportService {
 
   private normalizePath(filePath: string): string {
     return filePath.replace(/\\/g, '/').toLowerCase();
+  }
+
+  /**
+   * [跨端接续] 导入经独立连接通道传输过来的本地书籍文件，并保留源端 bookId：
+   * 1. 先把临时文件复制到应用电子书目录（解析器的提取目录与文件同层，必须先落位再解析）；
+   * 2. 解析并重绑 bookId（含章节与阅读进度），保证目标端按源端 bookId 命中接续。
+   * @param tempFilePath 通道接收到的临时文件路径（使用后可删除）
+   * @param targetBookId 源端书籍 ID
+   * @param originalFileName 源端原文件名（用于确定扩展名；临时文件统一以 .part 结尾）
+   */
+  public async importTransferredBook(tempFilePath: string, targetBookId: string, originalFileName: string = ''): Promise<EBook> {
+    if (!this.fileExists(tempFilePath)) {
+      throw new Error(`传输文件不存在: ${tempFilePath}`);
+    }
+    if (targetBookId.length <= 0) {
+      throw new Error('目标书籍ID为空');
+    }
+
+    let ebookRootDir = '';
+    try {
+      ebookRootDir = `${getContext().filesDir}/ebooks`;
+    } catch (error) {
+      logger.warn(TAG, `获取应用电子书目录失败: ${String(error)}`);
+      ebookRootDir = this.getParentDirectory(tempFilePath);
+    }
+    const extension = originalFileName.length > 0
+      ? this.getFileExtension(originalFileName, '.epub')
+      : this.getFileExtension(tempFilePath, '.epub');
+    const bookDir = `${ebookRootDir}/transferred_${targetBookId}`;
+    // [修复] 目录可能已存在（此前接续已同步过）：mkdirSync 对已存在目录会抛 EEXIST，先探测再创建
+    if (!SafeFileUtils.accessSync(bookDir)) {
+      SafeFileUtils.mkdirSync(bookDir, true);
+    }
+    const finalPath = `${bookDir}/${targetBookId}${extension}`;
+    try {
+      SafeFileUtils.copyFileSync(tempFilePath, finalPath);
+    } catch (error) {
+      logger.warn(TAG, `复制传输文件失败: ${String(error)}`);
+    }
+    if (!this.fileExists(finalPath)) {
+      throw new Error(`复制传输文件失败: ${finalPath}`);
+    }
+    // [修复] 复制后校验大小一致，防止残留旧文件/复制不完整被当成成功导入
+    const srcSize = SafeFileUtils.statSync(tempFilePath).size;
+    const dstSize = SafeFileUtils.statSync(finalPath).size;
+    if (srcSize <= 0 || dstSize !== srcSize) {
+      throw new Error(`复制传输文件大小不一致: src=${srcSize}, dst=${dstSize}`);
+    }
+
+    const parser = EBookParserFactory.createParser(finalPath);
+    if (!parser) {
+      throw new Error(`不支持的电子书格式: ${finalPath}`);
+    }
+
+    const ebook: EBook = await parser.parse();
+    // [修复] ReaderKit 解析失败会走降级解析：标题回退为文件名（即 targetBookId）、无真实章节。
+    // 对传输导入而言这等同于“文件损坏/不完整”，不能入库，否则目标端后续打开会报
+    // “File is not exist / 加载章节失败”，且残留记录会让下次接续跳过重新拉取。
+    const parsedTitle = (ebook.metadata.title || '').trim();
+    if (parsedTitle.length <= 0 || parsedTitle === targetBookId) {
+      throw new Error(`传输文件解析异常，文件可能不完整: ${finalPath}`);
+    }
+    // 重绑为源端 bookId（接续按 bookId 命中；章节与阅读进度同步重绑）
+    ebook.id = targetBookId;
+    for (const chapter of ebook.chapters) {
+      chapter.bookId = targetBookId;
+    }
+    if (ebook.readingProgress) {
+      ebook.readingProgress.bookId = targetBookId;
+    }
+    this.normalizeImportedTitle(ebook);
+    await this.ensureCoverInBookFolder(ebook, finalPath, bookDir);
+    await this.ebookDataManager.saveEBook(ebook);
+    logger.info(TAG, `接续传输电子书导入成功: bookId=${targetBookId}, title=${ebook.metadata.title}`);
+    return ebook;
   }
 }

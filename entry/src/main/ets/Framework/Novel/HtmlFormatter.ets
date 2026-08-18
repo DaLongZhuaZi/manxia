@@ -50,7 +50,11 @@ export class HtmlFormatter {
    * @param keepImg 是否保留图片标签
    * @returns 格式化后的纯文本
    */
-  static format(html: string | null | undefined, keepImg: boolean = false): string {
+  static format(
+    html: string | null | undefined,
+    keepImg: boolean = false,
+    useLegadoReaderIndent: boolean = false
+  ): string {
     if (!html) return '';
     
     let result = html;
@@ -79,10 +83,16 @@ export class HtmlFormatter {
       result = result.replace(HtmlFormatter.otherHtmlRegex, '');
     }
     
-    // 7. 处理换行（不添加缩进，缩进由后续处理统一添加）
-    // 注意：之前这里添加了'　　'缩进，但会导致与NovelContentProcessor和TextReaderComponent的缩进重复
-    result = result.replace(HtmlFormatter.indent1Regex, '\n');
-    result = result.replace(HtmlFormatter.indent2Regex, '');
+    // The legacy executor keeps its historical no-indent presentation. V2
+    // can opt into the upstream Legado reader contract, which prefixes every
+    // formatted paragraph with two full-width spaces.
+    if (useLegadoReaderIndent) {
+      result = result.replace(HtmlFormatter.indent1Regex, '\n　　');
+      result = result.replace(HtmlFormatter.indent2Regex, '　　');
+    } else {
+      result = result.replace(HtmlFormatter.indent1Regex, '\n');
+      result = result.replace(HtmlFormatter.indent2Regex, '');
+    }
     result = result.replace(HtmlFormatter.lastRegex, '');
     
     return result;
@@ -94,10 +104,14 @@ export class HtmlFormatter {
    * @param baseUrl 基础URL，用于解析相对路径
    * @returns 格式化后的内容（保留img标签）
    */
-  static formatKeepImg(html: string | null | undefined, baseUrl?: string): string {
+  static formatKeepImg(
+    html: string | null | undefined,
+    baseUrl?: string,
+    useLegadoReaderIndent: boolean = false
+  ): string {
     if (!html) return '';
     
-    const keepImgHtml = HtmlFormatter.format(html, true);
+    const keepImgHtml = HtmlFormatter.format(html, true, useLegadoReaderIndent);
     let appendPos = 0;
     let result = '';
     HtmlFormatter.formatImageRegex.lastIndex = 0;

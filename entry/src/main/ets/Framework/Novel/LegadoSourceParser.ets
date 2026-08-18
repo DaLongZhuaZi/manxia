@@ -148,7 +148,9 @@ export class LegadoSourceParser {
       variableComment: obj.variableComment ? String(obj.variableComment) : undefined,
       lastUpdateTime: this.parseNumberField(obj.lastUpdateTime, Date.now()),
       respondTime: this.parseNumberField(obj.respondTime, 180000),
-      weight: 0, // 导入的书源默认不置顶，忽略原始weight值
+      // V2 原始文档会完整保存；旧记录也必须保留 Legado 的排序权重，
+      // 不能因为导入而隐式改写用户的排序语义。
+      weight: this.parseNumberField(obj.weight, 0),
       exploreUrl: resolvedExploreUrl,
       exploreScreen: obj.exploreScreen ? String(obj.exploreScreen) : undefined,
       searchUrl: resolvedSearchUrl,
@@ -682,15 +684,12 @@ export class LegadoSourceParser {
   /**
    * 解析书源类型
    */
-  private parseBookSourceType(type: ESObject): LegadoBookSourceType {
+  private parseBookSourceType(type: ESObject): number {
     if (typeof type === 'number') {
-      switch (type) {
-        case 0: return LegadoBookSourceType.TEXT;
-        case 1: return LegadoBookSourceType.AUDIO;
-        case 2: return LegadoBookSourceType.IMAGE;
-        case 3: return LegadoBookSourceType.FILE;
-        default: return LegadoBookSourceType.TEXT;
+      if (Number.isFinite(type)) {
+        return type;
       }
+      return LegadoBookSourceType.TEXT;
     }
     if (typeof type === 'string') {
       const normalized = type.trim().toLowerCase();
@@ -914,21 +913,19 @@ export class LegadoSourceParser {
 
     const ruleStr = exploreUrl.trim();
 
-    // 检查是否为JSON格式
+    // Legado uses its default Gson instance for Explore kinds. That parser
+    // accepts literal control characters inside string values, while ArkTS
+    // JSON.parse is strict. Normalize only those characters before parsing so
+    // URL options with formatted request bodies retain their exact semantics.
     if (ruleStr.startsWith('[')) {
-      try {
-        const parsed: Object = SafeUtils.parseObj(ruleStr);
-        const parsedArray = parsed as Record<string, Object>[];
-        for (let i = 0; i < parsedArray.length; i++) {
-          const kind = this.parseExploreKindObject(parsedArray[i]);
-          if (kind) {
-            kinds.push(kind);
-          }
+      const parsedArray = this.parseExploreKindsJson(ruleStr);
+      for (let i = 0; i < parsedArray.length; i++) {
+        const kind = this.parseExploreKindObject(parsedArray[i]);
+        if (kind) {
+          kinds.push(kind);
         }
-        return kinds;
-      } catch (e) {
-        // 不是JSON，继续按文本格式解析
       }
+      return kinds;
     }
 
     // Legado 原版按 (&&|\n)+ 分割，URL 可省略
@@ -953,6 +950,81 @@ export class LegadoSourceParser {
     }
 
     return kinds;
+  }
+
+  private parseExploreKindsJson(ruleStr: string): Record<string, Object>[] {
+    const normalizedJson = this.normalizeExploreKindsJson(ruleStr);
+    try {
+      const parsed: Object = JSON.parse(normalizedJson) as Object;
+      if (!Array.isArray(parsed)) {
+        logger.error(TAG, `LEGADO_EXPLORE_KINDS_JSON_NOT_ARRAY inputLength=${ruleStr.length};normalizedLength=${normalizedJson.length}`);
+        throw new Error('LEGADO_EXPLORE_KINDS_JSON_NOT_ARRAY');
+      }
+      return parsed as Record<string, Object>[];
+    } catch (error) {
+      const message = String(error);
+      if (message.includes('LEGADO_EXPLORE_KINDS_JSON_NOT_ARRAY')) {
+        throw new Error('LEGADO_EXPLORE_KINDS_JSON_NOT_ARRAY');
+      }
+      logger.error(TAG, `LEGADO_EXPLORE_KINDS_JSON_PARSE_FAILED inputLength=${ruleStr.length};normalizedLength=${normalizedJson.length};reason=${message}`);
+      throw new Error('LEGADO_EXPLORE_KINDS_JSON_PARSE_FAILED');
+    }
+  }
+
+  /**
+   * Converts literal JSON control characters only while inside a quoted value.
+   * Pretty-print whitespace between object members stays untouched.
+   */
+  private normalizeExploreKindsJson(value: string): string {
+    let normalized = '';
+    let inString = false;
+    let escaping = false;
+    for (let index = 0; index < value.length; index++) {
+      const character = value.charAt(index);
+      if (!inString) {
+        normalized += character;
+        if (character === '"') {
+          inString = true;
+        }
+        continue;
+      }
+
+      if (escaping) {
+        normalized += character;
+        escaping = false;
+        continue;
+      }
+      if (character === '\\') {
+        normalized += character;
+        escaping = true;
+        continue;
+      }
+      if (character === '"') {
+        normalized += character;
+        inString = false;
+        continue;
+      }
+      const code = character.charCodeAt(0);
+      if (code >= 0x20) {
+        normalized += character;
+        continue;
+      }
+      if (character === '\n') {
+        normalized += '\\n';
+      } else if (character === '\r') {
+        normalized += '\\r';
+      } else if (character === '\t') {
+        normalized += '\\t';
+      } else if (character === '\b') {
+        normalized += '\\b';
+      } else if (character === '\f') {
+        normalized += '\\f';
+      } else {
+        const hex = code.toString(16);
+        normalized += `\\u${'0000'.substring(0, 4 - hex.length)}${hex}`;
+      }
+    }
+    return normalized;
   }
 
   private parseExploreKindObject(item: Record<string, Object>): LegadoExploreKind | null {

@@ -8,9 +8,13 @@
 
 import { HdsNavDestination } from '@kit.UIDesignKit';
 import { promptAction } from '@kit.ArkUI';
+import { common } from '@kit.AbilityKit';
 import { logger } from '../Utils/Logger';
 import { PageLifecycleManager } from '../Framework/Lifecycle';
 import { getNovelSourceManager, NovelSourceManager } from '../Framework/Novel/NovelSourceManager';
+import { getNovelInitializer } from '../Framework/Novel/NovelInitializer';
+import { LegadoWorkflowKind } from '../Framework/Novel/LegadoCompatibilityTypes';
+import { getLegadoSourceAutomationToken } from '../Framework/Novel/LegadoSourceAutomationIdentity';
 import { LegadoBookSourceType } from '../Framework/Novel/LegadoSourceTypes';
 import { getLegadoMangaSourceBridge, LegadoMangaVirtualSource } from '../Framework/Novel/LegadoMangaSourceBridge';
 import { getNovelSettingsManager, NovelSettingsManager } from '../Framework/Novel/NovelSettingsManager';
@@ -19,6 +23,7 @@ import { ThemeAwareState, ThemeAwareHelper } from '../Framework/Components/Theme
 import { ThemeManager, ThemeType } from '../Framework/Managers/ThemeManager';
 import { FontAwareHelper, FontAwareState } from '../Framework/Components/FontAware';
 import { NovelDetailPageParams, NovelSearchPageParams } from './NovelBookshelfPage';
+import { NovelExplorePageParams } from './NovelExplorePage';
 import { DeviceAdaptationManager, DeviceChangeListener } from '../Framework/Managers/DeviceAdaptationManager';
 import { AppColors } from '../Framework/Theme/AppColors';
 import { PageSettingsHelper, DetailPageType } from './settings/PageSettingsSubPage';
@@ -65,6 +70,14 @@ const SEARCH_BATCH_SIZE = 10;       // 每批搜索数量
 const SEARCH_BATCH_DELAY = 50;      // 批次间延迟(ms)
 const PROGRESS_THROTTLE_MS = 300;   // 进度更新节流(ms)
 const MAX_RESULTS_PER_SOURCE = 100; // 每个书源最大结果数
+const SINGLE_SOURCE_SEARCH_SUGGESTIONS: string[] = [
+  '斗破苍穹',
+  '诡秘之主',
+  '凡人修仙传',
+  '一人之下',
+  '咒术回战',
+  '海贼王'
+];
 
 @Component
 export struct NovelSearchPage {
@@ -81,11 +94,14 @@ export struct NovelSearchPage {
   @State searchResults: NovelSearchResult[] = [];
   @State isSearching: boolean = false;
   @State hasSearched: boolean = false;
+  @State searchErrorMessage: string = '';
   @State searchHistory: string[] = [];
   @State maxConcurrentSources: number = 5;
   // 单书源搜索模式
   @State singleSourceId: string = '';
   @State singleSourceName: string = '';
+  @State singleSourceV2TraceSummary: string = '';
+  @State showSingleSourceV2Trace: boolean = false;
   
   // 标签页相关状态
   @State sourceResults: SourceSearchResult[] = [];  // 按书源分组的搜索结果
@@ -118,6 +134,7 @@ export struct NovelSearchPage {
   
   // 搜索控制相关
   private currentSearchTaskId: number = 0;  // 当前搜索任务ID
+  private activeSearchKeyword: string = '';
   private lastProgressUpdate: number = 0;   // 上次进度更新时间戳
   @State searchProgress: string = '';       // 搜索进度文本
   
@@ -183,33 +200,61 @@ export struct NovelSearchPage {
     }
   }
 
+  private dismissSearchInputFocus(): void {
+    this.getUIContext().getFocusController().clearFocus();
+  }
+
   async doSearch(): Promise<void> {
-    if (!this.keyword.trim()) {
+    const normalizedKeyword = this.keyword.trim();
+    if (!normalizedKeyword) {
       return;
     }
+
+    // TextInput.onSubmit and the visible command can be delivered together by
+    // an IME or UI automation. They describe the same user action, so a
+    // second identical V2 request must not race the visible result and trace.
+    if (this.isSearching && this.activeSearchKeyword === normalizedKeyword) {
+      logger.info(TAG, `忽略重复搜索提交: ${normalizedKeyword}`);
+      return;
+    }
+
+    this.dismissSearchInputFocus();
 
     // 取消之前的搜索任务
     this.currentSearchTaskId++;
     const taskId = this.currentSearchTaskId;
+    this.activeSearchKeyword = normalizedKeyword;
     
     this.isSearching = true;
     this.hasSearched = true;
+    this.searchErrorMessage = '';
     this.searchResults = [];
     this.sourceResults = [];
     this.currentTabIndex = 0;
     this.completedSourceCount = 0;
     this.searchProgress = '';
+    this.singleSourceV2TraceSummary = '';
+    this.showSingleSourceV2Trace = false;
     this.lastProgressUpdate = 0;
 
     try {
+      // Source search is a V2 routing boundary. A cold-start page must not
+      // issue a plausible legacy request before raw source records finish
+      // restoring in the shared module initializer.
+      await this.ensureNovelModuleReady();
+      if (taskId !== this.currentSearchTaskId) {
+        return;
+      }
       // 保存搜索历史
-      await this.settingsManager.addSearchHistory(this.keyword.trim());
+      await this.settingsManager.addSearchHistory(normalizedKeyword);
       this.searchHistory = this.settingsManager.getSearchHistory();
       
       if (this.singleSourceId) {
         // 单书源搜索模式
         logger.info(TAG, `单书源搜索: ${this.keyword}, 书源: ${this.singleSourceName}`);
-        const results = await this.sourceManager.search(this.singleSourceId, this.keyword.trim(), 1);
+        const results = await this.sourceManager.search(this.singleSourceId, normalizedKeyword, 1, {
+          maxResults: MAX_RESULTS_PER_SOURCE
+        });
         
         // 检查任务是否已取消
         if (taskId !== this.currentSearchTaskId) {
@@ -223,15 +268,44 @@ export struct NovelSearchPage {
       } else {
         // 全局搜索模式 - 按书源分组搜索
         logger.info(TAG, `全局搜索: ${this.keyword}, 并发数: ${this.maxConcurrentSources}`);
-        await this.doSearchBySource(taskId);
+        await this.doSearchBySource(taskId, normalizedKeyword);
       }
     } catch (error) {
-      logger.error(TAG, `搜索失败: ${String(error)}`);
+      const executionError: string = String(error);
+      logger.error(TAG, `搜索失败: ${executionError}`);
+      if (executionError.includes('V2_EXECUTION_TRACE_MISSING')) {
+        this.searchErrorMessage = 'V2 执行证据缺失，结果未被采用';
+      } else if (executionError.includes('V2_FULL_CUTOVER_BLOCKED;workflow=search')) {
+        this.searchErrorMessage = 'V2 全量切换已阻止该书源执行，已记录兼容性诊断';
+      } else if (executionError.includes('V2_EXECUTION_UNAVAILABLE;workflow=search')) {
+        this.searchErrorMessage = 'V2 搜索执行器未就绪，已阻止返回不可信空结果';
+      } else if (executionError.includes('V2_EXECUTION_FAILED;workflow=search;stage=result_mapping')) {
+        this.searchErrorMessage = 'V2 搜索结果处理失败，已记录诊断信息';
+      } else if (executionError.includes('V2_EXECUTION_FAILED;workflow=search;stage=trace;error=http;status=')) {
+        const statusMarker: string = ';status=';
+        const statusStart: number = executionError.indexOf(statusMarker) + statusMarker.length;
+        const statusCode: string = executionError.substring(statusStart).split(';')[0];
+        this.searchErrorMessage = `V2 搜索请求返回 HTTP ${statusCode}，已记录诊断信息`;
+      } else if (executionError.includes('V2_EXECUTION_FAILED;workflow=search;stage=trace;error=network')) {
+        this.searchErrorMessage = 'V2 搜索网络请求未完成，已记录诊断信息';
+      } else if (executionError.includes('V2_EXECUTION_FAILED;workflow=search;stage=trace;error=unsupported_api')) {
+        this.searchErrorMessage = '当前 V2 不支持该书源所需脚本 API，已记录兼容性诊断';
+      } else if (executionError.includes('V2_EXECUTION_FAILED;workflow=search;stage=trace;error=rule')) {
+        this.searchErrorMessage = 'V2 搜索规则执行失败，已记录诊断信息';
+      } else if (executionError.includes('V2_EXECUTION_FAILED;workflow=search;stage=trace')) {
+        this.searchErrorMessage = 'V2 搜索状态同步失败，已记录诊断信息';
+      } else if (executionError.includes('V2_EXECUTION_FAILED;workflow=search;stage=request')) {
+        this.searchErrorMessage = 'V2 搜索请求未完成，已记录诊断信息';
+      } else {
+        this.searchErrorMessage = '搜索未完成，请稍后重试';
+      }
     }
 
     // 确保只有当前任务才更新状态
     if (taskId === this.currentSearchTaskId) {
+      this.refreshSingleSourceV2TraceSummary();
       this.isSearching = false;
+      this.activeSearchKeyword = '';
       this.searchProgress = '';
     }
   }
@@ -240,7 +314,7 @@ export struct NovelSearchPage {
    * 按书源分组搜索 - 独立并行搜索机制
    * @param taskId 搜索任务ID，用于取消检查
    */
-  async doSearchBySource(taskId: number): Promise<void> {
+  async doSearchBySource(taskId: number, keyword: string): Promise<void> {
     let sourcesToSearch: NovelSourceInfo[];
     
     // 如果用户选择了指定书源，则只搜索选中的书源
@@ -272,7 +346,7 @@ export struct NovelSearchPage {
       
       // 并行搜索当前批次的书源
       const batchPromises = batchSources.map(async (source: NovelSourceInfo) => {
-        return this.searchSingleSource(source, taskId);
+        return this.searchSingleSource(source, taskId, keyword);
       });
       
       await Promise.all(batchPromises);
@@ -305,7 +379,11 @@ export struct NovelSearchPage {
    * @param source 书源信息
    * @param taskId 搜索任务ID
    */
-  private async searchSingleSource(source: NovelSourceInfo, taskId: number): Promise<SourceSearchResult> {
+  private async searchSingleSource(
+    source: NovelSourceInfo,
+    taskId: number,
+    keyword: string
+  ): Promise<SourceSearchResult> {
     const sourceResult: SourceSearchResult = {
       sourceId: source.id,
       sourceName: source.name,
@@ -322,7 +400,9 @@ export struct NovelSearchPage {
         return sourceResult;
       }
       
-      const results = await this.sourceManager.search(source.id, this.keyword.trim(), 1);
+      const results = await this.sourceManager.search(source.id, keyword, 1, {
+        maxResults: MAX_RESULTS_PER_SOURCE
+      });
       
       // 再次检查任务是否已取消
       if (taskId !== this.currentSearchTaskId) {
@@ -390,6 +470,123 @@ export struct NovelSearchPage {
   searchFromHistory(keyword: string): void {
     this.keyword = keyword;
     this.doSearch();
+  }
+
+  /** Exposes only the persisted redacted V2 proof for the active source search. */
+  private refreshSingleSourceV2TraceSummary(): void {
+    this.singleSourceV2TraceSummary = '';
+    if (!this.singleSourceId) {
+      return;
+    }
+    const summaries = this.sourceManager.getExecutionTraceWorkflowSummaries(this.singleSourceId);
+    for (let index = 0; index < summaries.length; index++) {
+      const summary = summaries[index];
+      if (summary.workflow === LegadoWorkflowKind.SEARCH) {
+        this.singleSourceV2TraceSummary =
+          `V2 trace：${summary.workflow} · ${summary.transport} · HTTP ${summary.statusCode} · ` +
+          `${summary.errorCode} · ${summary.outputSummary}`;
+        return;
+      }
+    }
+  }
+
+  @Builder
+  private buildSingleSourceV2TraceDisclosure(): void {
+    if (this.singleSourceV2TraceSummary.length > 0) {
+      Column() {
+        Button(this.showSingleSourceV2Trace ? '收起诊断' : '执行诊断')
+          .id('novel_search_v2_trace_toggle')
+          .type(ButtonType.Normal)
+          .fontSize(12)
+          .fontFamily(this.appFontFamily)
+          .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
+          .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('panel_background', this.themeState.currentTheme))
+          .border({
+            width: 1,
+            color: ThemeAwareHelper.getTestManagementThemedColor('panel_border', this.themeState.currentTheme)
+          })
+          .borderRadius(6)
+          .padding({ left: 10, right: 10, top: 5, bottom: 5 })
+          .onClick(() => {
+            this.showSingleSourceV2Trace = !this.showSingleSourceV2Trace;
+          })
+        if (this.showSingleSourceV2Trace) {
+          Text(this.singleSourceV2TraceSummary)
+            .id('novel_search_v2_trace_detail')
+            .fontSize(11)
+            .fontFamily(this.appFontFamily)
+            .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_tertiary', this.themeState.currentTheme))
+            .width('100%')
+            .textAlign(TextAlign.Start)
+            .margin({ top: 6 })
+        }
+      }
+      .width('100%')
+      .alignItems(HorizontalAlign.Start)
+    }
+  }
+
+  private async ensureNovelModuleReady(): Promise<void> {
+    const initializer = getNovelInitializer();
+    if (initializer.isReady()) {
+      return;
+    }
+    const context = this.getUIContext().getHostContext() as common.UIAbilityContext;
+    const result = await initializer.initialize(context);
+    if (!result.success) {
+      throw new Error(`NOVEL_MODULE_INITIALIZATION_FAILED:${result.errors.length}`);
+    }
+  }
+
+  /** A new navigation must not inherit cards from a previous source request. */
+  private resetSearchPresentation(): void {
+    this.currentSearchTaskId++;
+    this.activeSearchKeyword = '';
+    this.isSearching = false;
+    this.hasSearched = false;
+    this.searchErrorMessage = '';
+    this.searchResults = [];
+    this.sourceResults = [];
+    this.currentTabIndex = 0;
+    this.completedSourceCount = 0;
+    this.totalSourceCount = 0;
+    this.searchProgress = '';
+  }
+
+  private searchFromSuggestion(keyword: string): void {
+    this.keyword = keyword;
+    this.doSearch();
+  }
+
+  private getSingleSourceSearchSuggestions(): string[] {
+    const suggestions = SINGLE_SOURCE_SEARCH_SUGGESTIONS.filter((suggestion: string): boolean => {
+      return !this.searchHistory.includes(suggestion);
+    });
+    if (suggestions.length > 0) {
+      return suggestions.slice(0, 3);
+    }
+    return SINGLE_SOURCE_SEARCH_SUGGESTIONS.slice(0, 3);
+  }
+
+  private currentSourceSupportsExplore(): boolean {
+    if (!this.singleSourceId) {
+      return false;
+    }
+    const source = this.sourceManager.getSource(this.singleSourceId);
+    if (!source || !source.exploreUrl) {
+      return false;
+    }
+    return source.exploreUrl.trim().length > 0;
+  }
+
+  private openCurrentSourceExplore(): void {
+    if (!this.currentSourceSupportsExplore()) {
+      return;
+    }
+    const params: NovelExplorePageParams = {
+      sourceId: this.singleSourceId
+    };
+    this.pathStack.pushPathByName('NovelExplorePage', params);
   }
 
   showConcurrentSettings(): void {
@@ -748,7 +945,10 @@ export struct NovelSearchPage {
         sourceName: book.sourceName,
         cachedTitle: book.name,
         cachedCover: book.coverUrl,
-        cachedAuthor: book.author
+        cachedAuthor: book.author,
+        forceNovelNetworkRefresh: sourceManager.shouldBlockLegacyFallback(book.sourceId),
+        novelRequestCarrierKey: book.requestCarrierKey,
+        novelBookVariable: book.variable
       };
       this.pathStack.pushPathByName('UnifiedDetailPage', unifiedParams);
     } else {
@@ -763,10 +963,129 @@ export struct NovelSearchPage {
         coverUrl: book.coverUrl,
         latestChapterTitle: book.latestChapterTitle,
         wordCount: book.wordCount,
-        sourceName: book.sourceName
+        sourceName: book.sourceName,
+        requestCarrierKey: book.requestCarrierKey,
+        bookVariable: book.variable
       };
       this.pathStack.pushPathByName('NovelDetailPage', params);
     }
+  }
+
+  @Builder
+  buildSingleSourceSearchStarter() {
+    Column({ space: 14 }) {
+      Row({ space: 10 }) {
+        SymbolGlyph($r('sys.symbol.magnifyingglass'))
+          .fontSize(22)
+          .fontColor([ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme)])
+
+        Column({ space: 4 }) {
+          Text('从当前书源开始找书')
+            .fontSize(16)
+            .fontWeight(FontWeight.Medium)
+            .fontFamily(this.appFontFamily)
+            .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
+          Text(this.singleSourceName
+            ? `仅检索「${this.singleSourceName}」，可输入作品名、作者名或别名。`
+            : '仅检索当前书源，可输入作品名、作者名或别名。')
+            .fontSize(13)
+            .fontFamily(this.appFontFamily)
+            .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
+            .maxLines(2)
+            .textOverflow({ overflow: TextOverflow.Ellipsis })
+        }
+        .layoutWeight(1)
+        .alignItems(HorizontalAlign.Start)
+      }
+      .width('100%')
+      .alignItems(VerticalAlign.Top)
+
+      Column({ space: 8 }) {
+        Text('试试这些关键词')
+          .fontSize(13)
+          .fontWeight(FontWeight.Medium)
+          .fontFamily(this.appFontFamily)
+          .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
+
+        Flex({ wrap: FlexWrap.Wrap }) {
+          ForEach(this.getSingleSourceSearchSuggestions(), (suggestion: string) => {
+            Button(suggestion)
+              .height(32)
+              .fontSize(13)
+              .fontFamily(this.appFontFamily)
+              .type(ButtonType.Normal)
+              .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('panel_background', this.themeState.currentTheme))
+              .fontColor(ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme))
+              .border({
+                width: 1,
+                color: ThemeAwareHelper.getTestManagementThemedColor('panel_border', this.themeState.currentTheme)
+              })
+              .borderRadius(16)
+              .padding({ left: 12, right: 12 })
+              .margin({ right: 8, bottom: 8 })
+              .onClick(() => {
+                this.searchFromSuggestion(suggestion);
+              })
+          }, (suggestion: string) => suggestion)
+        }
+        .width('100%')
+      }
+      .width('100%')
+      .alignItems(HorizontalAlign.Start)
+
+      if (this.currentSourceSupportsExplore()) {
+        Row({ space: 8 }) {
+          Text('不想输入关键词？')
+            .fontSize(13)
+            .fontFamily(this.appFontFamily)
+            .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
+          Blank()
+          Button('浏览书源发现')
+            .height(32)
+            .fontSize(13)
+            .fontFamily(this.appFontFamily)
+            .type(ButtonType.Normal)
+            .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme))
+            .fontColor(ThemeAwareHelper.getTestManagementThemedColor('button_text_primary', this.themeState.currentTheme))
+            .borderRadius(16)
+            .padding({ left: 12, right: 12 })
+            .onClick(() => {
+              this.openCurrentSourceExplore();
+            })
+        }
+        .width('100%')
+        .alignItems(VerticalAlign.Center)
+      } else {
+        Text('当前书源未提供发现页，可直接输入关键词搜索。')
+          .fontSize(13)
+          .fontFamily(this.appFontFamily)
+          .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_tertiary', this.themeState.currentTheme))
+          .width('100%')
+      }
+    }
+    .width('100%')
+    .padding({ left: 18, right: 18, top: 18, bottom: 18 })
+    .backgroundColor(SettingsPanelSurfaceHelper.getBackground(this.themeState.currentTheme))
+    .linearGradient(SettingsPanelSurfaceHelper.getSurfaceGradient(this.themeState.currentTheme))
+    .backgroundBlurStyle(
+      SettingsPanelSurfaceHelper.getBlurStyle(this.themeState.currentTheme),
+      SettingsPanelSurfaceHelper.getBlurOptions(this.themeState.currentTheme)
+    )
+    .backgroundEffect(SettingsPanelSurfaceHelper.getBackgroundEffect(this.themeState.currentTheme))
+    .borderRadius(SettingsPanelSurfaceHelper.getRadius(this.themeState.currentTheme))
+    .clip(true)
+    .border({
+      width: SettingsPanelSurfaceHelper.getBorderWidth(this.themeState.currentTheme),
+      color: SettingsPanelSurfaceHelper.getBorderColor(this.themeState.currentTheme)
+    })
+    .shadow({
+      radius: SettingsPanelSurfaceHelper.getRadius(this.themeState.currentTheme) + 4,
+      color: SettingsPanelSurfaceHelper.getShadowColor(this.themeState.currentTheme),
+      offsetX: 0,
+      offsetY: 8
+    })
+    .margin({ left: this.responsive_contentPadding, right: this.responsive_contentPadding })
+    .id('novel_single_source_search_starter')
   }
 
   build() {
@@ -792,6 +1111,7 @@ export struct NovelSearchPage {
               placeholder: this.singleSourceId ? `在${this.singleSourceName}中搜索...` : '搜索小说、作者...', 
               text: this.keyword 
             })
+              .id('novel_search_keyword_input')
               .layoutWeight(1)
               .height(44)
               .borderRadius(12)
@@ -811,11 +1131,15 @@ export struct NovelSearchPage {
               })
 
             Button('搜索')
+              .id('novel_search_submit')
               .fontFamily(this.appFontFamily)
               .onClick(() => {
                 this.doSearch();
               })
           }
+          .id(this.singleSourceId.length > 0
+            ? `novel_search_single_source_${getLegadoSourceAutomationToken(this.singleSourceId)}`
+            : 'novel_search_all_sources')
           .width('100%')
           .constraintSize({ maxWidth: this.responsive_isLandscape ? this.responsive_maxContentWidth : '100%' })
           .padding(this.responsive_contentPadding)
@@ -928,21 +1252,47 @@ export struct NovelSearchPage {
             this.buildTabsView()
           } else if (this.singleSourceId && this.searchResults.length > 0) {
             // 单书源搜索结果列表
-            Scroll() {
-              Column({ space: 8 }) {
-                ForEach(this.searchResults, (book: NovelSearchResult) => {
-                  this.buildSearchResultItem(book)
-                }, (book: NovelSearchResult) => `${book.sourceId}_${book.bookUrl}`)
+            List({ space: 8 }) {
+              if (this.singleSourceV2TraceSummary.length > 0) {
+                ListItem() {
+                  this.buildSingleSourceV2TraceDisclosure()
+                }
               }
-              .width('100%')
-              .constraintSize({ maxWidth: this.responsive_isLandscape ? this.responsive_maxContentWidth : '100%' })
-              .padding({ left: this.responsive_contentPadding, right: this.responsive_contentPadding, top: 8 })
+              ForEach(this.searchResults, (book: NovelSearchResult, index: number) => {
+                ListItem() {
+                  this.buildSearchResultItem(book, index)
+                }
+              }, (book: NovelSearchResult) => `${book.sourceId}_${book.bookUrl}`)
             }
             .width('100%')
+            .height('100%')
             .expandSafeArea([SafeAreaType.SYSTEM], [SafeAreaEdge.TOP, SafeAreaEdge.BOTTOM])
             .layoutWeight(1)
+            .padding({ left: this.responsive_contentPadding, right: this.responsive_contentPadding, top: 8, bottom: 16 })
             .scrollBar(BarState.Auto)
             .edgeEffect(EdgeEffect.Spring)
+            .id('novel_search_single_source_results')
+          } else if (this.searchErrorMessage.length > 0) {
+            Column() {
+              Text('搜索未完成')
+                .fontSize(16)
+                .fontWeight(FontWeight.Medium)
+                .fontFamily(this.appFontFamily)
+                .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
+              Text(this.searchErrorMessage)
+                .fontSize(14)
+                .fontFamily(this.appFontFamily)
+                .fontColor(ThemeAwareHelper.getTestManagementThemedColor('color_warning', this.themeState.currentTheme))
+                .margin({ top: 4 })
+              if (this.singleSourceV2TraceSummary.length > 0) {
+                this.buildSingleSourceV2TraceDisclosure()
+              }
+            }
+            .width('100%')
+            .id('novel_search_error_state')
+            .expandSafeArea([SafeAreaType.SYSTEM], [SafeAreaEdge.TOP, SafeAreaEdge.BOTTOM])
+            .layoutWeight(1)
+            .justifyContent(FlexAlign.Center)
           } else if (this.keyword && this.hasSearched && !this.isSearching && this.searchResults.length === 0) {
             // 搜索完成但无结果
             Column() {
@@ -960,8 +1310,12 @@ export struct NovelSearchPage {
                 .fontFamily(this.appFontFamily)
                 .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
                 .margin({ top: 4 })
+              if (this.singleSourceV2TraceSummary.length > 0) {
+                this.buildSingleSourceV2TraceDisclosure()
+              }
             }
             .width('100%')
+            .id('novel_search_no_results_state')
             .expandSafeArea([SafeAreaType.SYSTEM], [SafeAreaEdge.TOP, SafeAreaEdge.BOTTOM])
             .layoutWeight(1)
             .justifyContent(FlexAlign.Center)
@@ -978,6 +1332,7 @@ export struct NovelSearchPage {
                 .margin({ top: 12 })
             }
             .width('100%')
+            .id('novel_search_loading_state')
             .expandSafeArea([SafeAreaType.SYSTEM], [SafeAreaEdge.TOP, SafeAreaEdge.BOTTOM])
             .layoutWeight(1)
             .justifyContent(FlexAlign.Center)
@@ -1040,7 +1395,11 @@ export struct NovelSearchPage {
                 .width('100%')
                 .expandSafeArea([SafeAreaType.SYSTEM], [SafeAreaEdge.TOP, SafeAreaEdge.BOTTOM])
                 .padding({ left: this.responsive_contentPadding, right: this.responsive_contentPadding })
-              } else {
+              }
+
+              if (this.singleSourceId) {
+                this.buildSingleSourceSearchStarter()
+              } else if (this.searchHistory.length === 0) {
                 // 无搜索历史时的提示
                 Column() {
                   Text('📚')
@@ -1062,6 +1421,9 @@ export struct NovelSearchPage {
             .expandSafeArea([SafeAreaType.SYSTEM], [SafeAreaEdge.TOP, SafeAreaEdge.BOTTOM])
             .constraintSize({ maxWidth: this.responsive_isLandscape ? this.responsive_maxContentWidth : '100%' })
             .alignItems(HorizontalAlign.Start)
+            .justifyContent(this.singleSourceId
+              ? (this.searchHistory.length > 0 ? FlexAlign.SpaceBetween : FlexAlign.Center)
+              : FlexAlign.Start)
             .layoutWeight(1)
           }
         }
@@ -1089,6 +1451,7 @@ export struct NovelSearchPage {
     .ignoreLayoutSafeArea([LayoutSafeAreaType.SYSTEM], [LayoutSafeAreaEdge.TOP, LayoutSafeAreaEdge.BOTTOM])
     .onReady((context: NavDestinationContext) => {
       logger.info(TAG, 'HdsNavDestination.onReady 已触发');
+      this.resetSearchPresentation();
       const param = context.pathInfo.param as NovelSearchPageParams | null;
       if (param) {
         if (param.sourceId) {
@@ -1201,8 +1564,8 @@ export struct NovelSearchPage {
   buildAllResultsList() {
     Scroll() {
       Column({ space: 8 }) {
-        ForEach(this.searchResults, (book: NovelSearchResult) => {
-          this.buildSearchResultItem(book)
+        ForEach(this.searchResults, (book: NovelSearchResult, index: number) => {
+          this.buildSearchResultItem(book, index)
         }, (book: NovelSearchResult) => `${book.sourceId}_${book.bookUrl}`)
       }
       .width('100%')
@@ -1328,7 +1691,7 @@ export struct NovelSearchPage {
   }
 
   @Builder
-  buildSearchResultItem(book: NovelSearchResult) {
+  buildSearchResultItem(book: NovelSearchResult, automationIndex: number = -1) {
     Row() {
       // 封面
       if (book.coverUrl) {
@@ -1425,6 +1788,7 @@ export struct NovelSearchPage {
       offsetX: 0,
       offsetY: 8
     })
+    .id(`novel_search_result_${getLegadoSourceAutomationToken(book.sourceId)}_${automationIndex}`)
     .onClick(() => { void this.openBookDetail(book); })
   }
 

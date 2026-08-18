@@ -6,10 +6,14 @@
   <title>Legado Runtime V2</title>
 </head>
 <body>
+<script src="jsoup_entity_data.js"></script>
+<script src="jsoup_entity_decoder.js"></script>
 <script>
 (function () {
   var RUNTIME_MARKER = 'manxia-legado-runtime-v2';
   var sharedScopes = {};
+
+  var decodeHtmlEntities = window.__legadoDecodeHtmlEntities;
 
   function emptyObject(source) {
     var target = {};
@@ -51,6 +55,9 @@
     if (value === undefined || value === null) return '';
     if (typeof value === 'string') return value;
     if (typeof value === 'number' && isFinite(value) && Math.floor(value) === value) return String(value);
+    if (typeof value === 'object' && value.__legadoJavaString === true && typeof value.toString === 'function') {
+      return value.toString();
+    }
     if (typeof value === 'object') {
       try { return JSON.stringify(value); } catch (e) { return String(value); }
     }
@@ -294,7 +301,7 @@
   }
 
   function htmlFormatText(value) {
-    return String(value || '')
+    return decodeHtmlEntities(String(value || '')
       .replace(/<script[^>]*>[\s\S]*?<\/script>/gi, '')
       .replace(/<style[^>]*>[\s\S]*?<\/style>/gi, '')
       .replace(/<(?:br|hr)\s*\/?>/gi, '\n')
@@ -303,13 +310,7 @@
         var srcMatch = String(attrs || '').match(/\bsrc=["']?([^"'\s>]+)/i);
         return srcMatch ? '\n<img src="' + srcMatch[1] + '">\n' : '';
       })
-      .replace(/<[^>]+>/g, '')
-      .replace(/&nbsp;/g, ' ')
-      .replace(/&lt;/g, '<')
-      .replace(/&gt;/g, '>')
-      .replace(/&quot;/g, '"')
-      .replace(/&#39;/g, "'")
-      .replace(/&amp;/g, '&')
+      .replace(/<[^>]+>/g, ''), false)
       .replace(/\n{3,}/g, '\n\n')
       .trim();
   }
@@ -452,6 +453,13 @@
     var sourceEffects = {};
     var sourceDataChanges = [];
     var cache = state.cache || {};
+    // AnalyzeUrl resolves source.header once for the current request scope.
+    // Keep the result in the replay state so a pending bridge request does not
+    // re-run a time-sensitive header script with a different value.
+    var sourceHeaderCache = state.sourceHeaders || {};
+    var sourceHeaderResolution = state.sourceHeaderResolution || {};
+    var runtimeObjectsRef = null;
+    var sourceHeaderResolving = false;
 
     function requestBridge(request) {
       if (state.bridgeResponses && state.bridgeResponses[request.id]) {
@@ -461,6 +469,99 @@
       throw createPendingError(request);
     }
 
+    function parseSourceHeaderObject(value) {
+      var candidate = value;
+      if (candidate === undefined || candidate === null) return {};
+      if (typeof candidate === 'string') {
+        var text = candidate.trim();
+        if (!text) return {};
+        try {
+          candidate = JSON.parse(text);
+        } catch (e) {
+          return {};
+        }
+      }
+      if (!candidate || typeof candidate !== 'object' || Array.isArray(candidate)) return {};
+      var result = {};
+      Object.keys(candidate).forEach(function (key) {
+        result[String(key)] = toText(candidate[key]);
+      });
+      return result;
+    }
+
+    function mergeHeaderObjects(target, source) {
+      Object.keys(source || {}).forEach(function (key) {
+        target[key] = String(source[key]);
+      });
+      return target;
+    }
+
+    function resolveSourceHeaders(sourceSnapshotValue, sourceObject, runtimeObjects, includeLoginHeader) {
+      var withLoginHeader = includeLoginHeader !== false;
+      var cacheKey = withLoginHeader ? 'with-login' : 'source-only';
+      if (sourceHeaderResolution[cacheKey] === 'resolved') {
+        return sourceHeaderCache[cacheKey] || {};
+      }
+      if (sourceHeaderResolution[cacheKey] === 'failed') {
+        throw new Error('SOURCE_HEADER_SCRIPT_RUNTIME');
+      }
+      if (sourceHeaderResolving) {
+        throw new Error('SOURCE_HEADER_RECURSION');
+      }
+
+      var resolved = {};
+      var rawHeader = sourceSnapshotValue && sourceSnapshotValue.header
+        ? String(sourceSnapshotValue.header)
+        : '';
+      sourceHeaderResolving = true;
+      try {
+        var headerValue = rawHeader;
+        var lowerHeader = rawHeader.toLowerCase();
+        if (lowerHeader.indexOf('@js:') === 0) {
+          if (!runtimeObjects) throw new Error('SOURCE_HEADER_RUNTIME_UNAVAILABLE');
+          headerValue = executeCode(
+            rawHeader.substring(4),
+            runtimeObjects,
+            scope,
+            state.now,
+            state.randomSeed,
+            loadJsLib(context.jsLib || '', runtimeObjects)
+          );
+        } else if (lowerHeader.indexOf('<js>') === 0) {
+          if (!runtimeObjects) throw new Error('SOURCE_HEADER_RUNTIME_UNAVAILABLE');
+          var endIndex = lowerHeader.lastIndexOf('</js>');
+          var jsCode = endIndex > 4 ? rawHeader.substring(4, endIndex) : rawHeader.substring(4);
+          headerValue = executeCode(
+            jsCode,
+            runtimeObjects,
+            scope,
+            state.now,
+            state.randomSeed,
+            loadJsLib(context.jsLib || '', runtimeObjects)
+          );
+        }
+        mergeHeaderObjects(resolved, parseSourceHeaderObject(headerValue));
+        if (withLoginHeader) {
+          mergeHeaderObjects(resolved, parseSourceHeaderObject(variables.__loginHeader || ''));
+        }
+        sourceHeaderCache[cacheKey] = resolved;
+        sourceHeaderResolution[cacheKey] = 'resolved';
+        state.sourceHeaders = sourceHeaderCache;
+        state.sourceHeaderResolution = sourceHeaderResolution;
+        sourceHeaderResolving = false;
+        return resolved;
+      } catch (error) {
+        if (error && error.legadoPendingRequest) {
+          sourceHeaderResolving = false;
+          throw error;
+        }
+        sourceHeaderResolution[cacheKey] = 'failed';
+        state.sourceHeaderResolution = sourceHeaderResolution;
+        sourceHeaderResolving = false;
+        throw error;
+      }
+    }
+
     function doHttp(url, method, body, headers) {
       var split = splitUrlOption(url);
       var requestUrl = split.url;
@@ -468,6 +569,8 @@
       var actualMethod = String(method || option.method || 'GET').toUpperCase();
       var actualBody = body !== undefined && body !== null ? String(body) : option.body;
       var actualHeaders = {};
+      var sourceHeaders = resolveSourceHeaders(sourceSnapshot, source, runtimeObjectsRef, true);
+      Object.keys(sourceHeaders || {}).forEach(function (key) { actualHeaders[key] = sourceHeaders[key]; });
       Object.keys(option.headers || {}).forEach(function (key) { actualHeaders[key] = option.headers[key]; });
       Object.keys(headers || {}).forEach(function (key) { actualHeaders[key] = String(headers[key]); });
       var id = makeBridgeId('http', requestUrl, actualMethod, actualBody, actualHeaders, '');
@@ -507,7 +610,77 @@
         key: secret,
         value: text
       });
-      return response.success ? (response.body || '') : stableHexHash(secret + '|' + text, alg, 64);
+      if (response.success) return response.body || '';
+      // Do not manufacture a deterministic pseudo-signature.  Legado's
+      // HMacHex is a cryptographic contract: a bridge failure must remain a
+      // visible execution failure, otherwise requests are signed with data
+      // that can never be accepted by the source server.
+      throw new Error(response.error || 'CRYPTO_HMAC_FAILED');
+    }
+
+    function symmetricBridgeBytes(value) {
+      return base64EncodeBytes(normalizeByteArray(value));
+    }
+
+    function symmetricDecryptEncoding(value) {
+      if (typeof value === 'string' && /^[0-9a-fA-F\s]+$/.test(value) && value.replace(/\s/g, '').length % 2 === 0) {
+        return 'hex';
+      }
+      return 'base64';
+    }
+
+    function executeSymmetricBridge(transformation, keyValue, ivValue, operation, input, decryptInput) {
+      var inputEncoding = decryptInput ? symmetricDecryptEncoding(input) : 'base64';
+      var inputText = inputEncoding === 'hex' ? String(input || '') : symmetricBridgeBytes(input);
+      if (decryptInput && inputEncoding === 'base64' && typeof input === 'string') inputText = String(input || '');
+      var headers = {
+        'x-legado-iv-base64': symmetricBridgeBytes(ivValue),
+        'x-legado-input-encoding': inputEncoding
+      };
+      var id = makeBridgeId('crypto-symmetric', '', operation, inputText, headers,
+        String(transformation || '') + '|' + symmetricBridgeBytes(keyValue));
+      var response = requestBridge({
+        id: id,
+        type: 'crypto-symmetric',
+        method: operation,
+        algorithm: String(transformation || ''),
+        key: symmetricBridgeBytes(keyValue),
+        body: inputText,
+        headers: headers
+      });
+      if (!response.success) throw new Error(response.error || 'CRYPTO_SYMMETRIC_FAILED');
+      return response.body || '';
+    }
+
+    function createSymmetricCryptoBridge(transformation, keyValue, ivValue) {
+      var transform = String(transformation || 'AES/ECB/PKCS5Padding');
+      return {
+        encrypt: function(input) {
+          return base64DecodeBytes(executeSymmetricBridge(transform, keyValue, ivValue, 'encrypt', input, false));
+        },
+        encryptStr: function(input) {
+          return executeSymmetricBridge(transform, keyValue, ivValue, 'encryptStr', input, false);
+        },
+        encryptBase64: function(input) {
+          return executeSymmetricBridge(transform, keyValue, ivValue, 'encryptBase64', input, false);
+        },
+        encryptHex: function(input) {
+          return executeSymmetricBridge(transform, keyValue, ivValue, 'encryptHex', input, false);
+        },
+        decrypt: function(input) {
+          return base64DecodeBytes(executeSymmetricBridge(transform, keyValue, ivValue, 'decrypt', input, true));
+        },
+        decryptStr: function(input, charset) {
+          return executeSymmetricBridge(transform, keyValue, ivValue, 'decryptStr', input, true);
+        },
+        decryptBase64: function(input) {
+          return executeSymmetricBridge(transform, keyValue, ivValue, 'decryptBase64', input, true);
+        },
+        decryptHex: function(input) {
+          return executeSymmetricBridge(transform, keyValue, ivValue, 'decryptHex', input, true);
+        },
+        toString: function() { return transform; }
+      };
     }
 
     function readRuntimeFile(path) {
@@ -610,7 +783,7 @@
       key: sourceUrl,
       bookSourceUrl: sourceUrl,
       bookSourceName: sourceSnapshot.bookSourceName,
-      bookSourceType: sourceSnapshot.bookSourceType,
+      bookSourceType: sourceSnapshot.bookSourceType === '' ? '' : Number(sourceSnapshot.bookSourceType),
       bookSourceGroup: sourceSnapshot.bookSourceGroup,
       bookSourceComment: sourceSnapshot.bookSourceComment,
       header: sourceSnapshot.header,
@@ -621,12 +794,18 @@
       enabledCookieJar: sourceSnapshot.enabledCookieJar,
       getKey: function () { return sourceUrl; },
       getTag: function () { return this.bookSourceName || sourceUrl; },
-      getHeaderMap: function () {
-        try { return createJavaMap(this.header ? JSON.parse(this.header) : {}); } catch (e) { return createJavaMap({}); }
+      getHeaderMap: function (hasLoginHeader) {
+        return createJavaMap(resolveSourceHeaders(sourceSnapshot, source, runtimeObjectsRef, hasLoginHeader === true));
       },
       get: function (key) {
         if (key === 'key' || key === 'bookSourceUrl') return sourceUrl;
-        if (key === 'type' || key === 'bookSourceType') return sourceSnapshot.bookSourceType;
+        // BaseSource.get() is the persistent source-data API.  Resolve that
+        // namespace before exposing structural convenience fields; otherwise
+        // source.get('type') is forced to numeric bookSourceType=0 and source
+        // rules that use an empty/custom type never enter their content branch.
+        if (sourceData[key] !== undefined) return sourceData[key];
+        if (variables[key] !== undefined) return variables[key];
+        if (key === 'bookSourceType') return source.bookSourceType;
         if (key === 'bookSourceName') return sourceSnapshot.bookSourceName;
         if (key === 'bookSourceGroup') return sourceSnapshot.bookSourceGroup;
         if (key === 'bookSourceComment') return sourceSnapshot.bookSourceComment;
@@ -635,8 +814,6 @@
         if (key === 'loginUi') return sourceSnapshot.loginUi;
         if (key === 'loginCheckJs') return sourceSnapshot.loginCheckJs;
         if (key === 'variableComment') return sourceSnapshot.variableComment;
-        if (sourceData[key] !== undefined) return sourceData[key];
-        if (variables[key] !== undefined) return variables[key];
         return '';
       },
       put: function (key, value) {
@@ -757,6 +934,1693 @@
       deleteCacheObject: function (key) { return this.delete(key); }
     };
 
+    // java.getString/getStringList accept JSONPath before the chained CSS
+    // selector contract.  This mirrors AnalyzeRule in Legado: source-comment
+    // helpers commonly read JSON responses through java.getStringList rather
+    // than exposing the JSONPath as the outer bookList rule.
+    var legadoJsonPathValueText = function (value) {
+      if (value === undefined || value === null) return '';
+      if (typeof value === 'string') return value;
+      if (typeof value === 'number' || typeof value === 'boolean') return String(value);
+      try { return JSON.stringify(value); } catch (error) { return String(value); }
+    };
+
+    var legadoJsonPathSplitReplacement = function (rule) {
+      var pieces = String(rule || '').split('##');
+      return {
+        rule: String(pieces.shift() || '').trim(),
+        regex: pieces.length > 0 ? String(pieces.shift() || '') : '',
+        replacement: pieces.length > 0 ? String(pieces.shift() || '') : '',
+        replaceFirst: pieces.length > 0
+      };
+    };
+
+    var legadoJsonPathReplaceText = function (value, replacement) {
+      var text = legadoJsonPathValueText(value);
+      if (!replacement || !replacement.regex) return text;
+      try {
+        var flags = replacement.replaceFirst ? '' : 'g';
+        return text.replace(new RegExp(replacement.regex, flags), replacement.replacement);
+      } catch (error) {
+        return text;
+      }
+    };
+
+    // Legado selects the first top-level combinator and recursively keeps that
+    // same operator for the remaining segments. Splitting every operator in a
+    // single pass changes mixed expressions such as A&&B||C.
+    var legadoJsonPathSplitCombinators = function (rule, allowedOperators) {
+      var text = String(rule || '');
+      var operators = allowedOperators || ['&&', '||', '%%'];
+      var parts = [];
+      var current = '';
+      var firstOperator = '';
+      var squareDepth = 0;
+      var roundDepth = 0;
+      var braceDepth = 0;
+      var quote = '';
+      for (var i = 0; i < text.length; i++) {
+        var ch = text.charAt(i);
+        var next = i + 1 < text.length ? text.charAt(i + 1) : '';
+        if (quote) {
+          current += ch;
+          if (ch === '\\' && i + 1 < text.length) {
+            current += next;
+            i++;
+          } else if (ch === quote) {
+            quote = '';
+          }
+          continue;
+        }
+        if (ch === '"' || ch === "'") {
+          quote = ch;
+          current += ch;
+          continue;
+        }
+        if (ch === '[') squareDepth++;
+        else if (ch === ']' && squareDepth > 0) squareDepth--;
+        else if (ch === '(') roundDepth++;
+        else if (ch === ')' && roundDepth > 0) roundDepth--;
+        else if (ch === '{') braceDepth++;
+        else if (ch === '}' && braceDepth > 0) braceDepth--;
+        var matchedOperator = '';
+        if (squareDepth === 0 && roundDepth === 0 && braceDepth === 0) {
+          for (var operatorIndex = 0; operatorIndex < operators.length; operatorIndex++) {
+            var candidate = String(operators[operatorIndex] || '');
+            if (candidate && text.substring(i, i + candidate.length) === candidate) {
+              matchedOperator = candidate;
+              break;
+            }
+          }
+        }
+        if (matchedOperator && (!firstOperator || matchedOperator === firstOperator)) {
+          if (!firstOperator) firstOperator = matchedOperator;
+          if (current.trim()) parts.push(current.trim());
+          current = '';
+          i += matchedOperator.length - 1;
+          continue;
+        }
+        current += ch;
+      }
+      if (current.trim()) parts.push(current.trim());
+      return { parts: parts.length > 0 ? parts : [text.trim()], splitType: firstOperator };
+    };
+
+    var legadoJsonPathGetString = function (rule, content) {
+      var replacement = legadoJsonPathSplitReplacement(rule);
+      if (replacement.rule.charAt(0) !== '$') return '';
+      var split = legadoJsonPathSplitCombinators(replacement.rule, ['&&', '||']);
+      if (split.parts.length > 1) {
+        var textList = [];
+        for (var nestedIndex = 0; nestedIndex < split.parts.length; nestedIndex++) {
+          var nestedValue = legadoJsonPathGetString(split.parts[nestedIndex], content);
+          if (nestedValue) {
+            textList.push(nestedValue);
+            if (split.splitType === '||') break;
+          }
+        }
+        return legadoJsonPathReplaceText(textList.join('\n'), replacement);
+      }
+      var values = legadoGetJsonPathValues(replacement.rule, content);
+      var value = values.length > 0 ? legadoJsonPathValueText(values[0]) : '';
+      return legadoJsonPathReplaceText(value, replacement);
+    };
+
+    var legadoJsonPathGetStringList = function (rule, content) {
+      var replacement = legadoJsonPathSplitReplacement(rule);
+      if (replacement.rule.charAt(0) !== '$') return [];
+      var split = legadoJsonPathSplitCombinators(replacement.rule, ['&&', '||', '%%']);
+      if (split.parts.length > 1) {
+        var groups = [];
+        for (var nestedIndex = 0; nestedIndex < split.parts.length; nestedIndex++) {
+          var nestedValues = legadoJsonPathGetStringList(split.parts[nestedIndex], content);
+          if (nestedValues.length > 0) {
+            groups.push(nestedValues);
+            if (split.splitType === '||') break;
+          }
+        }
+        var merged = [];
+        if (split.splitType === '%%') {
+          var maxLength = 0;
+          for (var groupIndex = 0; groupIndex < groups.length; groupIndex++) {
+            if (groups[groupIndex].length > maxLength) maxLength = groups[groupIndex].length;
+          }
+          for (var row = 0; row < maxLength; row++) {
+            for (var column = 0; column < groups.length; column++) {
+              if (row < groups[column].length) merged.push(groups[column][row]);
+            }
+          }
+        } else {
+          for (var mergeIndex = 0; mergeIndex < groups.length; mergeIndex++) {
+            merged = merged.concat(groups[mergeIndex]);
+          }
+        }
+        return merged.map(function (item) { return legadoJsonPathReplaceText(item, replacement); });
+      }
+      return legadoGetJsonPathValues(replacement.rule, content)
+        .map(legadoJsonPathValueText)
+        .map(function (value) { return legadoJsonPathReplaceText(value, replacement); });
+    };
+
+    var legadoJsonPathSourceValue = function (content) {
+      if (content !== undefined && content !== null && typeof content === 'object') return content;
+      var text = content === undefined || content === null ? toText(context.result || '') : toText(content);
+      var trimmed = String(text || '').trim();
+      if (!trimmed || (trimmed.charAt(0) !== '{' && trimmed.charAt(0) !== '[')) return null;
+      try { return JSON.parse(trimmed); } catch (error) { return null; }
+    };
+
+    // AnalyzeRule has a distinct NativeObject overload for java.getString/
+    // getStringList(rule, mContent).  Do this before CSS coercion so a plain
+    // JS object is read by key instead of becoming "[object Object]".  DOM,
+    // Response and other bridge objects retain their selector behavior.
+    var legadoGetObjectContentValue = function (rule, content) {
+      if (content === undefined || content === null || typeof content !== 'object' || Array.isArray(content)) {
+        return { matched: false, value: '' };
+      }
+      if (typeof content.select === 'function' || typeof content.attr === 'function' || typeof content.body === 'function') {
+        return { matched: false, value: '' };
+      }
+      var replacement = legadoJsonPathSplitReplacement(rule);
+      var key = String(replacement.rule || '').trim();
+      if (!key || key.charAt(0) === '$') return { matched: false, value: '' };
+      var hasKey = Object.prototype.hasOwnProperty.call(content, key);
+      var rawValue = hasKey ? content[key] : undefined;
+      var value = rawValue === undefined || rawValue === null ? '' : String(rawValue);
+      return {
+        matched: true,
+        value: legadoJsonPathReplaceText(value, replacement),
+        hasKey: hasKey
+      };
+    };
+
+    var legadoGetObjectContentList = function (rule, content) {
+      var replacement = legadoJsonPathSplitReplacement(rule);
+      var lookup = legadoGetObjectContentValue(rule, content);
+      if (!lookup.matched) return { matched: false, values: [] };
+      var key = String(replacement.rule || '').trim();
+      var rawValue = Object.prototype.hasOwnProperty.call(content, key) ? content[key] : undefined;
+      if (rawValue === undefined || rawValue === null) return { matched: true, values: [] };
+      var values = Array.isArray(rawValue) ? rawValue.map(function (item) {
+        return item === undefined || item === null ? '' : String(item);
+      }) : String(rawValue).split('\n');
+      return {
+        matched: true,
+        values: values.map(function (value) { return legadoJsonPathReplaceText(value, replacement); })
+      };
+    };
+
+    var legadoCollectJsonPathKey = function (value, key, output) {
+      if (value === undefined || value === null) return;
+      if (Array.isArray(value)) {
+        for (var arrayIndex = 0; arrayIndex < value.length; arrayIndex++) {
+          legadoCollectJsonPathKey(value[arrayIndex], key, output);
+        }
+        return;
+      }
+      if (typeof value !== 'object') return;
+      if (Object.prototype.hasOwnProperty.call(value, key)) output.push(value[key]);
+      Object.keys(value).forEach(function (childKey) {
+        legadoCollectJsonPathKey(value[childKey], key, output);
+      });
+    };
+
+    var legadoApplyJsonPathTokens = function (values, suffix) {
+      var current = values.slice(0);
+      var remaining = String(suffix || '').trim();
+      while (remaining.length > 0) {
+        if (remaining.indexOf('..') === 0) {
+          remaining = remaining.substring(2);
+          var recursiveEnd = 0;
+          while (recursiveEnd < remaining.length && remaining.charAt(recursiveEnd) !== '.' && remaining.charAt(recursiveEnd) !== '[') recursiveEnd++;
+          var recursiveKey = remaining.substring(0, recursiveEnd).trim();
+          remaining = remaining.substring(recursiveEnd);
+          if (!recursiveKey) return [];
+          var recursiveOutput = [];
+          for (var recursiveIndex = 0; recursiveIndex < current.length; recursiveIndex++) {
+            legadoCollectJsonPathKey(current[recursiveIndex], recursiveKey, recursiveOutput);
+          }
+          current = recursiveOutput;
+          continue;
+        }
+        if (remaining.charAt(0) === '.') remaining = remaining.substring(1);
+        if (!remaining) break;
+        var token = '';
+        if (remaining.charAt(0) === '[') {
+          var closeIndex = remaining.indexOf(']');
+          if (closeIndex < 0) return [];
+          token = remaining.substring(1, closeIndex).trim();
+          remaining = remaining.substring(closeIndex + 1);
+          if ((token.charAt(0) === '"' && token.charAt(token.length - 1) === '"') ||
+              (token.charAt(0) === "'" && token.charAt(token.length - 1) === "'")) {
+            token = token.substring(1, token.length - 1);
+          }
+        } else {
+          var tokenEnd = 0;
+          while (tokenEnd < remaining.length && remaining.charAt(tokenEnd) !== '.' && remaining.charAt(tokenEnd) !== '[') tokenEnd++;
+          token = remaining.substring(0, tokenEnd).trim();
+          remaining = remaining.substring(tokenEnd);
+        }
+        if (!token) continue;
+        var next = [];
+        for (var valueIndex = 0; valueIndex < current.length; valueIndex++) {
+          var currentValue = current[valueIndex];
+          if (token === '*') {
+            if (Array.isArray(currentValue)) {
+              for (var wildcardIndex = 0; wildcardIndex < currentValue.length; wildcardIndex++) next.push(currentValue[wildcardIndex]);
+            } else if (currentValue && typeof currentValue === 'object') {
+              Object.keys(currentValue).forEach(function (key) { next.push(currentValue[key]); });
+            }
+            continue;
+          }
+          if (Array.isArray(currentValue) && /^-?[0-9]*:-?[0-9]*(?::-?[0-9]+)?$/.test(token)) {
+            var sliceParts = token.split(':');
+            var sliceStep = sliceParts.length > 2 && sliceParts[2] !== '' ? parseInt(sliceParts[2], 10) : 1;
+            if (sliceStep === 0) continue;
+            var sliceStart = sliceParts[0] === '' ? (sliceStep > 0 ? 0 : currentValue.length - 1) : parseInt(sliceParts[0], 10);
+            var sliceEnd = sliceParts[1] === '' ? (sliceStep > 0 ? currentValue.length : -1) : parseInt(sliceParts[1], 10);
+            if (sliceStart < 0) sliceStart = currentValue.length + sliceStart;
+            if (sliceEnd < 0 && !(sliceStep < 0 && sliceParts[1] === '')) sliceEnd = currentValue.length + sliceEnd;
+            if (sliceStep > 0) {
+              if (sliceStart < 0) sliceStart = 0;
+              if (sliceEnd > currentValue.length) sliceEnd = currentValue.length;
+              for (var sliceIndex = sliceStart; sliceIndex < sliceEnd; sliceIndex += sliceStep) next.push(currentValue[sliceIndex]);
+            } else {
+              if (sliceStart >= currentValue.length) sliceStart = currentValue.length - 1;
+              if (sliceEnd < -1) sliceEnd = -1;
+              for (var reverseSliceIndex = sliceStart; reverseSliceIndex > sliceEnd; reverseSliceIndex += sliceStep) next.push(currentValue[reverseSliceIndex]);
+            }
+            continue;
+          }
+          if (Array.isArray(currentValue) && /^-?[0-9]+$/.test(token)) {
+            var itemIndex = parseInt(token, 10);
+            if (itemIndex < 0) itemIndex = currentValue.length + itemIndex;
+            if (itemIndex >= 0 && itemIndex < currentValue.length) next.push(currentValue[itemIndex]);
+            continue;
+          }
+          if (currentValue && typeof currentValue === 'object' && Object.prototype.hasOwnProperty.call(currentValue, token)) {
+            next.push(currentValue[token]);
+          }
+        }
+        current = next;
+      }
+      return current;
+    };
+
+    var legadoGetJsonPathValues = function (rule, content) {
+      var ruleText = String(rule || '').trim();
+      if (ruleText.charAt(0) !== '$') return [];
+      var root = legadoJsonPathSourceValue(content);
+      if (root === null || root === undefined) return [];
+      var suffix = ruleText.substring(1);
+      return legadoApplyJsonPathTokens([root], suffix);
+    };
+
+    // java.getStringList follows Legado's chained selector contract.  A raw
+    // querySelectorAll call only accepts CSS and rejects rules such as
+    // class.list@tag.li@text, which are common in source-comment helpers.
+    var legadoRuleParts = function (rule) {
+      var parts = [];
+      var current = '';
+      var bracketDepth = 0;
+      var quote = '';
+      var text = String(rule || '');
+      for (var i = 0; i < text.length; i++) {
+        var ch = text.charAt(i);
+        if (quote) {
+          current += ch;
+          if (ch === '\\' && i + 1 < text.length) {
+            current += text.charAt(i + 1);
+            i++;
+          } else if (ch === quote) {
+            quote = '';
+          }
+          continue;
+        }
+        if (ch === '"' || ch === "'") {
+          quote = ch;
+          current += ch;
+          continue;
+        }
+        if (ch === '[') bracketDepth++;
+        if (ch === ']' && bracketDepth > 0) bracketDepth--;
+        if (ch === '@' && bracketDepth === 0) {
+          parts.push(current.trim());
+          current = '';
+        } else {
+          current += ch;
+        }
+      }
+      if (current.trim()) parts.push(current.trim());
+      return parts;
+    };
+
+    var legadoSelectorPart = function (part) {
+      var text = String(part || '').trim();
+      var index = -1;
+      var indexMatch = text.match(/\\.([0-9]+)$/);
+      if (indexMatch) {
+        index = parseInt(indexMatch[1], 10);
+        text = text.substring(0, indexMatch.index);
+      }
+      if (text.indexOf('class.') === 0) text = '.' + text.substring(6);
+      else if (text.indexOf('id.') === 0) text = '#' + text.substring(3);
+      else if (text.indexOf('tag.') === 0) text = text.substring(4);
+      else if (text.indexOf('css:') === 0) text = text.substring(4).trim();
+      return { selector: text, index: index };
+    };
+
+    var legadoAttributeName = function (part) {
+      var text = String(part || '').trim();
+      if (text === 'text' || text === 'textNodes' || text === 'ownText' ||
+          text === 'html' || text === 'outerHtml' || text === 'outerhtml' ||
+          text === 'all' || text === 'href' || text === 'src' ||
+          text === 'content' || text === 'title' || text === 'alt' ||
+          text === 'id' || text === 'class' || text === 'value') {
+        return text;
+      }
+      if (/^(data|aria)-[A-Za-z0-9_:-]+$/.test(text)) return text;
+      return '';
+    };
+
+    // Legado delegates `[attr~=regex]` to Jsoup. Browser querySelectorAll
+    // implements ~= as a whitespace-token operator, so remove only these
+    // predicates from the browser selector and apply the Jsoup regex test
+    // against the resulting nodes while preserving document order.
+    var legadoParseRegexAttributeSelectors = function (selector) {
+      var normalized = '';
+      var regexSelectors = [];
+      var cursor = 0;
+      var parenthesisDepth = 0;
+      var bracketDepth = 0;
+      var quoteState = '';
+      var escapedState = false;
+      var text = String(selector || '');
+      while (cursor < text.length) {
+        var currentCharacter = text.charAt(cursor);
+        if (escapedState) {
+          normalized += currentCharacter;
+          escapedState = false;
+          cursor++;
+          continue;
+        }
+        if (currentCharacter === '\\') {
+          normalized += currentCharacter;
+          escapedState = true;
+          cursor++;
+          continue;
+        }
+        if (quoteState) {
+          normalized += currentCharacter;
+          if (currentCharacter === quoteState) quoteState = '';
+          cursor++;
+          continue;
+        }
+        if (currentCharacter === '"' || currentCharacter === "'") {
+          normalized += currentCharacter;
+          quoteState = currentCharacter;
+          cursor++;
+          continue;
+        }
+        if (currentCharacter === '[') {
+          if (parenthesisDepth > 0 || bracketDepth > 0) {
+            bracketDepth++;
+            normalized += currentCharacter;
+            cursor++;
+            continue;
+          }
+        } else if (currentCharacter === ']' && bracketDepth > 0) {
+          bracketDepth--;
+          normalized += currentCharacter;
+          cursor++;
+          continue;
+        }
+        if (currentCharacter !== '[' || parenthesisDepth > 0 || bracketDepth > 0) {
+          normalized += currentCharacter;
+          if (bracketDepth === 0) {
+            if (currentCharacter === '(') parenthesisDepth++;
+            else if (currentCharacter === ')' && parenthesisDepth > 0) parenthesisDepth--;
+          }
+          cursor++;
+          continue;
+        }
+
+        var openIndex = cursor;
+        var index = openIndex + 1;
+        var nameStart = index;
+        while (index < text.length && /[A-Za-z0-9_:-]/.test(text.charAt(index))) index++;
+        var name = text.substring(nameStart, index).trim();
+        if (!name) {
+          normalized += '[';
+          cursor = openIndex + 1;
+          continue;
+        }
+        while (index < text.length && /\s/.test(text.charAt(index))) index++;
+        var isRegex = text.substring(index, index + 2) === '~=';
+        var value = '';
+        if (isRegex) index += 2;
+        while (index < text.length && /\s/.test(text.charAt(index))) index++;
+        var quote = isRegex ? text.charAt(index) : '';
+        if (isRegex && (quote === '"' || quote === "'")) {
+          index++;
+          while (index < text.length && text.charAt(index) !== quote) {
+            if (text.charAt(index) === '\\' && index + 1 < text.length) {
+              value += text.charAt(index);
+              index++;
+            }
+            value += text.charAt(index);
+            index++;
+          }
+          if (index < text.length) index++;
+        } else if (isRegex) {
+          var regexClassDepth = 0;
+          while (index < text.length) {
+            var current = text.charAt(index);
+            if (current === '\\' && index + 1 < text.length) {
+              value += current;
+              index++;
+              value += text.charAt(index);
+              index++;
+              continue;
+            }
+            if (current === '[') {
+              regexClassDepth++;
+              value += current;
+              index++;
+              continue;
+            }
+            if (current === ']' && regexClassDepth > 0) {
+              regexClassDepth--;
+              value += current;
+              index++;
+              continue;
+            }
+            if (current === ']' && regexClassDepth === 0) break;
+            value += current;
+            index++;
+          }
+        } else {
+          // Non-regex attributes remain in the browser selector.
+          var simpleClose = text.indexOf(']', index);
+          if (simpleClose < 0) {
+            normalized += text.substring(openIndex);
+            cursor = text.length;
+            break;
+          }
+          normalized += text.substring(openIndex, simpleClose + 1);
+          cursor = simpleClose + 1;
+          continue;
+        }
+        while (index < text.length && /\s/.test(text.charAt(index))) index++;
+        if (!isRegex || index >= text.length || text.charAt(index) !== ']') {
+          normalized += text.substring(openIndex, Math.min(text.length, index + 1));
+          cursor = Math.min(text.length, index + 1);
+          continue;
+        }
+        regexSelectors.push({ name: name.toLowerCase(), pattern: value.trim() });
+        cursor = index + 1;
+      }
+      return { selector: normalized, regexSelectors: regexSelectors };
+    };
+
+    var legadoNormalizeJavaRegex = function (pattern) {
+      var text = String(pattern || '');
+      var prefix = text.match(/^\(\?([imsu-]+)\)/);
+      if (!prefix) return { pattern: text, flags: '' };
+      var flags = '';
+      for (var flagIndex = 0; flagIndex < prefix[1].length; flagIndex++) {
+        var flag = prefix[1].charAt(flagIndex);
+        if ((flag === 'i' || flag === 'm' || flag === 's' || flag === 'u') && flags.indexOf(flag) < 0) {
+          flags += flag;
+        }
+      }
+      return { pattern: text.substring(prefix[0].length), flags: flags };
+    };
+
+    // These pseudos are native CSS in a normal element tree, but Jsoup treats
+    // the parser's detached fragment root as Document.  The ArkWeb path opts
+    // into manual evaluation only when that synthetic Document context is
+    // present; nested :has selectors keep their actual element root.
+    var legadoStandardDocumentPseudoNames = [
+      'first-child', 'last-child', 'nth-child', 'only-child',
+      'first-of-type', 'last-of-type', 'only-of-type',
+      'nth-of-type', 'nth-last-child', 'nth-last-of-type'
+    ];
+
+    var legadoSelectorHasTopLevelCombinatorBefore = function (selector, endIndex) {
+      var text = String(selector || '');
+      var parenthesisDepth = 0;
+      var bracketDepth = 0;
+      var quote = '';
+      var escaped = false;
+      for (var index = 0; index < endIndex && index < text.length; index++) {
+        var character = text.charAt(index);
+        if (escaped) {
+          escaped = false;
+          continue;
+        }
+        if (character === '\\') {
+          escaped = true;
+          continue;
+        }
+        if (quote) {
+          if (character === quote) quote = '';
+          continue;
+        }
+        if (character === '"' || character === "'") {
+          quote = character;
+          continue;
+        }
+        if (character === '[') {
+          bracketDepth++;
+          continue;
+        }
+        if (character === ']' && bracketDepth > 0) {
+          bracketDepth--;
+          continue;
+        }
+        if (bracketDepth > 0) continue;
+        if (character === '(') {
+          parenthesisDepth++;
+          continue;
+        }
+        if (character === ')' && parenthesisDepth > 0) {
+          parenthesisDepth--;
+          continue;
+        }
+        if (parenthesisDepth > 0) continue;
+        if (character === '>' || character === '+' || character === '~' || /\s/.test(character)) return true;
+      }
+      return false;
+    };
+
+    var legadoSelectorCompoundBefore = function (selector, endIndex) {
+      var text = String(selector || '');
+      var limit = Math.max(0, Math.min(Number(endIndex) || 0, text.length));
+      var compoundStart = 0;
+      var parenthesisDepth = 0;
+      var bracketDepth = 0;
+      var quote = '';
+      var escaped = false;
+      for (var index = 0; index < limit; index++) {
+        var character = text.charAt(index);
+        if (escaped) {
+          escaped = false;
+          continue;
+        }
+        if (character === '\\') {
+          escaped = true;
+          continue;
+        }
+        if (quote) {
+          if (character === quote) quote = '';
+          continue;
+        }
+        if (character === '"' || character === "'") {
+          quote = character;
+          continue;
+        }
+        if (character === '[') {
+          bracketDepth++;
+          continue;
+        }
+        if (character === ']' && bracketDepth > 0) {
+          bracketDepth--;
+          continue;
+        }
+        if (bracketDepth > 0) continue;
+        if (character === '(') {
+          parenthesisDepth++;
+          continue;
+        }
+        if (character === ')' && parenthesisDepth > 0) {
+          parenthesisDepth--;
+          continue;
+        }
+        if (parenthesisDepth > 0) continue;
+        if (character === '>' || character === '+' || character === '~' || /\s/.test(character)) {
+          compoundStart = index + 1;
+        }
+      }
+      return text.substring(compoundStart, limit).trim();
+    };
+
+    var legadoSelectorCompoundParts = function (selector) {
+      var parts = [];
+      var current = '';
+      var parenthesisDepth = 0;
+      var bracketDepth = 0;
+      var quote = '';
+      var escaped = false;
+      var pushCurrent = function () {
+        var value = current.trim();
+        if (value) parts.push(value);
+        current = '';
+      };
+      var text = String(selector || '');
+      for (var index = 0; index < text.length; index++) {
+        var character = text.charAt(index);
+        if (escaped) {
+          current += character;
+          escaped = false;
+          continue;
+        }
+        if (character === '\\') {
+          current += character;
+          escaped = true;
+          continue;
+        }
+        if (quote) {
+          current += character;
+          if (character === quote) quote = '';
+          continue;
+        }
+        if (character === '"' || character === "'") {
+          current += character;
+          quote = character;
+          continue;
+        }
+        if (character === '[') {
+          bracketDepth++;
+          current += character;
+          continue;
+        }
+        if (character === ']' && bracketDepth > 0) {
+          bracketDepth--;
+          current += character;
+          continue;
+        }
+        if (bracketDepth > 0) {
+          current += character;
+          continue;
+        }
+        if (character === '(') {
+          parenthesisDepth++;
+          current += character;
+          continue;
+        }
+        if (character === ')' && parenthesisDepth > 0) {
+          parenthesisDepth--;
+          current += character;
+          continue;
+        }
+        if (parenthesisDepth > 0) {
+          current += character;
+          continue;
+        }
+        if (character === '>' || character === '+' || character === '~' || /\s/.test(character)) {
+          pushCurrent();
+          continue;
+        }
+        current += character;
+      }
+      pushCurrent();
+      return parts;
+    };
+
+    var legadoSelectorCompoundIndexAt = function (selector, endIndex) {
+      var text = String(selector || '');
+      var limit = Math.max(0, Math.min(Number(endIndex) || 0, text.length));
+      var compoundIndex = 0;
+      var hasContent = false;
+      var parenthesisDepth = 0;
+      var bracketDepth = 0;
+      var quote = '';
+      var escaped = false;
+      for (var index = 0; index < limit; index++) {
+        var character = text.charAt(index);
+        if (escaped) {
+          hasContent = true;
+          escaped = false;
+          continue;
+        }
+        if (character === '\\') {
+          hasContent = true;
+          escaped = true;
+          continue;
+        }
+        if (quote) {
+          hasContent = true;
+          if (character === quote) quote = '';
+          continue;
+        }
+        if (character === '"' || character === "'") {
+          hasContent = true;
+          quote = character;
+          continue;
+        }
+        if (character === '[') {
+          hasContent = true;
+          bracketDepth++;
+          continue;
+        }
+        if (character === ']' && bracketDepth > 0) {
+          hasContent = true;
+          bracketDepth--;
+          continue;
+        }
+        if (bracketDepth > 0) {
+          hasContent = true;
+          continue;
+        }
+        if (character === '(') {
+          hasContent = true;
+          parenthesisDepth++;
+          continue;
+        }
+        if (character === ')' && parenthesisDepth > 0) {
+          hasContent = true;
+          parenthesisDepth--;
+          continue;
+        }
+        if (parenthesisDepth > 0) {
+          hasContent = true;
+          continue;
+        }
+        if (character === '>' || character === '+' || character === '~' || /\s/.test(character)) {
+          if (hasContent) {
+            compoundIndex++;
+            hasContent = false;
+          }
+          continue;
+        }
+        hasContent = true;
+      }
+      return compoundIndex;
+    };
+
+    var legadoParseJsoupTextPseudos = function (selector, extractStandardDocumentPseudos) {
+      var normalized = '';
+      var pseudos = [];
+      var text = String(selector || '');
+      var cursor = 0;
+      var bracketDepth = 0;
+      var quote = '';
+      while (cursor < text.length) {
+        var current = text.charAt(cursor);
+        if (quote) {
+          normalized += current;
+          if (current === '\\' && cursor + 1 < text.length) {
+            normalized += text.charAt(cursor + 1);
+            cursor += 2;
+            continue;
+          }
+          if (current === quote) quote = '';
+          cursor++;
+          continue;
+        }
+        if (current === '"' || current === "'") {
+          quote = current;
+          normalized += current;
+          cursor++;
+          continue;
+        }
+        if (current === '[') {
+          bracketDepth++;
+          normalized += current;
+          cursor++;
+          continue;
+        }
+        if (current === ']' && bracketDepth > 0) {
+          bracketDepth--;
+          normalized += current;
+          cursor++;
+          continue;
+        }
+        if (current !== ':' || bracketDepth > 0) {
+          normalized += current;
+          cursor++;
+          continue;
+        }
+        var nameCursor = cursor + 1;
+        if (text.charAt(nameCursor) === ':') nameCursor++;
+        var nameStart = nameCursor;
+        while (nameCursor < text.length && /[A-Za-z0-9-]/.test(text.charAt(nameCursor))) nameCursor++;
+        if (nameCursor === nameStart) {
+          normalized += current;
+          cursor++;
+          continue;
+        }
+        var name = text.substring(nameStart, nameCursor).toLowerCase();
+        var endCursor = nameCursor;
+        var argument = '';
+        if (text.charAt(nameCursor) === '(') {
+          endCursor++;
+          var depth = 1;
+          var argumentQuote = '';
+          var escaped = false;
+          var regexClassDepth = 0;
+          while (endCursor < text.length && depth > 0) {
+            var argumentChar = text.charAt(endCursor);
+            if (escaped) {
+              argument += argumentChar;
+              escaped = false;
+              endCursor++;
+              continue;
+            }
+            if (argumentChar === '\\') {
+              argument += argumentChar;
+              escaped = true;
+              endCursor++;
+              continue;
+            }
+            if (argumentQuote) {
+              argument += argumentChar;
+              if (argumentChar === argumentQuote) argumentQuote = '';
+              endCursor++;
+              continue;
+            }
+            if (argumentChar === '"' || argumentChar === "'") {
+              argumentQuote = argumentChar;
+              argument += argumentChar;
+              endCursor++;
+              continue;
+            }
+            if (argumentChar === '[') {
+              regexClassDepth++;
+              argument += argumentChar;
+              endCursor++;
+              continue;
+            }
+            if (argumentChar === ']' && regexClassDepth > 0) {
+              regexClassDepth--;
+              argument += argumentChar;
+              endCursor++;
+              continue;
+            }
+            if (regexClassDepth === 0 && argumentChar === '(') depth++;
+            else if (regexClassDepth === 0 && argumentChar === ')') depth--;
+            if (depth > 0) argument += argumentChar;
+            endCursor++;
+          }
+        }
+        var isDocumentPseudo = extractStandardDocumentPseudos === true &&
+          legadoStandardDocumentPseudoNames.indexOf(name) >= 0;
+        var isStandardDocumentPseudo = isDocumentPseudo &&
+          !legadoSelectorHasTopLevelCombinatorBefore(text, cursor);
+        var isManualPseudo = name === 'contains' || name === 'containsown' ||
+          name === 'matches' || name === 'matchesown' || name === 'has' || name === 'not' ||
+          name === 'nth-of-type' || name === 'empty' || name === 'eq' || name === 'lt' || isDocumentPseudo;
+        if (isManualPseudo) {
+          var targetSelector = legadoSelectorCompoundBefore(normalized, normalized.length);
+          if (!targetSelector) {
+            targetSelector = '*';
+            normalized += '*';
+          }
+          pseudos.push({
+            name: name,
+            argument: argument.trim(),
+            targetScope: isStandardDocumentPseudo ? 'first-compound' : (isManualPseudo ? 'compound' : ''),
+            targetSelector: targetSelector,
+            targetCompoundIndex: legadoSelectorCompoundIndexAt(text, cursor),
+            targetOccurrenceFromRight: 0
+          });
+          cursor = endCursor;
+        } else {
+          normalized += text.substring(cursor, endCursor);
+          cursor = endCursor;
+        }
+      }
+      var compoundParts = legadoSelectorCompoundParts(normalized);
+      for (var pseudoIndex = 0; pseudoIndex < pseudos.length; pseudoIndex++) {
+        var pseudo = pseudos[pseudoIndex];
+        var compoundIndex = Number(pseudo.targetCompoundIndex);
+        if (!isFinite(compoundIndex) || compoundIndex < 0 || compoundIndex >= compoundParts.length) continue;
+        var compoundText = compoundParts[compoundIndex];
+        var occurrenceFromRight = 0;
+        for (var laterIndex = compoundIndex + 1; laterIndex < compoundParts.length; laterIndex++) {
+          if (compoundParts[laterIndex] === compoundText) occurrenceFromRight++;
+        }
+        pseudo.targetOccurrenceFromRight = occurrenceFromRight;
+      }
+      return { selector: normalized, pseudos: pseudos };
+    };
+
+    var legadoPseudoArgument = function (argument) {
+      var text = String(argument || '').trim();
+      if (text.length >= 2) {
+        var first = text.charAt(0);
+        var last = text.charAt(text.length - 1);
+        if ((first === '"' || first === "'") && first === last) return text.substring(1, text.length - 1);
+      }
+      return text;
+    };
+
+    var legadoIsActuallyWhitespace = function (code) {
+      return code === 32 || code === 9 || code === 10 || code === 12 || code === 13 || code === 160;
+    };
+
+    var legadoIsInvisibleChar = function (code) {
+      return code === 8203 || code === 173;
+    };
+
+    var legadoIsPreserveWhitespaceTag = function (name) {
+      var normalized = String(name || '').toLowerCase();
+      return normalized === 'pre' || normalized === 'plaintext' || normalized === 'title' ||
+        normalized === 'textarea';
+    };
+
+    var legadoIsBlockTextTag = function (name) {
+      var normalized = String(name || '').toLowerCase();
+      var blocks = [
+        'html', 'head', 'body', 'frameset', 'script', 'noscript', 'style', 'meta',
+        'link', 'title', 'frame', 'noframes', 'section', 'nav', 'aside', 'hgroup',
+        'header', 'footer', 'p', 'h1', 'h2', 'h3', 'h4', 'h5', 'h6', 'ul', 'ol',
+        'pre', 'div', 'blockquote', 'hr', 'address', 'figure', 'figcaption', 'form',
+        'fieldset', 'ins', 'del', 'dl', 'dt', 'dd', 'li', 'table', 'caption', 'thead',
+        'tfoot', 'tbody', 'colgroup', 'col', 'tr', 'th', 'td', 'video', 'audio',
+        'canvas', 'details', 'menu', 'plaintext', 'template', 'article', 'main',
+        'svg', 'math', 'center', 'dir', 'applet', 'marquee', 'listing'
+      ];
+      return blocks.indexOf(normalized) >= 0;
+    };
+
+    var legadoTrimJavaWhitespace = function (value) {
+      var text = String(value || '');
+      var start = 0;
+      var end = text.length;
+      while (start < end && text.charCodeAt(start) <= 32) start++;
+      while (end > start && text.charCodeAt(end - 1) <= 32) end--;
+      return text.substring(start, end);
+    };
+
+    var legadoCreateTextAccumulator = function () {
+      return { value: '', lastCharIsSpace: false };
+    };
+
+    var legadoAppendText = function (accumulator, value, preserveWhitespace) {
+      var text = String(value || '');
+      if (!text) return;
+      if (preserveWhitespace) {
+        accumulator.value += text;
+        accumulator.lastCharIsSpace = text.charAt(text.length - 1) === ' ';
+        return;
+      }
+      for (var index = 0; index < text.length; index++) {
+        var code = text.charCodeAt(index);
+        if (legadoIsActuallyWhitespace(code)) {
+          if (!accumulator.lastCharIsSpace) {
+            accumulator.value += ' ';
+            accumulator.lastCharIsSpace = true;
+          }
+          continue;
+        }
+        if (legadoIsInvisibleChar(code)) continue;
+        accumulator.value += text.charAt(index);
+        accumulator.lastCharIsSpace = false;
+      }
+    };
+
+    var legadoAppendLineBreak = function (accumulator) {
+      if (accumulator.value.length > 0 && !accumulator.lastCharIsSpace &&
+          accumulator.value.charAt(accumulator.value.length - 1) !== '\n') {
+        accumulator.value += '\n';
+      }
+      accumulator.lastCharIsSpace = false;
+    };
+
+    // Jsoup 1.16.2 Element.text()/ownText() use a space, not LF, for a
+    // block/br boundary. The line-break helper remains for reader formatting
+    // paths that intentionally preserve paragraph breaks.
+    var legadoAppendJsoupSpaceBoundary = function (accumulator) {
+      if (accumulator.value.length > 0 && !accumulator.lastCharIsSpace) {
+        accumulator.value += ' ';
+      }
+      accumulator.lastCharIsSpace = accumulator.value.length > 0 &&
+        accumulator.value.charAt(accumulator.value.length - 1) === ' ';
+    };
+
+    var legadoIsFormatAsBlockTag = function (tagName) {
+      var normalized = String(tagName || '').toLowerCase();
+      var formatAsInline = [
+        'title', 'a', 'p', 'h1', 'h2', 'h3', 'h4', 'h5', 'h6', 'pre',
+        'address', 'li', 'th', 'td', 'script', 'style', 'ins', 'del', 's'
+      ];
+      var inlineTags = [
+        'object', 'base', 'font', 'tt', 'i', 'b', 'u', 'big', 'small', 'em',
+        'strong', 'dfn', 'code', 'samp', 'kbd', 'var', 'cite', 'abbr', 'time',
+        'acronym', 'mark', 'ruby', 'rt', 'rp', 'rtc', 'a', 'img', 'br', 'wbr',
+        'map', 'q', 'sub', 'sup', 'bdo', 'iframe', 'embed', 'span', 'input',
+        'select', 'textarea', 'label', 'button', 'optgroup', 'option', 'legend',
+        'datalist', 'keygen', 'output', 'progress', 'meter', 'area', 'param',
+        'source', 'track', 'summary', 'command', 'device', 'basefont', 'bgsound',
+        'menuitem', 'data', 'bdi', 'strike', 'nobr', 'rb', 'text', 'mi', 'mo',
+        'msup', 'mn', 'mtext'
+      ];
+      return formatAsInline.indexOf(normalized) < 0 && inlineTags.indexOf(normalized) < 0;
+    };
+
+    var legadoIsPreserveWhitespaceNode = function (node) {
+      var current = node;
+      var depth = 0;
+      while (current && depth < 6) {
+        if (current.nodeType === 1 && legadoIsPreserveWhitespaceTag(current.localName || current.tagName)) return true;
+        current = current.parentNode;
+        depth++;
+      }
+      return false;
+    };
+
+    var legadoAppendElementText = function (node, accumulator) {
+      if (!node || !node.childNodes) return;
+      for (var index = 0; index < node.childNodes.length; index++) {
+        var child = node.childNodes[index];
+        if (!child) continue;
+        if (child.nodeType === 3) {
+          legadoAppendText(accumulator, child.nodeValue || child.textContent || '', legadoIsPreserveWhitespaceNode(child.parentNode));
+          continue;
+        }
+        if (child.nodeType !== 1) continue;
+        var tagName = String(child.localName || child.tagName || '').toLowerCase();
+        if (tagName === 'br') {
+          legadoAppendJsoupSpaceBoundary(accumulator);
+          continue;
+        }
+        var isBlock = legadoIsBlockTextTag(tagName);
+        if (isBlock && accumulator.value.length > 0 && !accumulator.lastCharIsSpace) {
+          legadoAppendJsoupSpaceBoundary(accumulator);
+        }
+        var isDataTag = tagName === 'script' || tagName === 'style';
+        if (!isDataTag) legadoAppendElementText(child, accumulator);
+        var nextSibling = child.nextSibling;
+        var nextIsInlineElement = nextSibling && nextSibling.nodeType === 1 &&
+          !legadoIsFormatAsBlockTag(nextSibling.localName || nextSibling.tagName);
+        if (isBlock && nextSibling &&
+            (nextSibling.nodeType === 3 || nextIsInlineElement)) {
+          legadoAppendJsoupSpaceBoundary(accumulator);
+        }
+      }
+    };
+
+    var legadoText = function (node) {
+      var nodeTagName = String(node && (node.localName || node.tagName) || '').toLowerCase();
+      if (nodeTagName === 'script' || nodeTagName === 'style') return '';
+      var accumulator = legadoCreateTextAccumulator();
+      legadoAppendElementText(node, accumulator);
+      return legadoTrimJavaWhitespace(accumulator.value);
+    };
+
+    var legadoOwnText = function (node) {
+      if (!node || !node.childNodes) return '';
+      var nodeTagName = String(node.localName || node.tagName || '').toLowerCase();
+      if (nodeTagName === 'script' || nodeTagName === 'style') return '';
+      var accumulator = legadoCreateTextAccumulator();
+      for (var index = 0; index < node.childNodes.length; index++) {
+        var child = node.childNodes[index];
+        if (!child) continue;
+        if (child.nodeType === 3) {
+          legadoAppendText(accumulator, child.nodeValue || child.textContent || '', legadoIsPreserveWhitespaceNode(child.parentNode));
+        } else if (child.nodeType === 1 && String(child.localName || child.tagName || '').toLowerCase() === 'br') {
+          legadoAppendJsoupSpaceBoundary(accumulator);
+        }
+      }
+      return legadoTrimJavaWhitespace(accumulator.value);
+    };
+
+    var legadoNormalizeTextNode = function (value) {
+      var accumulator = legadoCreateTextAccumulator();
+      legadoAppendText(accumulator, value, false);
+      return accumulator.value;
+    };
+
+    var legadoDirectTextNodeValues = function (node) {
+      var values = [];
+      if (!node || !node.childNodes) return values;
+      var nodeTagName = String(node.localName || node.tagName || '').toLowerCase();
+      if (nodeTagName === 'script' || nodeTagName === 'style') return values;
+      for (var index = 0; index < node.childNodes.length; index++) {
+        var child = node.childNodes[index];
+        if (!child || (child.nodeType !== 3 && child.nodeType !== 4)) continue;
+        values.push(String(child.nodeValue || child.textContent || ''));
+      }
+      return values;
+    };
+
+    var legadoDirectTextNodes = function (node) {
+      var values = legadoDirectTextNodeValues(node);
+      var projected = [];
+      for (var index = 0; index < values.length; index++) {
+        var value = legadoTrimJavaWhitespace(legadoNormalizeTextNode(values[index]));
+        if (value) projected.push(value);
+      }
+      return projected;
+    };
+
+    var legadoCreateRuntimeTextNode = function (value) {
+      var wholeText = String(value || '');
+      var normalizedText = legadoNormalizeTextNode(wholeText);
+      return {
+        text: function () { return normalizedText; },
+        getWholeText: function () { return wholeText; },
+        toString: function () { return wholeText; }
+      };
+    };
+
+    var legadoCreateRuntimeTextNodeList = function (node) {
+      var rawValues = legadoDirectTextNodeValues(node);
+      var list = [];
+      for (var index = 0; index < rawValues.length; index++) {
+        list.push(legadoCreateRuntimeTextNode(rawValues[index]));
+      }
+      var defineMethod = function (name, implementation) {
+        try {
+          Object.defineProperty(list, name, {
+            value: implementation,
+            enumerable: false,
+            configurable: true,
+            writable: true
+          });
+        } catch (error) {
+          list[name] = implementation;
+        }
+      };
+      defineMethod('size', function () { return list.length; });
+      defineMethod('get', function (index) { return list[Number(index) || 0] || null; });
+      defineMethod('first', function () { return list.length > 0 ? list[0] : null; });
+      defineMethod('last', function () { return list.length > 0 ? list[list.length - 1] : null; });
+      defineMethod('isEmpty', function () { return list.length === 0; });
+      defineMethod('toArray', function () { return list.slice(0); });
+      return list;
+    };
+
+    var legadoElementSiblingIndex = function (node) {
+      if (!node || !node.parentElement || !node.parentElement.children) return -1;
+      var children = node.parentElement.children;
+      for (var index = 0; index < children.length; index++) {
+        if (children[index] === node) return index;
+      }
+      return -1;
+    };
+
+    var legadoElementTypeIndex = function (node) {
+      if (!node || !node.parentElement || !node.parentElement.children) return 0;
+      var children = node.parentElement.children;
+      var count = 0;
+      for (var index = 0; index < children.length; index++) {
+        if (String(children[index].localName || children[index].tagName || '').toLowerCase() ===
+            String(node.localName || node.tagName || '').toLowerCase()) {
+          count++;
+        }
+        if (children[index] === node) return count;
+      }
+      return 0;
+    };
+
+    var legadoElementSiblingCount = function (node) {
+      if (!node || !node.parentElement || !node.parentElement.children) return 0;
+      return node.parentElement.children.length;
+    };
+
+    var legadoElementTypeCount = function (node) {
+      if (!node || !node.parentElement || !node.parentElement.children) return 0;
+      var nodeType = String(node.localName || node.tagName || '').toLowerCase();
+      var children = node.parentElement.children;
+      var count = 0;
+      for (var index = 0; index < children.length; index++) {
+        if (String(children[index].localName || children[index].tagName || '').toLowerCase() === nodeType) count++;
+      }
+      return count;
+    };
+
+    var legadoIsSyntheticDocumentRoot = function (node) {
+      if (!node || !node.getAttribute) return false;
+      return node.getAttribute('data-legado-document-root') === '1';
+    };
+
+    var legadoIsDocumentBoundaryPseudo = function (name) {
+      return legadoStandardDocumentPseudoNames.indexOf(String(name || '').toLowerCase()) >= 0;
+    };
+
+    var legadoParseIndexPseudoArgument = function (argument) {
+      var text = String(argument || '').trim();
+      if (!/^\d+$/.test(text)) return null;
+      var value = parseInt(text, 10);
+      return isNaN(value) ? null : value;
+    };
+
+    var legadoMatchNthExpression = function (index, expression) {
+      var text = String(expression || '').replace(/\s+/g, '').toLowerCase();
+      if (text === 'odd') return index % 2 === 1;
+      if (text === 'even') return index % 2 === 0;
+      if (/^\d+$/.test(text)) return index === parseInt(text, 10);
+      var match = text.match(/^([+-]?\d*)n([+-]?\d+)?$/);
+      if (!match) return false;
+      var coefficientText = match[1];
+      var coefficient = coefficientText === '' || coefficientText === '+' ? 1 :
+        coefficientText === '-' ? -1 : parseInt(coefficientText, 10);
+      var offset = match[2] ? parseInt(match[2], 10) : 0;
+      if (isNaN(coefficient) || isNaN(offset) || coefficient === 0) {
+        return coefficient === 0 && index === offset;
+      }
+      var distance = index - offset;
+      return distance * coefficient >= 0 && distance % coefficient === 0;
+    };
+
+    var legadoMatchesJsoupPseudo = function (node, pseudo, documentRoot) {
+      if (!node) return false;
+      var argument = legadoPseudoArgument(pseudo.argument);
+      var pseudoName = String(pseudo.name || '').toLowerCase();
+      var predicateNode = node;
+      if ((pseudo.targetScope === 'first-compound' || pseudo.targetScope === 'compound') && pseudo.targetSelector) {
+        var ancestor = node;
+        var matchingAncestors = [];
+        while (ancestor) {
+          try {
+            // The target compound can contain Jsoup-only predicates such as
+            // `[href~=regex]`. Native DOM `matches()` interprets `~=` as a
+            // whitespace-token operator (and may reject Java regex syntax),
+            // so use the same Jsoup-aware selector bridge used for the final
+            // candidate instead of silently losing the pseudo projection.
+            if (legadoMatchesJsoupSelector(ancestor, pseudo.targetSelector, documentRoot)) {
+              matchingAncestors.push(ancestor);
+            }
+          } catch (error) {
+            matchingAncestors = [];
+            break;
+          }
+          if (documentRoot && ancestor === documentRoot) break;
+          ancestor = ancestor.parentElement;
+        }
+        var targetOccurrence = Number(pseudo.targetOccurrenceFromRight);
+        if (!isFinite(targetOccurrence) || targetOccurrence < 0) targetOccurrence = 0;
+        if (matchingAncestors.length <= targetOccurrence) return false;
+        predicateNode = matchingAncestors[targetOccurrence];
+      }
+      if (documentRoot && legadoIsSyntheticDocumentRoot(documentRoot) &&
+          predicateNode.parentElement === documentRoot && legadoIsDocumentBoundaryPseudo(pseudoName)) {
+        return false;
+      }
+      if (pseudo.name === 'not') {
+        if (!argument) return false;
+        if (legadoSelectorHasInvalidRegexAttribute(argument)) return false;
+        return !legadoMatchesAnyJsoupSelector(predicateNode, argument, documentRoot);
+      }
+      if (pseudo.name === 'has') {
+        if (!argument) return false;
+        var relativeSelector = argument.indexOf('>') === 0 ? ':scope ' + argument : argument;
+        return legadoSelectWithJsoupRegex(predicateNode, relativeSelector, null).length > 0;
+      }
+      if (pseudo.name === 'eq' || pseudo.name === 'lt') {
+        var indexArgument = legadoParseIndexPseudoArgument(argument);
+        if (indexArgument === null) return false;
+        var siblingIndex = legadoElementSiblingIndex(predicateNode);
+        return pseudo.name === 'eq'
+          ? siblingIndex === indexArgument
+          : siblingIndex >= 0 && siblingIndex < indexArgument;
+      }
+      if (pseudo.name === 'empty') {
+        var childNodes = predicateNode.childNodes || [];
+        for (var childIndex = 0; childIndex < childNodes.length; childIndex++) {
+          var childNode = childNodes[childIndex];
+          var childNodeType = Number(childNode && childNode.nodeType);
+          if (childNodeType === 3) {
+            var childText = String(childNode.nodeValue || childNode.textContent || '');
+            if (childText.trim().length > 0) return false;
+            continue;
+          }
+          if (childNodeType === 8 || childNodeType === 7 || childNodeType === 10) continue;
+          return false;
+        }
+        return true;
+      }
+      if (pseudoName === 'first-child' || pseudoName === 'last-child' ||
+          pseudoName === 'nth-child' || pseudoName === 'nth-last-child' ||
+          pseudoName === 'only-child') {
+        var siblingIndexOneBased = legadoElementSiblingIndex(predicateNode) + 1;
+        var siblingCount = legadoElementSiblingCount(predicateNode);
+        if (siblingIndexOneBased <= 0 || siblingCount <= 0) return false;
+        if (pseudoName === 'first-child') return siblingIndexOneBased === 1;
+        if (pseudoName === 'last-child') return siblingIndexOneBased === siblingCount;
+        if (pseudoName === 'only-child') return siblingCount === 1;
+        if (pseudoName === 'nth-last-child') {
+          return argument.length > 0 && legadoMatchNthExpression(siblingCount - siblingIndexOneBased + 1, argument);
+        }
+        return argument.length > 0 && legadoMatchNthExpression(siblingIndexOneBased, argument);
+      }
+      if (pseudoName === 'first-of-type' || pseudoName === 'last-of-type' ||
+          pseudoName === 'only-of-type' || pseudoName === 'nth-last-of-type') {
+        var typeIndex = legadoElementTypeIndex(predicateNode);
+        var typeCount = legadoElementTypeCount(predicateNode);
+        if (typeIndex <= 0 || typeCount <= 0) return false;
+        if (pseudoName === 'first-of-type') return typeIndex === 1;
+        if (pseudoName === 'last-of-type') return typeIndex === typeCount;
+        if (pseudoName === 'only-of-type') return typeCount === 1;
+        return argument.length > 0 && legadoMatchNthExpression(typeCount - typeIndex + 1, argument);
+      }
+      if (pseudo.name === 'nth-of-type') {
+        var typeIndex = legadoElementTypeIndex(predicateNode);
+        return typeIndex > 0 && legadoMatchNthExpression(typeIndex, argument);
+      }
+      var text = (pseudo.name === 'containsown' || pseudo.name === 'matchesown')
+        ? legadoOwnText(predicateNode)
+        : legadoText(predicateNode);
+      if (pseudo.name === 'contains' || pseudo.name === 'containsown') return text.indexOf(argument) >= 0;
+      var regexParts = legadoNormalizeJavaRegex(argument);
+      try {
+        return new RegExp(regexParts.pattern, regexParts.flags).test(text);
+      } catch (error) {
+        return false;
+      }
+    };
+
+    var legadoSplitSelectorGroups = function (selector) {
+      var groups = [];
+      var current = '';
+      var text = String(selector || '');
+      var parenthesisDepth = 0;
+      var bracketDepth = 0;
+      var quote = '';
+      var escaped = false;
+      for (var index = 0; index < text.length; index++) {
+        var character = text.charAt(index);
+        if (escaped) {
+          current += character;
+          escaped = false;
+          continue;
+        }
+        if (character === '\\') {
+          current += character;
+          escaped = true;
+          continue;
+        }
+        if (quote) {
+          current += character;
+          if (character === quote) quote = '';
+          continue;
+        }
+        if (character === '"' || character === "'") {
+          quote = character;
+          current += character;
+          continue;
+        }
+        if (character === '(') parenthesisDepth++;
+        else if (character === ')' && parenthesisDepth > 0) parenthesisDepth--;
+        else if (character === '[') bracketDepth++;
+        else if (character === ']' && bracketDepth > 0) bracketDepth--;
+        if (character === ',' && parenthesisDepth === 0 && bracketDepth === 0) {
+          if (current.trim()) groups.push(current.trim());
+          current = '';
+        } else {
+          current += character;
+        }
+      }
+      if (current.trim()) groups.push(current.trim());
+      return groups;
+    };
+
+    var legadoMatchesJsoupSelector = function (node, selector, documentRoot) {
+      if (!node) return false;
+      var text = String(selector || '').trim();
+      if (!text || text.charAt(0) === '>') return false;
+      var pseudoParsed = legadoParseJsoupTextPseudos(text, documentRoot !== null && documentRoot !== undefined);
+      var parsed = legadoParseRegexAttributeSelectors(pseudoParsed.selector);
+      var browserSelector = parsed.selector.trim() || '*';
+      try {
+        if (!node.matches(browserSelector)) return false;
+      } catch (error) {
+        return false;
+      }
+      for (var attributeIndex = 0; attributeIndex < parsed.regexSelectors.length; attributeIndex++) {
+        var regexSelector = parsed.regexSelectors[attributeIndex];
+        var actualValue = node.getAttribute ? node.getAttribute(regexSelector.name) : null;
+        if (actualValue === null || actualValue === undefined) return false;
+        try {
+          var regexParts = legadoNormalizeJavaRegex(regexSelector.pattern);
+          if (!(new RegExp(regexParts.pattern, regexParts.flags)).test(String(actualValue))) return false;
+        } catch (error) {
+          return false;
+        }
+      }
+      for (var pseudoIndex = 0; pseudoIndex < pseudoParsed.pseudos.length; pseudoIndex++) {
+        if (!legadoMatchesJsoupPseudo(node, pseudoParsed.pseudos[pseudoIndex], documentRoot)) return false;
+      }
+      return true;
+    };
+
+    var legadoMatchesJsoupSelectorInContext = function (node, selector, documentRoot) {
+      if (!node) return false;
+      var selectionRoot = documentRoot || (node.parentElement ? node.parentElement : null);
+      if (!selectionRoot || !selectionRoot.querySelectorAll) return false;
+      try {
+        var contextualMatches = legadoSelectWithJsoupRegex(selectionRoot, selector, documentRoot);
+        for (var index = 0; index < contextualMatches.length; index++) {
+          if (contextualMatches[index] === node) return true;
+        }
+      } catch (error) {
+        return false;
+      }
+      return false;
+    };
+
+    var legadoMatchesAnyJsoupSelector = function (node, selector, documentRoot) {
+      var groups = legadoSplitSelectorGroups(selector);
+      if (groups.length === 0) return false;
+      for (var groupIndex = 0; groupIndex < groups.length; groupIndex++) {
+        if (legadoMatchesJsoupSelector(node, groups[groupIndex], documentRoot)) return true;
+        if (legadoMatchesJsoupSelectorInContext(node, groups[groupIndex], documentRoot)) return true;
+      }
+      return false;
+    };
+
+    var legadoSelectorHasInvalidRegexAttribute = function (selector) {
+      var text = String(selector || '').trim();
+      if (!text) return false;
+      var pseudoParsed = legadoParseJsoupTextPseudos(text);
+      var parsed = legadoParseRegexAttributeSelectors(pseudoParsed.selector);
+      for (var attributeIndex = 0; attributeIndex < parsed.regexSelectors.length; attributeIndex++) {
+        var regexSelector = parsed.regexSelectors[attributeIndex];
+        try {
+          var regexParts = legadoNormalizeJavaRegex(regexSelector.pattern);
+          new RegExp(regexParts.pattern, regexParts.flags);
+        } catch (error) {
+          return true;
+        }
+      }
+      for (var pseudoIndex = 0; pseudoIndex < pseudoParsed.pseudos.length; pseudoIndex++) {
+        var nestedPseudo = pseudoParsed.pseudos[pseudoIndex];
+        if (nestedPseudo.name !== 'not' && nestedPseudo.name !== 'has') continue;
+        var nestedArgument = legadoPseudoArgument(nestedPseudo.argument);
+        if (nestedArgument.indexOf('>') === 0) nestedArgument = nestedArgument.substring(1).trim();
+        if (legadoSelectorHasInvalidRegexAttribute(nestedArgument)) return true;
+      }
+      return false;
+    };
+
+    var legadoSelectWithJsoupRegex = function (root, selector, documentRoot) {
+      var selectionDocumentRoot = documentRoot || (legadoIsSyntheticDocumentRoot(root) ? root : null);
+      var selectorGroups = legadoSplitSelectorGroups(selector);
+      if (selectorGroups.length > 1) {
+        var groupMatches = [];
+        for (var groupIndex = 0; groupIndex < selectorGroups.length; groupIndex++) {
+          var groupResult = legadoSelectWithJsoupRegex(root, selectorGroups[groupIndex], selectionDocumentRoot);
+          for (var resultIndex = 0; resultIndex < groupResult.length; resultIndex++) {
+            if (groupMatches.indexOf(groupResult[resultIndex]) < 0) groupMatches.push(groupResult[resultIndex]);
+          }
+        }
+        if (groupMatches.length > 1) {
+          groupMatches.sort(function (left, right) {
+            if (left === right || !left || !right || !left.compareDocumentPosition) return 0;
+            var relation = left.compareDocumentPosition(right);
+            if ((relation & 4) !== 0) return -1;
+            if ((relation & 2) !== 0) return 1;
+            return 0;
+          });
+        }
+        return groupMatches;
+      }
+      var pseudoParsed = legadoParseJsoupTextPseudos(selector, selectionDocumentRoot !== null);
+      var parsed = legadoParseRegexAttributeSelectors(pseudoParsed.selector);
+      var hasSpecialPredicate = parsed.regexSelectors.length > 0 || pseudoParsed.pseudos.length > 0;
+      if (!hasSpecialPredicate) return root.querySelectorAll(selector);
+      var browserSelector = parsed.selector.trim() || '*';
+      var candidates;
+      try {
+        candidates = root.querySelectorAll(browserSelector);
+      } catch (error) {
+        return [];
+      }
+      var matched = [];
+      for (var i = 0; i < candidates.length; i++) {
+        var node = candidates[i];
+        var accepted = true;
+        for (var j = 0; j < parsed.regexSelectors.length; j++) {
+          var regexSelector = parsed.regexSelectors[j];
+          var actualValue = node && node.getAttribute ? node.getAttribute(regexSelector.name) : null;
+          if (actualValue === null || actualValue === undefined) {
+            accepted = false;
+            break;
+          }
+          try {
+            var regexParts = legadoNormalizeJavaRegex(regexSelector.pattern);
+            if (!(new RegExp(regexParts.pattern, regexParts.flags)).test(String(actualValue))) {
+              accepted = false;
+              break;
+            }
+          } catch (error) {
+            accepted = false;
+            break;
+          }
+        }
+        if (accepted) {
+          for (var pseudoIndex = 0; pseudoIndex < pseudoParsed.pseudos.length; pseudoIndex++) {
+            if (!legadoMatchesJsoupPseudo(node, pseudoParsed.pseudos[pseudoIndex], selectionDocumentRoot)) {
+              accepted = false;
+              break;
+            }
+          }
+        }
+        if (accepted) matched.push(node);
+      }
+      return matched;
+    };
+
+    var legadoSelectDescendants = function (nodes, part) {
+      var parsed = legadoSelectorPart(part);
+      var selected = [];
+      if (!parsed.selector) return selected;
+      for (var i = 0; i < nodes.length; i++) {
+        var root = nodes[i];
+        if (!root || !root.querySelectorAll) continue;
+        var matches = legadoSelectWithJsoupRegex(root, parsed.selector);
+        if (parsed.index >= 0) {
+          if (matches.length > parsed.index) selected.push(matches[parsed.index]);
+        } else {
+          for (var j = 0; j < matches.length; j++) selected.push(matches[j]);
+        }
+      }
+      return selected;
+    };
+
+    var legadoNodeValue = function (node, attr) {
+      if (!node) return '';
+      if (attr === 'text') return legadoText(node);
+      if (attr === 'textNodes') return legadoDirectTextNodes(node).join('\n');
+      if (attr === 'ownText') return legadoOwnText(node);
+      if (attr === 'html') return String(node.innerHTML || '');
+      if (attr === 'outerHtml' || attr === 'outerhtml' || attr === 'all') {
+        return String(node.outerHTML || '');
+      }
+      if (node.getAttribute) {
+        var value = node.getAttribute(attr);
+        return value === null || value === undefined ? '' : String(value);
+      }
+      return '';
+    };
+
+    // AnalyzeByJSoup deduplicates nonblank terminal attribute values while
+    // Elements.eachAttr() itself preserves duplicates for direct JS callers.
+    var legadoDeduplicateAttributeValues = function (values, attr) {
+      var normalized = String(attr || '').toLowerCase();
+      if (normalized === 'text' || normalized === 'textnodes' ||
+          normalized === 'owntext' || normalized === 'html' ||
+          normalized === 'outerhtml' || normalized === 'all') {
+        return values;
+      }
+      var result = [];
+      for (var index = 0; index < values.length; index++) {
+        var value = values[index] === undefined || values[index] === null ? '' : String(values[index]);
+        if (!value.trim() || result.indexOf(value) >= 0) continue;
+        result.push(value);
+      }
+      return result;
+    };
+
+    var legadoCreateJavaList = function (values) {
+      var list = Array.isArray(values) ? values.slice(0) : [];
+      var defineMethod = function (name, implementation) {
+        try {
+          Object.defineProperty(list, name, {
+            value: implementation,
+            enumerable: false,
+            configurable: true,
+            writable: true
+          });
+        } catch (error) {
+          list[name] = implementation;
+        }
+      };
+      defineMethod('get', function (index) {
+        var numericIndex = Number(index) || 0;
+        return list[numericIndex] === undefined || list[numericIndex] === null ? '' : list[numericIndex];
+      });
+      defineMethod('size', function () { return list.length; });
+      defineMethod('isEmpty', function () { return list.length === 0; });
+      defineMethod('first', function () { return list.length > 0 ? list[0] : ''; });
+      defineMethod('last', function () { return list.length > 0 ? list[list.length - 1] : ''; });
+      defineMethod('toArray', function () { return list.slice(0); });
+      return list;
+    };
+
+    var legadoNormalizeCssRule = function (rule) {
+      var text = String(rule || '').trim();
+      if (/^@css:/i.test(text)) return text.substring(5).trim();
+      return text;
+    };
+
+    var legadoGetStringListSingle = function (rule, content) {
+      var text = legadoNormalizeCssRule(rule);
+      if (!text || typeof document === 'undefined') return [];
+      var holder = document.createElement('div');
+      holder.setAttribute('data-legado-document-root', '1');
+      holder.innerHTML = String(content || '');
+      var parts = legadoRuleParts(text);
+      if (parts.length === 0) return [];
+      var nodes = [holder];
+      var last = parts.length - 1;
+      for (var i = 0; i < parts.length; i++) {
+        var attr = i === last ? legadoAttributeName(parts[i]) : '';
+        if (attr) {
+          var values = [];
+          for (var j = 0; j < nodes.length; j++) values.push(legadoNodeValue(nodes[j], attr));
+          return legadoDeduplicateAttributeValues(values, attr);
+        }
+        nodes = legadoSelectDescendants(nodes, parts[i]);
+        if (nodes.length === 0) return [];
+      }
+      var textValues = [];
+      for (var k = 0; k < nodes.length; k++) textValues.push(legadoNodeValue(nodes[k], 'text'));
+      return textValues;
+    };
+
+    var legadoGetStringList = function (rule, content) {
+      var replacement = legadoJsonPathSplitReplacement(rule);
+      var text = legadoNormalizeCssRule(replacement.rule);
+      if (!text || typeof document === 'undefined') return legadoCreateJavaList([]);
+      var split = legadoJsonPathSplitCombinators(text, ['&&', '||', '%%']);
+      var values = [];
+      if (split.parts.length > 1) {
+        var groups = [];
+        for (var groupIndex = 0; groupIndex < split.parts.length; groupIndex++) {
+          var groupValues = legadoGetStringListSingle(split.parts[groupIndex], content);
+          if (groupValues.length > 0) {
+            groups.push(groupValues);
+            if (split.splitType === '||') break;
+          }
+        }
+        if (split.splitType === '%%') {
+          var maxLength = 0;
+          for (var lengthIndex = 0; lengthIndex < groups.length; lengthIndex++) {
+            if (groups[lengthIndex].length > maxLength) maxLength = groups[lengthIndex].length;
+          }
+          for (var rowIndex = 0; rowIndex < maxLength; rowIndex++) {
+            for (var columnIndex = 0; columnIndex < groups.length; columnIndex++) {
+              if (rowIndex < groups[columnIndex].length) values.push(groups[columnIndex][rowIndex]);
+            }
+          }
+        } else {
+          for (var mergeIndex = 0; mergeIndex < groups.length; mergeIndex++) {
+            values = values.concat(groups[mergeIndex]);
+          }
+        }
+      } else {
+        values = legadoGetStringListSingle(text, content);
+      }
+      var replaced = values.map(function (value) {
+        return legadoJsonPathReplaceText(value, replacement);
+      });
+      return legadoCreateJavaList(replaced);
+    };
+
     var java = {
       ajax: function (url) {
         var urlText = Array.isArray(url) ? url[0] : url;
@@ -787,6 +2651,16 @@
       post: function (url, body, headers) {
         return doHttp(url, 'POST', body || '', normalizeHeaders(headers));
       },
+      setContent: function (value) {
+        context.result = toText(value);
+        return context.result;
+      },
+      getContent: function () {
+        return toText(context.result || '');
+      },
+      getWebViewUA: function () {
+        return (typeof navigator !== 'undefined' && navigator.userAgent) ? String(navigator.userAgent) : '';
+      },
       put: function (key, value) {
         variables[String(key)] = toText(value);
         return value;
@@ -804,7 +2678,20 @@
       getCookie: function (tag, key) { return cookie.getCookie(tag, key); },
       setCookie: function (url, value) { return cookie.setCookie(url, value); },
       removeCookie: function (url) { return cookie.removeCookie(url); },
-      getString: function (value) { return toText(value); },
+      getString: function (rule, content) {
+        var replacement = legadoJsonPathSplitReplacement(rule);
+        var normalizedRule = replacement.rule.trim();
+        if (/^@json:/i.test(normalizedRule)) {
+          var jsonRule = String(rule || '').replace(/^\s*@json:/i, '').trim();
+          return legadoJsonPathGetString(jsonRule, content);
+        }
+        if (normalizedRule.charAt(0) === '$') return legadoJsonPathGetString(rule, content);
+        var objectValue = legadoGetObjectContentValue(rule, content);
+        if (objectValue.matched) return objectValue.value;
+        var sourceText = content === undefined || content === null ? String(context.result || '') : String(content);
+        var values = legadoGetStringList(rule, sourceText);
+        return values.length > 0 ? values.join('\n') : '';
+      },
       encodeURI: function (value, enc) { return legacyEncodeComponent(value); },
       decodeURI: function (value) { return legacyDecodeComponent(value); },
       encodeURIComponent: function (value) { return encodeURIComponent(String(value || '')); },
@@ -832,6 +2719,67 @@
       hexDecodeToString: function (hex) {
         return utf8BytesToString(hexToByteArray(hex));
       },
+      t2s: function (value) {
+        var text = String(value || '');
+        var map = {
+          '書':'书','說':'说','話':'话','語':'语','詞':'词','論':'论','講':'讲','讀':'读','寫':'写',
+          '記':'记','認':'认','識':'识','學':'学','習':'习','經':'经','過':'过','進':'进','運':'运',
+          '動':'动','開':'开','關':'关','門':'门','問':'问','間':'间','時':'时','機':'机','會':'会',
+          '見':'见','觀':'观','視':'视','聽':'听','聲':'声','響':'响','電':'电','報':'报','紙':'纸',
+          '張':'张','頁':'页','網':'网','絡':'络','線':'线','連':'连','結':'结','節':'节','點':'点',
+          '數':'数','計':'计','統':'统','圖':'图','畫':'画','藝':'艺','術':'术','設':'设','備':'备',
+          '準':'准','標':'标','題':'题','類':'类','別':'别','區':'区','場':'场','廣':'广','應':'应',
+          '當':'当','對':'对','錯':'错','難':'难','簡':'简','單':'单','複':'复','雜':'杂','亂':'乱',
+          '長':'长','國':'国','際':'际','內':'内','東':'东','華':'华','發':'发','現':'现','實':'实',
+          '確':'确','決':'决','選':'选','擇':'择','採':'采','給':'给','與':'与','為':'为','無':'无',
+          '從':'从','來':'来','後':'后','頭':'头','體':'体','個':'个','這':'这','裡':'里','邊':'边',
+          '處':'处','種':'种','樣':'样','條':'条','塊':'块','隻':'只','雙':'双','組':'组','愛':'爱',
+          '戀':'恋','親':'亲','歡':'欢','樂':'乐','傷':'伤','淚':'泪','驚':'惊','險':'险','戰':'战',
+          '鬥':'斗','勝':'胜','敗':'败','輸':'输','贏':'赢','強':'强','飛':'飞','風':'风','雲':'云',
+          '龍':'龙','鳳':'凤','獸':'兽','鳥':'鸟','魚':'鱼','馬':'马','車':'车'
+        };
+        var result = '';
+        for (var i = 0; i < text.length; i++) result += map[text[i]] || text[i];
+        return result;
+      },
+      s2t: function (value) {
+        var text = String(value || '');
+        var map = {
+          '书':'書','说':'說','话':'話','语':'語','词':'詞','论':'論','讲':'講','读':'讀','写':'寫',
+          '记':'記','认':'認','识':'識','学':'學','习':'習','经':'經','过':'過','进':'進','运':'運',
+          '动':'動','开':'開','关':'關','门':'門','问':'問','间':'間','时':'時','机':'機','会':'會',
+          '见':'見','观':'觀','视':'視','听':'聽','声':'聲','响':'響','电':'電','报':'報','纸':'紙',
+          '张':'張','页':'頁','网':'網','络':'絡','线':'線','连':'連','结':'結','节':'節','点':'點',
+          '数':'數','计':'計','统':'統','图':'圖','画':'畫','艺':'藝','术':'術','设':'設','备':'備',
+          '准':'準','标':'標','题':'題','类':'類','别':'別','区':'區','场':'場','广':'廣','应':'應',
+          '当':'當','对':'對','错':'錯','难':'難','简':'簡','单':'單','复':'複','杂':'雜','乱':'亂',
+          '长':'長','国':'國','际':'際','内':'內','东':'東','华':'華','发':'發','现':'現','实':'實',
+          '确':'確','决':'決','选':'選','择':'擇','采':'採','给':'給','与':'與','为':'為','无':'無',
+          '从':'從','来':'來','后':'後','头':'頭','体':'體','个':'個','这':'這','里':'裡','边':'邊',
+          '处':'處','种':'種','样':'樣','条':'條','块':'塊','只':'隻','双':'雙','组':'組','爱':'愛',
+          '恋':'戀','亲':'親','欢':'歡','乐':'樂','伤':'傷','泪':'淚','惊':'驚','险':'險','战':'戰',
+          '斗':'鬥','胜':'勝','败':'敗','输':'輸','赢':'贏','强':'強','飞':'飛','风':'風','云':'雲',
+          '龙':'龍','凤':'鳳','兽':'獸','鸟':'鳥','鱼':'魚','马':'馬','车':'車','厂':'廠'
+        };
+        var result = '';
+        for (var i = 0; i < text.length; i++) result += map[text[i]] || text[i];
+        return result;
+      },
+      getStringList: function (rule, content) {
+        var replacement = legadoJsonPathSplitReplacement(rule);
+        var normalizedRule = replacement.rule.trim();
+        if (/^@json:/i.test(normalizedRule)) {
+          var jsonRule = String(rule || '').replace(/^\s*@json:/i, '').trim();
+          return legadoCreateJavaList(legadoJsonPathGetStringList(jsonRule, content));
+        }
+        if (normalizedRule.charAt(0) === '$') {
+          return legadoCreateJavaList(legadoJsonPathGetStringList(rule, content));
+        }
+        var objectList = legadoGetObjectContentList(rule, content);
+        if (objectList.matched) return legadoCreateJavaList(objectList.values);
+        var sourceText = content === undefined || content === null ? String(context.result || '') : String(content);
+        return legadoGetStringList(rule, sourceText);
+      },
       hexEncodeToString: function (value) {
         return bytesToHex(stringToUtf8Bytes(value));
       },
@@ -847,13 +2795,24 @@
       sha256Encode: function (value) {
         return doDigest(value, 'SHA256');
       },
-      HMacHex: function (value, key, algorithm) {
-        return doHmac(value, key, algorithm || 'HmacMD5');
+      // Matches JsEncodeUtils.HMacHex(data, algorithm, key) in Legado.
+      HMacHex: function (data, algorithm, key) {
+        return doHmac(data, key, algorithm || 'HmacMD5');
+      },
+      aesBase64DecodeToString: function (str, key, transformation, iv) {
+        return createSymmetricCryptoBridge(transformation, key, iv).decryptStr(str);
+      },
+      desEncodeToBase64String: function (str, key, transformation, iv) {
+        return createSymmetricCryptoBridge(transformation, key, iv).encryptBase64(str);
+      },
+      createSymmetricCrypto: function (transformation, key, iv) {
+        return createSymmetricCryptoBridge(transformation, key, iv);
       },
       timeFormat: function (time) {
         var n = Number(time);
         if (!isFinite(n)) n = Date.now();
-        return formatDate(new Date(n), 'yyyy-MM-dd HH:mm:ss', -new Date(n).getTimezoneOffset() * 60000);
+        // AppConst.dateFormat in the pinned Legado commit is yyyy/MM/dd HH:mm.
+        return formatDate(new Date(n), 'yyyy/MM/dd HH:mm', -new Date(n).getTimezoneOffset() * 60000);
       },
       timeFormatUTC: function (time, pattern, sh) {
         var n = Number(time);
@@ -862,6 +2821,81 @@
       },
       toURL: function (url, baseUrl) {
         return createJsUrl(url, baseUrl || context.baseUrl || '');
+      },
+      // Mirrors JsExtensions.toNumChapter and StringUtils.stringToInt in Legado.
+      // Deliberately return only the first matching "第...章" segment, as the
+      // Android implementation does, rather than replacing every numeral in text.
+      toNumChapter: function (value) {
+        if (value === null || value === undefined) return null;
+        var chapterText = String(value);
+        var chapterMatch = /(第)(.+?)(章)/.exec(chapterText);
+        if (!chapterMatch) return chapterText;
+
+        var numberText = chapterMatch[2].replace(/[\u3000]/g, '');
+        numberText = numberText.replace(/[\uff01-\uff5e]/g, function (character) {
+          return String.fromCharCode(character.charCodeAt(0) - 65248);
+        }).replace(/\s+/g, '');
+        var decimalMatch = /^([+-]?)([0-9]+)$/.exec(numberText);
+        var numberValue = -1;
+        if (decimalMatch) {
+          var sign = decimalMatch[1] === '-' ? -1 : 1;
+          var decimalValue = 0;
+          var decimalValid = true;
+          for (var decimalIndex = 0; decimalIndex < decimalMatch[2].length; decimalIndex++) {
+            decimalValue = decimalValue * 10 + (decimalMatch[2].charCodeAt(decimalIndex) - 48);
+            if (decimalValue > 2147483648) {
+              decimalValid = false;
+              break;
+            }
+          }
+          if (decimalValid && ((sign > 0 && decimalValue <= 2147483647) ||
+            (sign < 0 && decimalValue <= 2147483648))) {
+            numberValue = sign * decimalValue;
+          }
+        } else {
+          var chineseValues = {
+            '零': 0, '一': 1, '二': 2, '三': 3, '四': 4, '五': 5,
+            '六': 6, '七': 7, '八': 8, '九': 9, '十': 10, '〇': 0,
+            '壹': 1, '贰': 2, '叁': 3, '肆': 4, '伍': 5, '陆': 6,
+            '柒': 7, '捌': 8, '玖': 9, '拾': 10, '两': 2, '百': 100,
+            '佰': 100, '千': 1000, '仟': 1000, '万': 10000, '亿': 100000000
+          };
+          var resultNumber = 0;
+          var temporaryNumber = 0;
+          var billionNumber = 0;
+          var chineseValid = numberText.length > 0;
+          for (var chineseIndex = 0; chineseValid && chineseIndex < numberText.length; chineseIndex++) {
+            var chineseValue = chineseValues[numberText.charAt(chineseIndex)];
+            if (chineseValue === undefined) {
+              chineseValid = false;
+              break;
+            }
+            if (chineseValue === 100000000) {
+              resultNumber = (resultNumber + temporaryNumber) | 0;
+              resultNumber = Math.imul(resultNumber, chineseValue);
+              billionNumber = (Math.imul(billionNumber, 100000000) + resultNumber) | 0;
+              resultNumber = 0;
+              temporaryNumber = 0;
+            } else if (chineseValue === 10000) {
+              resultNumber = (resultNumber + temporaryNumber) | 0;
+              resultNumber = Math.imul(resultNumber, chineseValue);
+              temporaryNumber = 0;
+            } else if (chineseValue >= 10) {
+              if (temporaryNumber === 0) temporaryNumber = 1;
+              resultNumber = (resultNumber + Math.imul(chineseValue, temporaryNumber)) | 0;
+              temporaryNumber = 0;
+            } else {
+              var previousValue = chineseIndex > 0 ? chineseValues[numberText.charAt(chineseIndex - 1)] : undefined;
+              if (chineseIndex >= 2 && chineseIndex === numberText.length - 1 && previousValue !== undefined && previousValue > 10) {
+                temporaryNumber = Math.trunc(Math.imul(chineseValue, previousValue) / 10);
+              } else {
+                temporaryNumber = (Math.imul(temporaryNumber, 10) + chineseValue) | 0;
+              }
+            }
+          }
+          if (chineseValid) numberValue = (resultNumber + temporaryNumber + billionNumber) | 0;
+        }
+        return chapterMatch[1] + String(numberValue) + chapterMatch[3];
       },
       htmlFormat: function (value) {
         return htmlFormatText(value);
@@ -899,14 +2933,13 @@
         return value;
       },
       webView: function (html, url, js) {
-        if (js) return executeJsInScope(js, html || '', url || '');
-        return html || '';
+        throw new Error('ARKWEB_NESTED_WEBVIEW_UNSUPPORTED: java.webView requires a dedicated nested ArkWeb bridge.');
       },
       webViewGetSource: function (html, url, js) {
-        return this.webView(html, url, js);
+        throw new Error('ARKWEB_NESTED_WEBVIEW_UNSUPPORTED: java.webViewGetSource requires a dedicated nested ArkWeb bridge.');
       },
       webViewGetOverrideUrl: function (html, url, js) {
-        return this.webView(html, url, js);
+        throw new Error('ARKWEB_NESTED_WEBVIEW_UNSUPPORTED: java.webViewGetOverrideUrl requires a dedicated nested ArkWeb bridge.');
       },
       cacheFile: function (url, saveTime) {
         var urlText = String(url || '');
@@ -949,6 +2982,110 @@
     var readFile = function (path) { return java.readFile(path); };
     var deleteFile = function (path) { return java.deleteFile(path); };
 
+    function createRuntimeJsoupElement(node) {
+      return {
+        text: function () { return node ? legadoText(node) : ''; },
+        textNodes: function () { return legadoCreateRuntimeTextNodeList(node); },
+        ownText: function () { return node ? legadoOwnText(node) : ''; },
+        html: function () { return node && node.innerHTML ? String(node.innerHTML) : ''; },
+        outerHtml: function () { return node && node.outerHTML ? String(node.outerHTML) : ''; },
+        attr: function (name) {
+          if (!node || !node.getAttribute) return '';
+          var value = node.getAttribute(String(name || ''));
+          return value === null || value === undefined ? '' : String(value);
+        },
+        attributes: function () {
+          var values = {};
+          if (!node || !node.attributes) return values;
+          for (var index = 0; index < node.attributes.length; index++) {
+            var attribute = node.attributes[index];
+            values[String(attribute.name)] = String(attribute.value || '');
+          }
+          return values;
+        },
+        select: function (selector) {
+          return node && node.querySelectorAll ? createRuntimeJsoupElements(legadoSelectWithJsoupRegex(node, String(selector || ''))) : [];
+        },
+        selectFirst: function (selector) {
+          var matches = this.select(selector);
+          return matches.length > 0 ? matches[0] : null;
+        },
+        getElementsByClass: function (className) {
+          return this.select('.' + String(className || ''));
+        },
+        parent: function () {
+          return node && node.parentElement ? createRuntimeJsoupElement(node.parentElement) : null;
+        },
+        remove: function () {
+          if (node && node.remove) node.remove();
+          return this;
+        },
+        toString: function () { return this.outerHtml(); }
+      };
+    }
+
+    function createRuntimeJsoupElements(nodes) {
+      var elements = [];
+      for (var index = 0; index < nodes.length; index++) {
+        elements.push(createRuntimeJsoupElement(nodes[index]));
+      }
+      var helperMethods = {
+        size: function () { return elements.length; },
+        get: function (index) { return elements[Number(index) || 0] || null; },
+        first: function () { return elements.length > 0 ? elements[0] : null; },
+        last: function () { return elements.length > 0 ? elements[elements.length - 1] : null; },
+        isEmpty: function () { return elements.length === 0; },
+        text: function () {
+          return elements.map(function (element) { return element.text(); }).join(' ');
+        },
+        html: function () { return elements.length > 0 ? elements[0].html() : ''; },
+        attr: function (name) { return elements.length > 0 ? elements[0].attr(name) : ''; },
+        eachText: function () { return elements.map(function (element) { return element.text(); }); },
+        eachAttr: function (name) {
+          return elements.map(function (element) { return element.attr(name); });
+        },
+        toArray: function () { return elements.slice(0); },
+        remove: function (index) {
+          if (index === undefined || index === null) {
+            elements.splice(0, elements.length);
+          } else if (typeof index === 'number') {
+            elements.splice(index, 1);
+          }
+          return elements;
+        }
+      };
+      Object.keys(helperMethods).forEach(function (name) {
+        Object.defineProperty(elements, name, {
+          value: helperMethods[name],
+          enumerable: false,
+          configurable: true,
+          writable: true
+        });
+      });
+      return elements;
+    }
+
+    function selectRuntimeJsoupElements(html, selector) {
+      var root = null;
+      try {
+        if (typeof DOMParser === 'function') {
+          root = new DOMParser().parseFromString(String(html || ''), 'text/html');
+        }
+      } catch (error) {
+        root = null;
+      }
+      if (!root && typeof document !== 'undefined' && document.createElement) {
+        root = document.createElement('div');
+        root.innerHTML = String(html || '');
+      }
+      if (!root || !root.querySelectorAll) return [];
+      try {
+        return createRuntimeJsoupElements(legadoSelectWithJsoupRegex(root, String(selector || '')));
+      } catch (error) {
+        return [];
+      }
+    }
+
     var Jsoup = {
       connect: function (url) {
         var requestHeaders = {};
@@ -988,8 +3125,14 @@
         return {
           html: function () { return html || ''; },
           text: function () { return String(html || '').replace(/<[^>]+>/g, '').trim(); },
-          select: function () { return { remove: function () { return this; }, html: function () { return html || ''; }, text: function () { return String(html || '').replace(/<[^>]+>/g, '').trim(); } }; },
-          selectFirst: function () { return null; },
+          select: function (selector) { return selectRuntimeJsoupElements(html, selector); },
+          selectFirst: function (selector) {
+            var matches = selectRuntimeJsoupElements(html, selector);
+            return matches.length > 0 ? matches[0] : null;
+          },
+          getElementsByClass: function (className) {
+            return selectRuntimeJsoupElements(html, '.' + String(className || ''));
+          },
           toString: function () { return html || ''; }
         };
       }
@@ -1089,7 +3232,54 @@
       };
     }
 
+    var javaUtil = java.util || {};
+    javaUtil.Arrays = {
+      copyOfRange: function (value, start, end) {
+        var bytes = toByteArray(value);
+        return bytes.slice(Number(start || 0), end === undefined ? bytes.length : Number(end));
+      }
+    };
+    javaUtil.Base64 = {
+      getDecoder: function () {
+        return { decode: function (value) { return base64DecodeBytes(value); } };
+      },
+      getEncoder: function () {
+        return { encodeToString: function (value) { return base64EncodeBytes(toByteArray(value)); } };
+      }
+    };
+
     var javaRoot = {
+      lang: {
+        System: {
+          currentTimeMillis: function () {
+            return Date.now();
+          },
+          err: {
+            println: function (value) {
+              if (java && typeof java.log === 'function') {
+                java.log(String(value === undefined || value === null ? '' : value));
+              }
+              return null;
+            }
+          }
+        },
+        String: function (value) {
+          var text = Array.isArray(value) ? bytesToString(toByteArray(value)) :
+            String(value === undefined || value === null ? '' : value);
+          return {
+            __legadoJavaString: true,
+            getBytes: function (_charset) {
+              return toByteArray(text);
+            },
+            toString: function () {
+              return text;
+            },
+            valueOf: function () {
+              return text;
+            }
+          };
+        }
+      },
       security: {
         MessageDigest: {
           getInstance: function (algorithm) {
@@ -1097,7 +3287,7 @@
           }
         }
       },
-      util: java.util || {},
+      util: javaUtil,
       net: {
         URL: function (urlValue) {
           return {
@@ -1120,6 +3310,30 @@
 
     var javaxRoot = {
       crypto: {
+        Cipher: {
+          ENCRYPT_MODE: 1,
+          DECRYPT_MODE: 2,
+          getInstance: function (transformation) {
+            var mode = 0;
+            var crypto = null;
+            var transform = String(transformation || 'AES/CBC/PKCS5Padding');
+            return {
+              init: function (nextMode, keySpec, ivSpec) {
+                mode = Number(nextMode);
+                var key = keySpec && typeof keySpec.getEncoded === 'function' ? keySpec.getEncoded() : [];
+                var iv = ivSpec && ivSpec.value !== undefined ? ivSpec.value : [];
+                crypto = createSymmetricCryptoBridge(transform, key, iv);
+                return this;
+              },
+              doFinal: function (input) {
+                if (crypto === null) throw new Error('CIPHER_NOT_INITIALIZED');
+                var bytes = input === undefined || input === null ? [] : toByteArray(input);
+                return mode === 2 ? crypto.decrypt(bytes) : crypto.encrypt(bytes);
+              },
+              getBlockSize: function () { return 16; }
+            };
+          }
+        },
         Mac: {
           getInstance: function (algorithm) {
             return createMac(algorithm);
@@ -1133,6 +3347,41 @@
               getAlgorithm: function () { return this.algorithm; },
               getEncoded: function () { return toByteArray(this.value); }
             };
+          },
+          IvParameterSpec: function (value) {
+            return { value: toByteArray(value) };
+          }
+        }
+      }
+    };
+
+    // Rhino exposes imported Java classes as direct names inside `with (ji)`.
+    // Keep this deliberately bounded to the package subset represented by the
+    // V2 bridge; unsupported classes still fail at their actual rule node.
+    var JavaImporter = function () {
+      var imported = {
+        importPackage: function () { return imported; },
+        importClass: function () { return imported; }
+      };
+      var roots = [javaRoot.lang, javaRoot.security, javaRoot.util, javaRoot.net, javaxRoot.crypto, javaxRoot.crypto.spec];
+      for (var rootIndex = 0; rootIndex < roots.length; rootIndex++) {
+        var root = roots[rootIndex];
+        var names = Object.keys(root);
+        for (var nameIndex = 0; nameIndex < names.length; nameIndex++) {
+          var name = names[nameIndex];
+          imported[name] = root[name];
+        }
+      }
+      imported.util = javaRoot.util;
+      return imported;
+    };
+
+    var androidRoot = {
+      util: {
+        Base64: {
+          NO_WRAP: 2,
+          encodeToString: function (value, _flags) {
+            return base64EncodeBytes(toByteArray(value));
           }
         }
       }
@@ -1155,11 +3404,7 @@
       }
     };
 
-    if (sourceDataChanges.length > 0) {
-      sourceEffects.data = sourceDataChanges;
-    }
-
-    return {
+    var runtimeObjects = {
       variables: variables,
       sourceEffects: sourceEffects,
       sourceDataChanges: sourceDataChanges,
@@ -1171,6 +3416,8 @@
       org: org,
       javaRoot: javaRoot,
       javaxRoot: javaxRoot,
+      androidRoot: androidRoot,
+      javaImporter: JavaImporter,
       resultValue: context.result,
       baseUrl: context.baseUrl || '',
       key: context.key || '',
@@ -1179,6 +3426,13 @@
       chapter: context.chapter || {},
       src: context.src || context.result || ''
     };
+    runtimeObjectsRef = runtimeObjects;
+
+    if (sourceDataChanges.length > 0) {
+      sourceEffects.data = sourceDataChanges;
+    }
+
+    return runtimeObjects;
   }
 
   function loadJsLib(jsLib, runtimeObjects) {
@@ -1313,10 +3567,97 @@
     return output;
   }
 
+  // Rhino keeps rule-local assignments in the source execution scope.  A
+  // browser Function's global object is ArkWeb's host window, so a plain
+  // `with (scope)` would leak undeclared assignments (for example `name=[]`)
+  // into window and make the next rule observe stale state.  The proxy keeps
+  // every identifier source-scoped while falling back to host globals for
+  // standard JS APIs.  It never enumerates, deletes or writes host-window
+  // properties.
+  function createSourceScopedBinding(scope) {
+    if (typeof Proxy !== 'function') {
+      return scope;
+    }
+    var host = window;
+    var protectedNames = {
+      '__scope': true,
+      '__java': true,
+      '__source': true,
+      '__cookie': true,
+      '__cache': true,
+      '__org': true,
+      '__oldDateNow': true,
+      '__oldRandom': true,
+      '__legadoEvalCode': true,
+      '__manxiaEvalResult': true,
+      'arguments': true
+    };
+    try {
+      return new Proxy(scope, {
+        has: function (_target, key) {
+          return typeof key === 'string' && !protectedNames[key];
+        },
+        get: function (target, key) {
+          if (typeof key === 'symbol') {
+            return undefined;
+          }
+          if (key in target) {
+            return target[key];
+          }
+          try {
+            return host[key];
+          } catch (_error) {
+            return undefined;
+          }
+        },
+        set: function (target, key, value) {
+          target[key] = value;
+          return true;
+        }
+      });
+    } catch (_error) {
+      return scope;
+    }
+  }
+
   function executeCode(code, runtimeObjects, scope, fixedNow, randomSeed, jsLib) {
     var normalized = normalizeCode(code);
-    var libCode = jsLib ? String(jsLib) + '\n' : '';
-    var evalCode = rewriteTopLevelFunctionDeclarations(libCode + normalized);
+    // A jsLib function declaration followed by an arrow-IIFE otherwise gets
+    // parsed as a call on the declaration's function value. Keep the library
+    // as a separate program segment, matching Rhino's statement boundary.
+    var libCode = jsLib ? String(jsLib) + '\n;\n' : '';
+    var hasEval = /\beval\s*\(/.test(normalized);
+    var hasSourceCommentEval = /source\s*\.\s*bookSourceComment/.test(normalized) ||
+      /__source_bookSourceComment/.test(normalized);
+    var sourceCommentValue = '';
+    if (runtimeObjects.source && runtimeObjects.source.bookSourceComment !== undefined &&
+        runtimeObjects.source.bookSourceComment !== null) {
+      sourceCommentValue = String(runtimeObjects.source.bookSourceComment);
+    }
+    if (sourceCommentValue.length === 0 && scope && scope.__source_bookSourceComment) {
+      sourceCommentValue = String(scope.__source_bookSourceComment);
+    }
+    var sourceCommentCode = '';
+    if (hasSourceCommentEval && sourceCommentValue.length > 0) {
+      sourceCommentCode = rewriteTopLevelFunctionDeclarations(sourceCommentValue);
+    }
+    var executableCode = normalized;
+    if (sourceCommentCode.length > 0) {
+      executableCode = executableCode.replace(
+        /eval\s*\(\s*String\s*\(\s*source\s*\.\s*bookSourceComment\s*\)\s*\)/g,
+        'eval(String(__manxiaSourceCommentCode))'
+      );
+      executableCode = executableCode.replace(
+        /eval\s*\(\s*String\s*\(\s*__source_bookSourceComment\s*\)\s*\)/g,
+        'eval(String(__manxiaSourceCommentCode))'
+      );
+    }
+    var evalCode = rewriteTopLevelFunctionDeclarations(libCode + executableCode);
+    scope.__manxiaEvalPhase = hasEval ? 'prepared' : 'not_applicable';
+    scope.__manxiaEvalBinding = hasSourceCommentEval ? 'source_comment' : (hasEval ? 'direct_code' : 'none');
+    scope.__manxiaEvalScope = hasEval ? 'source_scoped_with' : 'none';
+    scope.__manxiaEvalCodeLength = String(evalCode).length;
+    scope.__manxiaSourceCommentLength = sourceCommentValue.length;
     var runtimeValues = [
       runtimeObjects.java,
       runtimeObjects.source,
@@ -1335,7 +3676,10 @@
       runtimeObjects.javaRoot ? runtimeObjects.javaRoot.security : {},
       runtimeObjects.javaRoot ? runtimeObjects.javaRoot.util : {},
       runtimeObjects.javaRoot ? runtimeObjects.javaRoot.net : {},
-      runtimeObjects.javaxRoot || {}
+      runtimeObjects.javaxRoot || {},
+      runtimeObjects.androidRoot || {},
+      runtimeObjects.javaImporter,
+      sourceCommentCode
     ];
       var wrapped =
       'var __scope = this;\n' +
@@ -1344,6 +3688,7 @@
       'var __cookie = arguments[2];\n' +
       'var __cache = arguments[3];\n' +
       'var __org = arguments[12];\n' +
+      '__java.lang = arguments[13].lang || __java.lang || {};\n' +
       '__java.security = arguments[13].security || arguments[14] || {};\n' +
       '__java.util = arguments[13].util || arguments[15] || __java.util || {};\n' +
       '__java.net = arguments[13].net || arguments[16] || {};\n' +
@@ -1360,8 +3705,11 @@
       '__scope.src = arguments[10];\n' +
       '__scope.Jsoup = arguments[11];\n' +
       '__scope.org = __org;\n' +
-      '__scope.Packages = { java: arguments[13], javax: arguments[17], org: __org };\n' +
+      '__scope.Packages = { java: arguments[13], javax: arguments[17], android: arguments[18], org: __org };\n' +
       '__scope.javax = arguments[17];\n' +
+      '__scope.android = arguments[18];\n' +
+      '__scope.JavaImporter = arguments[19];\n' +
+      '__scope.__manxiaSourceCommentCode = arguments[20] || \"\";\n' +
       '__scope.downloadFile = __java.downloadFile.bind(__java);\n' +
       '__scope.cacheFile = __java.cacheFile.bind(__java);\n' +
       '__scope.importScript = __java.importScript.bind(__java);\n' +
@@ -1375,39 +3723,23 @@
       '__scope.putCacheObject = __java.putCacheObject.bind(__java);\n' +
       'var __oldDateNow = Date.now;\n' +
       'var __oldRandom = Math.random;\n' +
-      'var __global = window;\n' +
-      'var __oldGlobalJava = __global.java;\n' +
-      'var __oldGlobalSource = __global.source;\n' +
-      'var __oldGlobalCookie = __global.cookie;\n' +
-      'var __oldGlobalCache = __global.cache;\n' +
-      'var __oldGlobalGetFromCacheObject = __global.getFromCacheObject;\n' +
-      'var __oldGlobalPutToCacheObject = __global.putToCacheObject;\n' +
-      'var __oldGlobalGetCacheObject = __global.getCacheObject;\n' +
-      'var __oldGlobalPutCacheObject = __global.putCacheObject;\n' +
+      // ArkWeb exposes window as a host object.  The runtime scope already
+      // provides every Legado binding, so never mutate or inspect window.
       'Date.now = function(){ return ' + Number(fixedNow || Date.now()) + '; };\n' +
       'Math.random = (' + createRandom.toString() + ')(' + Number(randomSeed || 1) + ');\n' +
-      '__global.java = __scope.java;\n' +
-      '__global.source = __scope.source;\n' +
-      '__global.cookie = __scope.cookie;\n' +
-      '__global.cache = __scope.cache;\n' +
-      '__global.getFromCacheObject = __scope.getFromCacheObject;\n' +
-      '__global.putToCacheObject = __scope.putToCacheObject;\n' +
-      '__global.getCacheObject = __scope.getCacheObject;\n' +
-      '__global.putCacheObject = __scope.putCacheObject;\n' +
       'try {\n' +
       '  var __legadoEvalCode = ' + JSON.stringify(evalCode) + ';\n' +
-      '  with (__scope) { return eval(__legadoEvalCode); }\n' +
+      '  with (__scope) {\n' +
+      '    __scope.__manxiaEvalPhase = __scope.__manxiaEvalBinding === "source_comment" ? "source_comment_eval" : "direct_eval";\n' +
+      '    var __manxiaEvalResult = eval(__legadoEvalCode);\n' +
+      '    __scope.__manxiaEvalPhase = "completed";\n' +
+      '    return __manxiaEvalResult;\n' +
+      '  }\n' +
       '} finally {\n' +
       '  Date.now = __oldDateNow;\n' +
       '  Math.random = __oldRandom;\n' +
-      '  __global.java = __oldGlobalJava;\n' +
-      '  __global.source = __oldGlobalSource;\n' +
-      '  __global.cookie = __oldGlobalCookie;\n' +
-      '  __global.cache = __oldGlobalCache;\n' +
-      '  __global.getFromCacheObject = __oldGlobalGetFromCacheObject;\n' +
-      '  __global.putToCacheObject = __oldGlobalPutToCacheObject;\n' +
-      '  __global.getCacheObject = __oldGlobalGetCacheObject;\n' +
-      '  __global.putCacheObject = __oldGlobalPutCacheObject;\n' +
+      '  try { delete __scope.__manxiaSourceCommentCode; } catch (__cleanupError) {}\n' +
+      '  // No host-window cleanup is performed.\n' +
       '}\n';
     var runner = scope.__runner;
     if (!runner) {
@@ -1417,7 +3749,80 @@
       runner = Function(wrapped);
       scope.__runner = runner;
     }
-    return runner.apply(scope, runtimeValues);
+    var bindingScope = createSourceScopedBinding(scope);
+    return runner.apply(bindingScope, runtimeValues);
+  }
+
+  // Error evidence is deliberately structural.  Never return the exception
+  // message, URL, response body or script text: those values can contain
+  // credentials and user-provided source content.  The ArkTS layer adds the
+  // final digest and code length after receiving this envelope.
+  function buildRuntimeFailureDiagnostic(payload, error, scope) {
+    var context = payload && payload.context ? payload.context : {};
+    var variables = context && context.variables ? context.variables : {};
+    var source = context && context.source && typeof context.source === 'object'
+      ? context.source
+      : {};
+    var sourceComment = source.bookSourceComment || variables.__source_bookSourceComment
+      ? 'present'
+      : 'absent';
+    var domParser = typeof DOMParser === 'function'
+      ? 'present'
+      : (typeof document !== 'undefined' && document && typeof document.createElement === 'function'
+        ? 'fallback'
+        : 'absent');
+    var errorType = error && error.name ? String(error.name) : 'Error';
+    errorType = errorType.replace(/[^A-Za-z0-9_.-]/g, '_').substring(0, 32);
+    var errorText = error && error.stack ? String(error.stack) : String(error || '');
+    var errorDigest = stableHexHash(errorText, 'legado-runtime-error', 16);
+    var lowerErrorText = errorText.toLowerCase();
+    var operation = 'execute';
+    var operationNames = [
+      ['attr', 'attr'],
+      ['selectfirst', 'selectFirst'],
+      ['select', 'select'],
+      ['parse', 'parse'],
+      ['ajax', 'ajax'],
+      ['connect', 'connect'],
+      ['post', 'post'],
+      ['head', 'head'],
+      ['eval', 'eval'],
+      ['for-in', 'for_in'],
+      ['undefined', 'undefined_access']
+    ];
+    for (var operationIndex = 0; operationIndex < operationNames.length; operationIndex++) {
+      if (lowerErrorText.indexOf(operationNames[operationIndex][0]) >= 0) {
+        operation = operationNames[operationIndex][1];
+        break;
+      }
+    }
+    var line = 'unknown';
+    var column = 'unknown';
+    var locationMatch = errorText.match(/:(\d+):(\d+)/);
+    if (locationMatch) {
+      line = locationMatch[1];
+      column = locationMatch[2];
+    }
+    var codeLength = payload && payload.code !== undefined && payload.code !== null
+      ? String(payload.code).length
+      : 0;
+    var syntax = errorType === 'SyntaxError' ? 'SCRIPT_SYNTAX' : 'RUNTIME_ERROR';
+    var evalPhase = scope && scope.__manxiaEvalPhase ? String(scope.__manxiaEvalPhase) : 'unknown';
+    var evalBinding = scope && scope.__manxiaEvalBinding ? String(scope.__manxiaEvalBinding) : 'unknown';
+    var evalScope = scope && scope.__manxiaEvalScope ? String(scope.__manxiaEvalScope) : 'unknown';
+    var evalCodeLength = scope && scope.__manxiaEvalCodeLength !== undefined
+      ? String(scope.__manxiaEvalCodeLength)
+      : 'unknown';
+    var sourceCommentLength = scope && scope.__manxiaSourceCommentLength !== undefined
+      ? String(scope.__manxiaSourceCommentLength)
+      : 'unknown';
+    return 'runtime_diagnostic;operation=' + operation + ';errorType=' + errorType +
+      ';errorClass=' + syntax + ';errorDigest=' + errorDigest +
+      ';codeLength=' + codeLength + ';sourceComment=' + sourceComment +
+      ';domParser=' + domParser + ';line=' + line + ';column=' + column +
+      ';evalPhase=' + evalPhase + ';evalBinding=' + evalBinding +
+      ';evalScope=' + evalScope + ';evalCodeLength=' + evalCodeLength +
+      ';sourceCommentLength=' + sourceCommentLength;
   }
 
   window.__manxiaLegadoRuntimeExecute = function (payload) {
@@ -1428,11 +3833,15 @@
     var state = payload.state || {};
     var context = payload.context || {};
     var sourceUrl = context.sourceUrl || (context.variables && context.variables.sourceUrl) || context.baseUrl || 'default';
-    var scope = sharedScopes[sourceUrl];
-    if (!scope) {
-      scope = {};
-      sharedScopes[sourceUrl] = scope;
+    // Rhino evaluates every rule with fresh bindings. A source's jsLib is only
+    // its prototype; rule-local assignments must not leak into another rule or
+    // into the next bridge replay.
+    var sharedScope = sharedScopes[sourceUrl];
+    if (!sharedScope) {
+      sharedScope = {};
+      sharedScopes[sourceUrl] = sharedScope;
     }
+    var scope = Object.create(sharedScope);
 
     try {
       var runtimeObjects = buildRuntimeObjects(payload, state, scope, pendingRequests, logs, cookieChanges, toasts);
@@ -1447,7 +3856,9 @@
       if (pendingRequests.length > 0) {
         return buildResponse('pending', {
           bridgeRequests: pendingRequests,
-          logs: logs
+          logs: logs,
+          sourceHeaders: state.sourceHeaders || {},
+          sourceHeaderResolution: state.sourceHeaderResolution || {}
         });
       }
       return buildResponse('ok', {
@@ -1457,18 +3868,23 @@
         cache: state.cache || {},
         cookieChanges: cookieChanges,
         toasts: toasts,
-        logs: logs
+        logs: logs,
+        sourceHeaders: state.sourceHeaders || {},
+        sourceHeaderResolution: state.sourceHeaderResolution || {}
       });
     } catch (error) {
       if (error && error.legadoPendingRequest) {
         return buildResponse('pending', {
           bridgeRequests: pendingRequests,
-          logs: logs
+          logs: logs,
+          sourceHeaders: state.sourceHeaders || {},
+          sourceHeaderResolution: state.sourceHeaderResolution || {}
         });
       }
       return buildResponse('error', {
         errorCode: error && error.name === 'SyntaxError' ? 'SCRIPT_SYNTAX' : 'RUNTIME_ERROR',
         error: error && error.stack ? String(error.stack) : String(error),
+        diagnostic: buildRuntimeFailureDiagnostic(payload, error, scope),
         logs: logs
       });
     }

@@ -1,7 +1,8 @@
-﻿import { promptAction, LengthMetrics } from '@kit.ArkUI';
+import { promptAction, LengthMetrics } from '@kit.ArkUI';
 import { HdsNavDestination, HdsNavDestinationAttribute, ScrollEffectType } from '@kit.UIDesignKit';
 import { common } from '@kit.AbilityKit';
 import { logger } from '../Utils/Logger';
+import { continuationStateHelper } from '../Framework/Distributed/ContinuationStateHelper';
 import { ReadAloudController } from '../Framework/ReadAloud/ReadAloudController';
 import { eventBus, GameEvent, IEventPayload } from '../Framework/EventBus';
 import { ReadAloudPlaybackState, ReadAloudSessionContext, ReadAloudStateSnapshot } from '../Framework/ReadAloud/ReadAloudTypes';
@@ -97,8 +98,41 @@ export struct ReadAloudPlayerPage {
     this.refreshPlayerState();
   };
 
+  /**
+   * [修复] 应用当前 mission 的接续状态（ACTIVE=显示系统接续入口）
+   */
+  private applyMissionContinueState(active: boolean): void {
+    try {
+      const hostContext = this.getUIContext().getHostContext() as common.UIAbilityContext;
+      if (!hostContext) {
+        return;
+      }
+      continuationStateHelper.setMissionContinueState(hostContext, active);
+    } catch (error) {
+      logger.warn(TAG, `设置接续状态失败: ${String(error)}`);
+    }
+  }
+
+  /**
+   * [修复] 激活接续入口（页面检查点）：
+   * 入口按场景无条件显示；权限在触发接续时校验，此处异步确保权限就绪
+   */
+  private applyMissionContinueStateWithPermission(): void {
+    try {
+      const hostContext = this.getUIContext().getHostContext() as common.UIAbilityContext;
+      if (!hostContext) {
+        return;
+      }
+      continuationStateHelper.activateMissionContinueEntry(hostContext);
+    } catch (error) {
+      logger.warn(TAG, `设置接续状态失败: ${String(error)}`);
+    }
+  }
+
   aboutToAppear(): void {
     ThemeAwareHelper.initializeThemeAware(this.componentId, this.themeState, () => {});
+    // [修复] 权限前置激活系统接续入口（权限未授权时不进入接续状态）
+    this.applyMissionContinueStateWithPermission();
     this.captureRouteState('aboutToAppear');
     this.applyPreferredDisplayMode('aboutToAppear');
     AppStorage.setOrCreate('ReadAloudCurrentHostPage', 'ReadAloudPlayerPage');
@@ -115,6 +149,8 @@ export struct ReadAloudPlayerPage {
 
   aboutToDisappear(): void {
     this.clearDisplayRestoreTimer();
+    // [修复] 听书退出时关闭系统接续入口
+    this.applyMissionContinueState(false);
     this.stopSleepTimerRefreshTimer();
     this.restorePreviousDisplayMode('aboutToDisappear');
     const currentHostPage = (AppStorage.get<string>('ReadAloudCurrentHostPage') ?? '').trim();
@@ -132,6 +168,8 @@ export struct ReadAloudPlayerPage {
   }
 
   onPageShow(): void {
+    // [修复] 听书页面重新显示时按权限条件保持接续入口
+    this.applyMissionContinueStateWithPermission();
     this.applyPreferredDisplayMode('onPageShow');
     this.scheduleDisplayRestore('onPageShow');
     AppStorage.setOrCreate('ReadAloudCurrentHostPage', 'ReadAloudPlayerPage');

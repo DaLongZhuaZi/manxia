@@ -77,6 +77,7 @@ import {
 } from '../Utils/DoublePageSmartLayoutHelper';
 import { PageInfo as SourcePageInfo, PageRequestHeader as SourcePageRequestHeader } from '../Framework/WebView/MangaSourceTypes';
 import { getLegadoMangaSourceBridge, LegadoMangaPageResult } from '../Framework/Novel/LegadoMangaSourceBridge';
+import { MangaRequestHeaderContract } from '../Framework/Reader/MangaRequestHeaderContract';
 import { MangaSourceAPIEngine } from '../Framework/WebView/MangaSourceAPIEngine';
 import { ChapterPreloadManager } from '../Framework/Preload/ChapterPreloadManager';
 import {
@@ -144,6 +145,8 @@ import {
 import { MangaIdentityResolver, MangaIdentityResolveResult } from '../Framework/Reader/MangaIdentityResolver';
 import { distributedReadingService } from '../Framework/Distributed/DistributedReadingService';
 import { distributedDataSyncManager, SyncReadingState } from '../Framework/Distributed/DistributedDataSyncManager';
+import { distributedPermissionManager } from '../Framework/Distributed/DistributedPermissionManager';
+import { continuationStateHelper } from '../Framework/Distributed/ContinuationStateHelper';
 
 const TAG = 'MangaReaderPage';
 const AUTO_WEBTOON_ASPECT_RATIO_THRESHOLD: number = 2.8;
@@ -482,6 +485,7 @@ export struct MangaReaderPage {
   @State chapterTick: number = 0;// [新增] 章节切换计数器，用于通知MangaViewer重新加载
   private currentSourceId: number = -1;
   private currentSourcePkg: string = '';
+  private legadoSourceRawSha256: string = '';
   private photos18PageCachePartition: string = 'photos18_reader';
   private shouldKeepConfiguredImageUserAgent: boolean = false;
 
@@ -694,6 +698,8 @@ private onlineDownloadedLocalFastPathActive: boolean = false;
 
   onPageShow() {
     this.isPageVisible = true;
+    // [修复] 页面重新显示时按权限条件保持接续入口（覆盖主页/回前台时的 INACTIVE）
+    this.applyMissionContinueStateWithPermission();
     this.restoreStaleBackNavigationOnPageShow();
     this.uiContext = this.getUIContext();
     this.setupFullscreenMode();
@@ -765,16 +771,26 @@ private onlineDownloadedLocalFastPathActive: boolean = false;
             const hasManga: boolean = rawKeys.includes('manga');
             const hasMangaId: boolean = rawKeys.includes('mangaId');
             const hasSourceId: boolean = rawKeys.includes('sourceId');
+            const hasSourcePkg: boolean = rawKeys.includes('sourcePkg');
+            const hasSourceName: boolean = rawKeys.includes('sourceName');
+            const hasContentType: boolean = rawKeys.includes('contentType');
             const hasChapterId: boolean = rawKeys.includes('chapterId');
             const hasPageIndex: boolean = rawKeys.includes('pageIndex');
             const hasFromPage: boolean = rawKeys.includes('fromPage');
             const hasCoverComponentId: boolean = rawKeys.includes('coverComponentId');
+            const hasSkipDatabaseLookup: boolean = rawKeys.includes('skipDatabaseLookup');
+            const hasChapterTitle: boolean = rawKeys.includes('chapterTitle');
+            const hasReaderHostMode: boolean = rawKeys.includes('readerHostMode');
+            const hasReaderInstanceId: boolean = rawKeys.includes('readerInstanceId');
+            const hasReaderTitle: boolean = rawKeys.includes('readerTitle');
             const hasOriginImportId: boolean = rawKeys.includes('originImportId');
             const hasOriginImportKind: boolean = rawKeys.includes('originImportKind');
 
             if (hasManga || hasMangaId) {
               let inferredContentType: MangaReaderContentType = MangaReaderContentType.Local;
-              if (hasSourceId) {
+              if (hasContentType) {
+                inferredContentType = String(rawParamsObj['contentType']) as MangaReaderContentType;
+              } else if (hasSourceId) {
                 // 路由参数没有下载状态信息，默认为在线未下载以触发网络链路
                 inferredContentType = MangaReaderContentType.OnlineUndownloaded;
               }
@@ -783,11 +799,18 @@ private onlineDownloadedLocalFastPathActive: boolean = false;
                 manga: hasManga ? (rawParamsObj['manga'] as Manga) : undefined,
                 mangaId: hasMangaId ? String(rawParamsObj['mangaId']) : undefined,
                 sourceId: hasSourceId ? Number(rawParamsObj['sourceId']) : undefined,
+                sourcePkg: hasSourcePkg ? String(rawParamsObj['sourcePkg']) : undefined,
+                sourceName: hasSourceName ? String(rawParamsObj['sourceName']) : undefined,
                 contentType: inferredContentType,
                 chapterId: hasChapterId ? String(rawParamsObj['chapterId']) : undefined,
                 pageIndex: hasPageIndex ? Number(rawParamsObj['pageIndex']) : 0,
                 fromPage: hasFromPage ? String(rawParamsObj['fromPage']) : '未指定',
                 coverComponentId: hasCoverComponentId ? String(rawParamsObj['coverComponentId']) : undefined,
+                skipDatabaseLookup: hasSkipDatabaseLookup ? (rawParamsObj['skipDatabaseLookup'] as boolean) : undefined,
+                chapterTitle: hasChapterTitle ? String(rawParamsObj['chapterTitle']) : undefined,
+                readerHostMode: hasReaderHostMode ? String(rawParamsObj['readerHostMode']) : undefined,
+                readerInstanceId: hasReaderInstanceId ? String(rawParamsObj['readerInstanceId']) : undefined,
+                readerTitle: hasReaderTitle ? String(rawParamsObj['readerTitle']) : undefined,
                 originImportId: hasOriginImportId ? String(rawParamsObj['originImportId']) : undefined,
                 originImportKind: hasOriginImportKind ? String(rawParamsObj['originImportKind']) : undefined
               } as MangaReaderPageParams;
@@ -1071,6 +1094,14 @@ private onlineDownloadedLocalFastPathActive: boolean = false;
     if (hostContext) {
       this.onlineArchiveService.setContext(hostContext as common.UIAbilityContext);
     }
+
+    // [修复] 阅读器进入是窗口就绪的可靠时机：稳定提起分布式数据同步权限请求
+    // （管理器内部节流；未授权且满足间隔时会再次弹窗，被打断会在下次进入时重试）
+    this.requestDistributedDataSyncPermission();
+    // [修复] 权限前置激活系统接续入口（覆盖 NavPath 宿主场景下主页的 INACTIVE；权限未授权时不进入接续状态）
+    this.applyMissionContinueStateWithPermission();
+    // [修复] 标记阅读器页面在前台（供 onContinue 守卫判定有效阅读状态）
+    AppStorage.setOrCreate('currentReaderHostPage', 'MangaReaderPage');
     
     // 初始化响应式布局
     this.initScreenSize();
@@ -1108,6 +1139,57 @@ private onlineDownloadedLocalFastPathActive: boolean = false;
     
     // 启动阅读时间定时记录
     this.startReadingTimeTracking();
+  }
+
+  /**
+   * [修复] 稳定提起分布式数据同步权限请求（阅读器检查点）
+   * 窗口已完全就绪，弹窗不会被启动时序打断；未授权且满足间隔时会再次弹出
+   */
+  private requestDistributedDataSyncPermission(): void {
+    try {
+      const hostContext = this.getUIContext().getHostContext() as common.UIAbilityContext;
+      if (!hostContext) {
+        logger.warn(TAG, '分布式权限请求跳过：无法获取 UIAbilityContext');
+        return;
+      }
+      setTimeout(() => {
+        void distributedPermissionManager.ensurePermission(hostContext);
+      }, 800);
+    } catch (error) {
+      logger.warn(TAG, `分布式权限请求异常: ${String(error)}`);
+    }
+  }
+
+  /**
+   * [修复] 应用当前 mission 的接续状态（ACTIVE=显示系统接续入口）
+   * 独立阅读器 Ability 宿主时由 Ability 自身设置；NavPath 宿主（EntryAbility）时由页面设置
+   */
+  private applyMissionContinueState(active: boolean): void {
+    try {
+      const hostContext = this.getUIContext().getHostContext() as common.UIAbilityContext;
+      if (!hostContext) {
+        return;
+      }
+      continuationStateHelper.setMissionContinueState(hostContext, active);
+    } catch (error) {
+      logger.warn(TAG, `设置接续状态失败: ${String(error)}`);
+    }
+  }
+
+  /**
+   * [修复] 激活接续入口（页面检查点）：
+   * 入口按场景无条件显示；权限在触发接续时校验，此处异步确保权限就绪
+   */
+  private applyMissionContinueStateWithPermission(): void {
+    try {
+      const hostContext = this.getUIContext().getHostContext() as common.UIAbilityContext;
+      if (!hostContext) {
+        return;
+      }
+      continuationStateHelper.activateMissionContinueEntry(hostContext);
+    } catch (error) {
+      logger.warn(TAG, `设置接续状态失败: ${String(error)}`);
+    }
   }
   
   /**
@@ -1323,6 +1405,17 @@ private onlineDownloadedLocalFastPathActive: boolean = false;
     // 通知预加载管理器：阅读器已关闭
     this.lifecycle.destroy();
     this.unregisterRemoteControlListener();
+    
+    // [修复] 退出阅读器时清理分布式阅读状态与接续标志：
+    // 1) 防止陈旧 currentRead* 被 onContinue 打包流转到其他设备（未阅读却显示接续状态）
+    // 2) 防止未消费的 continuation* 残留导致下次打开阅读器误触发接续
+    distributedReadingService.detach();
+    distributedReadingService.clearCurrentReadingState();
+    distributedReadingService.clearContinuationFlags();
+    // [修复] 阅读器退出时关闭系统接续入口
+    this.applyMissionContinueState(false);
+    // [修复] 清理阅读器前台标志（防止守卫误判有效阅读状态）
+    AppStorage.setOrCreate('currentReaderHostPage', '');
     
     // 停止阅读时间定时记录
     ChapterPreloadManager.getInstance().setReaderActive(false);
@@ -2230,6 +2323,59 @@ private onlineDownloadedLocalFastPathActive: boolean = false;
 
   private shouldRefreshVolatileSourcePages(): boolean {
     return this.isKomiicSourceForReader();
+  }
+
+  /**
+   * Legado IMAGE adapters are V2-owned sources. Their remote page assets
+   * must retain the V2 request/cookie/decode contract even if page metadata
+   * happens to be present in the local online-page table.
+   */
+  private shouldUseLegadoV2ImageTransport(): boolean {
+    const pageSourcePkg: string = this.pageParams?.sourcePkg || '';
+    const currentSourcePkg: string = this.currentSourcePkg || '';
+    const mangaSourcePkg: string = this.readerState.currentManga?.sourceInfo?.sourcePkg || '';
+    return pageSourcePkg.startsWith('legado.image.') ||
+      currentSourcePkg.startsWith('legado.image.') ||
+      mangaSourcePkg.startsWith('legado.image.');
+  }
+
+  private applyResolvedSourceIdentityToManga(
+    manga: Manga | undefined,
+    identityResult: MangaIdentityResolveResult
+  ): void {
+    if (!manga || !manga.sourceInfo) {
+      return;
+    }
+    if (identityResult.sourceId > 0) {
+      manga.sourceInfo.sourceId = String(identityResult.sourceId);
+    }
+    if (identityResult.sourcePkg.length > 0) {
+      manga.sourceInfo.sourcePkg = identityResult.sourcePkg;
+    }
+    if (identityResult.sourceName.length > 0) {
+      manga.sourceInfo.sourceName = identityResult.sourceName;
+    }
+  }
+
+  private async refreshLegadoV2ImageTraceIdentity(): Promise<void> {
+    this.legadoSourceRawSha256 = '';
+    if (!this.shouldUseLegadoV2ImageTransport()) {
+      return;
+    }
+    const sourceId: number = this.currentSourceId > 0
+      ? this.currentSourceId
+      : (this.pageParams?.sourceId || 0);
+    if (sourceId <= 0) {
+      logger.warn(TAG, 'IMAGE V2 trace 缺少漫画源 ID，原始文档身份不可用');
+      return;
+    }
+    const rawSha256: string = await getLegadoMangaSourceBridge().getRawSourceDocumentSha256(sourceId);
+    if (/^[0-9a-f]{64}$/i.test(rawSha256)) {
+      this.legadoSourceRawSha256 = rawSha256.toUpperCase();
+      logger.info(TAG, `IMAGE V2 trace 身份已就绪: sourceId=${sourceId}`);
+      return;
+    }
+    logger.warn(TAG, `IMAGE V2 trace 未找到无损原始文档身份: sourceId=${sourceId}`);
   }
 
   private appendExtraRequestHeader(target: RequestHeaders, headerName: string, headerValue: string): void {
@@ -3522,6 +3668,7 @@ private onlineDownloadedLocalFastPathActive: boolean = false;
 
     this.currentSourceId = -1;
     this.currentSourcePkg = '';
+    this.legadoSourceRawSha256 = '';
     this.mangaEngine = null;
     this.shouldKeepConfiguredImageUserAgent = false;
     this.networkHeaders = undefined;
@@ -4125,6 +4272,15 @@ private onlineDownloadedLocalFastPathActive: boolean = false;
     return page;
   }
 
+  /**
+   * [修复] 向分布式阅读服务上报的原始内容类型来源：
+   * 本地漫画必须携带 local 标记，否则接续打包时 isLocal=false，
+   * 目标端会按“在线未下载”模式打开本地漫画而失败。
+   */
+  private buildSyncSourceType(contentType: MangaReaderContentType | undefined): string {
+    return contentType === MangaReaderContentType.Local ? 'local_manga' : 'manga';
+  }
+
   private convertLocalChapterInfoToMangaChapter(
     chapterInfo: ChapterInfo,
     chapterIndex: number,
@@ -4254,7 +4410,7 @@ private onlineDownloadedLocalFastPathActive: boolean = false;
     // 1. 判定是否为 Komiic (Source ID 6 或 14，或名称包含 Komiic)
     // 1. 判定是否为 Komiic (Source ID 6 或 14，或名称包含 Komiic)
       let srcId = params.sourceId || this.currentSourceId;
-      const srcName = params.sourceName || params.manga?.sourceInfo?.sourceName || '';
+      let srcName = params.sourceName || params.manga?.sourceInfo?.sourceName || '';
       let isKomiic = (srcId === 6 || srcId === 14) || srcName.toLowerCase().includes('komiic');
 
       if (params.sourceId && typeof params.sourceId === 'number' && params.sourceId > 0) {
@@ -4322,11 +4478,18 @@ private onlineDownloadedLocalFastPathActive: boolean = false;
           ? identityResult.externalChapterId
           : identityResult.canonicalChapterId;
       }
+      if (identityResult.sourcePkg.length > 0) {
+        params.sourcePkg = identityResult.sourcePkg;
+        this.currentSourcePkg = identityResult.sourcePkg;
+      }
+      if (identityResult.sourceName.length > 0) {
+        params.sourceName = identityResult.sourceName;
+        srcName = identityResult.sourceName;
+      }
       if (identityResult.sourceId > 0) {
         params.sourceId = identityResult.sourceId;
         this.currentSourceId = identityResult.sourceId;
         srcId = identityResult.sourceId;
-        isKomiic = (srcId === 6 || srcId === 14) || srcName.toLowerCase().includes('komiic');
         if (cookies.length <= 0) {
           try {
             const resolvedCookieManager: CookieManager = CookieManager.getInstance();
@@ -4339,6 +4502,8 @@ private onlineDownloadedLocalFastPathActive: boolean = false;
           }
         }
       }
+      isKomiic = (srcId === 6 || srcId === 14) || srcName.toLowerCase().includes('komiic');
+      this.applyResolvedSourceIdentityToManga(params.manga, identityResult);
       if (params.manga && params.manga.sourceInfo) {
         if (identityResult.externalMangaId.length > 0) {
           params.manga.sourceInfo.externalId = identityResult.externalMangaId;
@@ -4372,6 +4537,8 @@ private onlineDownloadedLocalFastPathActive: boolean = false;
         false
       );
     }
+
+    await this.refreshLegadoV2ImageTraceIdentity();
 
     // [重构] 根据是否有sourceId判断是在线还是本地漫画
     if (params.manga && params.manga.sourceInfo && params.manga.sourceInfo.sourceUrl) {
@@ -4943,23 +5110,45 @@ private onlineDownloadedLocalFastPathActive: boolean = false;
         throw new Error('路由参数无效：缺少 manga 或 mangaId');
       }
 
-      // 拦截分布式进度
+      if (resolvedIdentity) {
+        this.applyResolvedSourceIdentityToManga(manga, resolvedIdentity);
+      }
+
+      // [修复] 跨端接续恢复：优先使用 wantParam 快照（系统保证送达、不依赖组网），
+      // 快照缺失时再等待分布式数据对象同步（仅兜底），命中后才提示用户，避免"显示接续状态却恢复失败"
       const continuationSessionId = AppStorage.get<string>('continuationSessionId');
       if (continuationSessionId) {
-        this.getUIContext().getPromptAction().showToast({ message: '已从其他设备接续阅读' });
-        const distributedState = distributedDataSyncManager.getCurrentState();
-        if (distributedState && distributedState.bookId === manga.id) {
-          const chIndex = distributedState.chapterIndex;
-          if (chIndex >= 0 && chIndex < manga.chapters.length) {
-            params.chapterId = manga.chapters[chIndex].id;
-            params.pageIndex = distributedState.pageIndex;
-            logger.info(TAG, `[Distributed] 接续阅读命中: chapterIndex=${chIndex}, pageIndex=${params.pageIndex}`);
-            // 清除session避免重复触发
-            AppStorage.setOrCreate('continuationSessionId', '');
+        logger.info(TAG, `[Distributed] 检测到跨端接续会话，开始恢复阅读位置: sessionId=${continuationSessionId}`);
+        const snapshot = distributedReadingService.readContinuationSnapshot();
+        let restoredChapterIndex: number = -1;
+        let restoredPageIndex: number = -1;
+        let restoreSource: string = '';
+        if (snapshot) {
+          restoredChapterIndex = snapshot.chapterIndex;
+          restoredPageIndex = snapshot.pageIndex;
+          restoreSource = 'want_param_snapshot';
+        } else {
+          // 快照缺失：等待分布式数据对象把源端进度同步过来
+          const distributedState = await distributedDataSyncManager.waitForRemoteState(4000);
+          if (distributedState && distributedState.bookId === manga.id) {
+            restoredChapterIndex = distributedState.chapterIndex;
+            restoredPageIndex = distributedState.pageIndex;
+            restoreSource = 'distributed_object';
           }
         }
+        if (restoredChapterIndex >= 0 && restoredChapterIndex < manga.chapters.length) {
+          params.chapterId = manga.chapters[restoredChapterIndex].id;
+          if (restoredPageIndex >= 0) {
+            params.pageIndex = restoredPageIndex;
+          }
+          this.getUIContext().getPromptAction().showToast({ message: '已从其他设备接续阅读' });
+          logger.info(TAG, `[Distributed] 接续阅读命中: chapterIndex=${restoredChapterIndex}, pageIndex=${params.pageIndex}, source=${restoreSource}`);
+        } else {
+          logger.warn(TAG, `[Distributed] 接续恢复未命中（章节越界或数据未同步）: source=${restoreSource}, chapterIndex=${restoredChapterIndex}`);
+        }
 
-        // 注册遥控器指令监听（被控端）
+        // [修复] 无论是否命中都清理接续标志（防止残留导致后续误触发），并注册遥控器指令监听（被控端）
+        distributedReadingService.clearContinuationFlags();
         this.registerRemoteControlListener();
       }
 
@@ -5054,6 +5243,18 @@ private onlineDownloadedLocalFastPathActive: boolean = false;
         this.notifyTransitionReaderReadyOnce('no_available_chapter');
         return;
       }
+
+      // [修复] 内容就绪后立即同步一次阅读进度（确保 currentRead* 状态与时间戳就绪，
+      // 避免进入阅读器早期触发接续时守卫误判或打包空状态）
+      const boundChapter = this.readerState.currentChapter;
+      const initialSyncChapterIndex = boundChapter ? manga.chapters.findIndex(c => c.id === boundChapter.id) : -1;
+      distributedReadingService.syncProgress(
+        manga.id,
+        initialSyncChapterIndex >= 0 ? initialSyncChapterIndex : 0,
+        this.readerState.currentPageIndex,
+        0,
+        this.buildSyncSourceType(params.contentType)
+      );
 
       this.reportTransitionLoadingProgress(0.46, 'chapter_bound');
       this.recordMangaReadFlowEvent(
@@ -7826,7 +8027,7 @@ private onlineDownloadedLocalFastPathActive: boolean = false;
       if (!header) {
         continue;
       }
-      this.applyConfiguredRequestHeader(headers, header.name, header.value, true, true);
+      MangaRequestHeaderContract.apply(headers, header.name, header.value);
     }
     return headers;
   }
@@ -9451,7 +9652,7 @@ private onlineDownloadedLocalFastPathActive: boolean = false;
     
     // 向分布式沙箱同步实时进度
     const chIndex = manga.chapters.findIndex(c => c.id === chapter.id);
-    distributedReadingService.syncProgress(manga.id, chIndex >= 0 ? chIndex : 0, pageIndex, 0, manga.contentType?.toString() || 'manga');
+    distributedReadingService.syncProgress(manga.id, chIndex >= 0 ? chIndex : 0, pageIndex, 0, this.buildSyncSourceType(this.pageParams?.contentType));
     
     logger.debug(TAG, `已保存阅读进度[${trigger}]: ${manga.title} / ${chapter.title} -> 第${pageIndex + 1}页, 时长${duration}ms`);
   }
@@ -11653,6 +11854,8 @@ private onlineDownloadedLocalFastPathActive: boolean = false;
           sourceId: this.currentSourceId > 0 ? this.currentSourceId : 0,
           mangaId: this.readerState.currentManga ? this.readerState.currentManga.id : (this.pageParams ? this.pageParams.mangaId : ''),
           readFlowSessionId: this.mangaReadFlowSessionId,
+          useLegadoV2ImageTransport: this.shouldUseLegadoV2ImageTransport(),
+          legadoSourceRawSha256: this.legadoSourceRawSha256,
           preloadCurrentPages: this.getEffectiveViewerPreloadCurrentPages(),
           preloadNextPages: this.getEffectiveViewerPreloadNextPages(),
           contentType: this.pageParams ? this.pageParams.contentType : '',// [新增] 传递内容类型（用于区分在线/本地漫画）
@@ -13176,27 +13379,42 @@ private onlineDownloadedLocalFastPathActive: boolean = false;
         return null;
       }
       const hasSourceId: boolean = keys.includes('sourceId');
+      const hasSourcePkg: boolean = keys.includes('sourcePkg');
       const hasChapterId: boolean = keys.includes('chapterId');
       const hasPageIndex: boolean = keys.includes('pageIndex');
       const hasFromPage: boolean = keys.includes('fromPage');
       const hasCoverComponentId: boolean = keys.includes('coverComponentId');
       const hasSourceName: boolean = keys.includes('sourceName');
+      const hasContentType: boolean = keys.includes('contentType');
+      const hasSkipDatabaseLookup: boolean = keys.includes('skipDatabaseLookup');
+      const hasChapterTitle: boolean = keys.includes('chapterTitle');
+      const hasReaderHostMode: boolean = keys.includes('readerHostMode');
+      const hasReaderInstanceId: boolean = keys.includes('readerInstanceId');
+      const hasReaderTitle: boolean = keys.includes('readerTitle');
       const hasOriginImportId: boolean = keys.includes('originImportId');
       const hasOriginImportKind: boolean = keys.includes('originImportKind');
       let ct: MangaReaderContentType = MangaReaderContentType.Local;
-      if (hasSourceId) {
+      if (hasContentType) {
+        ct = String(raw['contentType']) as MangaReaderContentType;
+      } else if (hasSourceId) {
         ct = MangaReaderContentType.OnlineUndownloaded;
       }
       const result: MangaReaderPageParams = {
         manga: hasManga ? (raw['manga'] as Manga) : undefined,
         mangaId: hasMangaId ? String(raw['mangaId']) : undefined,
         sourceId: hasSourceId ? Number(raw['sourceId']) : undefined,
+        sourcePkg: hasSourcePkg ? String(raw['sourcePkg']) : undefined,
         sourceName: hasSourceName ? String(raw['sourceName']) : undefined,
         contentType: ct,
         chapterId: hasChapterId ? String(raw['chapterId']) : undefined,
         pageIndex: hasPageIndex ? Number(raw['pageIndex']) : 0,
         fromPage: hasFromPage ? String(raw['fromPage']) : '未指定',
         coverComponentId: hasCoverComponentId ? String(raw['coverComponentId']) : undefined,
+        skipDatabaseLookup: hasSkipDatabaseLookup ? (raw['skipDatabaseLookup'] as boolean) : undefined,
+        chapterTitle: hasChapterTitle ? String(raw['chapterTitle']) : undefined,
+        readerHostMode: hasReaderHostMode ? String(raw['readerHostMode']) : undefined,
+        readerInstanceId: hasReaderInstanceId ? String(raw['readerInstanceId']) : undefined,
+        readerTitle: hasReaderTitle ? String(raw['readerTitle']) : undefined,
         originImportId: hasOriginImportId ? String(raw['originImportId']) : undefined,
         originImportKind: hasOriginImportKind ? String(raw['originImportKind']) : undefined
       } as MangaReaderPageParams;

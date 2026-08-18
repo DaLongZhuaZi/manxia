@@ -13,6 +13,8 @@
     "pages/FileEditorAbilityPage",
     "pages/ExternalFileTaskAbilityPage",
     "pages/RemoteControlAbilityPage",
-    "pages/SourceDetailAbilityPage"
+    "pages/SourceDetailAbilityPage",
+    "pages/LegadoArkWebConformancePage",
+    "pages/ContinuationRestorePage"
   ]
 }

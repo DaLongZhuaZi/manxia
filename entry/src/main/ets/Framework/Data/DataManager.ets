@@ -38,6 +38,12 @@ import { getUnifiedAnnotationManager } from '../Annotations/UnifiedAnnotationMan
 import { ImageCacheManager, ImageCacheConfig, MemoryCacheConfig, DiskCacheConfig} from '../Cache/ImageCacheManager';
 import { ComicArchiveManager, ComicChapterInfo, ComicPageInfo } from '../Compress/ComicArchiveManager';
 import { HSPPluginManager } from '../Plugin/HSPPluginManager';
+import {
+  RemoteComicMetadata,
+  RemoteChapterMetadata,
+  RemotePageMetadata,
+  MangaChapterPagesEntry
+} from '../Distributed/MangaTransferTypes';
 import { UnifiedContentType } from '../../Models/UnifiedContentModels';
 import { BusinessError } from '@kit.BasicServicesKit';
 import { common } from '@kit.AbilityKit';
@@ -205,6 +211,17 @@ export interface ComicInfo {
   contentType?: string; // 内容类型：'manga' = 漫画, 'ebook' = 电子书类PDF
   isNSFW?: number | boolean; // 是否为NSFW内容（数据库中为0/1，代码中可为boolean）
   isPrivate?: number | boolean; // 是否为隐私内容（数据库中为0/1，代码中可为boolean）
+}
+
+/** COUNT(*) 查询结果行 */
+export interface CountRecord {
+  cnt: number;
+}
+
+/** 章节页面完整性检查用的章节行（id + pageCount） */
+interface ChapterPageCountRecord {
+  id: string;
+  pageCount: number;
 }
 
 export interface ChapterInfo {
@@ -823,6 +840,32 @@ export class DataManager {
     };
   }
 
+  /**
+   * 将强类型 OnlineComicInfo 转换为 ComicInfo
+   * [修复] 供 getComicById / getComicsByIds 的逐表查询兜底分支使用
+   */
+  private convertOnlineComicInfoToComicInfo(online: OnlineComicInfo): ComicInfo {
+    const isPrivateValue: number | undefined = online.isPrivate;
+    const isNSFWValue: number | undefined = online.isNSFW;
+    return {
+      id: online.id,
+      title: online.title,
+      author: online.author || '',
+      description: online.description || '',
+      coverUrl: online.coverUrl || '',
+      sourceId: online.sourceId,
+      status: 'unknown' as MangaStatus,
+      tags: online.tags || [],
+      rating: online.rating || 0,
+      chapterCount: 0,
+      lastUpdateTime: online.lastUpdateTime || 0,
+      addTime: online.addTime || 0,
+      externalId: online.externalId || undefined,
+      isPrivate: (isPrivateValue !== undefined && isPrivateValue !== null) ? (isPrivateValue === 1) : false,
+      isNSFW: (isNSFWValue !== undefined && isNSFWValue !== null) ? (isNSFWValue === 1) : false
+    };
+  }
+
   private convertRecordToChapterInfo(record: ChapterInfoDatabaseRecord): ChapterInfo {
     // [调试] 打印原始数据库记录的externalId字段
     logger.debug(TAG, `🔄 [convertRecordToChapterInfo] 原始record.externalId=${record.externalId || 'undefined'}, record.id=${record.id}, record.title="${record.title}"`);
@@ -831,7 +874,7 @@ export class DataManager {
       id: record.id,
       comicId: record.comicId,
       title: record.title,
-      index: record.chapterIndex,
+      index: this.resolveChapterIndexFromRecord(record),
       pageCount: record.pageCount,
       isDownloaded: record.isDownloaded,
       downloadPath: record.downloadPath || undefined,
@@ -845,17 +888,48 @@ export class DataManager {
     return result;
   }
 
+  /**
+   * [修复] 读库记录按列名生成键：chapter 表列名为 chapterNumber（不存在 chapterIndex 列），
+   * 原实现读 record.chapterIndex 恒为 undefined，导致接续传输的章节序号丢失。
+   * 优先读 chapterNumber，再回退 chapterIndex（兼容手写 SQL 的别名列）。
+   */
+  private resolveChapterIndexFromRecord(record: ChapterInfoDatabaseRecord): number {
+    if (typeof record.chapterNumber === 'number' && !Number.isNaN(record.chapterNumber)) {
+      return record.chapterNumber;
+    }
+    if (typeof record.chapterIndex === 'number' && !Number.isNaN(record.chapterIndex)) {
+      return record.chapterIndex;
+    }
+    return 0;
+  }
+
   private convertRecordToPageInfo(record: PageInfoDatabaseRecord): PageInfo {
     return {
       id: record.id,
       chapterId: record.chapterId,
-      index: record.index,
+      index: this.resolvePageIndexFromRecord(record),
       imageUrl: record.imageUrl,
       localPath: record.localPath || undefined,
       width: record.width,
       height: record.height,
       fileSize: record.fileSize
     };
+  }
+
+  /**
+   * [修复] 读库记录按列名生成键：page 表列名为 pageNumber（不存在 index 列），
+   * 原实现读 record.index 恒为 undefined，导致接续传输/导入的页面序号全部变为 0，
+   * 进而触发 (chapterId, pageNumber) 唯一约束把 20 页压缩成 1 页。
+   * 优先读 pageNumber，再回退 index（兼容手写 SQL 的别名列）。
+   */
+  private resolvePageIndexFromRecord(record: PageInfoDatabaseRecord): number {
+    if (typeof record.pageNumber === 'number' && !Number.isNaN(record.pageNumber)) {
+      return record.pageNumber;
+    }
+    if (typeof record.index === 'number' && !Number.isNaN(record.index)) {
+      return record.index;
+    }
+    return 0;
   }
 
   private convertRecordToFavoriteInfo(record: FavoriteInfoDatabaseRecord): FavoriteInfo {
@@ -1831,35 +1905,24 @@ export class DataManager {
 
   /**
    * 根据ID获取单个漫画
-   * [性能优化] 使用 UNION ALL 单条 SQL 同时查询 comic_info 和 online_comic_info 表
+   * [修复] 原实现使用 UNION ALL 单条 SQL 同时查询两张表，但 online_comic_info
+   * 与 comic_info 的列结构不一致（缺少 status/chapterCount/webUrl/apiUrl 等列），
+   * 语句引用不存在的列会导致整条 UNION 失效（真机上返回空结果），
+   * 表现为“本地漫画在 comic_info 中存在但按 id 查不到”。
+   * 改为逐表查询：先 comic_info，再 online_comic_info。
    */
   public async getComicById(comicId: string): Promise<ComicInfo | null> {
     try {
-      const sql = `
-        SELECT id, sourceId, externalId, title, author, description, coverUrl, coverLocalPath,
-               status, tags, rating, chapterCount, lastUpdateTime, addTime, createTime, updateTime,
-               webUrl, apiUrl, contentType, isPrivate, isNSFW, 'local' as _source, 0 as _priority
-        FROM comic_info WHERE id = ?
-        UNION ALL
-        SELECT id, sourceId, externalId, title, author, description, coverUrl, '' as coverLocalPath,
-               status, tags, rating, 0 as chapterCount, lastUpdateTime, addTime, createTime, updateTime,
-               null as webUrl, null as apiUrl, 'online' as contentType, isPrivate, isNSFW, 'online' as _source, 1 as _priority
-        FROM online_comic_info WHERE id = ?
-        ORDER BY _priority ASC
-        LIMIT 1
-      `;
-      const result = await this.databaseManager.querySql(sql, [comicId, comicId]);
+      const localComic = await this.getComicInfo(comicId);
+      if (localComic) {
+        logger.debug(TAG, `从 comic_info 表找到漫画: ${comicId}`);
+        return localComic;
+      }
 
-      if (result.length > 0) {
-        const record: ComicInfoBatchRecord = result[0] as ComicInfoBatchRecord;
-        const source: string = record._source;
-        if (source === 'local') {
-          logger.debug(TAG, `从 comic_info 表找到漫画: ${comicId}`);
-          return this.convertRecordToComicInfo(record);
-        } else {
-          logger.debug(TAG, `从 online_comic_info 表找到漫画: ${comicId}`);
-          return this.convertOnlineComicRecordToComicInfo(record);
-        }
+      const onlineComic = await this.getOnlineComicInfoById(comicId);
+      if (onlineComic) {
+        logger.debug(TAG, `从 online_comic_info 表找到漫画: ${comicId}`);
+        return this.convertOnlineComicInfoToComicInfo(onlineComic);
       }
 
       logger.debug(TAG, `未找到ID为 ${comicId} 的漫画（已查询 comic_info 和 online_comic_info 表）`);
@@ -1890,40 +1953,28 @@ export class DataManager {
       for (let start = 0; start < uniqueIds.length; start += COMIC_INFO_BATCH_QUERY_SIZE) {
         const batchIds: string[] = uniqueIds.slice(start, start + COMIC_INFO_BATCH_QUERY_SIZE);
         const placeholders = batchIds.map((): string => '?').join(',');
-        const sql = `
-          SELECT id, sourceId, externalId, title, author, description, coverUrl, coverLocalPath,
-                 status, tags, rating, chapterCount, lastUpdateTime, addTime, createTime, updateTime,
-                 webUrl, apiUrl, contentType, isPrivate, isNSFW, 'local' as _source, 0 as _priority
-          FROM comic_info WHERE id IN (${placeholders})
-          UNION ALL
-          SELECT id, sourceId, externalId, title, author, description, coverUrl, '' as coverLocalPath,
-                 status, tags, rating, 0 as chapterCount, lastUpdateTime, addTime, createTime, updateTime,
-                 null as webUrl, null as apiUrl, 'online' as contentType, isPrivate, isNSFW, 'online' as _source, 1 as _priority
-          FROM online_comic_info WHERE id IN (${placeholders})
-          ORDER BY _priority ASC
-        `;
-        const args: DatabaseValue[] = [];
-        for (const batchId of batchIds) {
-          args.push(batchId);
-        }
-        for (const batchId of batchIds) {
-          args.push(batchId);
-        }
-        const records: DatabaseRecord[] = await this.databaseManager.querySql(sql, args);
-        for (const record of records) {
-          const typedRecord: ComicInfoBatchRecord = record as ComicInfoBatchRecord;
-          const comicId = typedRecord.id;
-          if (comicId.length === 0) {
-            continue;
+
+        // [修复] 原 UNION ALL 写法因两表列结构不一致而整体失效，改为逐表查询并合并
+        const localRecords: DatabaseRecord[] = await this.databaseManager.querySql(
+          `SELECT * FROM comic_info WHERE id IN (${placeholders})`,
+          batchIds
+        );
+        for (const record of localRecords) {
+          const comicInfo: ComicInfo = this.convertRecordToComicInfo(record as ComicInfoDatabaseRecord);
+          if (comicInfo.id.length > 0) {
+            resultMap.set(comicInfo.id, comicInfo);
           }
-          const source: string = typedRecord._source;
-          if (source !== 'local' && resultMap.has(comicId)) {
-            continue;
+        }
+
+        const onlineRecords: DatabaseRecord[] = await this.databaseManager.querySql(
+          `SELECT * FROM online_comic_info WHERE id IN (${placeholders})`,
+          batchIds
+        );
+        for (const record of onlineRecords) {
+          const onlineComic: OnlineComicInfo = this.convertRecordToOnlineComicInfo(record as DatabaseRecord);
+          if (onlineComic.id.length > 0 && !resultMap.has(onlineComic.id)) {
+            resultMap.set(onlineComic.id, this.convertOnlineComicInfoToComicInfo(onlineComic));
           }
-          const comicInfo: ComicInfo = source === 'local'
-            ? this.convertRecordToComicInfo(typedRecord)
-            : this.convertOnlineComicRecordToComicInfo(typedRecord);
-          resultMap.set(comicId, comicInfo);
         }
       }
       logger.debug(TAG, `批量获取漫画信息完成: 请求=${uniqueIds.length}, 命中=${resultMap.size}`);
@@ -2750,6 +2801,202 @@ export class DataManager {
    */
   public async getPageInfoList(chapterId: string): Promise<PageInfo[]> {
     return this.getChapterPages(chapterId);
+  }
+
+  /**
+   * [跨端接续诊断] 输出漫画父记录在两个表中的查询情况，
+   * 用于定位“本地漫画存在但按 id 查不到”的落库/查询不一致问题。
+   */
+  public async getMangaLookupDiagnostics(comicId: string): Promise<string> {
+    const parts: string[] = [];
+    try {
+      const exactRows = await this.databaseManager.querySql('SELECT COUNT(*) AS cnt FROM comic_info WHERE id = ?', [comicId]);
+      parts.push(`comic_info精确=${this.readCountFromRows(exactRows)}`);
+      const totalRows = await this.databaseManager.querySql('SELECT COUNT(*) AS cnt FROM comic_info', []);
+      parts.push(`comic_info总数=${this.readCountFromRows(totalRows)}`);
+      const onlineRows = await this.databaseManager.querySql('SELECT COUNT(*) AS cnt FROM online_comic_info WHERE id = ?', [comicId]);
+      parts.push(`online精确=${this.readCountFromRows(onlineRows)}`);
+      const chapterRows = await this.databaseManager.querySql('SELECT COUNT(*) AS cnt FROM chapter WHERE comicId = ?', [comicId]);
+      parts.push(`chapter引用=${this.readCountFromRows(chapterRows)}`);
+      const suffix = comicId.length > 8 ? comicId.substring(comicId.length - 8) : comicId;
+      const likeRows = await this.databaseManager.querySql('SELECT id FROM comic_info WHERE id LIKE ? LIMIT 5', [`%${suffix}`]);
+      const likeIds: string[] = [];
+      for (const row of likeRows) {
+        likeIds.push(String(row.id));
+      }
+      parts.push(`comic_info后缀命中=${likeIds.join(',')}`);
+    } catch (error) {
+      parts.push(`诊断异常=${String(error)}`);
+    }
+    return parts.join('; ');
+  }
+
+  private readCountFromRows(rows: DatabaseRecord[]): number {
+    if (rows.length <= 0) {
+      return 0;
+    }
+    const record: CountRecord = rows[0] as CountRecord;
+    return Number(record.cnt) || 0;
+  }
+
+  /**
+   * [修复] 安全读取接续传输页面序号：JSON 传输可能丢失 undefined 字段，缺失时按 0 处理。
+   */
+  private remotePageIndex(page: RemotePageMetadata): number {
+    if (typeof page.index === 'number' && !Number.isNaN(page.index)) {
+      return page.index;
+    }
+    return 0;
+  }
+
+  /**
+   * [跨端接续修复] 检查本地漫画的页面数据是否完整。
+   * 目标端存在上次接续残留（如旧版本把整章压缩成 1 页）时返回 false，
+   * 调用方据此从源设备重新拉取漫画数据。
+   */
+  public async hasCompleteChapterPages(comicId: string): Promise<boolean> {
+    try {
+      const chapterRecords = await this.databaseManager.querySql(
+        'SELECT id, pageCount FROM chapter WHERE comicId = ?',
+        [comicId]
+      );
+      if (!chapterRecords || chapterRecords.length <= 0) {
+        return false;
+      }
+      for (const record of chapterRecords) {
+        const chapterRow: ChapterPageCountRecord = record as ChapterPageCountRecord;
+        const chapterId: string = String(chapterRow.id);
+        const expectedPageCount: number = Number(chapterRow.pageCount) || 0;
+        const pageCountRows = await this.databaseManager.querySql(
+          'SELECT COUNT(*) AS cnt FROM page WHERE chapterId = ?',
+          [chapterId]
+        );
+        const actualPageCount: number = this.readCountFromRows(pageCountRows);
+        if (expectedPageCount > 0) {
+          if (actualPageCount < expectedPageCount) {
+            logger.warn(TAG, `章节页面数据不完整: chapterId=${chapterId}, 期望=${expectedPageCount}, 实际=${actualPageCount}`);
+            return false;
+          }
+        } else if (actualPageCount <= 0) {
+          logger.warn(TAG, `章节缺少页面数据: chapterId=${chapterId}, 实际=${actualPageCount}`);
+          return false;
+        }
+      }
+      return true;
+    } catch (error) {
+      logger.warn(TAG, `检查章节页面完整性失败: comicId=${comicId}, ${String(error)}`);
+      return false;
+    }
+  }
+
+  /**
+   * [跨端接续] 导入从源设备传输来的漫画数据（漫画行 + 章节 + 页面，保留源端 ID）。
+   * 先删除同 ID 旧数据再插入（幂等，支持重复接续），路径由调用方改写为沙箱内路径。
+   */
+  public async importRemoteComicData(
+    comic: RemoteComicMetadata,
+    chapters: RemoteChapterMetadata[],
+    chapterPages: MangaChapterPagesEntry[]
+  ): Promise<void> {
+    try {
+      const now = Date.now();
+      await this.databaseManager.beginTransaction();
+      try {
+        await this.databaseManager.executeSql(
+          'DELETE FROM page WHERE chapterId IN (SELECT id FROM chapter WHERE comicId = ?)',
+          [comic.id]
+        );
+        await this.databaseManager.executeSql('DELETE FROM chapter WHERE comicId = ?', [comic.id]);
+        await this.databaseManager.executeSql('DELETE FROM comic_info WHERE id = ?', [comic.id]);
+
+        const comicRecord: ComicInfoDatabaseRecord = {
+          id: comic.id,
+          title: comic.title,
+          author: comic.author || '',
+          description: comic.description || '',
+          coverUrl: comic.coverUrl || '',
+          coverLocalPath: comic.coverLocalPath || '',
+          sourceId: comic.sourceId || 'local_import',
+          externalId: comic.externalId || comic.id,
+          status: String(comic.status),
+          tags: JSON.stringify(comic.tags || []),
+          rating: comic.rating || 0,
+          chapterCount: comic.chapterCount || chapters.length,
+          lastUpdateTime: comic.lastUpdateTime || now,
+          addTime: comic.addTime || now,
+          createTime: now,
+          updateTime: now,
+          webUrl: null,
+          apiUrl: null,
+          contentType: comic.contentType || 'manga',
+          isNSFW: comic.isNSFW === 1 ? 1 : 0,
+          isPrivate: comic.isPrivate === 1 ? 1 : 0
+        };
+        await this.databaseManager.insert<ComicInfoDatabaseRecord>('comic_info', comicRecord);
+
+        for (const chapter of chapters) {
+          const chapterRecord: ChapterInfoDatabaseRecord = {
+            id: chapter.id,
+            comicId: comic.id,
+            externalId: chapter.externalId || chapter.id,
+            title: chapter.title,
+            chapterIndex: chapter.index,
+            chapterNumber: chapter.index,
+            pageCount: chapter.pageCount,
+            isDownloaded: chapter.isDownloaded,
+            downloadPath: chapter.downloadPath.length > 0 ? chapter.downloadPath : null,
+            publishTime: chapter.publishTime,
+            addTime: chapter.addTime || now,
+            createTime: now,
+            updateTime: now
+          };
+          await this.databaseManager.insert<ChapterInfoDatabaseRecord>('chapter', chapterRecord);
+          const pagesEntry = chapterPages.find((entry: MangaChapterPagesEntry): boolean => entry.chapterId === chapter.id);
+          const pages = pagesEntry ? pagesEntry.pages : [];
+          // [修复] 当所有页面序号都相同（例如源端历史数据序号全为 0）时，
+          // (chapterId, pageNumber) 唯一约束会把整章压缩成 1 页；此时按数组顺序重排序号。
+          let useSequentialIndexes: boolean = pages.length > 1;
+          if (useSequentialIndexes) {
+            const firstIndex: number = this.remotePageIndex(pages[0]);
+            for (const page of pages) {
+              if (this.remotePageIndex(page) !== firstIndex) {
+                useSequentialIndexes = false;
+                break;
+              }
+            }
+          }
+          for (let pagePosition: number = 0; pagePosition < pages.length; pagePosition++) {
+            const page = pages[pagePosition];
+            const pageIndexValue: number = useSequentialIndexes
+              ? pagePosition
+              : this.remotePageIndex(page);
+            const pageRecord: PageInfoDatabaseRecord = {
+              id: page.id,
+              chapterId: chapter.id,
+              index: Math.floor(pageIndexValue),
+              imageUrl: page.imageUrl,
+              localPath: page.localPath.length > 0 ? page.localPath : null,
+              width: Math.floor(page.width),
+              height: Math.floor(page.height),
+              fileSize: Math.floor(page.fileSize)
+            };
+            await this.databaseManager.insert<PageInfoDatabaseRecord>('page', pageRecord);
+          }
+        }
+        await this.databaseManager.commit();
+        logger.info(TAG, `接续漫画数据导入成功: comicId=${comic.id}, chapters=${chapters.length}`);
+      } catch (transactionError) {
+        try {
+          await this.databaseManager.rollBack();
+        } catch (rollbackError) {
+          logger.error(TAG, `接续漫画导入事务回滚失败: ${String(rollbackError)}`);
+        }
+        throw transactionError as Error;
+      }
+    } catch (error) {
+      logger.error(TAG, `接续漫画数据导入失败: ${String(error)}`);
+      throw error as Error;
+    }
   }
 
   /**

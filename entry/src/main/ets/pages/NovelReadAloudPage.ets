@@ -1,11 +1,13 @@
-﻿import { SafeUtils } from '../Utils/SafeUtils';
+import { SafeUtils } from '../Utils/SafeUtils';
 /**
  * 小说听书页面（播放器样式）
  */
 
 import { promptAction } from '@kit.ArkUI';
+import { common } from '@kit.AbilityKit';
 import { media } from '@kit.MediaKit';
 import { logger } from '../Utils/Logger';
+import { continuationStateHelper } from '../Framework/Distributed/ContinuationStateHelper';
 import { NovelReaderPageParams } from './NovelBookshelfPage';
 import { getNovelSourceManager } from '../Framework/Novel/NovelSourceManager';
 import { getNovelChapterCacheManager } from '../Framework/Novel/NovelChapterCacheManager';
@@ -21,6 +23,7 @@ import { eventBus, GameEvent, IEventPayload, ReadAloudStatePayload } from '../Fr
 import { loadGlobalReadAloudSettings as loadStoredGlobalReadAloudSettings } from '../Framework/ReadAloud/ReadAloudSettingsStore';
 import { processReadAloudNovelContentByBook } from '../Framework/ReadAloud/ReadAloudTextProcessing';
 import { openNovelReaderInIsolatedAbility } from '../Framework/Reader/NovelReaderAbilityLauncher';
+import { LegadoWorkflowOutputKind } from '../Framework/Novel/LegadoCompatibilityTypes';
 
 const TAG = 'NovelReadAloudPage';
 type AudioJsonValue = string | number | boolean | Object | Array<Object> | null;
@@ -73,6 +76,37 @@ export struct NovelReadAloudPage {
   private audioTimeUpdateHandler: ((timeMs: number) => void) | null = null;
   private audioErrorHandler: ((error: Object) => void) | null = null;
 
+  /**
+   * [修复] 应用当前 mission 的接续状态（ACTIVE=显示系统接续入口）
+   */
+  private applyMissionContinueState(active: boolean): void {
+    try {
+      const hostContext = this.getUIContext().getHostContext() as common.UIAbilityContext;
+      if (!hostContext) {
+        return;
+      }
+      continuationStateHelper.setMissionContinueState(hostContext, active);
+    } catch (error) {
+      logger.warn(TAG, `设置接续状态失败: ${String(error)}`);
+    }
+  }
+
+  /**
+   * [修复] 激活接续入口（页面检查点）：
+   * 入口按场景无条件显示；权限在触发接续时校验，此处异步确保权限就绪
+   */
+  private applyMissionContinueStateWithPermission(): void {
+    try {
+      const hostContext = this.getUIContext().getHostContext() as common.UIAbilityContext;
+      if (!hostContext) {
+        return;
+      }
+      continuationStateHelper.activateMissionContinueEntry(hostContext);
+    } catch (error) {
+      logger.warn(TAG, `设置接续状态失败: ${String(error)}`);
+    }
+  }
+
   private onReadAloudStateChanged: (payload: IEventPayload) => void = (payload: IEventPayload): void => {
     if (this.isAudioSourceMode()) {
       return;
@@ -91,10 +125,14 @@ export struct NovelReadAloudPage {
 
   aboutToAppear(): void {
     eventBus.subscribe(GameEvent.READ_ALOUD_STATE_CHANGED, this.onReadAloudStateChanged);
+    // [修复] 权限前置激活系统接续入口（NavPath 宿主场景；权限未授权时不进入接续状态）
+    this.applyMissionContinueStateWithPermission();
   }
 
   aboutToDisappear(): void {
     eventBus.unsubscribe(GameEvent.READ_ALOUD_STATE_CHANGED, this.onReadAloudStateChanged);
+    // [修复] 听书页面退出时关闭系统接续入口
+    this.applyMissionContinueState(false);
     if (this.isAudioSourceMode()) {
       this.releaseAudioPlayer();
       return;
@@ -402,7 +440,7 @@ export struct NovelReadAloudPage {
         title: this.chapterTitle,
         index: safeIndex
       };
-      rawContent = await this.sourceManager.getContent(this.sourceId, chapter);
+      rawContent = await this.getTypedAudioPayload(chapter);
     }
     if (!rawContent || rawContent.length <= 0) {
       this.chapterContent = '';
@@ -624,6 +662,17 @@ export struct NovelReadAloudPage {
       return '';
     }
     return '';
+  }
+
+  private async getTypedAudioPayload(chapter: LegadoChapter): Promise<string> {
+    const result = await this.sourceManager.getContentWithResult(this.sourceId, chapter);
+    if (!result.handoff.isReady() || result.handoff.kind !== LegadoWorkflowOutputKind.AUDIO) {
+      throw new Error(
+        `V2_OUTPUT_HANDOFF_BLOCKED;workflow=audio;kind=${result.handoff.kind};` +
+        `status=${result.handoff.status};reason=${result.handoff.reasonCode}`
+      );
+    }
+    return result.handoff.mediaUrl;
   }
 
   private resolveAudioSourceUrl(rawContent: string, baseUrl: string): string {

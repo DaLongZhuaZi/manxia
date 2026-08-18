@@ -5,10 +5,12 @@ import { SafeUtils } from './Utils/SafeUtils';
  * 负责初始化应用上下文、数据管理系统和窗口管理
  */
  
-import { UIAbility, AbilityConstant, Want } from '@kit.AbilityKit';
+import { UIAbility, AbilityConstant, Want, wantConstant } from '@kit.AbilityKit';
 import { window } from '@kit.ArkUI';
 import { setContext } from './GlobalContext';
 import { DeepLinkRouter } from './Framework/Utils/DeepLinkRouter';
+import { FeedbackTurnstileBridge } from './Framework/Services/FeedbackTurnstileBridge';
+import { logCollector } from './Framework/Debug/LogCollector';
 import { logger } from './Utils/Logger';
 import { WindowManager, DisplayMode } from './Utils/WindowManager';
 import { OrientationLockApplyResult, OrientationLockManager, OrientationLockStrategy } from './Utils/OrientationLockManager';
@@ -57,9 +59,11 @@ import {
   ngfSettingsStoreFacade,
   ngfUiShellIntegrationFacade
 } from './Framework/NGF';
-import { BasePayload, eventBus, GameEvent, ContinuationTriggeredPayload } from './Framework/EventBus';
+import { BasePayload, eventBus, GameEvent } from './Framework/EventBus';
 import { distributedFileManager } from './Framework/Distributed/DistributedFileManager';
 import { distributedDataSyncManager } from './Framework/Distributed/DistributedDataSyncManager';
+import { distributedPermissionManager } from './Framework/Distributed/DistributedPermissionManager';
+import { continuationStateHelper } from './Framework/Distributed/ContinuationStateHelper';
 import { openExternalFileTaskInIsolatedAbilityByContext } from './Framework/ExternalFile/ExternalFileTaskLauncher';
 import {
   ExternalFileTaskFactory,
@@ -70,6 +74,9 @@ import {
 
 export default class EntryAbility extends UIAbility {
 
+  /** 跨端接续恢复使用的 LocalStorage（restoreWindowStage 传入，onWindowStageRestore 中随 loadContent 传递） */
+  private continuationWindowStorage: LocalStorage = new LocalStorage();
+
   onCreate(want: Want, launchParam: AbilityConstant.LaunchParam): void {
     logger.startup('EntryAbility', 'onCreate START', 'EntryAbility开始创建');
     initializeReaderKitRuntimeGate('EntryAbility.onCreate');
@@ -78,9 +85,33 @@ export default class EntryAbility extends UIAbility {
     distributedFileManager.initialize(this.context);
     distributedDataSyncManager.initialize(this.context);
 
+    // [修复] 注册入口 Ability 上下文（接续成功后源端自动拉起遥控器使用）并预载权限 tokenId
+    // （让 onContinue 同步路径 isPermissionGrantedSync() 拿到真实授权结果，避免首次误拒）
+    continuationStateHelper.registerEntryAbilityContext(this.context);
+    distributedPermissionManager.preloadTokenId();
+
+    // 启动早期先抑制「设备发现和连接」权限的后台检查点自动请求：
+    // 首次启动由新手引导的权限步骤先说明用途再稳定触发；非首次启动由 MainMenuPage
+    // 加载后解除抑制（主页检查点接管），避免应用刚启动、引导未展示时就弹窗或跳转设置
+    distributedPermissionManager.setOnboardingGuideActive(true);
+
+    // 启动日志文件持久化（不阻塞启动；供反馈中心按时间范围导出历史日志）
+    void logCollector.initialize(this.context);
+
     // 处理跨端接续 (App Continuation)
     if (launchParam.launchReason === AbilityConstant.LaunchReason.CONTINUATION) {
       this.restoreContinuationState(want);
+      // [官方文档修复] 接续落地时系统不会回调 onWindowStageCreate，而是回调 onWindowStageRestore；
+      // 必须在 onCreate 中同步调用 restoreWindowStage 触发该回调（异步调用会导致页面加载失败）
+      this.prepareContinuationWindowStage();
+    }
+    // [修复] 阅读器/听书 Ability 接续启动后的转交：触发 MainMenuPage 消费接续导航标志
+    if (want.parameters && want.parameters['continuationRedirect']) {
+      const current = AppStorage.get<number>('continuationNavigationTrigger') || 0;
+      AppStorage.setOrCreate('continuationNavigationTrigger', current + 1);
+      // 同时写入前台确认 token：接续启动的 Ability 据此确认转交已受理并终止自身
+      AppStorage.setOrCreate('continuationRedirectForegroundToken', Date.now());
+      logger.info('EntryAbility', '收到接续转交启动，已触发主页接续导航检查');
     }
     
     // 详细记录Want信息用于调试
@@ -602,7 +633,62 @@ export default class EntryAbility extends UIAbility {
 
   onWindowStageDestroy(): void {
     logger.lifecycle('EntryAbility', '窗口阶段销毁');
+    // [修复] 接续迁移时入口任务窗口被系统销毁，此时 WindowManager.dispose 会作用于
+    // 已销毁的窗口（1300002 取消全屏布局失败），并触发错误监控写入链；跳过全局窗口清理，
+    // 保留同进程遥控器等场景的窗口状态（与 onDestroy 的迁移守卫一致）。
+    if (continuationStateHelper.isContinuationMigrationActive()) {
+      logger.info('EntryAbility', 'onWindowStageDestroy: 接续迁移中，跳过 WindowManager.dispose');
+      return;
+    }
     WindowManager.dispose();
+  }
+
+  /**
+   * [官方文档修复] 跨端接续落地的窗口恢复回调：
+   * 接续启动时（冷/热启动）系统不会回调 onWindowStageCreate，而是回调本方法；
+   * Navigation 路由不支持页面栈自动恢复（源端 onContinue 已设置 SUPPORT_CONTINUE_PAGE_STACK_KEY=false），
+   * 因此在此手动 loadContent 加载主页，由 MainMenuPage 消费 AppStorage 中的接续导航标志
+   * （widgetTargetPage/continuation*）自动打开对应阅读器并恢复进度。
+   */
+  onWindowStageRestore(windowStage: window.WindowStage): void {
+    logger.lifecycle('EntryAbility', '窗口阶段恢复', '跨端接续落地 onWindowStageRestore 触发，手动加载主页');
+
+    try {
+      WindowManager.initialize(windowStage);
+    } catch (error) {
+      logger.warn('EntryAbility', `接续恢复 WindowManager 初始化失败: ${String(error)}`);
+    }
+
+    try {
+      windowStage.loadContent('pages/MainMenuPage', this.continuationWindowStorage, (err) => {
+        if (err && err.code !== 0) {
+          logger.error('EntryAbility', `接续恢复加载 MainMenuPage 失败: ${JSON.stringify(err)}`);
+          return;
+        }
+        logger.info('EntryAbility', '接续恢复 MainMenuPage 加载成功，等待主页消费接续导航标志');
+      });
+    } catch (error) {
+      logger.error('EntryAbility', `接续恢复 loadContent 异常: ${String(error)}`);
+    }
+  }
+
+  /**
+   * [官方文档修复] 接续落地准备：必须同步调用 restoreWindowStage（异步调用会导致页面加载失败），
+   * 同时按官方建议将目标端接续状态置为 ACTIVE 保证迁移连续性。
+   */
+  private prepareContinuationWindowStage(): void {
+    try {
+      this.context.setMissionContinueState(AbilityConstant.ContinueState.ACTIVE).then(() => {
+        logger.info('EntryAbility', '接续落地：目标端接续状态已置 ACTIVE');
+      }).catch((error: Error) => {
+        logger.warn('EntryAbility', `接续落地 setMissionContinueState 失败: ${String(error)}`);
+      });
+      this.continuationWindowStorage = new LocalStorage();
+      this.context.restoreWindowStage(this.continuationWindowStorage);
+      logger.info('EntryAbility', '接续落地：已同步调用 restoreWindowStage（等待 onWindowStageRestore）');
+    } catch (error) {
+      logger.error('EntryAbility', `接续落地 restoreWindowStage 异常: ${String(error)}`);
+    }
   }
 
   /**
@@ -1161,6 +1247,16 @@ export default class EntryAbility extends UIAbility {
     // 处理跨端接续 (App Continuation) 热启动
     if (launchParam.launchReason === AbilityConstant.LaunchReason.CONTINUATION) {
       this.restoreContinuationState(want);
+      // [官方文档修复] 热启动接续同样需要同步调用 restoreWindowStage 触发 onWindowStageRestore
+      this.prepareContinuationWindowStage();
+    }
+    // [修复] 阅读器/听书 Ability 接续启动后的转交（热启动）：触发 MainMenuPage 消费接续导航标志
+    if (want.parameters && want.parameters['continuationRedirect']) {
+      const current = AppStorage.get<number>('continuationNavigationTrigger') || 0;
+      AppStorage.setOrCreate('continuationNavigationTrigger', current + 1);
+      // 同时写入前台确认 token：接续启动的 Ability 据此确认转交已受理并终止自身
+      AppStorage.setOrCreate('continuationRedirectForegroundToken', Date.now());
+      logger.info('EntryAbility', '收到接续转交启动（onNewWant），已触发主页接续导航检查');
     }
 
     if (this.handleNotificationNavigation(want, true)) {
@@ -1264,6 +1360,18 @@ export default class EntryAbility extends UIAbility {
    */
   onForeground(): void {
     logger.lifecycle('EntryAbility', '应用进入前台');
+
+    // [修复] 前台确认 token：目标端接续转交时，接续启动的 Ability 据此确认
+    // EntryAbility 已前台接管并终止自身（避免固定延迟终止引发的"目标端回到桌面"）
+    AppStorage.setOrCreate('continuationRedirectForegroundToken', Date.now());
+
+    // [修复] 主页/书库前台时关闭系统接续入口（INACTIVE）：
+    // 接续入口只在阅读器/听书等场景显示（由阅读页面与独立阅读器 Ability 置 ACTIVE）
+    continuationStateHelper.setMissionContinueState(this.context, false);
+    
+    // [修复] 前台是窗口就绪的可靠时机：每次回到前台都尝试提起分布式权限请求
+    // （DistributedPermissionManager 无冷却：未授权即请求；被打断自动重试，在途去重防系统抑制）
+    this.requestDistributedDataSyncPermissionSafely();
     
     // 清除后台状态（统一由WindowManager管理）
     WindowManager.syncBackgroundState(false, '应用进入前台');
@@ -1334,6 +1442,11 @@ export default class EntryAbility extends UIAbility {
   private handleDeepLink(uri: string): void {
     try {
       logger.info('EntryAbility', `🔗 开始解析 Deep Link: ${uri}`);
+      if (uri.startsWith('manxia://turnstile')) {
+        FeedbackTurnstileBridge.getInstance().deliverTokenFromUri(uri);
+        logger.info('EntryAbility', '🔗 Turnstile 验证回传已交给反馈页面处理');
+        return;
+      }
       if (uri === 'manxia://open' || uri === 'https://manxia.top/' || uri === 'https://www.manxia.top/') {
         AppStorage.setOrCreate('hasDeepLink', false);
         AppStorage.setOrCreate('deepLinkShowDialog', false);
@@ -1360,6 +1473,13 @@ export default class EntryAbility extends UIAbility {
   // 在Ability销毁时的清理工作（游戏引擎已移除）
   onDestroy(): void {
     logger.info('EntryAbility', 'onDestroy: app is being destroyed');
+    // [修复] 接续迁移时入口任务被系统迁移销毁，但源端阅读器任务仍在运行：
+    // 跳过全局清理（WindowManager 释放、错误监控停止、分布式会话清理），
+    // 否则会破坏仍在阅读器中的窗口状态与遥控器会话
+    if (continuationStateHelper.isContinuationMigrationActive()) {
+      logger.info('EntryAbility', 'onDestroy: 接续迁移中（入口任务被迁移），跳过全局清理以保留源端阅读器会话');
+      return;
+    }
     WindowManager.dispose();
 
     try {
@@ -1379,43 +1499,18 @@ export default class EntryAbility extends UIAbility {
 
   /**
    * 鸿蒙跨端流转 (App Continuation) 状态保存
+   * 统一由 ContinuationStateHelper 打包（含阅读态守卫、wantParam 快照、分布式会话与权限请求）
    */
   onContinue(wantParam: Record<string, Object>): AbilityConstant.OnContinueResult {
     logger.info('EntryAbility', 'onContinue: 开始保存接续状态');
-    
-    // 生成分布式状态机 sessionId
-    const sessionId = `continuation_${Date.now()}`;
-    
-    // 将会话ID写入 wantParam 传给目标端
-    wantParam['distributedSessionId'] = sessionId;
-    
-    // 从AppStorage提取当前阅读状态
-    const bookId = AppStorage.get<string>('currentReadBookId') || '';
-    const chapterIndex = AppStorage.get<number>('currentReadChapterIndex') || 0;
-    const pageIndex = AppStorage.get<number>('currentReadPageIndex') || 0;
-    const offset = AppStorage.get<number>('currentReadOffset') || 0;
-    const sourceType = AppStorage.get<string>('currentReadSourceType') || '';
-    const isLocal = AppStorage.get<boolean>('currentReadIsLocal') || false;
-
-    // 启动分布式状态机
-    distributedDataSyncManager.joinSession(sessionId);
-    distributedDataSyncManager.updateProgress(bookId, chapterIndex, pageIndex, offset, sourceType);
-
-    wantParam['bookId'] = bookId;
-    wantParam['isLocal'] = isLocal;
-    wantParam['chapterIndex'] = chapterIndex;
-    wantParam['pageIndex'] = pageIndex;
-    wantParam['offset'] = offset;
-    wantParam['sourceType'] = sourceType;
-    
-    // 触发全局接续事件，供前端（如MainMenuPage）弹出遥控器进入提示
-    eventBus.publish(
-      GameEvent.CONTINUATION_TRIGGERED,
-      new ContinuationTriggeredPayload(sessionId, bookId, chapterIndex, pageIndex, offset, sourceType, isLocal)
-    );
-    
-    logger.info('EntryAbility', `onContinue 状态已保存: bookId=${bookId}, sessionId=${sessionId}`);
-    return AbilityConstant.OnContinueResult.AGREE;
+    try {
+      // [官方文档修复] Navigation 路由不支持页面栈自动恢复：
+      // 关闭自动恢复，目标端将在 onWindowStageRestore 中手动 loadContent 加载页面
+      wantParam[wantConstant.Params.SUPPORT_CONTINUE_PAGE_STACK_KEY] = false;
+    } catch (error) {
+      logger.warn('EntryAbility', `写入页面栈恢复参数失败: ${String(error)}`);
+    }
+    return continuationStateHelper.packContinuationWant(wantParam, this.context);
   }
 
   /**
@@ -1423,46 +1518,25 @@ export default class EntryAbility extends UIAbility {
    */
   private restoreContinuationState(want: Want): void {
     logger.info('EntryAbility', 'restoreContinuationState: 开始恢复跨端流转状态');
-    
-    if (want.parameters && want.parameters['distributedSessionId']) {
-      const sessionId = want.parameters['distributedSessionId'] as string;
-      const bookId = want.parameters['bookId'] as string;
-      const isLocal = want.parameters['isLocal'] as boolean;
-      const chapterIndex = want.parameters['chapterIndex'] as number;
-      const pageIndex = want.parameters['pageIndex'] as number;
-      const offset = want.parameters['offset'] as number;
-      const rawSourceType = want.parameters['sourceType'] as string;
-      const sourceType = this.normalizeContinuationSourceType(rawSourceType);
-      
-      logger.info('EntryAbility', `目标端接续解析: sessionId=${sessionId}, bookId=${bookId}`);
-      
-      // 延迟目标端加入分布式状态机会话，避免与应用数据系统初始化竞争导致卡死
-      ngfLifecycleOrchestratorFacade.getCompletionPromise().then(() => {
-        logger.info('EntryAbility', '应用初始化完成，目标端开始加入分布式状态机会话');
-        distributedDataSyncManager.joinSession(sessionId);
-      });
-      
-      // 设置标志位，让 MainMenuPage 或阅读器直接拉起内容
-      AppStorage.setOrCreate('widgetTargetPage', 'continueRead');
-      AppStorage.setOrCreate('widgetContentType', sourceType);
-      AppStorage.setOrCreate('widgetContentId', bookId);
-      AppStorage.setOrCreate('continuationSessionId', sessionId);
-      AppStorage.setOrCreate('continuationPageIndex', pageIndex);
-      AppStorage.setOrCreate('continuationOffset', offset);
-      AppStorage.setOrCreate('continuationChapterIndex', chapterIndex);
-      AppStorage.setOrCreate('continuationIsLocal', isLocal);
-    }
+    continuationStateHelper.restoreContinuationState(want, this.context);
   }
 
-  private normalizeContinuationSourceType(sourceType: string): string {
-    const safeSourceType = sourceType ? sourceType : '';
-    const normalized = safeSourceType.trim().toLowerCase();
-    if (normalized === 'novel') {
-      return 'novel';
+  /**
+   * [修复] 稳定提起分布式数据同步权限请求（窗口已就绪的前台时机）
+   * 由 DistributedPermissionManager 统一处理：未授权即请求（无冷却），
+   * 请求被打断自动重试，请求在途去重防系统抑制；不再只依赖启动时的一次请求。
+   */
+  private requestDistributedDataSyncPermissionSafely(): void {
+    try {
+      setTimeout(() => {
+        void distributedPermissionManager.ensurePermission(this.context).then((granted: boolean) => {
+          if (granted) {
+            logger.info('EntryAbility', '分布式数据同步权限就绪（前台检查点）');
+          }
+        });
+      }, 1200);
+    } catch (error) {
+      logger.warn('EntryAbility', `分布式数据同步权限请求异常: ${String(error)}`);
     }
-    if (normalized === 'ebook' || normalized === 'epub' || normalized === 'pdf' || normalized === 'txt') {
-      return 'ebook';
-    }
-    return 'manga';
   }
 }

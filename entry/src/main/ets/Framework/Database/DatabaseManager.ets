@@ -129,6 +129,12 @@ export class DatabaseManager {
       
       // 创建表（列添加和迁移已内嵌在createTables中）
       await this.createTables();
+
+      // Apply versioned migrations after the current table definitions exist.
+      // Every ALTER TABLE ADD COLUMN is inspected before execution so a
+      // healthy restart never emits duplicate-column errors, while unrelated
+      // migration failures still stop initialization.
+      await this.applyVersionedMigrations();
       
       // 创建索引
       await this.createIndexes();
@@ -153,6 +159,96 @@ export class DatabaseManager {
       throw new Error('数据库未初始化');
     }
     return this.store;
+  }
+
+  /**
+   * Checks schema state before issuing ALTER TABLE. SQLite reports a native
+   * error even when a duplicate-column attempt is intentionally swallowed,
+   * which made every healthy cold start look like a database failure.
+   */
+  private async hasTableColumn(tableName: string, columnName: string): Promise<boolean> {
+    this.assertSafeIdentifier(tableName);
+    this.assertSafeIdentifier(columnName);
+    const store: relationalStore.RdbStore = this.getStore();
+    const resultSet: relationalStore.ResultSet = await store.querySql(`PRAGMA table_info(${tableName})`);
+    try {
+      const nameColumnIndex: number = resultSet.getColumnIndex('name');
+      if (nameColumnIndex < 0) {
+        throw new Error(`无法读取表结构字段: ${tableName}`);
+      }
+      while (resultSet.goToNextRow()) {
+        if (resultSet.getString(nameColumnIndex) === columnName) {
+          return true;
+        }
+      }
+      return false;
+    } finally {
+      resultSet.close();
+    }
+  }
+
+  /**
+   * Adds one known schema column exactly once. The recheck handles a caller
+   * racing an already-completed migration without suppressing unrelated SQL
+   * failures.
+   */
+  private async ensureTableColumn(
+    tableName: string,
+    columnName: string,
+    columnDefinition: string
+  ): Promise<void> {
+    if (await this.hasTableColumn(tableName, columnName)) {
+      return;
+    }
+    const store: relationalStore.RdbStore = this.getStore();
+    try {
+      await store.executeSql(`ALTER TABLE ${tableName} ADD COLUMN ${columnName} ${columnDefinition}`);
+    } catch {
+      if (!await this.hasTableColumn(tableName, columnName)) {
+        throw new Error(`新增数据库字段失败: ${tableName}.${columnName}`);
+      }
+    }
+  }
+
+  private assertSafeIdentifier(value: string): void {
+    if (!/^[A-Za-z_][A-Za-z0-9_]*$/.test(value)) {
+      throw new Error(`非法数据库标识符: ${value}`);
+    }
+  }
+
+  /**
+   * Replays only migrations newer than PRAGMA user_version.  ADD COLUMN
+   * statements are converted to the same schema-inspection path used by the
+   * table bootstrap, making retries and process restarts idempotent.
+   */
+  private async applyVersionedMigrations(): Promise<void> {
+    const currentVersion: number = await this.getDatabaseVersion();
+    if (currentVersion >= DATABASE_CONFIG.DATABASE_VERSION) {
+      return;
+    }
+
+    for (let version = currentVersion + 1; version <= DATABASE_CONFIG.DATABASE_VERSION; version++) {
+      const scripts: string[] | undefined = MIGRATION_SCRIPTS[version];
+      if (scripts === undefined) {
+        await this.updateDatabaseVersion(version);
+        continue;
+      }
+      for (let index = 0; index < scripts.length; index++) {
+        await this.executeIdempotentMigration(scripts[index]);
+      }
+      await this.updateDatabaseVersion(version);
+    }
+  }
+
+  private async executeIdempotentMigration(sql: string): Promise<void> {
+    const normalized: string = sql.trim();
+    const addColumnMatch: RegExpExecArray | null =
+      /^ALTER\s+TABLE\s+([A-Za-z_][A-Za-z0-9_]*)\s+ADD\s+COLUMN\s+([A-Za-z_][A-Za-z0-9_]*)\s+(.+)$/i.exec(normalized);
+    if (addColumnMatch !== null) {
+      await this.ensureTableColumn(addColumnMatch[1], addColumnMatch[2], addColumnMatch[3]);
+      return;
+    }
+    await this.getStore().executeSql(normalized);
   }
 
   /**
@@ -246,79 +342,79 @@ export class DatabaseManager {
         // 🔧 在表创建后立即添加可能缺失的列
         if (tableName === 'COMIC_INFO') {
           logger.info(TAG, '🔧 [COMIC_INFO] 添加隐私列');
-          try { await store.executeSql('ALTER TABLE comic_info ADD COLUMN isPrivate INTEGER DEFAULT 0'); } catch (e) {}
-          try { await store.executeSql('ALTER TABLE comic_info ADD COLUMN isNSFW INTEGER DEFAULT 0'); } catch (e) {}
-          try { await store.executeSql('UPDATE comic_info SET isPrivate = 0 WHERE isPrivate IS NULL'); } catch (e) {}
-          try { await store.executeSql('UPDATE comic_info SET isNSFW = 0 WHERE isNSFW IS NULL'); } catch (e) {}
+          await this.ensureTableColumn('comic_info', 'isPrivate', 'INTEGER DEFAULT 0');
+          await this.ensureTableColumn('comic_info', 'isNSFW', 'INTEGER DEFAULT 0');
+          await store.executeSql('UPDATE comic_info SET isPrivate = 0 WHERE isPrivate IS NULL');
+          await store.executeSql('UPDATE comic_info SET isNSFW = 0 WHERE isNSFW IS NULL');
           logger.info(TAG, '✅ [COMIC_INFO] 列添加完成');
         } else if (tableName === 'ONLINE_COMIC_INFO') {
           logger.info(TAG, '🔧 [ONLINE_COMIC_INFO] 添加兼容列');
-          try { await store.executeSql("ALTER TABLE online_comic_info ADD COLUMN sourceName TEXT DEFAULT ''"); } catch (e) {}
-          try { await store.executeSql("ALTER TABLE online_comic_info ADD COLUMN sourcePkg TEXT DEFAULT ''"); } catch (e) {}
-          try { await store.executeSql('ALTER TABLE online_comic_info ADD COLUMN isPrivate INTEGER DEFAULT 0'); } catch (e) {}
-          try { await store.executeSql('ALTER TABLE online_comic_info ADD COLUMN isNSFW INTEGER DEFAULT 0'); } catch (e) {}
-          try { await store.executeSql("UPDATE online_comic_info SET sourceName = '' WHERE sourceName IS NULL"); } catch (e) {}
-          try { await store.executeSql("UPDATE online_comic_info SET sourcePkg = '' WHERE sourcePkg IS NULL"); } catch (e) {}
-          try { await store.executeSql('UPDATE online_comic_info SET isPrivate = 0 WHERE isPrivate IS NULL'); } catch (e) {}
-          try { await store.executeSql('UPDATE online_comic_info SET isNSFW = 0 WHERE isNSFW IS NULL'); } catch (e) {}
+          await this.ensureTableColumn('online_comic_info', 'sourceName', "TEXT DEFAULT ''");
+          await this.ensureTableColumn('online_comic_info', 'sourcePkg', "TEXT DEFAULT ''");
+          await this.ensureTableColumn('online_comic_info', 'isPrivate', 'INTEGER DEFAULT 0');
+          await this.ensureTableColumn('online_comic_info', 'isNSFW', 'INTEGER DEFAULT 0');
+          await store.executeSql("UPDATE online_comic_info SET sourceName = '' WHERE sourceName IS NULL");
+          await store.executeSql("UPDATE online_comic_info SET sourcePkg = '' WHERE sourcePkg IS NULL");
+          await store.executeSql('UPDATE online_comic_info SET isPrivate = 0 WHERE isPrivate IS NULL');
+          await store.executeSql('UPDATE online_comic_info SET isNSFW = 0 WHERE isNSFW IS NULL');
           logger.info(TAG, '✅ [ONLINE_COMIC_INFO] 列添加完成');
         } else if (tableName === 'ONLINE_PAGE') {
           logger.info(TAG, '🔧 [ONLINE_PAGE] 添加页面请求头列');
-          try { await store.executeSql("ALTER TABLE online_page ADD COLUMN requestHeaders TEXT DEFAULT ''"); } catch (e) {}
-          try { await store.executeSql("UPDATE online_page SET requestHeaders = '' WHERE requestHeaders IS NULL"); } catch (e) {}
+          await this.ensureTableColumn('online_page', 'requestHeaders', "TEXT DEFAULT ''");
+          await store.executeSql("UPDATE online_page SET requestHeaders = '' WHERE requestHeaders IS NULL");
           logger.info(TAG, '✅ [ONLINE_PAGE] 列添加完成');
         } else if (tableName === 'EBOOK_INFO') {
           logger.info(TAG, '🔧 [EBOOK_INFO] 添加隐私列');
-          try { await store.executeSql('ALTER TABLE ebook_info ADD COLUMN isPrivate INTEGER DEFAULT 0'); } catch (e) {}
-          try { await store.executeSql('ALTER TABLE ebook_info ADD COLUMN isNSFW INTEGER DEFAULT 0'); } catch (e) {}
-          try { await store.executeSql("ALTER TABLE ebook_info ADD COLUMN contentMode TEXT DEFAULT 'UNKNOWN'"); } catch (e) {}
-          try { await store.executeSql("ALTER TABLE ebook_info ADD COLUMN preferredReaderEngine TEXT DEFAULT 'READER_KIT'"); } catch (e) {}
-          try { await store.executeSql("ALTER TABLE ebook_info ADD COLUMN extractedRootPath TEXT DEFAULT ''"); } catch (e) {}
-          try { await store.executeSql('UPDATE ebook_info SET isPrivate = 0 WHERE isPrivate IS NULL'); } catch (e) {}
-          try { await store.executeSql('UPDATE ebook_info SET isNSFW = 0 WHERE isNSFW IS NULL'); } catch (e) {}
-          try { await store.executeSql("UPDATE ebook_info SET contentMode = 'UNKNOWN' WHERE contentMode IS NULL OR contentMode = ''"); } catch (e) {}
-          try { await store.executeSql("UPDATE ebook_info SET preferredReaderEngine = 'READER_KIT' WHERE preferredReaderEngine IS NULL OR preferredReaderEngine = ''"); } catch (e) {}
-          try { await store.executeSql("UPDATE ebook_info SET extractedRootPath = '' WHERE extractedRootPath IS NULL"); } catch (e) {}
+          await this.ensureTableColumn('ebook_info', 'isPrivate', 'INTEGER DEFAULT 0');
+          await this.ensureTableColumn('ebook_info', 'isNSFW', 'INTEGER DEFAULT 0');
+          await this.ensureTableColumn('ebook_info', 'contentMode', "TEXT DEFAULT 'UNKNOWN'");
+          await this.ensureTableColumn('ebook_info', 'preferredReaderEngine', "TEXT DEFAULT 'READER_KIT'");
+          await this.ensureTableColumn('ebook_info', 'extractedRootPath', "TEXT DEFAULT ''");
+          await store.executeSql('UPDATE ebook_info SET isPrivate = 0 WHERE isPrivate IS NULL');
+          await store.executeSql('UPDATE ebook_info SET isNSFW = 0 WHERE isNSFW IS NULL');
+          await store.executeSql("UPDATE ebook_info SET contentMode = 'UNKNOWN' WHERE contentMode IS NULL OR contentMode = ''");
+          await store.executeSql("UPDATE ebook_info SET preferredReaderEngine = 'READER_KIT' WHERE preferredReaderEngine IS NULL OR preferredReaderEngine = ''");
+          await store.executeSql("UPDATE ebook_info SET extractedRootPath = '' WHERE extractedRootPath IS NULL");
           logger.info(TAG, '✅ [EBOOK_INFO] 列添加完成');
         } else if (tableName === 'EBOOK_CHAPTER') {
           logger.info(TAG, '🔧 [EBOOK_CHAPTER] 添加 EPUB 资源列');
-          try { await store.executeSql("ALTER TABLE ebook_chapter ADD COLUMN resourceHref TEXT DEFAULT ''"); } catch (e) {}
-          try { await store.executeSql("ALTER TABLE ebook_chapter ADD COLUMN resourceFile TEXT DEFAULT ''"); } catch (e) {}
-          try { await store.executeSql("ALTER TABLE ebook_chapter ADD COLUMN resourceMediaType TEXT DEFAULT ''"); } catch (e) {}
-          try { await store.executeSql("ALTER TABLE ebook_chapter ADD COLUMN resourceLayoutType TEXT DEFAULT ''"); } catch (e) {}
-          try { await store.executeSql("ALTER TABLE ebook_chapter ADD COLUMN resourceImagePath TEXT DEFAULT ''"); } catch (e) {}
-          try { await store.executeSql("ALTER TABLE ebook_chapter ADD COLUMN resourceImageRelativePath TEXT DEFAULT ''"); } catch (e) {}
-          try { await store.executeSql("UPDATE ebook_chapter SET resourceHref = '' WHERE resourceHref IS NULL"); } catch (e) {}
-          try { await store.executeSql("UPDATE ebook_chapter SET resourceFile = '' WHERE resourceFile IS NULL"); } catch (e) {}
-          try { await store.executeSql("UPDATE ebook_chapter SET resourceMediaType = '' WHERE resourceMediaType IS NULL"); } catch (e) {}
-          try { await store.executeSql("UPDATE ebook_chapter SET resourceLayoutType = '' WHERE resourceLayoutType IS NULL"); } catch (e) {}
-          try { await store.executeSql("UPDATE ebook_chapter SET resourceImagePath = '' WHERE resourceImagePath IS NULL"); } catch (e) {}
-          try { await store.executeSql("UPDATE ebook_chapter SET resourceImageRelativePath = '' WHERE resourceImageRelativePath IS NULL"); } catch (e) {}
+          await this.ensureTableColumn('ebook_chapter', 'resourceHref', "TEXT DEFAULT ''");
+          await this.ensureTableColumn('ebook_chapter', 'resourceFile', "TEXT DEFAULT ''");
+          await this.ensureTableColumn('ebook_chapter', 'resourceMediaType', "TEXT DEFAULT ''");
+          await this.ensureTableColumn('ebook_chapter', 'resourceLayoutType', "TEXT DEFAULT ''");
+          await this.ensureTableColumn('ebook_chapter', 'resourceImagePath', "TEXT DEFAULT ''");
+          await this.ensureTableColumn('ebook_chapter', 'resourceImageRelativePath', "TEXT DEFAULT ''");
+          await store.executeSql("UPDATE ebook_chapter SET resourceHref = '' WHERE resourceHref IS NULL");
+          await store.executeSql("UPDATE ebook_chapter SET resourceFile = '' WHERE resourceFile IS NULL");
+          await store.executeSql("UPDATE ebook_chapter SET resourceMediaType = '' WHERE resourceMediaType IS NULL");
+          await store.executeSql("UPDATE ebook_chapter SET resourceLayoutType = '' WHERE resourceLayoutType IS NULL");
+          await store.executeSql("UPDATE ebook_chapter SET resourceImagePath = '' WHERE resourceImagePath IS NULL");
+          await store.executeSql("UPDATE ebook_chapter SET resourceImageRelativePath = '' WHERE resourceImageRelativePath IS NULL");
           logger.info(TAG, '✅ [EBOOK_CHAPTER] 列添加完成');
         } else if (tableName === 'COMIC_SOURCE') {
           logger.info(TAG, '🔧 [COMIC_SOURCE] 添加扩展列');
-          try { await store.executeSql("ALTER TABLE comic_source ADD COLUMN cookies TEXT DEFAULT ''"); } catch (e) {}
-          try { await store.executeSql('ALTER TABLE comic_source ADD COLUMN pkg TEXT'); } catch (e) {}
-          try { await store.executeSql('ALTER TABLE comic_source ADD COLUMN tabs_config TEXT'); } catch (e) {}
-          try { await store.executeSql('ALTER TABLE comic_source ADD COLUMN iconPath TEXT'); } catch (e) {}
-          try { await store.executeSql('ALTER TABLE comic_source ADD COLUMN requireProxy INTEGER DEFAULT 0'); } catch (e) {}
-          try { await store.executeSql('ALTER TABLE comic_source ADD COLUMN isNSFW INTEGER DEFAULT 0'); } catch (e) {}
-          try { await store.executeSql('ALTER TABLE comic_source ADD COLUMN preloadCurrentChapter INTEGER DEFAULT 1'); } catch (e) {}
-          try { await store.executeSql('ALTER TABLE comic_source ADD COLUMN preloadCurrentPages INTEGER DEFAULT 10'); } catch (e) {}
-          try { await store.executeSql('ALTER TABLE comic_source ADD COLUMN preloadNextChapter INTEGER DEFAULT 1'); } catch (e) {}
-          try { await store.executeSql('ALTER TABLE comic_source ADD COLUMN preloadNextPages INTEGER DEFAULT -1'); } catch (e) {}
+          await this.ensureTableColumn('comic_source', 'cookies', "TEXT DEFAULT ''");
+          await this.ensureTableColumn('comic_source', 'pkg', 'TEXT');
+          await this.ensureTableColumn('comic_source', 'tabs_config', 'TEXT');
+          await this.ensureTableColumn('comic_source', 'iconPath', 'TEXT');
+          await this.ensureTableColumn('comic_source', 'requireProxy', 'INTEGER DEFAULT 0');
+          await this.ensureTableColumn('comic_source', 'isNSFW', 'INTEGER DEFAULT 0');
+          await this.ensureTableColumn('comic_source', 'preloadCurrentChapter', 'INTEGER DEFAULT 1');
+          await this.ensureTableColumn('comic_source', 'preloadCurrentPages', 'INTEGER DEFAULT 10');
+          await this.ensureTableColumn('comic_source', 'preloadNextChapter', 'INTEGER DEFAULT 1');
+          await this.ensureTableColumn('comic_source', 'preloadNextPages', 'INTEGER DEFAULT -1');
           logger.info(TAG, '✅ [COMIC_SOURCE] 列添加完成');
         } else if (tableName === 'EBOOK_READING_PROGRESS') {
           logger.info(TAG, '🔧 [EBOOK_READING_PROGRESS] 添加扩展列');
-          try { await store.executeSql('ALTER TABLE ebook_reading_progress ADD COLUMN currentChapterIndex INTEGER DEFAULT 0'); } catch (e) {}
-          try { await store.executeSql("ALTER TABLE ebook_reading_progress ADD COLUMN domPos TEXT DEFAULT ''"); } catch (e) {}
+          await this.ensureTableColumn('ebook_reading_progress', 'currentChapterIndex', 'INTEGER DEFAULT 0');
+          await this.ensureTableColumn('ebook_reading_progress', 'domPos', "TEXT DEFAULT ''");
           logger.info(TAG, '✅ [EBOOK_READING_PROGRESS] 列添加完成');
         } else if (tableName === 'NOVEL_BOOK') {
           logger.info(TAG, '🔧 [NOVEL_BOOK] 添加隐私列');
-          try { await store.executeSql('ALTER TABLE novel_book ADD COLUMN isPrivate INTEGER DEFAULT 0'); } catch (e) {}
-          try { await store.executeSql('ALTER TABLE novel_book ADD COLUMN isNSFW INTEGER DEFAULT 0'); } catch (e) {}
-          try { await store.executeSql('UPDATE novel_book SET isPrivate = 0 WHERE isPrivate IS NULL'); } catch (e) {}
-          try { await store.executeSql('UPDATE novel_book SET isNSFW = 0 WHERE isNSFW IS NULL'); } catch (e) {}
+          await this.ensureTableColumn('novel_book', 'isPrivate', 'INTEGER DEFAULT 0');
+          await this.ensureTableColumn('novel_book', 'isNSFW', 'INTEGER DEFAULT 0');
+          await store.executeSql('UPDATE novel_book SET isPrivate = 0 WHERE isPrivate IS NULL');
+          await store.executeSql('UPDATE novel_book SET isNSFW = 0 WHERE isNSFW IS NULL');
           logger.info(TAG, '✅ [NOVEL_BOOK] 列添加完成');
         }
       } catch (error) {
@@ -348,7 +444,10 @@ export class DatabaseManager {
         logger.debug(TAG, `创建索引成功: ${sql}`);
       } catch (error) {
         logger.error(TAG, `创建索引失败: ${String(error)}`);
-        // 索引创建失败不应该阻止数据库初始化
+        // IF NOT EXISTS only makes an already-present index idempotent. A
+        // missing table/column or another schema error must keep initialization
+        // blocked instead of advancing the database version as if it succeeded.
+        throw error as Error;
       }
     }
   }
@@ -357,21 +456,24 @@ export class DatabaseManager {
    * 获取数据库版本
    */
   private async getDatabaseVersion(): Promise<number> {
+    const store: relationalStore.RdbStore = this.getStore();
+    let resultSet: relationalStore.ResultSet | null = null;
     try {
-      const store = this.getStore();
-      const resultSet = await store.querySql('PRAGMA user_version');
-      
-      if (resultSet.goToFirstRow()) {
-        const version = resultSet.getLong(0);
-        resultSet.close();
-        return version;
+      resultSet = await store.querySql('PRAGMA user_version');
+      if (resultSet === null) {
+        throw new Error('PRAGMA user_version 返回空结果集');
       }
-      
-      resultSet.close();
-      return 0;
+      if (!resultSet.goToFirstRow()) {
+        throw new Error('PRAGMA user_version 未返回版本行');
+      }
+      return resultSet.getLong(0);
     } catch (error) {
       logger.error(TAG, `获取数据库版本失败: ${String(error)}`);
-      return 0;
+      throw error as Error;
+    } finally {
+      if (resultSet !== null) {
+        resultSet.close();
+      }
     }
   }
 

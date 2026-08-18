@@ -1,4 +1,5 @@
 import { common } from '@kit.AbilityKit';
+import { FrameCallback, UIContext } from '@kit.ArkUI';
 import { logger } from '../Utils/Logger';
 import { NovelReaderPage } from './NovelReaderPage';
 import { NovelReaderPageParams } from './NovelBookshelfPage';
@@ -11,21 +12,91 @@ import {
 
 const TAG: string = 'NovelReaderAbilityPage';
 
+class NovelReaderNavigationFrameCallback extends FrameCallback {
+  private callback: () => void;
+  private hasRun: boolean = false;
+
+  constructor(callback: () => void) {
+    super();
+    this.callback = callback;
+  }
+
+  onFrame(_frameTimeInNano: number): void {
+  }
+
+  onIdle(_timeLeftInNano: number): void {
+    if (this.hasRun) {
+      return;
+    }
+    this.hasRun = true;
+    this.callback();
+  }
+}
+
 @Entry
 @Component
 struct NovelReaderAbilityPage {
-  @State private pathStack: NavPathStack = new NavPathStack();
+  private pathStack: NavPathStack = new NavPathStack();
   @State private readerParams: NovelReaderPageParams | null = null;
-  @State private readerInstanceId: string = '';
+  private readerInstanceId: string = '';
   private hasOpenedReader: boolean = false;
+  private hasScheduledInitialReaderOpen: boolean = false;
+  private navigationScheduleGeneration: number = 0;
+  private isPageActive: boolean = false;
+  private scheduledFrameCallback: NovelReaderNavigationFrameCallback | null = null;
 
   aboutToAppear(): void {
+    this.isPageActive = true;
     this.resolveReaderLaunchPayload('appear');
-    this.openInitialReader();
-    setTimeout((): void => {
-      this.resolveReaderLaunchPayload('deferred');
-      this.openInitialReader();
-    }, 0);
+    this.scheduleInitialReaderOpen();
+  }
+
+  onPageShow(): void {
+    this.isPageActive = true;
+    if (this.hasOpenedReader) {
+      return;
+    }
+    this.resolveReaderLaunchPayload('page_show');
+    this.scheduleInitialReaderOpen();
+  }
+
+  aboutToDisappear(): void {
+    this.isPageActive = false;
+    this.navigationScheduleGeneration += 1;
+    this.hasScheduledInitialReaderOpen = false;
+    this.scheduledFrameCallback = null;
+  }
+
+  private scheduleInitialReaderOpen(): void {
+    if (!this.isPageActive ||
+      this.hasOpenedReader ||
+      this.hasScheduledInitialReaderOpen) {
+      return;
+    }
+    try {
+      const uiContext: UIContext = this.getUIContext();
+      const scheduleGeneration: number = this.navigationScheduleGeneration + 1;
+      this.navigationScheduleGeneration = scheduleGeneration;
+      this.hasScheduledInitialReaderOpen = true;
+      const frameCallback = new NovelReaderNavigationFrameCallback((): void => {
+        if (scheduleGeneration !== this.navigationScheduleGeneration) {
+          return;
+        }
+        this.scheduledFrameCallback = null;
+        this.hasScheduledInitialReaderOpen = false;
+        if (!this.isPageActive || this.hasOpenedReader) {
+          return;
+        }
+        this.resolveReaderLaunchPayload('frame_idle');
+        this.openInitialReader();
+      });
+      this.scheduledFrameCallback = frameCallback;
+      uiContext.postFrameCallback(frameCallback);
+    } catch (error) {
+      this.scheduledFrameCallback = null;
+      this.hasScheduledInitialReaderOpen = false;
+      logger.warn(TAG, `调度独立小说阅读器初始路由失败: ${String(error)}`);
+    }
   }
 
   private resolveReaderLaunchPayload(source: string): void {
@@ -62,20 +133,21 @@ struct NovelReaderAbilityPage {
     }
   }
 
-  private openInitialReader(): void {
+  private openInitialReader(): boolean {
     if (this.hasOpenedReader) {
-      return;
+      return true;
     }
 
     if (!this.readerParams) {
       logger.error(TAG, `独立小说阅读器参数为空: instanceId=${this.readerInstanceId}`);
-      return;
+      return false;
     }
 
-    this.hasOpenedReader = true;
     const params = this.buildIsolatedReaderParams(this.readerParams);
+    this.pathStack.pushPathByName('NovelReaderPage', params, false);
+    this.hasOpenedReader = true;
     logger.info(TAG, `打开独立小说阅读器目标页: instanceId=${this.readerInstanceId}, book=${params.bookName}, chapterIndex=${params.chapterIndex}`);
-    this.pathStack.pushPathByName('NovelReaderPage', params);
+    return true;
   }
 
   private buildIsolatedReaderParams(source: NovelReaderPageParams): NovelReaderPageParams {
@@ -90,6 +162,9 @@ struct NovelReaderAbilityPage {
       chapterPageIndex: source.chapterPageIndex,
       chapterStartOffset: source.chapterStartOffset,
       tocUrl: source.tocUrl,
+      bookVariable: source.bookVariable,
+      bookRequestUrlTemplate: source.bookRequestUrlTemplate,
+      tocRequestUrlTemplate: source.tocRequestUrlTemplate,
       author: source.author,
       coverUrl: source.coverUrl,
       sourceName: source.sourceName,
@@ -100,8 +175,15 @@ struct NovelReaderAbilityPage {
       readerHostMode: READER_ABILITY_HOST_MULTITON,
       readerInstanceId: this.readerInstanceId,
       readerTitle: source.readerTitle,
-      readerOpenFlowId: source.readerOpenFlowId
+      readerOpenFlowId: source.readerOpenFlowId,
+      // Keep the V2 verification intent across the isolated Ability boundary.
+      // The destination reader uses it only for its initial current chapter.
+      forceNetworkContentRefresh: source.forceNetworkContentRefresh === true
     };
+    logger.info(
+      TAG,
+      `独立小说阅读器刷新意图转发: instanceId=${this.readerInstanceId}, forceContentRefresh=${params.forceNetworkContentRefresh === true}`
+    );
     return params;
   }
 

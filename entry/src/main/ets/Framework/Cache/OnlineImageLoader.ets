@@ -39,6 +39,16 @@ import {
   DownloadCacheFlowSeverity,
   DownloadCacheFlowStage
 } from '../Download/DownloadCacheFlowTypes';
+import {
+  LegadoImageTransportTrace,
+  LegadoImageTransportTraceContext
+} from '../Network/LegadoImageTransportTrace';
+import {
+  getNetworkTransportFailureCoordinator,
+  NetworkTransportCircuitDecision,
+  NetworkTransportFailureCoordinator,
+  NetworkTransportFailureDescriptor
+} from '../Network/NetworkTransportFailureCoordinator';
 
 
 const TAG = 'OnlineImageLoader';
@@ -64,6 +74,9 @@ export interface OnlineLoadOptions {
   visibleLoad?: boolean;
   prefetch?: boolean;
   skipFailureTtl?: boolean;
+  forceRefresh?: boolean;
+  /** Present only for Legado IMAGE V2 evidence; contains no raw target or header value. */
+  legadoImageTrace?: LegadoImageTransportTraceContext;
 }
 
 
@@ -110,6 +123,7 @@ interface QueuedRequest {
   url: string;
   options: OnlineLoadOptions;
   cacheKey: string;
+  loadingKey: string;
   flowId: string;
   sourceKey: string;
   visibleLoad: boolean;
@@ -177,6 +191,8 @@ export class OnlineImageLoader {
   private downloadCacheFlowMonitor: DownloadCacheFlowMonitor = getDownloadCacheFlowMonitor();
   private failureTtlCache: DownloadCacheFailureTtlCache = getDownloadCacheFailureTtlCache();
   private sourceLimiter: DownloadCacheSourceLimiter = getDownloadCacheSourceLimiter();
+  private transportFailureCoordinator: NetworkTransportFailureCoordinator =
+    getNetworkTransportFailureCoordinator();
 
   // 缓存状态写库队列（按URL去重，批量异步落库）
   private pendingCacheStatusUpdates = new Map<string, CacheStatusUpdateValue>();
@@ -226,6 +242,7 @@ export class OnlineImageLoader {
   public async load(url: string, options?: OnlineLoadOptions): Promise<image.PixelMap | null> {
     const effectiveOptions: OnlineLoadOptions = this.cloneLoadOptions(options);
     const cacheKey = this.generateCacheKey(url, effectiveOptions);
+    const loadingKey: string = effectiveOptions.forceRefresh ? `${cacheKey}|force_refresh` : cacheKey;
     const sourceKey = this.resolveSourceKey(url, effectiveOptions);
     const flowId = this.ensureImageFlow(url, cacheKey, effectiveOptions);
     effectiveOptions.downloadCacheFlowId = flowId;
@@ -233,7 +250,7 @@ export class OnlineImageLoader {
     
     // 1. 检查内存缓存
 
-    const cached = this.getFromCache(cacheKey);
+    const cached = effectiveOptions.forceRefresh ? null : this.getFromCache(cacheKey);
     if (cached) {
       logger.info(TAG, `✅ 内存缓存命中: ${url.substring(0, 80)}`);
       this.recordImageFlowEvent(
@@ -249,6 +266,9 @@ export class OnlineImageLoader {
         0,
         0
       );
+      if (effectiveOptions.legadoImageTrace !== undefined) {
+        LegadoImageTransportTrace.recordCacheHit(effectiveOptions.legadoImageTrace, 'memory');
+      }
       return cached;
     }
     
@@ -258,7 +278,7 @@ export class OnlineImageLoader {
       // 检查是否已初始化，避免警告日志泛滥
       if (diskCache.isInitialized()) {
         const diskCacheUrl = this.buildDiskCacheUrl(url, effectiveOptions);
-        const diskCached = await diskCache.get(diskCacheUrl);
+        const diskCached = effectiveOptions.forceRefresh ? null : await diskCache.get(diskCacheUrl);
 
         if (diskCached) {
           logger.info(TAG, `✅ 磁盘缓存命中: ${url.substring(0, 80)}`);
@@ -277,6 +297,9 @@ export class OnlineImageLoader {
             0,
             0
           );
+          if (effectiveOptions.legadoImageTrace !== undefined) {
+            LegadoImageTransportTrace.recordCacheHit(effectiveOptions.legadoImageTrace, 'disk');
+          }
           this.syncCacheStatusToDatabaseAsync(url, diskCacheUrl, diskCache, flowId, effectiveOptions.sourceId || 0, sourceKey, cacheKey);
           return diskCached;
         }
@@ -286,6 +309,38 @@ export class OnlineImageLoader {
     }
 
     const allowFailureSkip = this.shouldAllowFailureTtlSkip(effectiveOptions);
+    const circuitDecision: NetworkTransportCircuitDecision = this.transportFailureCoordinator.shouldSuppress(
+      url,
+      allowFailureSkip,
+      effectiveOptions.forceRefresh === true
+    );
+    if (circuitDecision.suppressed) {
+      logger.debug(
+        TAG,
+        `后台图片请求命中主机熔断: fingerprint=${circuitDecision.descriptor.fingerprint}, ` +
+          `remaining=${circuitDecision.remainingMs}ms`
+      );
+      if (effectiveOptions.legadoImageTrace !== undefined) {
+        LegadoImageTransportTrace.recordTransportFailure(
+          effectiveOptions.legadoImageTrace,
+          circuitDecision.descriptor.canonicalMessage
+        );
+      }
+      this.recordImageFlowEvent(
+        flowId,
+        DownloadCacheFlowEventType.FAILURE_TTL_HIT,
+        DownloadCacheFlowStage.NETWORK,
+        'background_host_circuit_open',
+        url,
+        cacheKey,
+        effectiveOptions,
+        true,
+        circuitDecision.descriptor.canonicalMessage,
+        0,
+        0
+      );
+      throw new Error(circuitDecision.descriptor.canonicalMessage);
+    }
     if (this.failureTtlCache.shouldSkip(effectiveOptions.sourceId || 0, sourceKey, cacheKey, 'network', allowFailureSkip)) {
       const message = this.failureTtlCache.getErrorMessage(effectiveOptions.sourceId || 0, sourceKey, cacheKey, 'network');
       logger.debug(TAG, `预取命中失败TTL，跳过后台请求: ${url.substring(0, 80)}, error=${message}`);
@@ -306,7 +361,7 @@ export class OnlineImageLoader {
     }
     
     // 3. [修复] 检查是否已在加载中
-    if (this.loadingKeys.has(cacheKey)) {
+    if (this.loadingKeys.has(loadingKey)) {
       logger.debug(TAG, `缓存Key已在加载队列中，等待现有加载完成: ${url.substring(0, 80)}, key=${cacheKey}`);
       this.recordImageFlowEvent(
         flowId,
@@ -322,12 +377,12 @@ export class OnlineImageLoader {
         0
       );
       // 等待现有加载完成，然后从缓存返回
-      return this.waitForLoading(url, cacheKey, effectiveOptions, flowId);
+      return this.waitForLoading(url, loadingKey, cacheKey, effectiveOptions, flowId);
 
     }
     
     // 4. 标记为正在加载
-    this.loadingKeys.add(cacheKey);
+    this.loadingKeys.add(loadingKey);
     
     // 4. 加入请求队列
     return new Promise<image.PixelMap | null>((resolve, reject) => {
@@ -335,6 +390,7 @@ export class OnlineImageLoader {
         url: url,
         options: effectiveOptions,
         cacheKey: cacheKey,
+        loadingKey: loadingKey,
         flowId: flowId,
         sourceKey: sourceKey,
         visibleLoad: this.isVisibleLoad(effectiveOptions),
@@ -372,6 +428,7 @@ export class OnlineImageLoader {
    */
   private async waitForLoading(
     url: string,
+    loadingKey: string,
     cacheKey: string,
     options: OnlineLoadOptions,
     flowId: string
@@ -380,7 +437,7 @@ export class OnlineImageLoader {
     const checkInterval = 100; // 每100ms检查一次
     const startTime = Date.now();
     
-    while (this.loadingKeys.has(cacheKey)) {
+    while (this.loadingKeys.has(loadingKey)) {
       if (Date.now() - startTime > maxWaitTime) {
         logger.warn(TAG, `等待URL加载超时: ${url.substring(0, 80)}`);
         this.recordImageFlowEvent(
@@ -446,6 +503,41 @@ export class OnlineImageLoader {
     let permit: DownloadCacheLimiterPermit | null = null;
     
     try {
+      const circuitDecision: NetworkTransportCircuitDecision = this.transportFailureCoordinator.shouldSuppress(
+        request.url,
+        this.shouldAllowFailureTtlSkip(request.options),
+        request.options.forceRefresh === true
+      );
+      if (circuitDecision.suppressed) {
+        logger.debug(
+          TAG,
+          `队列后台请求命中主机熔断: fingerprint=${circuitDecision.descriptor.fingerprint}, ` +
+            `remaining=${circuitDecision.remainingMs}ms`
+        );
+        if (request.options.legadoImageTrace !== undefined) {
+          LegadoImageTransportTrace.recordTransportFailure(
+            request.options.legadoImageTrace,
+            circuitDecision.descriptor.canonicalMessage
+          );
+        }
+        this.recordImageFlowEvent(
+          request.flowId,
+          DownloadCacheFlowEventType.FAILURE_TTL_HIT,
+          DownloadCacheFlowStage.NETWORK,
+          'queued_background_host_circuit_open',
+          request.url,
+          request.cacheKey,
+          request.options,
+          true,
+          circuitDecision.descriptor.canonicalMessage,
+          0,
+          0
+        );
+        this.loadingKeys.delete(request.loadingKey);
+        request.reject(new Error(circuitDecision.descriptor.canonicalMessage));
+        return;
+      }
+
       await this.waitForInterval();
 
       const limiterActiveBefore = this.sourceLimiter.getActiveCount(request.sourceKey);
@@ -485,6 +577,7 @@ export class OnlineImageLoader {
       const pixelMap = await this.httpRequest(request.url, request.options);
       
       if (pixelMap) {
+        this.transportFailureCoordinator.recordSuccess(request.url);
         // 存入内存缓存
         await this.putToCache(request.cacheKey, pixelMap);
         
@@ -555,7 +648,7 @@ export class OnlineImageLoader {
         request.resolve(pixelMap);
         
         // [修复] 加载成功，从loadingKeys中移除
-        this.loadingKeys.delete(request.cacheKey);
+        this.loadingKeys.delete(request.loadingKey);
       } else {
         const emptyMessage = 'online_image_empty_pixel_map';
         this.recordImageFlowEvent(
@@ -590,15 +683,25 @@ export class OnlineImageLoader {
         request.resolve(null);
         
         // [修复] 加载失败，从loadingKeys中移除
-        this.loadingKeys.delete(request.cacheKey);
+        this.loadingKeys.delete(request.loadingKey);
       }
       
     } catch (error) {
       const errorObj: Error = error instanceof Error ? error : new Error(String(error));
+      const transportFailure: NetworkTransportFailureDescriptor =
+        this.transportFailureCoordinator.describe(request.url, errorObj.message);
+      const reportedErrorMessage: string = transportFailure.recognized
+        ? transportFailure.canonicalMessage
+        : errorObj.message;
+      const stopBackgroundRetry: boolean = transportFailure.circuitEligible &&
+        this.shouldAllowFailureTtlSkip(request.options);
       // 重试逻辑
-      if (request.retryCount < this.MAX_RETRIES) {
+      if (request.retryCount < this.MAX_RETRIES && !stopBackgroundRetry) {
         request.retryCount++;
-        logger.warn(TAG, `请求失败，准备重试 (${request.retryCount}/${this.MAX_RETRIES}): ${request.url.substring(0, 80)}`);
+        const retryTarget: string = transportFailure.recognized
+          ? `fingerprint=${transportFailure.fingerprint}`
+          : request.url.substring(0, 80);
+        logger.warn(TAG, `请求失败，准备重试 (${request.retryCount}/${this.MAX_RETRIES}): ${retryTarget}`);
         this.recordImageFlowEvent(
           request.flowId,
           DownloadCacheFlowEventType.IMAGE_DOWNLOAD_RETRY,
@@ -608,7 +711,7 @@ export class OnlineImageLoader {
           request.cacheKey,
           request.options,
           false,
-          errorObj.message,
+          reportedErrorMessage,
           0,
           0
         );
@@ -621,7 +724,15 @@ export class OnlineImageLoader {
         // 延迟后重试
         setTimeout(() => this.processQueue(), this.RETRY_DELAY);
       } else {
-        logger.error(TAG, `请求最终失败: ${request.url.substring(0, 80)}, error=${String(errorObj)}`);
+        if (transportFailure.recognized) {
+          logger.warn(
+            TAG,
+            `请求最终失败（已按传输根因聚合）: ${transportFailure.canonicalMessage}, ` +
+              `background=${this.shouldAllowFailureTtlSkip(request.options)}`
+          );
+        } else {
+          logger.error(TAG, `请求最终失败: ${request.url.substring(0, 80)}, error=${String(errorObj)}`);
+        }
         this.recordImageFlowEvent(
           request.flowId,
           DownloadCacheFlowEventType.IMAGE_DOWNLOAD_FAILED,
@@ -631,12 +742,18 @@ export class OnlineImageLoader {
           request.cacheKey,
           request.options,
           false,
-          errorObj.message,
+          reportedErrorMessage,
           0,
           0
         );
         if (this.shouldAllowFailureTtlSkip(request.options)) {
-          this.failureTtlCache.recordFailure(request.options.sourceId || 0, request.sourceKey, request.cacheKey, 'network', errorObj.message);
+          this.failureTtlCache.recordFailure(
+            request.options.sourceId || 0,
+            request.sourceKey,
+            request.cacheKey,
+            'network',
+            reportedErrorMessage
+          );
           this.recordImageFlowEvent(
             request.flowId,
             DownloadCacheFlowEventType.FAILURE_TTL_RECORDED,
@@ -646,15 +763,15 @@ export class OnlineImageLoader {
             request.cacheKey,
             request.options,
             true,
-            errorObj.message,
+            reportedErrorMessage,
             0,
             0
           );
         }
-        request.reject(errorObj);
+        request.reject(new Error(reportedErrorMessage));
         
         // [修复] 最终失败，从loadingKeys中移除
-        this.loadingKeys.delete(request.cacheKey);
+        this.loadingKeys.delete(request.loadingKey);
       }
     } finally {
       if (permit !== null) {
@@ -929,6 +1046,8 @@ export class OnlineImageLoader {
     cloned.visibleLoad = options.visibleLoad;
     cloned.prefetch = options.prefetch;
     cloned.skipFailureTtl = options.skipFailureTtl;
+    cloned.forceRefresh = options.forceRefresh;
+    cloned.legadoImageTrace = options.legadoImageTrace;
     return cloned;
   }
 
@@ -1370,7 +1489,9 @@ export class OnlineImageLoader {
         downloadCacheFlowId: options.downloadCacheFlowId,
         visibleLoad: options.visibleLoad,
         prefetch: options.prefetch,
-        skipFailureTtl: options.skipFailureTtl
+        skipFailureTtl: options.skipFailureTtl,
+        forceRefresh: options.forceRefresh,
+        legadoImageTrace: options.legadoImageTrace
       };
 
       return await this.doHttpRequest(url, retriedOptions);
@@ -1487,7 +1608,9 @@ export class OnlineImageLoader {
       downloadCacheFlowId: options.downloadCacheFlowId,
       visibleLoad: options.visibleLoad,
       prefetch: options.prefetch,
-      skipFailureTtl: options.skipFailureTtl
+      skipFailureTtl: options.skipFailureTtl,
+      forceRefresh: options.forceRefresh,
+      legadoImageTrace: options.legadoImageTrace
     };
     const headers = options.headers;
     if (headers) {
@@ -1501,6 +1624,9 @@ export class OnlineImageLoader {
       if (headers.referer) {
         relaxedHeaders.referer = String(headers.referer);
       }
+      if (headers.origin) {
+        relaxedHeaders.origin = String(headers.origin);
+      }
       if (headers.cookie) {
         relaxedHeaders.cookie = String(headers.cookie);
       }
@@ -1509,6 +1635,21 @@ export class OnlineImageLoader {
       }
       if (headers.acceptLanguage) {
         relaxedHeaders.acceptLanguage = String(headers.acceptLanguage);
+      }
+      if (headers.cacheControl) {
+        relaxedHeaders.cacheControl = String(headers.cacheControl);
+      }
+      if (headers.pragma) {
+        relaxedHeaders.pragma = String(headers.pragma);
+      }
+      if (headers.secFetchDest) {
+        relaxedHeaders.secFetchDest = String(headers.secFetchDest);
+      }
+      if (headers.secFetchMode) {
+        relaxedHeaders.secFetchMode = String(headers.secFetchMode);
+      }
+      if (headers.secFetchSite) {
+        relaxedHeaders.secFetchSite = String(headers.secFetchSite);
       }
       if (headers.cachePartition) {
         relaxedHeaders.cachePartition = String(headers.cachePartition);
@@ -1776,6 +1917,13 @@ export class OnlineImageLoader {
       
       // 构建请求头
       const headers = await this.buildHeaders(url, options);
+      if (options.legadoImageTrace !== undefined) {
+        await LegadoImageTransportTrace.recordRequest(
+          options.legadoImageTrace,
+          this.getRequestHeaderNames(headers),
+          headers.userAgent || ''
+        );
+      }
       
       logger.debug(TAG, `发起HTTP请求: url=${url}, timeout=${this.TIMEOUT}`);
       
@@ -1789,11 +1937,20 @@ export class OnlineImageLoader {
       
       // 发送请求
       const response = await httpRequest.request(url, requestOptions);
+      const responseContentType: string = this.getResponseContentType(response.header);
       
       if (response.responseCode === 200 && response.result) {
         const duration = Date.now() - startTs;
         const imageBuffer = response.result as ArrayBuffer;
         const bytesLen = imageBuffer.byteLength;
+        if (options.legadoImageTrace !== undefined) {
+          LegadoImageTransportTrace.recordHttpResponse(
+            options.legadoImageTrace,
+            Number(response.responseCode),
+            responseContentType,
+            bytesLen
+          );
+        }
         
         logger.info(TAG, `HTTP响应成功: code=200, bytes=${bytesLen}, duration=${duration}ms`);
         this.recordImageFlowEvent(
@@ -1886,6 +2043,13 @@ export class OnlineImageLoader {
           
           // 创建PixelMap
           const pixelMap = await this.createPixelMapFromBuffer(finalBuffer, options);
+          if (options.legadoImageTrace !== undefined) {
+            LegadoImageTransportTrace.recordDecode(
+              options.legadoImageTrace,
+              pixelMap !== null,
+              finalBuffer.byteLength
+            );
+          }
           this.recordImageFlowEvent(
             flowId,
             DownloadCacheFlowEventType.IMAGE_PROCESS_COMPLETED,
@@ -1935,6 +2099,13 @@ export class OnlineImageLoader {
           return pixelMap;
         } catch (processError) {
           const processMessage = processError instanceof Error ? processError.message : String(processError);
+          if (options.legadoImageTrace !== undefined) {
+            LegadoImageTransportTrace.recordDecode(
+              options.legadoImageTrace,
+              false,
+              finalBuffer.byteLength
+            );
+          }
           this.recordImageFlowEvent(
             flowId,
             DownloadCacheFlowEventType.IMAGE_PROCESS_FAILED,
@@ -1953,6 +2124,14 @@ export class OnlineImageLoader {
         
       } else {
         const duration = Date.now() - startTs;
+        if (options.legadoImageTrace !== undefined) {
+          LegadoImageTransportTrace.recordHttpResponse(
+            options.legadoImageTrace,
+            Number(response.responseCode),
+            responseContentType,
+            0
+          );
+        }
         logger.warn(TAG, `HTTP响应失败: code=${response.responseCode}, duration=${duration}ms`);
         throw new Error(`HTTP请求失败: ${response.responseCode}`);
       }
@@ -1981,9 +2160,28 @@ export class OnlineImageLoader {
 
       const errCode = (error as Record<string, Object>)['code'];
       const errData = (error as Record<string, Object>)['data'];
-      
-      // 输出完整错误信息
-      logger.error(TAG, `HTTP请求异常: message=${errMsg}, code=${errCode}, data=${errData}, url=${url}`);
+
+      const transportFailure: NetworkTransportFailureDescriptor = this.transportFailureCoordinator.recordFailure(
+        url,
+        errMsg,
+        String(errCode)
+      );
+      const reportedErrorMessage: string = transportFailure.recognized
+        ? transportFailure.canonicalMessage
+        : `${errMsg} (code=${String(errCode)})`;
+      if (options.legadoImageTrace !== undefined) {
+        LegadoImageTransportTrace.recordTransportFailure(options.legadoImageTrace, reportedErrorMessage);
+      }
+
+      if (transportFailure.recognized) {
+        if (this.transportFailureCoordinator.claimDiagnosticError(transportFailure.fingerprint)) {
+          logger.error(TAG, `HTTP传输失败: ${transportFailure.canonicalMessage}`);
+        } else {
+          logger.warn(TAG, `HTTP传输失败（重复根因）: ${transportFailure.canonicalMessage}`);
+        }
+      } else {
+        logger.error(TAG, `HTTP请求异常: message=${errMsg}, code=${errCode}, data=${errData}, url=${url}`);
+      }
       this.recordImageFlowEvent(
         flowId,
         DownloadCacheFlowEventType.HTTP_FAILED,
@@ -1993,13 +2191,13 @@ export class OnlineImageLoader {
         cacheKey,
         options,
         false,
-        errMsg,
+        reportedErrorMessage,
         Date.now() - startTs,
         0
       );
       
       // 重新抛出错误
-      throw new Error(`${errMsg} (code=${errCode})`);
+      throw new Error(reportedErrorMessage);
     }
   }
 
@@ -2035,6 +2233,42 @@ export class OnlineImageLoader {
     }
 
     return pixelMap;
+  }
+
+  private getRequestHeaderNames(headers: HttpHeadersObject): string[] {
+    const names: string[] = [];
+    if (headers.userAgent) names.push('User-Agent');
+    if (headers.origin) names.push('Origin');
+    if (headers.accept) names.push('Accept');
+    if (headers.referer) names.push('Referer');
+    if (headers.cookie) names.push('Cookie');
+    if (headers.authorization) names.push('Authorization');
+    if (headers.acceptLanguage) names.push('Accept-Language');
+    if (headers.cacheControl) names.push('Cache-Control');
+    if (headers.pragma) names.push('Pragma');
+    if (headers.secFetchDest) names.push('Sec-Fetch-Dest');
+    if (headers.secFetchMode) names.push('Sec-Fetch-Mode');
+    if (headers.secFetchSite) names.push('Sec-Fetch-Site');
+    const extraHeaders: RequestHeaderEntry[] | undefined = headers.extraHeaders;
+    if (extraHeaders !== undefined) {
+      for (let index: number = 0; index < extraHeaders.length; index++) {
+        if (extraHeaders[index].name.length > 0 && extraHeaders[index].value.length > 0) {
+          names.push(extraHeaders[index].name);
+        }
+      }
+    }
+    return names;
+  }
+
+  private getResponseContentType(headers: Object): string {
+    const entries: [string, Object][] = Object.entries(headers) as [string, Object][];
+    for (let index: number = 0; index < entries.length; index++) {
+      const name: string = entries[index][0].trim().toLowerCase();
+      if (name === 'content-type' || name === 'contenttype') {
+        return String(entries[index][1]);
+      }
+    }
+    return '';
   }
 
   private createRequestHeadersObject(headers: HttpHeadersObject): Record<string, string> {

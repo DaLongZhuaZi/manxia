@@ -4,9 +4,19 @@
     "type": "feature",
     "deviceTypes": [
       "phone",
-      "tablet"
+      "tablet",
+      "2in1"
     ],
     "deliveryWithInstall": true,
-    "installationFree": false
+    "installationFree": false,
+    "testRunner": {
+      "name": "OpenHarmonyTestRunner",
+      "srcPath": "./ets/testrunner/OpenHarmonyTestRunner.ets"
+    },
+    "requestPermissions": [
+      {
+        "name": "ohos.permission.INTERNET"
+      }
+    ]
   }
 }

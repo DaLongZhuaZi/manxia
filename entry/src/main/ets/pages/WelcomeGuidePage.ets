@@ -23,6 +23,7 @@ import { SettingsPanelSurfaceHelper } from './settings/SettingsPanelSurfaceHelpe
 import { BuiltInThemeResources } from '../Framework/Theme/BuiltInThemeResources';
 import { common } from '@kit.AbilityKit';
 import { pasteboard } from '@kit.BasicServicesKit';
+import { distributedPermissionManager } from '../Framework/Distributed/DistributedPermissionManager';
 
 const TAG = 'WelcomeGuidePage';
 const SOURCE_REPO_URL = 'https://raw.githubusercontent.com/DaLongZhuaZi/manxia-extensions-source/master/index.main.json';
@@ -87,6 +88,10 @@ struct WelcomeGuidePage {
   @State private notificationPermissionGranted: boolean = false;
   @State private notificationPermissionRequesting: boolean = false;
   @State private notificationPermissionStatusText: string = '';
+  @State private distributedPermissionGranted: boolean = false;
+  @State private distributedPermissionRequesting: boolean = false;
+  @State private distributedPermissionStatusText: string = '';
+  @State private distributedPermissionUserFixedDenied: boolean = false;
   @State private guideBottomBarStyleIndex: number = 0; // 0: HDS, 1: 经典
   @State private guideLibraryDisplayModeIndex: number = 0; // 0: 平铺, 1: 书架
   @State private guideGlobalBackgroundEnabled: boolean = true;
@@ -99,6 +104,7 @@ struct WelcomeGuidePage {
 
   private uiContext: UIContext | undefined = undefined;
   private notificationPermissionAutoRequested: boolean = false;
+  private distributedPermissionAutoRequested: boolean = false;
   private customExperienceSettingsInitialized: boolean = false;
   private readerKitEmulatorGuardChecked: boolean = false;
 
@@ -193,6 +199,16 @@ struct WelcomeGuidePage {
     };
     steps.set(GuideStep.ANALYTICS_PERMISSION, analyticsPermissionContent);
 
+    const distributedPermissionContent: GuideStepContent = {
+      title: '跨设备接续阅读',
+      subtitle: '需要「设备发现和连接」权限',
+      description: '开启后，漫匣才能发现附近的其他设备，把当前的阅读进度接续到另一台设备继续阅读，并用本机遥控对方设备翻页。该权限仅用于设备发现与进度同步，不会读取您的其他数据。',
+      icon: $r('sys.symbol.computer_share_fill'),
+      buttonText: '继续下一步',
+      showSkip: false
+    };
+    steps.set(GuideStep.DISTRIBUTED_PERMISSION, distributedPermissionContent);
+
     const libraryIntroContent: GuideStepContent = {
       title: '隐私书库与 SFW 模式',
       subtitle: '两种常用的内容保护方式',
@@ -273,6 +289,11 @@ struct WelcomeGuidePage {
       return;
     }
 
+    if (step === GuideStep.DISTRIBUTED_PERMISSION) {
+      await this.ensureDistributedPermissionState(true);
+      return;
+    }
+
     if (step === GuideStep.LIBRARY_INTRO) {
       await this.ensureNotificationPermissionState(false);
     }
@@ -320,6 +341,78 @@ struct WelcomeGuidePage {
   private async requestNotificationPermissionAgain(): Promise<void> {
     this.notificationPermissionAutoRequested = false;
     await this.ensureNotificationPermissionState(true);
+  }
+
+  /**
+   * 检查并稳定触发「设备发现和连接」权限请求（新手引导页面的权限步骤）。
+   * 完全新装的设备上系统会正常弹出授权弹窗；权限曾被用户在设置中固定关闭时
+   * 系统会未弹窗直接拒绝，此时展示"前往设置开启"入口（不自动跳转，先说明原因）。
+   */
+  private async ensureDistributedPermissionState(requestIfNeeded: boolean): Promise<void> {
+    try {
+      const granted = await distributedPermissionManager.isPermissionGranted();
+      this.distributedPermissionGranted = granted;
+      if (granted) {
+        this.distributedPermissionUserFixedDenied = false;
+        this.distributedPermissionStatusText = '「设备发现和连接」权限已开启，随时可以把阅读进度接续到其他设备。';
+        return;
+      }
+
+      this.distributedPermissionStatusText = requestIfNeeded
+        ? '正在尝试请求「设备发现和连接」权限...'
+        : '「设备发现和连接」权限尚未开启，进入阅读器时会再次提示。';
+
+      if (!requestIfNeeded || this.distributedPermissionAutoRequested) {
+        return;
+      }
+      this.distributedPermissionAutoRequested = true;
+
+      const hostContext = this.uiContext?.getHostContext();
+      const context = hostContext as common.UIAbilityContext | null;
+      if (!context) {
+        this.distributedPermissionStatusText = '无法获取页面上下文，暂时无法请求权限，请稍后重试。';
+        return;
+      }
+
+      this.distributedPermissionRequesting = true;
+      const result = await distributedPermissionManager.requestPermissionForGuide(context);
+      if (result === 'granted') {
+        this.distributedPermissionGranted = true;
+        this.distributedPermissionUserFixedDenied = false;
+        this.distributedPermissionStatusText = '权限已开启，跨设备接续阅读已可用。';
+      } else if (result === 'user_fixed_denied') {
+        this.distributedPermissionUserFixedDenied = true;
+        this.distributedPermissionStatusText = '该权限曾在系统设置中被固定关闭，应用内无法再弹窗。请点击下方按钮前往设置，打开「设备发现和连接」开关。';
+      } else if (result === 'denied') {
+        this.distributedPermissionUserFixedDenied = false;
+        this.distributedPermissionStatusText = '已选择暂不开启。之后进入阅读器时会再次提示授权。';
+      } else {
+        this.distributedPermissionUserFixedDenied = false;
+        this.distributedPermissionStatusText = '权限请求被打断，请点击下方按钮重试。';
+      }
+    } catch (error) {
+      logger.error(TAG, `欢迎引导检查「设备发现和连接」权限失败: ${String(error)}`);
+      this.distributedPermissionStatusText = '检查权限失败，请稍后重试。';
+    } finally {
+      this.distributedPermissionRequesting = false;
+    }
+  }
+
+  private async requestDistributedPermissionAgain(): Promise<void> {
+    this.distributedPermissionAutoRequested = false;
+    this.distributedPermissionUserFixedDenied = false;
+    await this.ensureDistributedPermissionState(true);
+  }
+
+  private openDistributedPermissionSettings(): void {
+    const hostContext = this.uiContext?.getHostContext();
+    const context = hostContext as common.UIAbilityContext | null;
+    if (!context) {
+      this.getUIContext().getPromptAction().showToast({ message: '无法打开系统设置' });
+      return;
+    }
+    distributedPermissionManager.openAppPermissionSettings(context);
+    logger.info(TAG, '用户点击"前往设置开启"，已跳转系统设置应用信息页');
   }
 
   private async disableReaderKitOnEmulatorIfNeeded(trigger: string): Promise<void> {
@@ -530,6 +623,11 @@ struct WelcomeGuidePage {
 
   aboutToAppear(): void {
     logger.lifecycle(TAG, '欢迎引导页面开始加载');
+
+    // 新手引导期间抑制后台检查点的权限自动请求/设置跳转：
+    // 「设备发现和连接」权限由本页的权限步骤先说明用途，再稳定触发首次请求，
+    // 避免应用一启动（后台检查点）就直接弹窗或跳转设置
+    distributedPermissionManager.setOnboardingGuideActive(true);
 
     // 获取UIContext
     this.uiContext = this.getUIContext();
@@ -792,7 +890,16 @@ struct WelcomeGuidePage {
         break;
 
       case GuideStep.ANALYTICS_PERMISSION:
-        logger.debug(TAG, '执行通知权限步骤处理，进入隐私书库与SFW说明');
+        logger.debug(TAG, '执行通知权限步骤处理，进入设备发现和连接权限步骤');
+        this.animateStepChange(() => {
+          this.currentStep = GuideStep.DISTRIBUTED_PERMISSION;
+          void this.welcomeGuideManager.setCurrentStep(GuideStep.DISTRIBUTED_PERMISSION);
+          void this.handleStepEntered(GuideStep.DISTRIBUTED_PERMISSION);
+        });
+        break;
+
+      case GuideStep.DISTRIBUTED_PERMISSION:
+        logger.debug(TAG, '执行设备发现和连接权限步骤处理，进入隐私书库与SFW说明');
         this.animateStepChange(() => {
           this.currentStep = GuideStep.LIBRARY_INTRO;
           void this.welcomeGuideManager.setCurrentStep(GuideStep.LIBRARY_INTRO);
@@ -1353,6 +1460,111 @@ struct WelcomeGuidePage {
   }
 
   @Builder
+  private buildDistributedPermissionGuideSection() {
+    Column({ space: 12 }) {
+      Column({ space: 10 }) {
+        Row({ space: 10 }) {
+          SymbolGlyph($r('sys.symbol.bookshelf'))
+            .fontSize(18)
+            .fontColor([ThemeAwareHelper.getTestManagementThemedColor('accent_blue', this.themeState.currentTheme)])
+          Text('把当前的阅读进度接续到附近的其他设备继续阅读')
+            .fontSize(13)
+            .fontFamily(this.appFontFamily)
+            .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
+            .layoutWeight(1)
+            .textAlign(TextAlign.Start)
+        }
+
+        Row({ space: 10 }) {
+          SymbolGlyph($r('sys.symbol.computer_share_fill'))
+            .fontSize(18)
+            .fontColor([ThemeAwareHelper.getTestManagementThemedColor('accent_blue', this.themeState.currentTheme)])
+          Text('接续后用本机遥控对方设备的翻页与章节切换')
+            .fontSize(13)
+            .fontFamily(this.appFontFamily)
+            .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
+            .layoutWeight(1)
+            .textAlign(TextAlign.Start)
+        }
+
+        Row({ space: 10 }) {
+          SymbolGlyph($r('sys.symbol.lock_shield_fill'))
+            .fontSize(18)
+            .fontColor([ThemeAwareHelper.getTestManagementThemedColor('accent_blue', this.themeState.currentTheme)])
+          Text('仅用于设备发现与进度同步，不读取您的其他数据')
+            .fontSize(13)
+            .fontFamily(this.appFontFamily)
+            .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
+            .layoutWeight(1)
+            .textAlign(TextAlign.Start)
+        }
+      }
+      .width('100%')
+      .padding(16)
+      .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('background_secondary', this.themeState.currentTheme))
+      .borderRadius(16)
+
+      Column({ space: 8 }) {
+        Text(this.distributedPermissionGranted ? '设备发现和连接权限状态：已开启' : '设备发现和连接权限状态：未开启')
+          .fontSize(13)
+          .fontWeight(FontWeight.Medium)
+          .fontFamily(this.appFontFamily)
+          .fontColor(this.distributedPermissionGranted
+            ? ThemeAwareHelper.getTestManagementThemedColor('accent_blue', this.themeState.currentTheme)
+            : ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
+
+        Text(this.distributedPermissionStatusText)
+          .fontSize(12)
+          .fontFamily(this.appFontFamily)
+          .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_muted', this.themeState.currentTheme))
+          .width('100%')
+          .textAlign(TextAlign.Start)
+
+        if (!this.distributedPermissionGranted) {
+          if (this.distributedPermissionUserFixedDenied) {
+            Button(this.distributedPermissionRequesting ? '正在处理...' : '前往设置开启')
+              .fontSize(13)
+              .fontFamily(this.appFontFamily)
+              .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_white', this.themeState.currentTheme))
+              .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('accent_blue', this.themeState.currentTheme))
+              .borderRadius(18)
+              .height(36)
+              .enabled(!this.distributedPermissionRequesting)
+              .opacity(this.distributedPermissionRequesting ? 0.6 : 1.0)
+              .onClick(() => {
+                if (!this.distributedPermissionRequesting) {
+                  this.openDistributedPermissionSettings();
+                }
+              })
+          } else {
+            Button(this.distributedPermissionRequesting ? '正在请求权限...' : '再次请求权限')
+              .fontSize(13)
+              .fontFamily(this.appFontFamily)
+              .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_white', this.themeState.currentTheme))
+              .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('accent_blue', this.themeState.currentTheme))
+              .borderRadius(18)
+              .height(36)
+              .enabled(!this.distributedPermissionRequesting)
+              .opacity(this.distributedPermissionRequesting ? 0.6 : 1.0)
+              .onClick(() => {
+                if (!this.distributedPermissionRequesting) {
+                  void this.requestDistributedPermissionAgain();
+                }
+              })
+          }
+        }
+      }
+      .width('100%')
+      .padding(16)
+      .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('background_secondary', this.themeState.currentTheme))
+      .borderRadius(16)
+    }
+    .width('100%')
+    .padding({ left: 32, right: 32 })
+    .margin({ bottom: 28 })
+  }
+
+  @Builder
   private buildBookSourceGuideActionSection() {
     Column() {
       Button() {
@@ -1838,6 +2050,8 @@ struct WelcomeGuidePage {
 
   aboutToDisappear(): void {
     logger.lifecycle(TAG, '欢迎引导页面即将销毁');
+    // 引导页销毁后恢复后台检查点的权限请求能力（首次请求已由引导页权限步骤负责）
+    distributedPermissionManager.setOnboardingGuideActive(false);
     this.customExperienceSettingsInitialized = false;
     if (!this.isSingleGuidePreview() && this.isSourceFeatureOnlyFlow()) {
       void this.welcomeGuideManager.finishSourceFeatureGuide();
@@ -2058,6 +2272,7 @@ struct WelcomeGuidePage {
                   this.currentStep === GuideStep.REMOTE_LIBRARY_GUIDE ||
                   this.currentStep === GuideStep.CUSTOM_EXPERIENCE ||
                   this.currentStep === GuideStep.ANALYTICS_PERMISSION ||
+                  this.currentStep === GuideStep.DISTRIBUTED_PERMISSION ||
                   this.currentStep === GuideStep.LIBRARY_INTRO
                   ? 16
                   : 48
@@ -2123,6 +2338,10 @@ struct WelcomeGuidePage {
 
             if (this.currentStep === GuideStep.ANALYTICS_PERMISSION) {
               this.buildNotificationGuideSection()
+            }
+
+            if (this.currentStep === GuideStep.DISTRIBUTED_PERMISSION) {
+              this.buildDistributedPermissionGuideSection()
             }
 
             if (this.currentStep === GuideStep.LIBRARY_INTRO) {

@@ -18,19 +18,23 @@ import {
   ReadingProgress
 } from '../../Models/MangaModels';
 import { DEFAULT_READING_SETTINGS } from '../../Models/MangaModels';
+import { NovelSearchResult } from '../../Models/NovelModels';
 import { PageInfo as SourcePageInfo, PageRequestHeader } from '../WebView/MangaSourceTypes';
 import { SafeUtils } from '../../Utils/SafeUtils';
 import {
   LegadoBook,
   LegadoBookSource,
   LegadoBookSourceType,
-  LegadoChapter,
-  LegadoSearchBook
+  LegadoChapter
 } from './LegadoSourceTypes';
 import { LegadoUrlAnalyzer, ParsedUrlRequest } from './LegadoUrlAnalyzer';
 import { LegadoJsSourceEffects } from './LegadoJsEngine';
-import { NovelSourceExecutor } from './NovelSourceExecutor';
 import { getNovelDataManager } from './NovelDataManager';
+import { getNovelSourceManager, NovelSourceManager } from './NovelSourceManager';
+import {
+  LegadoWorkflowContentResult,
+  LegadoWorkflowOutputKind
+} from './LegadoCompatibilityTypes';
 import { getNovelLoginManager } from './NovelLoginManager';
 import { getCookieStore } from './LegadoCookieStore';
 import { LegadoMangaExtractedImage, LegadoMangaImageExtractor } from './LegadoMangaImageExtractor';
@@ -39,6 +43,20 @@ import { HtmlFormatter } from './HtmlFormatter';
 const TAG = 'LegadoMangaSourceBridge';
 const LEGADO_MANGA_PKG_PREFIX = 'legado.image.';
 const LEGADO_MANGA_ADAPTER = 'legado-image';
+
+/**
+ * comic_source.name is globally unique while Legado permits several IMAGE
+ * sources to share a visible bookSourceName. Keep the original name in the
+ * bridge metadata and give its internal manga-source record a stable identity.
+ */
+export function buildLegadoImageVirtualSourceRecordName(bookSourceName: string, pkg: string): string {
+  const normalizedName = bookSourceName.trim();
+  const packageIdentity = pkg.startsWith(LEGADO_MANGA_PKG_PREFIX)
+    ? pkg.substring(LEGADO_MANGA_PKG_PREFIX.length)
+    : pkg;
+  const displayName = normalizedName.length > 0 ? normalizedName : 'Unnamed Legado IMAGE source';
+  return `Legado IMAGE [${packageIdentity}] ${displayName}`;
+}
 
 export interface LegadoMangaVirtualSource {
   pkg: string;
@@ -144,6 +162,8 @@ interface LegadoImageResolvedRequest {
 export class LegadoMangaSourceBridge {
   private static instance: LegadoMangaSourceBridge | null = null;
   private dataManager: DataManager = DataManager.getInstance();
+  private sourceManager: NovelSourceManager = getNovelSourceManager();
+  private virtualSourceSyncTasks: Map<string, Promise<void>> = new Map<string, Promise<void>>();
 
   private constructor() {}
 
@@ -164,13 +184,15 @@ export class LegadoMangaSourceBridge {
     }
 
     const pkg = await this.buildVirtualPkg(source.bookSourceUrl);
-    const config = this.buildVirtualConfig(pkg, source);
-    const jsonContent = JSON.stringify(config);
-    await this.dataManager.importSourceFromJSON(jsonContent);
+    await this.synchronizeVirtualComicSource(pkg, source);
 
     const sourceRecord = await this.dataManager.getComicSourceByPkg(pkg);
     if (!sourceRecord) {
       logger.warn(TAG, `虚拟漫画图源创建后未找到记录: pkg=${pkg}`);
+      return null;
+    }
+    if (!this.validateVirtualComicSourceIdentity(sourceRecord, pkg, source)) {
+      logger.error(TAG, `IMAGE 虚拟图源身份校验失败，拒绝使用导入记录: pkg=${pkg}`);
       return null;
     }
 
@@ -187,6 +209,32 @@ export class LegadoMangaSourceBridge {
     return result;
   }
 
+  /**
+   * Import and page-opening paths can ask for the same virtual source at the
+   * same time. Serialize per package so the check-then-insert import API never
+   * races itself on the database's unique constraints.
+   */
+  private async synchronizeVirtualComicSource(pkg: string, source: LegadoBookSource): Promise<void> {
+    const previousTask = this.virtualSourceSyncTasks.get(pkg);
+    const task: Promise<void> = previousTask === undefined
+      ? this.persistVirtualComicSource(pkg, source)
+      : previousTask.then(() => this.persistVirtualComicSource(pkg, source));
+    this.virtualSourceSyncTasks.set(pkg, task);
+    try {
+      await task;
+    } finally {
+      if (this.virtualSourceSyncTasks.get(pkg) === task) {
+        this.virtualSourceSyncTasks.delete(pkg);
+      }
+    }
+  }
+
+  private async persistVirtualComicSource(pkg: string, source: LegadoBookSource): Promise<void> {
+    const config = this.buildVirtualConfig(pkg, source);
+    const jsonContent = JSON.stringify(config);
+    await this.dataManager.importSourceFromJSON(jsonContent);
+  }
+
   async disableVirtualComicSource(source: LegadoBookSource): Promise<void> {
     if (source.bookSourceType !== LegadoBookSourceType.IMAGE) {
       return;
@@ -201,6 +249,43 @@ export class LegadoMangaSourceBridge {
     }
     const record = await this.dataManager.getComicSourceById(sourceId);
     return this.isLegadoMangaRecord(record);
+  }
+
+  /**
+   * Resolves the lossless V2 document identity for IMAGE transport evidence.
+   * The raw document and source URL remain inside the compatibility store.
+   */
+  async getRawSourceDocumentSha256(sourceId: number): Promise<string> {
+    if (sourceId <= 0) {
+      return '';
+    }
+    try {
+      const source: LegadoBookSource | null = await this.resolveLegadoSourceByComicSourceId(sourceId);
+      if (source === null) {
+        return '';
+      }
+      const record = await getNovelDataManager().getCompatibilityRecord(source.bookSourceUrl);
+      if (record === null || record.rawSha256.length <= 0) {
+        return '';
+      }
+      return record.rawSha256.toUpperCase();
+    } catch (error) {
+      logger.warn(TAG, `读取 IMAGE V2 原始文档身份失败: sourceId=${sourceId}, error=${String(error)}`);
+      return '';
+    }
+  }
+
+  /**
+   * A legacy-created comic cache is not V2 workflow evidence. During a full
+   * V2 cutover, detail navigation must execute the live IMAGE bridge rather
+   * than silently rendering that stale record.
+   */
+  async shouldForceNetworkDetail(sourceId: number): Promise<boolean> {
+    const source = await this.resolveLegadoSourceByComicSourceId(sourceId);
+    if (source === null) {
+      return false;
+    }
+    return this.isV2LegacyFallbackBlocked(source.bookSourceUrl);
   }
 
   isLegadoMangaRecord(record: ComicSourceDatabaseRecord | null): boolean {
@@ -221,18 +306,34 @@ export class LegadoMangaSourceBridge {
     cachedTitle?: string,
     cachedCover?: string
   ): Promise<LegadoMangaDetailResult | null> {
+    logger.warn(
+      TAG,
+      `IMAGE_V2_DETAIL_ENTER sourceId=${sourceId};bookUrlLength=${bookUrl.length};` +
+      `cachedTitle=${(cachedTitle || '').length > 0};cachedCover=${(cachedCover || '').length > 0}`
+    );
     const source = await this.resolveLegadoSourceByComicSourceId(sourceId);
     if (!source) {
+      logger.warn(TAG, `IMAGE_V2_DETAIL_SOURCE_MISSING sourceId=${sourceId}`);
       return null;
     }
 
-    const executor = new NovelSourceExecutor(source);
-    let book = await this.getBookInfoWithExecutor(executor, bookUrl);
+    let book = await this.getBookInfo(source, bookUrl);
+    logger.warn(
+      TAG,
+      `IMAGE_V2_DETAIL_BOOK_INFO sourceId=${sourceId};present=${book !== null};` +
+      `nameLength=${book ? book.name.length : 0};authorLength=${book ? book.author.length : 0};` +
+      `tocUrlLength=${book && book.tocUrl ? book.tocUrl.length : 0}`
+    );
     if (!book) {
+      if (this.isV2LegacyFallbackBlocked(source.bookSourceUrl)) {
+        logger.warn(TAG, `V2 详情工作流失败，拒绝 IMAGE 桥接 fallback: source=${source.bookSourceUrl}`);
+        return null;
+      }
       book = this.buildFallbackBook(source, bookUrl, cachedTitle, cachedCover);
     }
 
-    const chapters = await this.getChapterListWithExecutor(executor, book);
+    const chapters = await this.getChapterList(source, book);
+    logger.warn(TAG, `IMAGE_V2_DETAIL_TOC sourceId=${sourceId};chapterCount=${chapters.length}`);
     const sourceRecord = await this.dataManager.getComicSourceById(sourceId);
     const sourcePkg = sourceRecord && sourceRecord.pkg ? String(sourceRecord.pkg) : await this.buildVirtualPkg(source.bookSourceUrl);
     const mangaChapters = this.convertChapters(book.bookUrl, chapters);
@@ -256,9 +357,8 @@ export class LegadoMangaSourceBridge {
     if (!source) {
       return [];
     }
-    const executor = new NovelSourceExecutor(source);
-    const books = await executor.search(keyword, page);
-    return this.convertSearchBooksToComicInfo(books);
+    const books = await this.sourceManager.search(source.bookSourceUrl, keyword, page);
+    return this.convertNovelSearchResultsToComicInfo(books);
   }
 
   async exploreDefault(sourceId: number, page: number = 1): Promise<ComicInfo[]> {
@@ -269,13 +369,12 @@ export class LegadoMangaSourceBridge {
     if (!source.exploreUrl || source.exploreUrl.trim().length <= 0) {
       return [];
     }
-    const executor = new NovelSourceExecutor(source);
-    const kinds = await executor.getExploreKindsAsync();
+    const kinds = await this.sourceManager.getExploreKindsAsync(source.bookSourceUrl);
     if (kinds.length <= 0 || kinds[0].url.trim().length <= 0) {
       return [];
     }
-    const books = await executor.explore(kinds[0].url, page);
-    return this.convertSearchBooksToComicInfo(books);
+    const books = await this.sourceManager.explore(source.bookSourceUrl, kinds[0].url, page);
+    return this.convertNovelSearchResultsToComicInfo(books);
   }
 
   async loadPageList(
@@ -289,15 +388,14 @@ export class LegadoMangaSourceBridge {
       logger.warn(TAG, `无法解析Legado漫画虚拟图源: sourceId=${sourceId}`);
       return null;
     }
-    const executor = new NovelSourceExecutor(source);
-    const chapter = await this.resolveChapterWithExecutor(executor, source, mangaExternalId, chapterExternalId);
+    const chapter = await this.resolveChapter(source, mangaExternalId, chapterExternalId);
     if (!chapter) {
       logger.warn(TAG, `无法定位Legado漫画章节: sourceId=${sourceId}, manga=${mangaExternalId}, chapter=${chapterExternalId}`);
       return null;
     }
     logger.info(TAG, `Legado漫画章节定位成功: source=${source.bookSourceName}, chapterTitle=${chapter.title}, chapterUrl=${chapter.url}`);
 
-    const content = await this.getContentWithExecutor(executor, chapter);
+    const content = await this.getContent(source, chapter);
     const images: LegadoMangaExtractedImage[] =
       LegadoMangaImageExtractor.extractImages(content, chapter.url || mangaExternalId);
     logger.info(TAG, `Legado漫画正文解析完成: contentLength=${content.length}, images=${images.length}, chapterUrl=${chapter.url || mangaExternalId}`);
@@ -355,7 +453,7 @@ export class LegadoMangaSourceBridge {
   private buildVirtualConfig(pkg: string, source: LegadoBookSource): LegadoVirtualConfig {
     const metadata: LegadoVirtualMetadata = {
       id: pkg,
-      name: source.bookSourceName,
+      name: buildLegadoImageVirtualSourceRecordName(source.bookSourceName, pkg),
       baseUrl: this.resolveBaseUrl(source.bookSourceUrl),
       version: String(source.lastUpdateTime || Date.now()),
       description: source.bookSourceComment || 'Legado IMAGE bridge source',
@@ -401,6 +499,10 @@ export class LegadoMangaSourceBridge {
     if (!this.isLegadoMangaRecord(record)) {
       return null;
     }
+    if (!record || !record.pkg || record.pkg.trim().length <= 0) {
+      logger.warn(TAG, `IMAGE 虚拟图源记录缺少稳定包名: sourceId=${sourceId}`);
+      return null;
+    }
     const bookSourceUrl = this.extractBookSourceUrl(record);
     if (!bookSourceUrl) {
       return null;
@@ -409,7 +511,51 @@ export class LegadoMangaSourceBridge {
     if (!source || source.bookSourceType !== LegadoBookSourceType.IMAGE) {
       return null;
     }
+    if (!this.validateVirtualComicSourceIdentity(record, record.pkg, source)) {
+      logger.error(TAG, `IMAGE 虚拟图源身份不一致，拒绝数字 ID 解析: sourceId=${sourceId}`);
+      return null;
+    }
     return source;
+  }
+
+  /**
+   * A numeric comic_source.id is only an address. The package and the
+   * serialized Legado metadata are the identity contract that prevents a
+   * neighboring IMAGE source from being selected after stale cache reuse.
+   */
+  private validateVirtualComicSourceIdentity(
+    record: ComicSourceDatabaseRecord | null,
+    expectedPkg: string,
+    expectedSource: LegadoBookSource
+  ): boolean {
+    if (!record || !record.pkg || record.pkg !== expectedPkg) {
+      return false;
+    }
+    if (!this.isLegadoMangaRecord(record)) {
+      return false;
+    }
+    const config: LegadoVirtualConfig = SafeUtils.parseObj<LegadoVirtualConfig>(record.configJson);
+    const metadata: LegadoVirtualMetadata | null = config ? config.metadata : null;
+    const workflows: LegadoVirtualWorkflows | null = config ? config.workflows : null;
+    if (!metadata || !workflows) {
+      return false;
+    }
+    if (record.pkg !== expectedPkg || metadata.id !== expectedPkg) {
+      return false;
+    }
+    if (metadata.bookSourceUrl !== expectedSource.bookSourceUrl) {
+      return false;
+    }
+    if (metadata.bookSourceType !== LegadoBookSourceType.IMAGE) {
+      return false;
+    }
+    if (metadata.adapter !== LEGADO_MANGA_ADAPTER || workflows.adapter !== LEGADO_MANGA_ADAPTER) {
+      return false;
+    }
+    if (record.type !== undefined && record.type !== 'manga' && record.type !== 'image') {
+      return false;
+    }
+    return true;
   }
 
   private extractBookSourceUrl(record: ComicSourceDatabaseRecord | null): string {
@@ -627,19 +773,17 @@ export class LegadoMangaSourceBridge {
     mangaExternalId: string,
     chapterExternalId: string
   ): Promise<LegadoChapter | null> {
-    const executor = new NovelSourceExecutor(source);
-    return await this.resolveChapterWithExecutor(executor, source, mangaExternalId, chapterExternalId);
-  }
-
-  private async resolveChapterWithExecutor(
-    executor: NovelSourceExecutor,
-    source: LegadoBookSource,
-    mangaExternalId: string,
-    chapterExternalId: string
-  ): Promise<LegadoChapter | null> {
-    const book = await this.getBookInfoWithExecutor(executor, mangaExternalId);
+    const book = await this.getBookInfo(source, mangaExternalId);
+    if (!book && this.isV2LegacyFallbackBlocked(source.bookSourceUrl)) {
+      logger.warn(TAG, `V2 详情工作流失败，拒绝 IMAGE 章节解析 fallback: source=${source.bookSourceUrl}`);
+      return null;
+    }
     const actualBook = book || this.buildFallbackBook(source, mangaExternalId);
-    const chapters = await this.getChapterListWithExecutor(executor, actualBook);
+    const chapters = await this.getChapterList(source, actualBook);
+    if (chapters.length <= 0 && this.isV2LegacyFallbackBlocked(source.bookSourceUrl)) {
+      logger.warn(TAG, `V2 目录工作流失败，拒绝 IMAGE 缓存章节 fallback: source=${source.bookSourceUrl}`);
+      return null;
+    }
     for (let i = 0; i < chapters.length; i++) {
       const chapter = chapters[i];
       const externalId = this.buildChapterExternalId(mangaExternalId, chapter, i);
@@ -680,35 +824,39 @@ export class LegadoMangaSourceBridge {
   }
 
   private async getBookInfo(source: LegadoBookSource, bookUrl: string): Promise<LegadoBook | null> {
-    const executor = new NovelSourceExecutor(source);
-    return await this.getBookInfoWithExecutor(executor, bookUrl);
+    return await this.sourceManager.getBookInfo(source.bookSourceUrl, bookUrl);
+  }
+
+  /** Keep IMAGE bridge fallback semantics inside the central V2 policy boundary. */
+  private isV2LegacyFallbackBlocked(sourceId: string): boolean {
+    return this.sourceManager.shouldBlockLegacyFallback(sourceId);
   }
 
   private async getChapterList(source: LegadoBookSource, book: LegadoBook): Promise<LegadoChapter[]> {
-    const executor = new NovelSourceExecutor(source);
-    return await this.getChapterListWithExecutor(executor, book);
+    const chapters = await this.sourceManager.getChapterList(source.bookSourceUrl, book);
+    return await this.normalizeImageBookChapters(source, book, chapters);
+  }
+
+  private async getContentResult(
+    source: LegadoBookSource,
+    chapter: LegadoChapter
+  ): Promise<LegadoWorkflowContentResult> {
+    return await this.sourceManager.getContentWithResult(source.bookSourceUrl, chapter);
   }
 
   private async getContent(source: LegadoBookSource, chapter: LegadoChapter): Promise<string> {
-    const executor = new NovelSourceExecutor(source);
-    return await this.getContentWithExecutor(executor, chapter);
-  }
-
-  private async getBookInfoWithExecutor(executor: NovelSourceExecutor, bookUrl: string): Promise<LegadoBook | null> {
-    return await executor.getBookInfo(bookUrl);
-  }
-
-  private async getChapterListWithExecutor(executor: NovelSourceExecutor, book: LegadoBook): Promise<LegadoChapter[]> {
-    const chapters = await executor.getChapterList(book);
-    return await this.normalizeImageBookChapters(executor, book, chapters);
-  }
-
-  private async getContentWithExecutor(executor: NovelSourceExecutor, chapter: LegadoChapter): Promise<string> {
-    return await executor.getContent(chapter);
+    const result = await this.getContentResult(source, chapter);
+    if (!result.handoff.isReady() || result.handoff.kind !== LegadoWorkflowOutputKind.IMAGE) {
+      throw new Error(
+        `V2_OUTPUT_HANDOFF_BLOCKED;workflow=image;kind=${result.handoff.kind};` +
+        `status=${result.handoff.status};reason=${result.handoff.reasonCode}`
+      );
+    }
+    return result.handoff.imageContent;
   }
 
   private async normalizeImageBookChapters(
-    executor: NovelSourceExecutor,
+    source: LegadoBookSource,
     book: LegadoBook,
     chapters: LegadoChapter[]
   ): Promise<LegadoChapter[]> {
@@ -716,7 +864,7 @@ export class LegadoMangaSourceBridge {
       return chapters;
     }
     const singleChapter = this.buildSingleImageBookChapter(book);
-    const content = await this.getContentWithExecutor(executor, singleChapter);
+    const content = await this.getContent(source, singleChapter);
     const images = LegadoMangaImageExtractor.extractImages(content, singleChapter.url || book.bookUrl);
     if (images.length <= 0) {
       return chapters;
@@ -775,6 +923,8 @@ export class LegadoMangaSourceBridge {
       id: `${book.bookUrl}#full`,
       bookUrl: book.bookUrl,
       url: chapterUrl,
+      requestUrlTemplate: book.tocRequestUrlTemplate || book.requestUrlTemplate || chapterUrl,
+      requestCarrier: book.tocRequestCarrier || book.requestCarrier,
       title: title,
       index: 0,
       updateTime: book.updateTime || Date.now()
@@ -844,7 +994,7 @@ export class LegadoMangaSourceBridge {
     return result.toLowerCase();
   }
 
-  private convertSearchBooksToComicInfo(books: LegadoSearchBook[]): ComicInfo[] {
+  private convertNovelSearchResultsToComicInfo(books: NovelSearchResult[]): ComicInfo[] {
     const result: ComicInfo[] = [];
     for (let i = 0; i < books.length; i++) {
       const book = books[i];

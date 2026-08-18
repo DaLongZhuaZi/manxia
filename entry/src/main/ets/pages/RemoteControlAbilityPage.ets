@@ -1,4 +1,5 @@
 import { common } from '@kit.AbilityKit';
+import { FrameCallback, UIContext } from '@kit.ArkUI';
 import { logger } from '../Utils/Logger';
 import { RemoteControlPage } from './RemoteControlPage';
 import {
@@ -14,6 +15,27 @@ import { ContinuationTriggeredPayload } from '../Framework/EventBus';
 const TAG: string = 'RemoteControlAbilityPage';
 let remoteControlAbilityPageStorage: LocalStorage = new LocalStorage();
 
+class RemoteControlNavigationFrameCallback extends FrameCallback {
+  private callback: () => void;
+  private hasRun: boolean = false;
+
+  constructor(callback: () => void) {
+    super();
+    this.callback = callback;
+  }
+
+  onFrame(_frameTimeInNano: number): void {
+  }
+
+  onIdle(_timeLeftInNano: number): void {
+    if (this.hasRun) {
+      return;
+    }
+    this.hasRun = true;
+    this.callback();
+  }
+}
+
 @Entry(remoteControlAbilityPageStorage)
 @Component
 struct RemoteControlAbilityPage {
@@ -22,15 +44,16 @@ struct RemoteControlAbilityPage {
   @LocalStorageProp(REMOTE_CONTROL_ABILITY_INSTANCE_ID_KEY) private remoteInstanceId: string = '';
   @StorageProp(REMOTE_CONTROL_ABILITY_REFRESH_TRIGGER_KEY) @Watch('onRefreshTriggerChanged') private refreshTrigger: number = 0;
   private hasOpenedRemoteControl: boolean = false;
+  private hasScheduledInitialRemoteControlOpen: boolean = false;
+  private navigationScheduleGeneration: number = 0;
+  private isPageActive: boolean = false;
+  private scheduledFrameCallback: RemoteControlNavigationFrameCallback | null = null;
   private lastRefreshTrigger: number = 0;
 
   aboutToAppear(): void {
+    this.isPageActive = true;
     this.resolveRemoteControlLaunchPayload('appear');
-    this.openInitialRemoteControl();
-    setTimeout((): void => {
-      this.resolveRemoteControlLaunchPayload('deferred');
-      this.openInitialRemoteControl();
-    }, 0);
+    this.scheduleInitialRemoteControlOpen();
   }
 
   onRefreshTriggerChanged(_changedPropertyName?: string): void {
@@ -38,7 +61,16 @@ struct RemoteControlAbilityPage {
   }
 
   onPageShow(): void {
+    this.isPageActive = true;
     this.handleRefreshTrigger('page_show');
+    this.scheduleInitialRemoteControlOpen();
+  }
+
+  aboutToDisappear(): void {
+    this.isPageActive = false;
+    this.navigationScheduleGeneration += 1;
+    this.hasScheduledInitialRemoteControlOpen = false;
+    this.scheduledFrameCallback = null;
   }
 
   private handleRefreshTrigger(source: string): void {
@@ -52,6 +84,38 @@ struct RemoteControlAbilityPage {
     }
     this.resolveRemoteControlLaunchPayload(source, true);
     this.replaceRemoteControlParams(source);
+  }
+
+  private scheduleInitialRemoteControlOpen(): void {
+    if (!this.isPageActive ||
+      this.hasOpenedRemoteControl ||
+      this.hasScheduledInitialRemoteControlOpen) {
+      return;
+    }
+    try {
+      const uiContext: UIContext = this.getUIContext();
+      const scheduleGeneration: number = this.navigationScheduleGeneration + 1;
+      this.navigationScheduleGeneration = scheduleGeneration;
+      this.hasScheduledInitialRemoteControlOpen = true;
+      const frameCallback = new RemoteControlNavigationFrameCallback((): void => {
+        if (scheduleGeneration !== this.navigationScheduleGeneration) {
+          return;
+        }
+        this.scheduledFrameCallback = null;
+        this.hasScheduledInitialRemoteControlOpen = false;
+        if (!this.isPageActive || this.hasOpenedRemoteControl) {
+          return;
+        }
+        this.resolveRemoteControlLaunchPayload('frame_idle');
+        this.openInitialRemoteControl();
+      });
+      this.scheduledFrameCallback = frameCallback;
+      uiContext.postFrameCallback(frameCallback);
+    } catch (error) {
+      this.scheduledFrameCallback = null;
+      this.hasScheduledInitialRemoteControlOpen = false;
+      logger.warn(TAG, `调度独立遥控器初始路由失败: ${String(error)}`);
+    }
   }
 
   private resolveRemoteControlLaunchPayload(source: string, allowReplace: boolean = false): void {
@@ -96,24 +160,30 @@ struct RemoteControlAbilityPage {
     }
   }
 
-  private openInitialRemoteControl(): void {
+  private openInitialRemoteControl(): boolean {
     if (this.hasOpenedRemoteControl) {
-      return;
+      return true;
     }
 
     if (!this.remoteParams) {
       logger.error(TAG, `独立遥控器参数为空: instanceId=${this.remoteInstanceId}`);
-      return;
+      return false;
     }
 
-    this.hasOpenedRemoteControl = true;
-    logger.info(TAG, `打开独立遥控器目标页: instanceId=${this.remoteInstanceId}, sessionId=${this.remoteParams.sessionId}`);
-    this.pathStack.pushPathByName('RemoteControlPage', this.remoteParams);
+    try {
+      logger.info(TAG, `打开独立遥控器目标页: instanceId=${this.remoteInstanceId}, sessionId=${this.remoteParams.sessionId}`);
+      this.pathStack.pushPathByName('RemoteControlPage', this.remoteParams, false);
+      this.hasOpenedRemoteControl = true;
+      return true;
+    } catch (error) {
+      logger.error(TAG, `打开独立遥控器目标页失败: instanceId=${this.remoteInstanceId}, error=${String(error)}`);
+      return false;
+    }
   }
 
   private replaceRemoteControlParams(source: string): void {
     if (!this.hasOpenedRemoteControl) {
-      this.openInitialRemoteControl();
+      this.scheduleInitialRemoteControlOpen();
       return;
     }
     if (!this.remoteParams) {

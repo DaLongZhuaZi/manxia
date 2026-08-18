@@ -61,6 +61,26 @@
       "value": "#424242"
     },
     {
+      "name": "reader_text_primary",
+      "value": "#FFFFFF"
+    },
+    {
+      "name": "reader_text_secondary",
+      "value": "#CCFFFFFF"
+    },
+    {
+      "name": "reader_overlay_background",
+      "value": "#B3000000"
+    },
+    {
+      "name": "reader_divider",
+      "value": "#66FFFFFF"
+    },
+    {
+      "name": "reader_progress_track",
+      "value": "#40FFFFFF"
+    },
+    {
       "name": "game_ui_background",
       "value": "#0D1117"
     },

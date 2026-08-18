@@ -143,6 +143,16 @@
             "uris": [
               {
                 "scheme": "manxia",
+                "host": "turnstile",
+                "path": ""
+              },
+              {
+                "scheme": "manxia",
+                "host": "turnstile",
+                "pathRegex": ".*"
+              },
+              {
+                "scheme": "manxia",
                 "host": "open",
                 "path": ""
               },
@@ -243,6 +253,7 @@
         "launchType": "multiton",
         "removeMissionAfterTerminate": true,
         "exported": false,
+        "continuable": true,
         "orientation": "auto_rotation"
       },
       {
@@ -257,6 +268,7 @@
         "launchType": "multiton",
         "removeMissionAfterTerminate": true,
         "exported": false,
+        "continuable": true,
         "orientation": "auto_rotation"
       },
       {
@@ -271,6 +283,7 @@
         "launchType": "multiton",
         "removeMissionAfterTerminate": true,
         "exported": false,
+        "continuable": true,
         "orientation": "auto_rotation"
       },
       {
@@ -285,6 +298,7 @@
         "launchType": "singleton",
         "removeMissionAfterTerminate": true,
         "exported": false,
+        "continuable": true,
         "orientation": "auto_rotation",
         "backgroundModes": ["audioPlayback"]
       },
@@ -340,6 +354,20 @@
         "startWindowIcon": "$media:start_window_transparent",
         "startWindowBackground": "$color:transport",
         "launchType": "multiton",
+        "removeMissionAfterTerminate": true,
+        "exported": false,
+        "orientation": "auto_rotation"
+      },
+      {
+        "name": "LegadoArkWebConformanceAbility",
+        "srcEntry": "./ets/LegadoArkWebConformanceAbility.ets",
+        "description": "$string:EntryAbility_desc",
+        "icon": "$media:layered_image",
+        "label": "$string:EntryAbility_label",
+        "startWindow": "$profile:start_window_hidden",
+        "startWindowIcon": "$media:start_window_transparent",
+        "startWindowBackground": "$color:transport",
+        "launchType": "singleton",
         "removeMissionAfterTerminate": true,
         "exported": false,
         "orientation": "auto_rotation"

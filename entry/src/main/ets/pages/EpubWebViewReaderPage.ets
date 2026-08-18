@@ -13,6 +13,8 @@ import { ReaderOrientationLockHelper } from '../Utils/ReaderOrientationLockHelpe
 import { ReaderSafeAreaUtils } from '../Utils/ReaderSafeAreaUtils';
 import { ThemeManager } from '../Framework/Managers/ThemeManager';
 import { getFontManager, FontScene } from '../Framework/Managers/FontManager';
+import { distributedReadingService } from '../Framework/Distributed/DistributedReadingService';
+import { distributedDataSyncManager, SyncReadingState } from '../Framework/Distributed/DistributedDataSyncManager';
 import { EBookDataManager } from '../Framework/Data/EBookDataManager';
 import { EBookParserFactory, resolveEpubPackageDocumentPathFromRoot } from '../Framework/Parsers/EBookParser';
 import { convertMobiToExtractedDir } from '../Framework/Parsers/MobiParser';
@@ -236,6 +238,10 @@ export struct EpubWebViewReaderPage {
   private autoPageTurnTimer: number = -1;
   private timeUpdateTimer: number = -1;
   private lastProgressSaveTime: number = 0;
+  private lastRemoteInstructionTimestamp: number = 0;
+  private remoteCallbacksRegistered: boolean = false;
+  private pendingContinuationSpineIndex: number = -1;
+  private pendingContinuationPageIndex: number = -1;
   private sessionStartTimestamp: number = 0;
   private themeManager: ThemeManager = ThemeManager.getInstance();
   private settingsManager: SettingsManager = SettingsManager.getInstance();
@@ -299,6 +305,23 @@ export struct EpubWebViewReaderPage {
 
   aboutToAppear(): void {
     this.isPageVisible = true;
+    // [修复] WebView EPUB 阅读器接入跨端接续状态机：前台标志 + 接续快照 + 遥控监听
+    AppStorage.setOrCreate('currentReaderHostPage', 'EpubWebViewReaderPage');
+    const continuationSessionId = AppStorage.get<string>('continuationSessionId');
+    if (continuationSessionId && continuationSessionId.length > 0) {
+      const snapshot = distributedReadingService.readContinuationSnapshot();
+      if (snapshot) {
+        if (snapshot.chapterIndex >= 0) {
+          this.pendingContinuationSpineIndex = snapshot.chapterIndex;
+        }
+        if (snapshot.pageIndex >= 0) {
+          this.pendingContinuationPageIndex = snapshot.pageIndex;
+        }
+        logger.info(TAG, `[Distributed] WebView EPUB 接续快照待应用: chapterIndex=${snapshot.chapterIndex}, pageIndex=${snapshot.pageIndex}`);
+      }
+      this.registerRemoteControlListener();
+      distributedReadingService.clearContinuationFlags();
+    }
     this.themeManager = ThemeManager.getInstance();
     this.settingsManager = SettingsManager.getInstance();
     eventBus.subscribe(GameEvent.READ_ALOUD_STATE_CHANGED, this.onReadAloudStateChanged);
@@ -315,6 +338,8 @@ export struct EpubWebViewReaderPage {
 
   aboutToDisappear(): void {
     this.isPageVisible = false;
+    AppStorage.setOrCreate('currentReaderHostPage', '');
+    this.unregisterRemoteControlListener();
     this.stopReadAloudUiSyncTimer();
     eventBus.unsubscribe(GameEvent.READ_ALOUD_STATE_CHANGED, this.onReadAloudStateChanged);
     this.clearToolbarTimer();
@@ -571,6 +596,24 @@ export struct EpubWebViewReaderPage {
       this.currentSpineIndex = normalizedSpineIndex;
       this.currentPageWithinSpine = restoredPageOffset;
       this.currentAnchorFragment = '';
+      // [修复] 跨端接续：用源端 wantParam 快照覆盖本地进度（spine + 页内页码）
+      if (this.pendingContinuationSpineIndex >= 0) {
+        const continuationSpine = this.isReadableSpineIndex(this.pendingContinuationSpineIndex)
+          ? this.pendingContinuationSpineIndex
+          : normalizedSpineIndex;
+        this.currentSpineIndex = continuationSpine;
+        this.pendingContinuationSpineIndex = -1;
+        logger.info(TAG, `[Distributed] 已应用 WebView EPUB 接续章节: spine=${continuationSpine}`);
+      }
+      if (this.pendingContinuationPageIndex >= 0) {
+        this.currentPageWithinSpine = Math.max(0, this.pendingContinuationPageIndex);
+        this.pendingContinuationPageIndex = -1;
+        logger.info(TAG, `[Distributed] 已应用 WebView EPUB 接续页码: page=${this.currentPageWithinSpine}`);
+      }
+      // [修复] 加载完成立即同步一次阅读状态：打开书籍后未翻页就触发接续时，
+      // onContinue 守卫依赖 currentRead*（此前该状态只随进度保存更新，会误判拒绝流转）
+      distributedReadingService.syncProgress(ebook.id, this.currentSpineIndex, this.currentPageWithinSpine, 0, 'ebook');
+      logger.info(TAG, `阅读状态已就绪: bookId=${ebook.id}, spine=${this.currentSpineIndex}, page=${this.currentPageWithinSpine}`);
 
       this.isLoading = false;
       void this.refreshCurrentSpineHighlightRanges('ebook_loaded');
@@ -3636,6 +3679,72 @@ export struct EpubWebViewReaderPage {
     return false;
   }
 
+  /**
+   * [修复] WebView EPUB 被控端遥控指令监听（与文本阅读器一致）：
+   * 翻页/章节切换/朗读开关，执行后回 ack。
+   */
+  private onRemoteDataChanged = (state: SyncReadingState) => {
+    if (!state.instructionType || state.instructionType === 'none' || state.instructionType === 'ack') {
+      return;
+    }
+    if (state.timestamp <= this.lastRemoteInstructionTimestamp) {
+      return;
+    }
+    this.lastRemoteInstructionTimestamp = state.timestamp;
+    logger.info(TAG, `[RemoteControl] 收到 WebView EPUB 遥控指令: ${state.instructionType}`);
+    switch (state.instructionType) {
+      case 'cmd:next_page':
+        this.flipPage(true, 'remote_next_page');
+        break;
+      case 'cmd:prev_page':
+        this.flipPage(false, 'remote_prev_page');
+        break;
+      case 'cmd:next_chapter':
+        this.onSpineChangeRequested('next', 'remote_next_chapter');
+        break;
+      case 'cmd:prev_chapter':
+        this.onSpineChangeRequested('prev', 'remote_prev_chapter');
+        break;
+      case 'cmd:toggle_auto_read':
+        this.toggleReadAloudFromToolbar();
+        break;
+      default:
+        logger.warn(TAG, `[RemoteControl] 未知 WebView EPUB 指令: ${state.instructionType}`);
+        break;
+    }
+    distributedDataSyncManager.sendInstruction('ack', '');
+  };
+
+  private onRemoteStatusChanged = (status: 'online' | 'offline' | 'restored' | 'error', message?: string) => {
+    if (status === 'offline') {
+      logger.info(TAG, '[RemoteControl] 遥控器已断开');
+      if (this.remoteCallbacksRegistered) {
+        this.getUIContext().getPromptAction().showToast({ message: '遥控器已断开' });
+      }
+    }
+  };
+
+  private registerRemoteControlListener(): void {
+    if (this.remoteCallbacksRegistered) {
+      return;
+    }
+    logger.info(TAG, '[RemoteControl] WebView EPUB 被控端已注册遥控器指令监听');
+    this.remoteCallbacksRegistered = true;
+    this.getUIContext().getPromptAction().showToast({ message: '遥控已连接' });
+    distributedDataSyncManager.addOnDataChangedCallback(this.onRemoteDataChanged);
+    distributedDataSyncManager.addOnStatusChangedCallback(this.onRemoteStatusChanged);
+    distributedDataSyncManager.diagnoseSession('WebView EPUB 被控端注册');
+  }
+
+  private unregisterRemoteControlListener(): void {
+    if (!this.remoteCallbacksRegistered) {
+      return;
+    }
+    this.remoteCallbacksRegistered = false;
+    distributedDataSyncManager.removeOnDataChangedCallback(this.onRemoteDataChanged);
+    distributedDataSyncManager.removeOnStatusChangedCallback(this.onRemoteStatusChanged);
+  }
+
   private loadSpineItem(
     spineIndex: number,
     pageOffset: number,
@@ -4089,6 +4198,9 @@ export struct EpubWebViewReaderPage {
     try {
       await this.ebookDataManager.saveReadingProgress(progress);
       ebook.readingProgress = progress;
+      // [修复] 同步跨端接续阅读状态（currentRead* + 独立通道推送），
+      // WebView EPUB 阅读器此前缺失该调用，导致 onContinue 打包旧书状态被拒绝
+      distributedReadingService.syncProgress(ebook.id, progress.currentChapterIndex, progress.currentPosition, 0, 'ebook');
       this.lastProgressSaveTime = now;
       this.sessionStartTimestamp = now;
       logger.debug(

@@ -1,4 +1,4 @@
-﻿import { SafeUtils } from '../../Utils/SafeUtils';
+import { SafeUtils } from '../../Utils/SafeUtils';
 /**
  * Legado JavaScript执行引擎
  * 优先使用Native JSVM引擎执行书源中的JavaScript代码
@@ -15,6 +15,8 @@ import { NativeJsEngine, JsContext as NativeJsContext, JsResult } from './Native
 import { getCookieStore } from './LegadoCookieStore';
 import { getLegadoRuntimeV2 } from './LegadoRuntimeV2';
 import type { LegadoBookSource } from './LegadoSourceTypes';
+import type { LegadoBridgeTrace } from './LegadoCompatibilityTypes';
+import { buildJsoupEntityCompatibilityScript } from '../../libs/htmlparser';
 
 const TAG = 'LegadoJsEngine';
 
@@ -42,6 +44,11 @@ export interface JsExecuteResult {
   success: boolean;
   result: string;
   error?: string;
+  /**
+   * Evidence-safe structural information about a failed runtime evaluation.
+   * The value must never contain source text, URLs, cookies or response data.
+   */
+  diagnostic?: string;
   /** JS执行后回传的自定义变量快照 */
   variables?: Record<string, string>;
   /** source.putLoginInfo/putLoginHeader/setVariable/put 的副作用快照 */
@@ -52,6 +59,8 @@ export interface JsExecuteResult {
   logs?: string[];
   /** Cookie变化列表，需要同步到持久化存储 */
   cookieChanges?: CookieChange[];
+  /** Nested java.ajax/connect/post/head bridge evidence for trace diagnosis. */
+  bridgeTraces?: LegadoBridgeTrace[];
 }
 
 export interface LegadoJsSourceDataChange {
@@ -536,6 +545,23 @@ export class LegadoJsEngine {
         return true;
       }
     }
+
+    // Legado sources may defer the actual network call to an evaluated field,
+    // most commonly `eval(String(source.bookSourceComment))` where the
+    // comment contains `java.ajax(...)`.  Static scanning cannot see through
+    // that indirection. Route dynamic evaluation to ArkWeb conservatively so
+    // the evaluated code gets the same DOM and request bridge as its caller,
+    // instead of failing inside the headless Native JSVM.
+    const dynamicNetworkPatterns = [
+      'eval(',
+      'Function(',
+      'source.bookSourceComment'
+    ];
+    for (const pattern of dynamicNetworkPatterns) {
+      if (code.includes(pattern)) {
+        return true;
+      }
+    }
     
     // java.get 需要特殊处理：
     // - java.get("entityType") / java.get("n") 等字符串字面量变量读取，不需要网络
@@ -613,14 +639,12 @@ export class LegadoJsEngine {
         // 构建完整的执行脚本（包含辅助函数和上下文）
         const fullScript = this.buildNativeScript(code, context);
         
-        const nativeContext: NativeJsContext = {
-          result: context.result,
-          baseUrl: context.baseUrl,
-          key: context.key,
-          page: context.page,
-          sourceUrl: context.variables?.['sourceUrl'] || context.baseUrl,
-          variables: context.variables
-        };
+        // buildNativeScript() owns a complete IIFE-local context. Passing it
+        // through NativeJsEngine.setContext as well writes source variables to
+        // the long-lived JSVM global object, allowing one workflow to affect a
+        // later rule. Keep the generic NativeJsEngine context API intact for
+        // tooling, but execute V2's self-contained bridge without globals.
+        const nativeContext: NativeJsContext = {};
         
         const result = await this.nativeEngine.execute(fullScript, nativeContext);
         if (result.success) {
@@ -1565,20 +1589,392 @@ export class LegadoJsEngine {
   }
 
   /**
+   * Emits one Jsoup 1.16.2-compatible text projector for every generated
+   * JSVM prelude. The legacy prelude contains three independently evolved
+   * HTML shims; applying the contract here prevents their terminal-rule and
+   * direct-JS semantics from drifting again.
+   */
+  private buildJsoupTextProjectionCompatibilityScript(): string {
+    return `
+      ${buildJsoupEntityCompatibilityScript()}
+      var __legadoJsoupTextIsWhitespace = function(code) {
+        return code === 32 || code === 9 || code === 10 || code === 12 ||
+          code === 13 || code === 160;
+      };
+      var __legadoJsoupTextIsNameCharacter = function(code, character) {
+        return (code >= 48 && code <= 57) || (code >= 65 && code <= 90) ||
+          (code >= 97 && code <= 122) || character === ':' ||
+          character === '-' || character === '_';
+      };
+      var __legadoJsoupTextIsBlockTag = function(tagName) {
+        var normalized = String(tagName || '').toLowerCase();
+        var blocks = [
+          'html', 'head', 'body', 'frameset', 'script', 'noscript', 'style', 'meta',
+          'link', 'title', 'frame', 'noframes', 'section', 'nav', 'aside', 'hgroup',
+          'header', 'footer', 'p', 'h1', 'h2', 'h3', 'h4', 'h5', 'h6', 'ul', 'ol',
+          'pre', 'div', 'blockquote', 'hr', 'address', 'figure', 'figcaption', 'form',
+          'fieldset', 'ins', 'del', 'dl', 'dt', 'dd', 'li', 'table', 'caption', 'thead',
+          'tfoot', 'tbody', 'colgroup', 'col', 'tr', 'th', 'td', 'video', 'audio',
+          'canvas', 'details', 'menu', 'plaintext', 'template', 'article', 'main',
+          'svg', 'math', 'center', 'dir', 'applet', 'marquee', 'listing'
+        ];
+        return blocks.indexOf(normalized) >= 0;
+      };
+      var __legadoJsoupTextIsFormatAsBlockTag = function(tagName) {
+        var normalized = String(tagName || '').toLowerCase();
+        var inline = [
+          'object', 'base', 'font', 'tt', 'i', 'b', 'u', 'big', 'small', 'em',
+          'strong', 'dfn', 'code', 'samp', 'kbd', 'var', 'cite', 'abbr', 'time',
+          'acronym', 'mark', 'ruby', 'rt', 'rp', 'rtc', 'a', 'img', 'br', 'wbr',
+          'map', 'q', 'sub', 'sup', 'bdo', 'iframe', 'embed', 'span', 'input',
+          'select', 'textarea', 'label', 'button', 'optgroup', 'option', 'legend',
+          'datalist', 'keygen', 'output', 'progress', 'meter', 'area', 'param',
+          'source', 'track', 'summary', 'command', 'device', 'basefont', 'bgsound',
+          'menuitem', 'data', 'bdi', 'strike', 'nobr', 'rb', 'text', 'mi', 'mo',
+          'msup', 'mn', 'mtext', 'title', 'p', 'h1', 'h2', 'h3', 'h4', 'h5', 'h6',
+          'pre', 'address', 'li', 'th', 'td', 'script', 'style', 'ins', 'del', 's'
+        ];
+        return inline.indexOf(normalized) < 0;
+      };
+      var __legadoJsoupTextIsVoidTag = function(tagName) {
+        var normalized = String(tagName || '').toLowerCase();
+        var voidTags = [
+          'meta', 'link', 'base', 'frame', 'img', 'br', 'wbr', 'embed', 'hr',
+          'input', 'keygen', 'col', 'command', 'device', 'area', 'basefont',
+          'bgsound', 'menuitem', 'param', 'source', 'track'
+        ];
+        return voidTags.indexOf(normalized) >= 0;
+      };
+      var __legadoJsoupTextIsPreserveTag = function(tagName) {
+        var normalized = String(tagName || '').toLowerCase();
+        return normalized === 'pre' || normalized === 'plaintext' ||
+          normalized === 'title' || normalized === 'textarea';
+      };
+      var __legadoJsoupTextDecode = function(value) {
+        return __legadoDecodeHtmlEntities(value, false);
+      };
+      var __legadoJsoupTextAccumulator = function() {
+        return { value: '', lastCharIsSpace: false };
+      };
+      var __legadoJsoupTextAppend = function(accumulator, value, preserveWhitespace) {
+        var text = __legadoJsoupTextDecode(value);
+        if (!text) return;
+        if (preserveWhitespace) {
+          accumulator.value += text;
+          accumulator.lastCharIsSpace = text.charAt(text.length - 1) === ' ';
+          return;
+        }
+        for (var index = 0; index < text.length; index++) {
+          var code = text.charCodeAt(index);
+          if (__legadoJsoupTextIsWhitespace(code)) {
+            if (!accumulator.lastCharIsSpace) {
+              accumulator.value += ' ';
+              accumulator.lastCharIsSpace = true;
+            }
+            continue;
+          }
+          if (code === 8203 || code === 173) continue;
+          accumulator.value += text.charAt(index);
+          accumulator.lastCharIsSpace = false;
+        }
+      };
+      var __legadoJsoupTextTrim = function(value) {
+        var text = String(value || '');
+        var start = 0;
+        var end = text.length;
+        while (start < end && text.charCodeAt(start) <= 32) start++;
+        while (end > start && text.charCodeAt(end - 1) <= 32) end--;
+        return text.substring(start, end);
+      };
+      var __legadoJsoupTextBoundary = function(accumulator) {
+        if (accumulator.value.length > 0 && !accumulator.lastCharIsSpace) {
+          accumulator.value += ' ';
+        }
+        accumulator.lastCharIsSpace = accumulator.value.length > 0 &&
+          accumulator.value.charAt(accumulator.value.length - 1) === ' ';
+      };
+      var __legadoJsoupTextTokens = function(value) {
+        var html = String(value || '');
+        var tokens = [];
+        var cursor = 0;
+        while (cursor < html.length) {
+          var tagStart = html.indexOf('<', cursor);
+          if (tagStart < 0) {
+            if (cursor < html.length) tokens.push({ kind: 'text', value: html.substring(cursor) });
+            break;
+          }
+          if (tagStart > cursor) tokens.push({ kind: 'text', value: html.substring(cursor, tagStart) });
+          if (html.substring(tagStart, tagStart + 4) === '<!--') {
+            var commentEnd = html.indexOf('-->', tagStart + 4);
+            cursor = commentEnd < 0 ? html.length : commentEnd + 3;
+            continue;
+          }
+          var scan = tagStart + 1;
+          var quote = '';
+          while (scan < html.length) {
+            var character = html.charAt(scan);
+            if (quote) {
+              if (character === quote) quote = '';
+            } else if (character === '"' || character === "'") {
+              quote = character;
+            } else if (character === '>') {
+              break;
+            }
+            scan++;
+          }
+          if (scan >= html.length) {
+            tokens.push({ kind: 'text', value: html.substring(tagStart) });
+            break;
+          }
+          var body = html.substring(tagStart + 1, scan);
+          var bodyCursor = 0;
+          while (bodyCursor < body.length && body.charCodeAt(bodyCursor) <= 32) bodyCursor++;
+          if (body.charAt(bodyCursor) === '!' || body.charAt(bodyCursor) === '?') {
+            cursor = scan + 1;
+            continue;
+          }
+          var closing = body.charAt(bodyCursor) === '/';
+          if (closing) bodyCursor++;
+          while (bodyCursor < body.length && body.charCodeAt(bodyCursor) <= 32) bodyCursor++;
+          var nameStart = bodyCursor;
+          while (bodyCursor < body.length &&
+            __legadoJsoupTextIsNameCharacter(body.charCodeAt(bodyCursor), body.charAt(bodyCursor))) {
+            bodyCursor++;
+          }
+          var name = body.substring(nameStart, bodyCursor).toLowerCase();
+          if (!name) {
+            tokens.push({ kind: 'text', value: html.substring(tagStart, scan + 1) });
+            cursor = scan + 1;
+            continue;
+          }
+          var tail = body.length - 1;
+          while (tail >= 0 && body.charCodeAt(tail) <= 32) tail--;
+          var selfClosing = !closing && (body.charAt(tail) === '/' || __legadoJsoupTextIsVoidTag(name));
+          tokens.push({ kind: closing ? 'close' : 'open', name: name, selfClosing: selfClosing });
+          cursor = scan + 1;
+        }
+        return tokens;
+      };
+      var __legadoJsoupTextHasTag = function(stack, firstTag) {
+        for (var index = stack.length - 1; index >= 0 && index >= stack.length - 6; index--) {
+          if (stack[index] === firstTag) return true;
+        }
+        return false;
+      };
+      var __legadoJsoupTextPreservesWhitespace = function(stack) {
+        for (var index = stack.length - 1; index >= 0 && index >= stack.length - 6; index--) {
+          if (__legadoJsoupTextIsPreserveTag(stack[index])) return true;
+        }
+        return false;
+      };
+      var __legadoJsoupTextFromHtml = function(value) {
+        var tokens = __legadoJsoupTextTokens(value);
+        var accumulator = __legadoJsoupTextAccumulator();
+        var stack = [];
+        for (var index = 0; index < tokens.length; index++) {
+          var token = tokens[index];
+          if (token.kind === 'text') {
+            if (!__legadoJsoupTextHasTag(stack, 'script') &&
+                !__legadoJsoupTextHasTag(stack, 'style')) {
+              __legadoJsoupTextAppend(accumulator, token.value,
+                __legadoJsoupTextPreservesWhitespace(stack));
+            }
+            continue;
+          }
+          if (token.kind === 'open') {
+            if (token.name === 'br') {
+              __legadoJsoupTextBoundary(accumulator);
+              continue;
+            }
+            if (__legadoJsoupTextIsBlockTag(token.name) && accumulator.value.length > 0 &&
+                !accumulator.lastCharIsSpace) {
+              __legadoJsoupTextBoundary(accumulator);
+            }
+            if (!token.selfClosing) stack.push(token.name);
+            continue;
+          }
+          if (__legadoJsoupTextIsBlockTag(token.name)) {
+            var next = index + 1 < tokens.length ? tokens[index + 1] : null;
+            if (next && (next.kind === 'text' ||
+                (next.kind === 'open' && !__legadoJsoupTextIsFormatAsBlockTag(next.name)))) {
+              __legadoJsoupTextBoundary(accumulator);
+            }
+          }
+          for (var stackIndex = stack.length - 1; stackIndex >= 0; stackIndex--) {
+            var stackName = stack[stackIndex];
+            stack.splice(stackIndex, 1);
+            if (stackName === token.name) break;
+          }
+        }
+        return __legadoJsoupTextTrim(accumulator.value);
+      };
+      var __legadoJsoupTextRoot = function(tokens) {
+        for (var index = 0; index < tokens.length; index++) {
+          if (tokens[index].kind === 'open' && tokens[index].name !== 'br') return index;
+        }
+        return -1;
+      };
+      var __legadoJsoupOwnTextFromHtml = function(value) {
+        var tokens = __legadoJsoupTextTokens(value);
+        var rootIndex = __legadoJsoupTextRoot(tokens);
+        if (rootIndex < 0) return __legadoJsoupTextFromHtml(value);
+        var root = tokens[rootIndex];
+        if (root.selfClosing || root.name === 'script' || root.name === 'style') return '';
+        var accumulator = __legadoJsoupTextAccumulator();
+        var depth = 0;
+        for (var index = rootIndex + 1; index < tokens.length; index++) {
+          var token = tokens[index];
+          if (token.kind === 'close' && depth === 0 && token.name === root.name) break;
+          if (token.kind === 'text') {
+            if (depth === 0) __legadoJsoupTextAppend(accumulator, token.value,
+              __legadoJsoupTextIsPreserveTag(root.name));
+            continue;
+          }
+          if (token.kind === 'open') {
+            if (depth === 0 && token.name === 'br') {
+              __legadoJsoupTextBoundary(accumulator);
+            } else if (!token.selfClosing) {
+              depth++;
+            }
+            continue;
+          }
+          if (depth > 0) depth--;
+        }
+        return __legadoJsoupTextTrim(accumulator.value);
+      };
+      var __legadoJsoupTextNodeValuesFromHtml = function(value) {
+        var tokens = __legadoJsoupTextTokens(value);
+        var rootIndex = __legadoJsoupTextRoot(tokens);
+        var values = [];
+        if (rootIndex < 0) {
+          var rawText = String(value || '');
+          if (rawText) values.push(rawText);
+          return values;
+        }
+        var root = tokens[rootIndex];
+        if (root.selfClosing || root.name === 'script' || root.name === 'style') return values;
+        var depth = 0;
+        for (var index = rootIndex + 1; index < tokens.length; index++) {
+          var token = tokens[index];
+          if (token.kind === 'close' && depth === 0 && token.name === root.name) break;
+          if (token.kind === 'text') {
+            if (depth === 0) values.push(token.value);
+            continue;
+          }
+          if (token.kind === 'open') {
+            if (!token.selfClosing) depth++;
+            continue;
+          }
+          if (depth > 0) depth--;
+        }
+        return values;
+      };
+      var __legadoJsoupTextNode = function(value) {
+        var rawText = String(value || '');
+        var wholeText = __legadoJsoupTextDecode(rawText);
+        var accumulator = __legadoJsoupTextAccumulator();
+        __legadoJsoupTextAppend(accumulator, rawText, false);
+        var normalizedText = accumulator.value;
+        return {
+          text: function() { return normalizedText; },
+          getWholeText: function() { return wholeText; },
+          toString: function() { return wholeText; }
+        };
+      };
+      var __legadoJsoupTextNodeListFromHtml = function(value) {
+        var rawValues = __legadoJsoupTextNodeValuesFromHtml(value);
+        var list = [];
+        for (var index = 0; index < rawValues.length; index++) {
+          list.push(__legadoJsoupTextNode(rawValues[index]));
+        }
+        var defineMethod = function(name, implementation) {
+          try {
+            Object.defineProperty(list, name, {
+              value: implementation,
+              enumerable: false,
+              configurable: true,
+              writable: true
+            });
+          } catch (error) {
+            list[name] = implementation;
+          }
+        };
+        defineMethod('size', function() { return list.length; });
+        defineMethod('get', function(index) { return list[Number(index) || 0] || null; });
+        defineMethod('first', function() { return list.length > 0 ? list[0] : null; });
+        defineMethod('last', function() { return list.length > 0 ? list[list.length - 1] : null; });
+        defineMethod('isEmpty', function() { return list.length === 0; });
+        defineMethod('toArray', function() { return list.slice(0); });
+        return list;
+      };
+      var __legadoJsoupTextNodesTerminal = function(element) {
+        if (!element || typeof element.textNodes !== 'function') return '';
+        var nodes = element.textNodes();
+        var values = [];
+        for (var index = 0; index < nodes.length; index++) {
+          var node = nodes[index];
+          if (!node || typeof node.text !== 'function') continue;
+          var text = __legadoJsoupTextTrim(node.text());
+          if (text) values.push(text);
+        }
+        return values.join('\\n');
+      };
+      var __legadoJsoupPatchHtmlElement = function(element, outerHtml) {
+        if (!element) return element;
+        var html = String(outerHtml || '');
+        element.text = function() { return __legadoJsoupTextFromHtml(html); };
+        element.ownText = function() { return __legadoJsoupOwnTextFromHtml(html); };
+        element.textNodes = function() { return __legadoJsoupTextNodeListFromHtml(html); };
+        return element;
+      };
+      if (typeof __nativeCreateHtmlElement === 'function') {
+        var __legadoOriginalNativeCreateHtmlElement = __nativeCreateHtmlElement;
+        __nativeCreateHtmlElement = function(outerHtml) {
+          return __legadoJsoupPatchHtmlElement(__legadoOriginalNativeCreateHtmlElement(outerHtml), outerHtml);
+        };
+      }
+      if (typeof __createHtmlElement === 'function') {
+        var __legadoOriginalCreateHtmlElement = __createHtmlElement;
+        __createHtmlElement = function(outerHtml) {
+          return __legadoJsoupPatchHtmlElement(__legadoOriginalCreateHtmlElement(outerHtml), outerHtml);
+        };
+      }
+      if (typeof JsoupElement === 'function' && JsoupElement.prototype) {
+        JsoupElement.prototype.text = function() { return __legadoJsoupTextFromHtml(this._outerHtml || ''); };
+        JsoupElement.prototype.ownText = function() { return __legadoJsoupOwnTextFromHtml(this._outerHtml || ''); };
+        JsoupElement.prototype.textNodes = function() { return __legadoJsoupTextNodeListFromHtml(this._outerHtml || ''); };
+      }
+      var __legadoJsoupReadElementByAttr = function(element, attrName) {
+        if (!element) return '';
+        var attr = String(attrName || 'text').trim();
+        if (attr === 'text') return typeof element.text === 'function' ? element.text() : '';
+        if (attr === 'textNodes') return __legadoJsoupTextNodesTerminal(element);
+        if (attr === 'ownText') return typeof element.ownText === 'function' ? element.ownText() : '';
+        if (attr === 'html') return typeof element.html === 'function' ? element.html() : '';
+        if (attr === 'outerHtml') return typeof element.outerHtml === 'function' ? element.outerHtml() : String(element);
+        return typeof element.attr === 'function' ? element.attr(attr) : '';
+      };
+      if (typeof __nativeReadElementByAttr === 'function') __nativeReadElementByAttr = __legadoJsoupReadElementByAttr;
+      if (typeof __readElementByAttr === 'function') __readElementByAttr = __legadoJsoupReadElementByAttr;
+    `;
+  }
+
+  /**
    * 构建执行脚本
    */
   private buildScript(code: string, context: JsContext): string {
     // 获取sourceUrl（优先从variables中获取，否则使用baseUrl）
-    const sourceUrl = context.variables?.['sourceUrl'] || context.baseUrl || '';
+    const sourceUrl = context.variables?.['sourceUrl'] || context.baseUrl || context.source?.bookSourceUrl || '';
     const activeJsLib = context.jsLib !== undefined ? context.jsLib : this.jsLib;
-    const sourceBookSourceName = context.variables?.['__source_bookSourceName'] || '';
-    const sourceBookSourceGroup = context.variables?.['__source_bookSourceGroup'] || '';
-    const sourceBookSourceComment = context.variables?.['__source_bookSourceComment'] || '';
-    const sourceHeader = context.variables?.['__source_header'] || '';
-    const sourceLoginUrl = context.variables?.['__source_loginUrl'] || '';
-    const sourceLoginUi = context.variables?.['__source_loginUi'] || '';
-    const sourceLoginCheckJs = context.variables?.['__source_loginCheckJs'] || '';
-    const sourceVariableComment = context.variables?.['__source_variableComment'] || '';
+    const sourceBookSourceName = context.variables?.['__source_bookSourceName'] || context.source?.bookSourceName || '';
+    const sourceBookSourceGroup = context.variables?.['__source_bookSourceGroup'] || context.source?.bookSourceGroup || '';
+    const sourceBookSourceComment = context.variables?.['__source_bookSourceComment'] || context.source?.bookSourceComment || '';
+    const sourceBookSourceType = context.source?.bookSourceType || Number(context.variables?.['__source_bookSourceType'] || '0');
+    const sourceHeader = context.variables?.['__source_header'] || context.source?.header || '';
+    const sourceLoginUrl = context.variables?.['__source_loginUrl'] || context.source?.loginUrl || '';
+    const sourceLoginUi = context.variables?.['__source_loginUi'] || context.source?.loginUi || '';
+    const sourceLoginCheckJs = context.variables?.['__source_loginCheckJs'] || context.source?.loginCheckJs || '';
+    const sourceVariableComment = context.variables?.['__source_variableComment'] || context.source?.variableComment || '';
     const normalizedSourceLoginUrl = this.normalizeJsCode(sourceLoginUrl);
     const normalizedSourceLoginCheckJs = this.normalizeJsCode(sourceLoginCheckJs);
     
@@ -1739,6 +2135,7 @@ export class LegadoJsEngine {
         bookSourceName: ${JSON.stringify(sourceBookSourceName)},
         bookSourceGroup: ${JSON.stringify(sourceBookSourceGroup)},
         bookSourceComment: ${JSON.stringify(sourceBookSourceComment)},
+        bookSourceType: ${sourceBookSourceType},
         loginUrl: ${JSON.stringify(normalizedSourceLoginUrl)},
         loginUi: ${JSON.stringify(sourceLoginUi)},
         loginCheckJs: ${JSON.stringify(normalizedSourceLoginCheckJs)},
@@ -1920,7 +2317,8 @@ export class LegadoJsEngine {
         if (!html || !name) return '';
         var attrRegex = new RegExp('\\\\s' + String(name).replace(/[-\\/\\\\^$*+?.()|[\\]{}]/g, '\\\\$&') + '\\\\s*=\\\\s*(?:"([^"]*)"|\\\\\\'([^\\\\\\']*)\\\\\\'|([^\\\\s"\\\\\\'<>]+))', 'i');
         var attrMatch = String(html).match(attrRegex);
-        return attrMatch ? (attrMatch[1] || attrMatch[2] || attrMatch[3] || '') : '';
+        var rawAttrValue = attrMatch ? (attrMatch[1] || attrMatch[2] || attrMatch[3] || '') : '';
+        return __legadoDecodeHtmlEntities(rawAttrValue, true);
       };
 
       var __nativeCreateAttribute = function(name, value) {
@@ -2097,6 +2495,32 @@ export class LegadoJsEngine {
           return texts;
         };
         elementList.toArray = function() { return elementList.slice(0); };
+        // Rhino's Jsoup Elements behaves like an indexed Java collection:
+        // a for-in over the collection visits element indexes, not helpers.
+        // The ArkWeb bridge initially assigned methods directly, making them
+        // enumerable and causing real sources to call attr() on a function.
+        var helperNames = [
+          'size', 'get', 'first', 'last', 'isEmpty', 'contains', 'subList',
+          'clear', 'remove', 'text', 'html', 'attr', 'eachAttr', 'eachText',
+          'toArray'
+        ];
+        for (var helperIndex = 0; helperIndex < helperNames.length; helperIndex++) {
+          var helperName = helperNames[helperIndex];
+          var helperValue = elementList[helperName];
+          if (typeof helperValue === 'function') {
+            try {
+              Object.defineProperty(elementList, helperName, {
+                value: helperValue,
+                enumerable: false,
+                configurable: true,
+                writable: true
+              });
+            } catch (ignoredDefineError) {
+              // Older WebView engines may reject redefinition; indexed access
+              // remains usable and the failure is surfaced by the rule trace.
+            }
+          }
+        }
         return elementList;
       };
 
@@ -2198,6 +2622,27 @@ export class LegadoJsEngine {
         return text;
       };
 
+      var __nativeSplitRuleReplacement = function(rule) {
+        var pieces = String(rule || '').split('##');
+        return {
+          rule: String(pieces.shift() || '').trim(),
+          regex: pieces.length > 0 ? String(pieces.shift() || '') : '',
+          replacement: pieces.length > 0 ? String(pieces.shift() || '') : '',
+          replaceFirst: pieces.length > 0
+        };
+      };
+
+      var __nativeApplyRuleReplacement = function(value, replacement) {
+        var text = value === undefined || value === null ? '' : String(value);
+        if (!replacement || !replacement.regex) return text;
+        try {
+          var flags = replacement.replaceFirst ? '' : 'g';
+          return text.replace(new RegExp(replacement.regex, flags), replacement.replacement);
+        } catch (error) {
+          return text;
+        }
+      };
+
       var __nativeSplitCssAttrRule = function(rule) {
         var text = __nativeNormalizeCssRule(rule);
         var attr = 'text';
@@ -2213,10 +2658,28 @@ export class LegadoJsEngine {
       var __nativeReadElementByAttr = function(element, attrName) {
         if (!element) return '';
         var attr = String(attrName || 'text').trim();
-        if (attr === 'text' || attr === 'textNodes') return typeof element.text === 'function' ? element.text() : '';
+        if (attr === 'text') return typeof element.text === 'function' ? element.text() : '';
+        if (attr === 'textNodes') return __legadoJsoupTextNodesTerminal(element);
+        if (attr === 'ownText') return typeof element.ownText === 'function' ? element.ownText() : '';
         if (attr === 'html') return typeof element.html === 'function' ? element.html() : '';
         if (attr === 'outerHtml') return typeof element.outerHtml === 'function' ? element.outerHtml() : String(element);
         return typeof element.attr === 'function' ? element.attr(attr) : '';
+      };
+
+      var __nativeCreateJavaList = function(values) {
+        var list = Array.isArray(values) ? values.slice(0) : [];
+        list.get = function(index) {
+          var numericIndex = Number(index) || 0;
+          return list[numericIndex] === undefined || list[numericIndex] === null ? '' : list[numericIndex];
+        };
+        list.size = function() { return list.length; };
+        list.isEmpty = function() { return list.length === 0; };
+        list.first = function() { return list.length > 0 ? list[0] : ''; };
+        list.last = function() { return list.length > 0 ? list[list.length - 1] : ''; };
+        list.toArray = function() { return list.slice(0); };
+        list.entrySet = function() { return { toArray: function() { return list.slice(0); } }; };
+        list.toString = function() { return '[' + list.join(', ') + ']'; };
+        return list;
       };
 
       var __nativeResolveRuleContent = function(contentValue) {
@@ -2227,25 +2690,232 @@ export class LegadoJsEngine {
         return String(contentValue || '');
       };
 
-      var __nativeGetStringFromContent = function(rule, contentValue) {
-        var split = __nativeSplitCssAttrRule(rule);
-        var sourceContent = __nativeResolveRuleContent(contentValue);
-        if (!split.selector) return sourceContent;
-        var documentObj = __nativeCreateParsedDocument(sourceContent);
-        var element = documentObj.selectFirst(split.selector);
-        return __nativeReadElementByAttr(element, split.attr);
+      var __nativeSplitObjectContentRule = function(rule) {
+        var pieces = String(rule || '').split('##');
+        return {
+          key: String(pieces.length > 0 ? pieces[0] : '').trim(),
+          regex: pieces.length > 1 ? String(pieces[1] || '') : '',
+          replacement: pieces.length > 2 ? String(pieces[2] || '') : '',
+          replaceFirst: pieces.length > 3
+        };
+      };
+
+      var __nativeReplaceObjectContentText = function(value, ruleParts) {
+        var text = value === undefined || value === null ? '' : String(value);
+        if (!ruleParts.regex) return text;
+        try {
+          var flags = ruleParts.replaceFirst ? '' : 'g';
+          return text.replace(new RegExp(ruleParts.regex, flags), ruleParts.replacement);
+        } catch (error) {
+          return text;
+        }
+      };
+
+      var __nativeGetObjectContentValue = function(rule, contentValue) {
+        if (contentValue === undefined || contentValue === null || typeof contentValue !== 'object' || Array.isArray(contentValue)) {
+          return { matched: false, value: '' };
+        }
+        if (typeof contentValue.select === 'function' || typeof contentValue.attr === 'function' || typeof contentValue.body === 'function') {
+          return { matched: false, value: '' };
+        }
+        var ruleParts = __nativeSplitObjectContentRule(rule);
+        if (!ruleParts.key || ruleParts.key.charAt(0) === '$') return { matched: false, value: '' };
+        var keys = Object.keys(contentValue);
+        var hasKey = keys.indexOf(ruleParts.key) >= 0;
+        var rawValue = hasKey ? contentValue[ruleParts.key] : undefined;
+        return {
+          matched: true,
+          value: __nativeReplaceObjectContentText(rawValue, ruleParts),
+          hasKey: hasKey
+        };
+      };
+
+      var __nativeGetObjectContentList = function(rule, contentValue) {
+        var lookup = __nativeGetObjectContentValue(rule, contentValue);
+        if (!lookup.matched) return { matched: false, values: [] };
+        var ruleParts = __nativeSplitObjectContentRule(rule);
+        var rawValue = contentValue[ruleParts.key];
+        if (rawValue === undefined || rawValue === null) return { matched: true, values: [] };
+        var values = Array.isArray(rawValue) ? rawValue : String(rawValue).split('\n');
+        var projected = [];
+        for (var valueIndex = 0; valueIndex < values.length; valueIndex++) {
+          projected.push(__nativeReplaceObjectContentText(values[valueIndex], ruleParts));
+        }
+        return { matched: true, values: projected };
+      };
+      var __nativeSplitRuleCombinators = function(rule, allowedOperators) {
+        var text = String(rule || '');
+        var operators = allowedOperators || ['&&', '||', '%%'];
+        var parts = [];
+        var current = '';
+        var firstOperator = '';
+        var squareDepth = 0;
+        var roundDepth = 0;
+        var braceDepth = 0;
+        var quote = '';
+        for (var i = 0; i < text.length; i++) {
+          var ch = text.charAt(i);
+          var next = i + 1 < text.length ? text.charAt(i + 1) : '';
+          if (quote) {
+            current += ch;
+            if (ch === '\\\\' && i + 1 < text.length) {
+              current += next;
+              i++;
+            } else if (ch === quote) {
+              quote = '';
+            }
+            continue;
+          }
+          if (ch === '"' || ch === "'") {
+            quote = ch;
+            current += ch;
+            continue;
+          }
+          if (ch === '[') squareDepth++;
+          else if (ch === ']' && squareDepth > 0) squareDepth--;
+          else if (ch === '(') roundDepth++;
+          else if (ch === ')' && roundDepth > 0) roundDepth--;
+          else if (ch === '{') braceDepth++;
+          else if (ch === '}' && braceDepth > 0) braceDepth--;
+          var matchedOperator = '';
+          if (squareDepth === 0 && roundDepth === 0 && braceDepth === 0) {
+            for (var operatorIndex = 0; operatorIndex < operators.length; operatorIndex++) {
+              var candidate = String(operators[operatorIndex] || '');
+              if (candidate && text.substring(i, i + candidate.length) === candidate) {
+                matchedOperator = candidate;
+                break;
+              }
+            }
+          }
+          if (matchedOperator && (!firstOperator || matchedOperator === firstOperator)) {
+            if (!firstOperator) firstOperator = matchedOperator;
+            if (current.trim()) parts.push(current.trim());
+            current = '';
+            i += matchedOperator.length - 1;
+            continue;
+          }
+          current += ch;
+        }
+        if (current.trim()) parts.push(current.trim());
+        return { parts: parts.length > 0 ? parts : [text.trim()], splitType: firstOperator };
+      };
+
+      var __nativeGetStringFromContent = function(rule, contentValue, skipComposition) {
+        var replacement = __nativeSplitRuleReplacement(rule);
+        var normalizedRule = replacement.rule;
+        if (!skipComposition) {
+          var split = __nativeSplitRuleCombinators(normalizedRule, ['&&', '||']);
+          if (split.parts.length > 1) {
+            var textList = [];
+            for (var splitIndex = 0; splitIndex < split.parts.length; splitIndex++) {
+              var nestedValue = __nativeGetStringFromContent(split.parts[splitIndex], contentValue, true);
+              if (nestedValue) {
+                textList.push(nestedValue);
+                if (split.splitType === '||') break;
+              }
+            }
+            return __nativeApplyRuleReplacement(textList.join('\n'), replacement);
+          }
+        }
+        var objectLookup = __nativeGetObjectContentValue(rule, contentValue);
+        if (objectLookup.matched) return objectLookup.value;
+        if (normalizedRule.charAt(0) === '$') {
+          var jsonValues = typeof __nativeJsonPathValues === 'function'
+            ? __nativeJsonPathValues(normalizedRule, contentValue)
+            : __getJsonPathValues(normalizedRule, contentValue);
+          var jsonValue = jsonValues.length > 0
+            ? (typeof __nativeJsonPathText === 'function' ? __nativeJsonPathText(jsonValues[0]) : __jsonPathValueText(jsonValues[0]))
+            : '';
+          return __nativeApplyRuleReplacement(jsonValue, replacement);
+        }
+        var cssValues = __nativeGetStringListFromContent(normalizedRule, contentValue, true);
+        return __nativeApplyRuleReplacement(cssValues.join('\n'), replacement);
       };
 
       var __nativeGetStringFromCurrentResult = function(rule) {
         return __nativeGetStringFromContent(rule, result || src || '');
       };
 
-      var __nativeGetStringListFromContent = function(rule, contentValue) {
-        var split = __nativeSplitCssAttrRule(rule);
+      var __nativeDeduplicateLegadoAttributeValues = function(values, attr) {
+        var normalized = String(attr || '').toLowerCase();
+        if (normalized === 'text' || normalized === 'textnodes' ||
+            normalized === 'owntext' || normalized === 'html' ||
+            normalized === 'outerhtml' || normalized === 'all') {
+          return values;
+        }
+        var result = [];
+        for (var valueIndex = 0; valueIndex < values.length; valueIndex++) {
+          var value = values[valueIndex] === undefined || values[valueIndex] === null ? '' : String(values[valueIndex]);
+          if (!value.trim() || result.indexOf(value) >= 0) continue;
+          result.push(value);
+        }
+        return result;
+      };
+
+      var __nativeGetStringListFromContent = function(rule, contentValue, skipComposition) {
+        var replacement = __nativeSplitRuleReplacement(rule);
+        var normalizedRule = replacement.rule;
+        if (!skipComposition) {
+          var split = __nativeSplitRuleCombinators(normalizedRule, ['&&', '||', '%%']);
+          if (split.parts.length > 1) {
+            var groups = [];
+            for (var splitIndex = 0; splitIndex < split.parts.length; splitIndex++) {
+              var nestedValues = __nativeGetStringListFromContent(split.parts[splitIndex], contentValue, true);
+              if (nestedValues.length > 0) {
+                groups.push(nestedValues);
+                if (split.splitType === '||') break;
+              }
+            }
+            var merged = [];
+            if (split.splitType === '%%') {
+              var maxLength = 0;
+              for (var groupIndex = 0; groupIndex < groups.length; groupIndex++) {
+                if (groups[groupIndex].length > maxLength) maxLength = groups[groupIndex].length;
+              }
+              for (var row = 0; row < maxLength; row++) {
+                for (var column = 0; column < groups.length; column++) {
+                  if (row < groups[column].length) merged.push(groups[column][row]);
+                }
+              }
+            } else {
+              for (var mergeIndex = 0; mergeIndex < groups.length; mergeIndex++) {
+                merged = merged.concat(groups[mergeIndex]);
+              }
+            }
+            return merged.map(function(value) { return __nativeApplyRuleReplacement(value, replacement); });
+          }
+        }
+        var objectLookup = __nativeGetObjectContentList(rule, contentValue);
+        if (objectLookup.matched) return objectLookup.values;
+        if (normalizedRule.charAt(0) === '$') {
+          var jsonValues = typeof __nativeJsonPathValues === 'function'
+            ? __nativeJsonPathValues(normalizedRule, contentValue)
+            : __getJsonPathValues(normalizedRule, contentValue);
+          return jsonValues.map(function(value) {
+            var jsonText = typeof __nativeJsonPathText === 'function' ? __nativeJsonPathText(value) : __jsonPathValueText(value);
+            return __nativeApplyRuleReplacement(jsonText, replacement);
+          });
+        }
+        var split = __nativeSplitCssAttrRule(normalizedRule);
         if (!split.selector) return [];
         var documentObj = __nativeCreateParsedDocument(__nativeResolveRuleContent(contentValue));
         var elements = documentObj.select(split.selector);
-        if (split.attr === 'text' || split.attr === 'textNodes') return elements.eachText();
+        if (split.attr === 'text') return elements.eachText();
+        if (split.attr === 'textNodes') {
+          var textNodeList = [];
+          for (var textNodeIndex = 0; textNodeIndex < elements.size(); textNodeIndex++) {
+            textNodeList.push(__legadoJsoupTextNodesTerminal(elements.get(textNodeIndex)));
+          }
+          return textNodeList;
+        }
+        if (split.attr === 'ownText') {
+          var ownTextList = [];
+          for (var ownTextIndex = 0; ownTextIndex < elements.size(); ownTextIndex++) {
+            var ownTextElement = elements.get(ownTextIndex);
+            ownTextList.push(ownTextElement && typeof ownTextElement.ownText === 'function' ? ownTextElement.ownText() : '');
+          }
+          return ownTextList;
+        }
         if (split.attr === 'html') {
           var htmlList = [];
           for (var i = 0; i < elements.size(); i++) htmlList.push(elements.get(i).html());
@@ -2256,7 +2926,7 @@ export class LegadoJsEngine {
           for (var j = 0; j < elements.size(); j++) outerList.push(elements.get(j).outerHtml());
           return outerList;
         }
-        return elements.eachAttr(split.attr);
+        return __nativeDeduplicateLegadoAttributeValues(elements.eachAttr(split.attr), split.attr);
       };
       
       // putLoginInfo函数（全局）
@@ -2469,7 +3139,8 @@ export class LegadoJsEngine {
         if (!html || !name) return '';
         var attrRegex = new RegExp('\\\\s' + String(name).replace(/[-\\/\\\\^$*+?.()|[\\]{}]/g, '\\\\$&') + '\\\\s*=\\\\s*(?:"([^"]*)"|\\\\\\'([^\\\\\\']*)\\\\\\'|([^\\\\s"\\\\\\'<>]+))', 'i');
         var attrMatch = String(html).match(attrRegex);
-        return attrMatch ? (attrMatch[1] || attrMatch[2] || attrMatch[3] || '') : '';
+        var rawAttrValue = attrMatch ? (attrMatch[1] || attrMatch[2] || attrMatch[3] || '') : '';
+        return __legadoDecodeHtmlEntities(rawAttrValue, true);
       };
 
       var __createHtmlElement = function(outerHtml) {
@@ -2679,6 +3350,27 @@ export class LegadoJsEngine {
         return text;
       };
 
+      var __splitRuleReplacement = function(rule) {
+        var pieces = String(rule || '').split('##');
+        return {
+          rule: String(pieces.shift() || '').trim(),
+          regex: pieces.length > 0 ? String(pieces.shift() || '') : '',
+          replacement: pieces.length > 0 ? String(pieces.shift() || '') : '',
+          replaceFirst: pieces.length > 0
+        };
+      };
+
+      var __applyRuleReplacement = function(value, replacement) {
+        var text = value === undefined || value === null ? '' : String(value);
+        if (!replacement || !replacement.regex) return text;
+        try {
+          var flags = replacement.replaceFirst ? '' : 'g';
+          return text.replace(new RegExp(replacement.regex, flags), replacement.replacement);
+        } catch (error) {
+          return text;
+        }
+      };
+
       var __splitCssAttrRule = function(rule) {
         var text = __normalizeCssRule(rule);
         var attr = 'text';
@@ -2694,7 +3386,9 @@ export class LegadoJsEngine {
       var __readElementByAttr = function(element, attrName) {
         if (!element) return '';
         var attr = String(attrName || 'text').trim();
-        if (attr === 'text' || attr === 'textNodes') return typeof element.text === 'function' ? element.text() : '';
+        if (attr === 'text') return typeof element.text === 'function' ? element.text() : '';
+        if (attr === 'textNodes') return __legadoJsoupTextNodesTerminal(element);
+        if (attr === 'ownText') return typeof element.ownText === 'function' ? element.ownText() : '';
         if (attr === 'html') return typeof element.html === 'function' ? element.html() : '';
         if (attr === 'outerHtml') return typeof element.outerHtml === 'function' ? element.outerHtml() : String(element);
         return typeof element.attr === 'function' ? element.attr(attr) : '';
@@ -2705,36 +3399,366 @@ export class LegadoJsEngine {
         return __readResponseText(contentValue);
       };
 
-      var __getStringFromContent = function(rule, contentValue) {
-        var split = __splitCssAttrRule(rule);
-        var sourceContent = __resolveRuleContent(contentValue);
-        if (!split.selector) return sourceContent;
-        var documentObj = __createParsedDocument(sourceContent);
-        var element = documentObj.selectFirst(split.selector);
-        return __readElementByAttr(element, split.attr);
+      // Legado's java.getString/getStringList accept JSONPath as well as CSS.
+      // Keep this bridge local to the rule runtime so JSON response rules such
+      // as $.data[*].title do not get misinterpreted as CSS selectors.
+      var __jsonPathValueText = function(value) {
+        if (value === undefined || value === null) return '';
+        if (typeof value === 'string') return value;
+        if (typeof value === 'number' || typeof value === 'boolean') return String(value);
+        try { return JSON.stringify(value); } catch(e) { return String(value); }
+      };
+      var __splitRuleCombinators = function(rule, allowedOperators) {
+        var text = String(rule || '');
+        var operators = allowedOperators || ['&&', '||', '%%'];
+        var parts = [];
+        var current = '';
+        var firstOperator = '';
+        var squareDepth = 0;
+        var roundDepth = 0;
+        var braceDepth = 0;
+        var quote = '';
+        for (var i = 0; i < text.length; i++) {
+          var ch = text.charAt(i);
+          var next = i + 1 < text.length ? text.charAt(i + 1) : '';
+          if (quote) {
+            current += ch;
+            if (ch === '\\\\' && i + 1 < text.length) {
+              current += next;
+              i++;
+            } else if (ch === quote) {
+              quote = '';
+            }
+            continue;
+          }
+          if (ch === '"' || ch === "'") {
+            quote = ch;
+            current += ch;
+            continue;
+          }
+          if (ch === '[') squareDepth++;
+          else if (ch === ']' && squareDepth > 0) squareDepth--;
+          else if (ch === '(') roundDepth++;
+          else if (ch === ')' && roundDepth > 0) roundDepth--;
+          else if (ch === '{') braceDepth++;
+          else if (ch === '}' && braceDepth > 0) braceDepth--;
+          var matchedOperator = '';
+          if (squareDepth === 0 && roundDepth === 0 && braceDepth === 0) {
+            for (var operatorIndex = 0; operatorIndex < operators.length; operatorIndex++) {
+              var candidate = String(operators[operatorIndex] || '');
+              if (candidate && text.substring(i, i + candidate.length) === candidate) {
+                matchedOperator = candidate;
+                break;
+              }
+            }
+          }
+          if (matchedOperator && (!firstOperator || matchedOperator === firstOperator)) {
+            if (!firstOperator) firstOperator = matchedOperator;
+            if (current.trim()) parts.push(current.trim());
+            current = '';
+            i += matchedOperator.length - 1;
+            continue;
+          }
+          current += ch;
+        }
+        if (current.trim()) parts.push(current.trim());
+        return { parts: parts.length > 0 ? parts : [text.trim()], splitType: firstOperator };
+      };
+      var __jsonPathSourceValue = function(contentValue) {
+        var candidate = contentValue === undefined || contentValue === null ? (result || src || '') : contentValue;
+        if (candidate !== undefined && candidate !== null && typeof candidate === 'object') {
+          return candidate;
+        }
+        var sourceText = __resolveRuleContent(candidate);
+        if (typeof sourceText !== 'string') return null;
+        var trimmed = sourceText.trim();
+        if (trimmed.charAt(0) !== '{' && trimmed.charAt(0) !== '[') return null;
+        try { return JSON.parse(trimmed); } catch(e) { return null; }
+      };
+      var __collectJsonPathKey = function(value, key, output) {
+        if (value === undefined || value === null) return;
+        if (Array.isArray(value)) {
+          for (var arrayIndex = 0; arrayIndex < value.length; arrayIndex++) {
+            __collectJsonPathKey(value[arrayIndex], key, output);
+          }
+          return;
+        }
+        if (typeof value !== 'object') return;
+        var valueKeys = Object.keys(value);
+        if (valueKeys.indexOf(key) >= 0) output.push(value[key]);
+        for (var keyIndex = 0; keyIndex < valueKeys.length; keyIndex++) {
+          __collectJsonPathKey(value[valueKeys[keyIndex]], key, output);
+        }
+      };
+      var __applyJsonPathTokens = function(values, suffix) {
+        var current = values.slice(0);
+        var remaining = String(suffix || '').trim();
+        while (remaining.length > 0) {
+          if (remaining.indexOf('..') === 0) {
+            remaining = remaining.substring(2);
+            var recursiveEnd = 0;
+            while (recursiveEnd < remaining.length && remaining.charAt(recursiveEnd) !== '.' && remaining.charAt(recursiveEnd) !== '[') recursiveEnd++;
+            var recursiveKey = remaining.substring(0, recursiveEnd).trim();
+            remaining = remaining.substring(recursiveEnd);
+            if (!recursiveKey) return [];
+            var recursiveOutput = [];
+            for (var recursiveIndex = 0; recursiveIndex < current.length; recursiveIndex++) {
+              __collectJsonPathKey(current[recursiveIndex], recursiveKey, recursiveOutput);
+            }
+            current = recursiveOutput;
+            continue;
+          }
+          if (remaining.charAt(0) === '.') remaining = remaining.substring(1);
+          if (remaining.length === 0) break;
+          var token = '';
+          if (remaining.charAt(0) === '[') {
+            var closeIndex = remaining.indexOf(']');
+            if (closeIndex < 0) return [];
+            token = remaining.substring(1, closeIndex).trim();
+            remaining = remaining.substring(closeIndex + 1);
+            if ((token.charAt(0) === '\"' && token.charAt(token.length - 1) === '\"') ||
+              (token.charAt(0) === "'" && token.charAt(token.length - 1) === "'")) {
+              token = token.substring(1, token.length - 1);
+            }
+          } else {
+            var tokenEnd = 0;
+            while (tokenEnd < remaining.length && remaining.charAt(tokenEnd) !== '.' && remaining.charAt(tokenEnd) !== '[') tokenEnd++;
+            token = remaining.substring(0, tokenEnd).trim();
+            remaining = remaining.substring(tokenEnd);
+          }
+          if (token.length === 0) continue;
+          var next = [];
+          for (var valueIndex = 0; valueIndex < current.length; valueIndex++) {
+            var value = current[valueIndex];
+            if (token === '*') {
+              if (Array.isArray(value)) {
+                for (var wildcardIndex = 0; wildcardIndex < value.length; wildcardIndex++) next.push(value[wildcardIndex]);
+              } else if (value && typeof value === 'object') {
+                Object.keys(value).forEach(function(key) { next.push(value[key]); });
+              }
+              continue;
+            }
+            if (Array.isArray(value) && token.indexOf(':') >= 0) {
+              var sliceParts = token.split(':');
+              if (sliceParts.length >= 2 && sliceParts.length <= 3) {
+                var sliceStep = sliceParts.length > 2 && sliceParts[2] !== '' ? parseInt(sliceParts[2], 10) : 1;
+                if (!isNaN(sliceStep) && sliceStep !== 0) {
+                  var sliceStart = sliceParts[0] === '' ? (sliceStep > 0 ? 0 : value.length - 1) : parseInt(sliceParts[0], 10);
+                  var sliceEnd = sliceParts[1] === '' ? (sliceStep > 0 ? value.length : -1) : parseInt(sliceParts[1], 10);
+                  if (isNaN(sliceStart) || isNaN(sliceEnd)) continue;
+                  if (sliceStart < 0) sliceStart = value.length + sliceStart;
+                  if (sliceEnd < 0 && !(sliceStep < 0 && sliceParts[1] === '')) sliceEnd = value.length + sliceEnd;
+                  if (sliceStep > 0) {
+                    if (sliceStart < 0) sliceStart = 0;
+                    if (sliceEnd > value.length) sliceEnd = value.length;
+                    for (var sliceIndex = sliceStart; sliceIndex < sliceEnd; sliceIndex += sliceStep) next.push(value[sliceIndex]);
+                  } else {
+                    if (sliceStart >= value.length) sliceStart = value.length - 1;
+                    if (sliceEnd < -1) sliceEnd = -1;
+                    for (var reverseSliceIndex = sliceStart; reverseSliceIndex > sliceEnd; reverseSliceIndex += sliceStep) next.push(value[reverseSliceIndex]);
+                  }
+                  continue;
+                }
+              }
+            }
+            if (Array.isArray(value) && /^-?[0-9]+$/.test(token)) {
+              var arrayItemIndex = parseInt(token, 10);
+              if (arrayItemIndex < 0) arrayItemIndex = value.length + arrayItemIndex;
+              if (arrayItemIndex >= 0 && arrayItemIndex < value.length) next.push(value[arrayItemIndex]);
+              continue;
+            }
+            if (value !== undefined && value !== null && typeof value === 'object') {
+              var objectKeys = Object.keys(value);
+              if (objectKeys.indexOf(token) >= 0) next.push(value[token]);
+            }
+          }
+          current = next;
+        }
+        return current;
+      };
+      var __getJsonPathValues = function(rule, contentValue) {
+        var ruleText = String(rule || '').trim();
+        if (ruleText.charAt(0) !== '$') return [];
+        var root = __jsonPathSourceValue(contentValue);
+        if (root === null || root === undefined) return [];
+        var suffix = ruleText.substring(1);
+        if (suffix.indexOf('..') === 0) {
+          var recursiveSuffix = suffix.substring(2);
+          var recursiveMatch = recursiveSuffix.match(/^([A-Za-z_$][0-9A-Za-z_$-]*)/);
+          if (!recursiveMatch) return [];
+          var recursiveValues = [];
+          __collectJsonPathKey(root, recursiveMatch[1], recursiveValues);
+          return __applyJsonPathTokens(recursiveValues, recursiveSuffix.substring(recursiveMatch[1].length));
+        }
+        return __applyJsonPathTokens([root], suffix);
+      };
+
+      var __splitObjectContentRule = function(rule) {
+        var pieces = String(rule || '').split('##');
+        return {
+          key: String(pieces.length > 0 ? pieces[0] : '').trim(),
+          regex: pieces.length > 1 ? String(pieces[1] || '') : '',
+          replacement: pieces.length > 2 ? String(pieces[2] || '') : '',
+          replaceFirst: pieces.length > 3
+        };
+      };
+
+      var __replaceObjectContentText = function(value, ruleParts) {
+        var text = value === undefined || value === null ? '' : String(value);
+        if (!ruleParts.regex) return text;
+        try {
+          var flags = ruleParts.replaceFirst ? '' : 'g';
+          return text.replace(new RegExp(ruleParts.regex, flags), ruleParts.replacement);
+        } catch (error) {
+          return text;
+        }
+      };
+
+      var __getObjectContentValue = function(rule, contentValue) {
+        if (contentValue === undefined || contentValue === null || typeof contentValue !== 'object' || Array.isArray(contentValue)) {
+          return { matched: false, value: '' };
+        }
+        if (typeof contentValue.select === 'function' || typeof contentValue.attr === 'function' || typeof contentValue.body === 'function') {
+          return { matched: false, value: '' };
+        }
+        var ruleParts = __splitObjectContentRule(rule);
+        if (!ruleParts.key || ruleParts.key.charAt(0) === '$') return { matched: false, value: '' };
+        var keys = Object.keys(contentValue);
+        var hasKey = keys.indexOf(ruleParts.key) >= 0;
+        var rawValue = hasKey ? contentValue[ruleParts.key] : undefined;
+        return {
+          matched: true,
+          value: __replaceObjectContentText(rawValue, ruleParts),
+          hasKey: hasKey
+        };
+      };
+
+      var __getObjectContentList = function(rule, contentValue) {
+        var lookup = __getObjectContentValue(rule, contentValue);
+        if (!lookup.matched) return { matched: false, values: [] };
+        var ruleParts = __splitObjectContentRule(rule);
+        var rawValue = contentValue[ruleParts.key];
+        if (rawValue === undefined || rawValue === null) return { matched: true, values: [] };
+        var values = Array.isArray(rawValue) ? rawValue : String(rawValue).split('\n');
+        var projected = [];
+        for (var valueIndex = 0; valueIndex < values.length; valueIndex++) {
+          projected.push(__replaceObjectContentText(values[valueIndex], ruleParts));
+        }
+        return { matched: true, values: projected };
+      };
+
+      var __getStringFromContent = function(rule, contentValue, skipComposition) {
+        var replacement = __splitRuleReplacement(rule);
+        var normalizedRule = replacement.rule;
+        if (!skipComposition) {
+          var split = __splitRuleCombinators(normalizedRule, ['&&', '||']);
+          if (split.parts.length > 1) {
+            var textList = [];
+            for (var splitIndex = 0; splitIndex < split.parts.length; splitIndex++) {
+              var nestedValue = __getStringFromContent(split.parts[splitIndex], contentValue, true);
+              if (nestedValue) {
+                textList.push(nestedValue);
+                if (split.splitType === '||') break;
+              }
+            }
+            return __applyRuleReplacement(textList.join('\n'), replacement);
+          }
+        }
+        var objectLookup = __getObjectContentValue(rule, contentValue);
+        if (objectLookup.matched) return objectLookup.value;
+        if (normalizedRule.charAt(0) === '$') {
+          var jsonValues = __getJsonPathValues(normalizedRule, contentValue);
+          var jsonValue = jsonValues.length > 0 ? __jsonPathValueText(jsonValues[0]) : '';
+          return __applyRuleReplacement(jsonValue, replacement);
+        }
+        var cssValues = __getStringListFromContent(normalizedRule, contentValue, true);
+        return __applyRuleReplacement(cssValues.join('\n'), replacement);
       };
 
       var __getStringFromCurrentResult = function(rule) {
         return __getStringFromContent(rule, result || src || '');
       };
 
-      var __getStringListFromContent = function(rule, contentValue) {
-        var split = __splitCssAttrRule(rule);
+      var __deduplicateLegadoAttributeValues = function(values, attr) {
+        var normalized = String(attr || '').toLowerCase();
+        if (normalized === 'text' || normalized === 'textnodes' ||
+            normalized === 'owntext' || normalized === 'html' ||
+            normalized === 'outerhtml' || normalized === 'all') {
+          return values;
+        }
+        var result = [];
+        for (var valueIndex = 0; valueIndex < values.length; valueIndex++) {
+          var value = values[valueIndex] === undefined || values[valueIndex] === null ? '' : String(values[valueIndex]);
+          if (!value.trim() || result.indexOf(value) >= 0) continue;
+          result.push(value);
+        }
+        return result;
+      };
+
+      var __getStringListFromContent = function(rule, contentValue, skipComposition) {
+        var replacement = __splitRuleReplacement(rule);
+        var normalizedRule = replacement.rule;
+        if (!skipComposition) {
+          var split = __splitRuleCombinators(normalizedRule, ['&&', '||', '%%']);
+          if (split.parts.length > 1) {
+            var groups = [];
+            for (var splitIndex = 0; splitIndex < split.parts.length; splitIndex++) {
+              var nestedValues = __getStringListFromContent(split.parts[splitIndex], contentValue, true);
+              if (nestedValues.length > 0) {
+                groups.push(nestedValues);
+                if (split.splitType === '||') break;
+              }
+            }
+            var merged = [];
+            if (split.splitType === '%%') {
+              var maxLength = 0;
+              for (var groupIndex = 0; groupIndex < groups.length; groupIndex++) {
+                if (groups[groupIndex].length > maxLength) maxLength = groups[groupIndex].length;
+              }
+              for (var row = 0; row < maxLength; row++) {
+                for (var column = 0; column < groups.length; column++) {
+                  if (row < groups[column].length) merged.push(groups[column][row]);
+                }
+              }
+            } else {
+              for (var mergeIndex = 0; mergeIndex < groups.length; mergeIndex++) {
+                merged = merged.concat(groups[mergeIndex]);
+              }
+            }
+            return merged.map(function(value) { return __applyRuleReplacement(value, replacement); });
+          }
+        }
+        var objectLookup = __getObjectContentList(rule, contentValue);
+        if (objectLookup.matched) return objectLookup.values;
+        if (normalizedRule.charAt(0) === '$') {
+          var jsonValues = __getJsonPathValues(normalizedRule, contentValue);
+          return jsonValues.map(function(value) { return __applyRuleReplacement(__jsonPathValueText(value), replacement); });
+        }
+        var split = __splitCssAttrRule(normalizedRule);
         if (!split.selector) return [];
         var documentObj = __createParsedDocument(__resolveRuleContent(contentValue));
         var elements = documentObj.select(split.selector);
-        if (split.attr === 'text' || split.attr === 'textNodes') return elements.eachText();
+        var rawValues = [];
+        if (split.attr === 'text') rawValues = elements.eachText();
+        else if (split.attr === 'textNodes') {
+          for (var textNodeIndex = 0; textNodeIndex < elements.size(); textNodeIndex++) {
+            rawValues.push(__legadoJsoupTextNodesTerminal(elements.get(textNodeIndex)));
+          }
+        } else if (split.attr === 'ownText') {
+          for (var ownTextIndex = 0; ownTextIndex < elements.size(); ownTextIndex++) {
+            var ownTextElement = elements.get(ownTextIndex);
+            rawValues.push(ownTextElement && typeof ownTextElement.ownText === 'function' ? ownTextElement.ownText() : '');
+          }
+        }
         if (split.attr === 'html') {
-          var htmlList = [];
-          for (var i = 0; i < elements.size(); i++) htmlList.push(elements.get(i).html());
-          return htmlList;
+          for (var i = 0; i < elements.size(); i++) rawValues.push(elements.get(i).html());
+        } else if (split.attr === 'outerHtml') {
+          for (var j = 0; j < elements.size(); j++) rawValues.push(elements.get(j).outerHtml());
+        } else if (split.attr !== 'text' && split.attr !== 'textNodes' && split.attr !== 'ownText') {
+          rawValues = elements.eachAttr(split.attr);
         }
-        if (split.attr === 'outerHtml') {
-          var outerList = [];
-          for (var j = 0; j < elements.size(); j++) outerList.push(elements.get(j).outerHtml());
-          return outerList;
-        }
-        return elements.eachAttr(split.attr);
+        rawValues = __deduplicateLegadoAttributeValues(rawValues, split.attr);
+        return rawValues.map(function(value) { return __nativeApplyRuleReplacement(value, replacement); });
       };
 
       var __getStringListFromCurrentResult = function(rule) {
@@ -3277,65 +4301,110 @@ export class LegadoJsEngine {
         }
         return bytes;
       };
-      var __createCryptoBytes = function(value, preferBase64) {
+      var __createCryptoBytes = function(value, encoding) {
         if (Array.isArray(value)) return value.slice(0);
         var text = String(value === undefined || value === null ? '' : value);
-        if (preferBase64 && text.length > 0) return __base64DecodeBytes(text);
-        if (__looksLikeHexString(text)) return __hexStringToBytes(text);
+        var normalizedEncoding = String(encoding || 'UTF-8').toUpperCase();
+        if (normalizedEncoding === 'BASE64') return __base64DecodeBytes(text);
+        if (normalizedEncoding === 'HEX') {
+          if (!__looksLikeHexString(text)) throw new Error('INVALID_HEX_INPUT');
+          return __hexStringToBytes(text);
+        }
         return __toJavaByteArray(text, 'UTF-8');
       };
-      var __createSymmetricCrypto = function(transformation, keyValue, ivValue) {
-        var transform = String(transformation || 'AES/CBC/PKCS5Padding');
-        var upper = transform.toUpperCase();
-        var algorithm = upper.indexOf('DES') >= 0 && upper.indexOf('AES') < 0 ? 'DES' : 'AES';
-        var modeName = upper.indexOf('/ECB') >= 0 ? 'ECB' : 'CBC';
-        var noPadding = upper.indexOf('NOPADDING') >= 0;
-        var zeroPadding = upper.indexOf('ZEROPADDING') >= 0;
-        var keyBytes = __createCryptoBytes(keyValue, false);
-        var ivBytes = ivValue === undefined || ivValue === null ? [] : __createCryptoBytes(ivValue, false);
-        var fallbackBytes = function(input, encrypted) {
-          if (Array.isArray(input)) return input.slice(0);
-          var text = String(input === undefined || input === null ? '' : input);
-          if (encrypted) {
-            if (__looksLikeHexString(text)) return __hexStringToBytes(text);
-            return __base64DecodeBytes(text);
-          }
-          return __toJavaByteArray(text, 'UTF-8');
+      var __decodeSymmetricCryptoInput = function(value) {
+        if (Array.isArray(value)) return value.slice(0);
+        var text = String(value === undefined || value === null ? '' : value);
+        return __looksLikeHexString(text)
+          ? __createCryptoBytes(text, 'HEX')
+          : __createCryptoBytes(text, 'BASE64');
+      };
+      var __parseSymmetricTransformation = function(transformation) {
+        var transform = String(transformation || 'AES/CBC/PKCS5Padding').trim();
+        if (transform.length === 0) transform = 'AES/CBC/PKCS5Padding';
+        var parts = transform.split('/');
+        if (parts.length > 3) throw new Error('UNSUPPORTED_SYMMETRIC_TRANSFORMATION:' + transform);
+        var algorithmToken = String(parts[0] || '').trim().toUpperCase();
+        var cryptoAlgorithm = algorithmToken === 'DESEDE' || algorithmToken === '3DES'
+          ? 'TripleDES'
+          : algorithmToken;
+        if (cryptoAlgorithm !== 'AES' && cryptoAlgorithm !== 'DES' && cryptoAlgorithm !== 'TripleDES') {
+          throw new Error('UNSUPPORTED_SYMMETRIC_ALGORITHM:' + transform);
+        }
+        var modeToken = parts.length > 1 ? String(parts[1] || '').trim().toUpperCase() : 'ECB';
+        if (modeToken !== 'ECB' && modeToken !== 'CBC') {
+          throw new Error('UNSUPPORTED_SYMMETRIC_MODE:' + transform);
+        }
+        var paddingToken = parts.length > 2 ? String(parts[2] || '').trim().toUpperCase() : 'PKCS5PADDING';
+        var padding = '';
+        if (paddingToken === 'PKCS5PADDING' || paddingToken === 'PKCS7PADDING') {
+          padding = 'PKCS7';
+        } else if (paddingToken === 'NOPADDING') {
+          padding = 'NoPadding';
+        } else {
+          throw new Error('UNSUPPORTED_SYMMETRIC_PADDING:' + transform);
+        }
+        return {
+          transformation: transform,
+          algorithm: algorithmToken === 'DESEDE' || algorithmToken === '3DES' ? '3DES' : algorithmToken,
+          cryptoAlgorithm: cryptoAlgorithm,
+          mode: modeToken,
+          padding: padding,
+          blockLength: cryptoAlgorithm === 'AES' ? 16 : 8
         };
+      };
+      var __createSymmetricCrypto = function(transformation, keyValue, ivValue) {
+        var spec = __parseSymmetricTransformation(transformation);
+        var keyBytes = __createCryptoBytes(keyValue, 'UTF-8');
+        var expectedKeyLength = spec.cryptoAlgorithm === 'AES'
+          ? (keyBytes.length === 16 || keyBytes.length === 24 || keyBytes.length === 32)
+          : (spec.cryptoAlgorithm === 'DES' ? keyBytes.length === 8 : keyBytes.length === 24);
+        if (!expectedKeyLength) {
+          var keyLabel = spec.cryptoAlgorithm === 'TripleDES' ? '3DES' : spec.cryptoAlgorithm;
+          throw new Error('INVALID_' + keyLabel + '_KEY_LENGTH:' + keyBytes.length);
+        }
+        var ivBytes = ivValue === undefined || ivValue === null ? [] : __createCryptoBytes(ivValue, 'UTF-8');
         var buildOptions = function() {
-          var options = {};
-          if (typeof CryptoJS !== 'undefined') {
-            options.mode = modeName === 'ECB' ? CryptoJS.mode.ECB : CryptoJS.mode.CBC;
-            if (ivBytes.length > 0 && modeName !== 'ECB') options.iv = __bytesToCryptoWordArray(ivBytes);
-            options.padding = noPadding ? CryptoJS.pad.NoPadding : (zeroPadding ? CryptoJS.pad.ZeroPadding : CryptoJS.pad.Pkcs7);
+          if (typeof CryptoJS === 'undefined' || !CryptoJS[spec.cryptoAlgorithm]) {
+            throw new Error('CRYPTO_JS_UNAVAILABLE:' + spec.cryptoAlgorithm);
+          }
+          var options = {
+            mode: spec.mode === 'ECB' ? CryptoJS.mode.ECB : CryptoJS.mode.CBC,
+            padding: spec.padding === 'NoPadding' ? CryptoJS.pad.NoPadding : CryptoJS.pad.Pkcs7
+          };
+          if (spec.mode === 'CBC') {
+            if (ivBytes.length !== spec.blockLength) {
+              throw new Error('INVALID_' + spec.algorithm + '_CBC_IV_LENGTH:' + ivBytes.length);
+            }
+            options.iv = __bytesToCryptoWordArray(ivBytes);
           }
           return options;
         };
-        var runEncrypt = function(input) {
-          if (typeof CryptoJS === 'undefined' || !CryptoJS[algorithm]) return fallbackBytes(input, false);
-          try {
-            var encrypted = CryptoJS[algorithm].encrypt(
-              __bytesToCryptoWordArray(__createCryptoBytes(input, false)),
-              __bytesToCryptoWordArray(keyBytes),
-              buildOptions()
-            );
-            return __cryptoWordArrayToBytes(encrypted.ciphertext);
-          } catch(__encryptError__) {
-            return fallbackBytes(input, false);
+        var validateBlockLength = function(bytes) {
+          if (spec.padding === 'NoPadding' && bytes.length % spec.blockLength !== 0) {
+            throw new Error('INVALID_SYMMETRIC_BLOCK_LENGTH:' + bytes.length);
           }
+          return bytes;
+        };
+        var runEncrypt = function(input) {
+          var options = buildOptions();
+          var inputBytes = validateBlockLength(__createCryptoBytes(input, 'UTF-8'));
+          var encrypted = CryptoJS[spec.cryptoAlgorithm].encrypt(
+            __bytesToCryptoWordArray(inputBytes),
+            __bytesToCryptoWordArray(keyBytes),
+            options
+          );
+          return __cryptoWordArrayToBytes(encrypted.ciphertext);
         };
         var runDecrypt = function(input) {
-          if (typeof CryptoJS === 'undefined' || !CryptoJS[algorithm]) return fallbackBytes(input, true);
-          try {
-            var decrypted = CryptoJS[algorithm].decrypt(
-              { ciphertext: __bytesToCryptoWordArray(__createCryptoBytes(input, typeof input === 'string')) },
-              __bytesToCryptoWordArray(keyBytes),
-              buildOptions()
-            );
-            return __cryptoWordArrayToBytes(decrypted);
-          } catch(__decryptError__) {
-            return fallbackBytes(input, true);
-          }
+          var options = buildOptions();
+          var inputBytes = validateBlockLength(__decodeSymmetricCryptoInput(input));
+          var decrypted = CryptoJS[spec.cryptoAlgorithm].decrypt(
+            { ciphertext: __bytesToCryptoWordArray(inputBytes) },
+            __bytesToCryptoWordArray(keyBytes),
+            options
+          );
+          return __cryptoWordArrayToBytes(decrypted);
         };
         return {
           encrypt: function(input) { return runEncrypt(input); },
@@ -3346,7 +4415,7 @@ export class LegadoJsEngine {
           decryptStr: function(input, charset) { return __javaBytesToString(runDecrypt(input), charset || 'UTF-8'); },
           decryptBase64: function(input) { return __base64EncodeString(runDecrypt(input)); },
           decryptHex: function(input) { return __bytesToHexString(runDecrypt(input)); },
-          toString: function() { return transform; }
+          toString: function() { return spec.transformation; }
         };
       };
       var __createOkHttpHeaders = function(headerMap) {
@@ -3521,10 +4590,23 @@ export class LegadoJsEngine {
           ENCRYPT_MODE: 1,
           DECRYPT_MODE: 2,
           getInstance: function(name) {
+            var transformation = String(name || 'AES/CBC/PKCS5Padding');
+            var operation = 0;
+            var crypto = null;
             return {
-              init: function() { return ''; },
-              doFinal: function(input) { return input === undefined ? [] : input; },
-              getBlockSize: function() { return 128; }
+              init: function(mode, keySpec, params) {
+                operation = Number(mode);
+                var keyBytes = __extractSecretKeyBytes(keySpec);
+                var ivBytes = params && params.value !== undefined ? __toJavaByteArray(params.value) : [];
+                crypto = __createSymmetricCrypto(transformation, keyBytes, ivBytes);
+                return this;
+              },
+              doFinal: function(input) {
+                if (crypto === null) throw new Error('CIPHER_NOT_INITIALIZED');
+                var bytes = input === undefined || input === null ? [] : __toJavaByteArray(input);
+                return operation === 2 ? crypto.decrypt(bytes) : crypto.encrypt(bytes);
+              },
+              getBlockSize: function() { return 16; }
             };
           }
         },
@@ -3644,7 +4726,10 @@ export class LegadoJsEngine {
           var request = __normalizeRequestOptions('GET', header, null);
           return __syncRequest(url, request.method, request.body, request.headers);
         },
-        // get方法：优先读取上下文变量；只有明确URL/表达式才发起HTTP请求
+        // AnalyzeRule.get() only reads variables owned by the current rule,
+        // book/chapter, or source. It must never fall through to the JS global
+        // scope or transport layer: both leak unrelated runtime state into a
+        // source rule and diverge from Legado's empty-string contract.
         get: function(urlOrVarName, headers) {
           if (urlOrVarName === 'key') return __ctx_key || '';
           if (urlOrVarName === 'page') return __ctx_page || 1;
@@ -3654,31 +4739,10 @@ export class LegadoJsEngine {
           if (typeof urlOrVarName === 'string') {
             if (__ctx_variables && Object.keys(__ctx_variables).includes(urlOrVarName)) {
               var contextValue = __ctx_variables[urlOrVarName];
-              if (!__looksLikeRequestUrl(contextValue) && headers === undefined) {
-                return contextValue;
-              }
-              var contextRequest = __normalizeRequestOptions('GET', headers, null);
-              return __syncRequest(contextValue, contextRequest.method, contextRequest.body, contextRequest.headers);
-            }
-            var trimmedName = urlOrVarName.trim();
-            var looksLikeVariable = /^[A-Za-z_$][0-9A-Za-z_$]*$/.test(trimmedName);
-            if (looksLikeVariable) {
-              try {
-                var dynamicValue = eval(trimmedName);
-                if (typeof dynamicValue !== 'undefined') {
-                  if (!__looksLikeRequestUrl(dynamicValue) && headers === undefined) {
-                    return dynamicValue;
-                  }
-                  var dynamicRequest = __normalizeRequestOptions('GET', headers, null);
-                  return __syncRequest(dynamicValue, dynamicRequest.method, dynamicRequest.body, dynamicRequest.headers);
-                }
-              } catch(__ignoredEvalError__) { /* ignore */ }
-              return '';
+              return contextValue === undefined || contextValue === null ? '' : contextValue;
             }
           }
-
-          var request = __normalizeRequestOptions('GET', headers, null);
-          return __syncRequest(urlOrVarName, request.method, request.body, request.headers);
+          return '';
         },
         // put方法：设置变量值
         put: function(varName, value) {
@@ -3822,17 +4886,56 @@ export class LegadoJsEngine {
           return __javaBytesToString(bytes, charset || 'UTF-8');
         },
         
-        // 时间格式化
+        // 时间格式化：保持 Legado dateFormat/SimpleDateFormat 语义，禁止使用
+        // 会随设备语言变化的 toLocaleString。
+        __formatLegadoDate: function(time, format, utc, offset) {
+          var date = new Date(Number(time) + (utc ? Number(offset || 0) : 0));
+          var year = utc ? date.getUTCFullYear() : date.getFullYear();
+          var month = (utc ? date.getUTCMonth() : date.getMonth()) + 1;
+          var day = utc ? date.getUTCDate() : date.getDate();
+          var hour24 = utc ? date.getUTCHours() : date.getHours();
+          var minute = utc ? date.getUTCMinutes() : date.getMinutes();
+          var second = utc ? date.getUTCSeconds() : date.getSeconds();
+          var millis = utc ? date.getUTCMilliseconds() : date.getMilliseconds();
+          var hour12 = hour24 % 12 || 12;
+          var pad = function(value, width) { return String(value).padStart(width, '0'); };
+          return String(format).replace(/yyyy|yy|MM|M|dd|d|HH|H|hh|h|mm|m|ss|s|SSS|S/g, function(token) {
+            switch (token) {
+              case 'yyyy': return pad(year, 4);
+              case 'yy': return pad(year % 100, 2);
+              case 'MM': return pad(month, 2);
+              case 'M': return String(month);
+              case 'dd': return pad(day, 2);
+              case 'd': return String(day);
+              case 'HH': return pad(hour24, 2);
+              case 'H': return String(hour24);
+              case 'hh': return pad(hour12, 2);
+              case 'h': return String(hour12);
+              case 'mm': return pad(minute, 2);
+              case 'm': return String(minute);
+              case 'ss': return pad(second, 2);
+              case 's': return String(second);
+              case 'SSS': return pad(millis, 3);
+              case 'S': return String(millis);
+              default: return token;
+            }
+          });
+        },
         timeFormat: function(time) {
-          return new Date(time).toLocaleString();
+          return this.__formatLegadoDate(time, 'yyyy/MM/dd HH:mm', false, 0);
         },
         timeFormatUTC: function(time, format, sh) {
-          return new Date(time).toISOString();
+          return this.__formatLegadoDate(time, format, true, sh);
         },
         
-        // URL编码
-        encodeURI: function(str, enc) { 
-          return encodeURIComponent(str); 
+        // Match JsExtensions.encodeURI: Java URLEncoder form encoding, not the
+        // browser encodeURIComponent variant used by the previous shim.
+        encodeURI: function(str, enc) {
+          return encodeURIComponent(String(str === undefined || str === null ? '' : str))
+            .replace(/%20/g, '+')
+            .replace(/[!'()~]/g, function(character) {
+              return '%' + character.charCodeAt(0).toString(16).toUpperCase();
+            });
         },
         
         // HTML格式化
@@ -4086,7 +5189,8 @@ export class LegadoJsEngine {
           return content === undefined ? __getStringFromCurrentResult(rule) : __getStringFromContent(rule, content);
         },
         getStringList: function(rule, content) {
-          return content === undefined ? __getStringListFromCurrentResult(rule) : __getStringListFromContent(rule, content);
+          var values = content === undefined ? __getStringListFromCurrentResult(rule) : __getStringListFromContent(rule, content);
+          return __createJavaList(values, 'bracket');
         },
         getElement: function(rule, content) {
           return __getElementFromContent(rule, content === undefined ? (result || src || '') : content);
@@ -4135,26 +5239,52 @@ export class LegadoJsEngine {
           return str.split(delimiter).filter(function(s) { return s.trim() !== ''; });
         },
         
-        // 章节数转数字
+        // Kept equivalent to the V2 runtime's Legado JsExtensions bridge.
         toNumChapter: function(s) {
-          if (!s) return '';
-          var chineseNums = {'零':0,'一':1,'二':2,'三':3,'四':4,'五':5,'六':6,'七':7,'八':8,'九':9,'十':10,'百':100,'千':1000,'万':10000};
-          return s.replace(/[零一二三四五六七八九十百千万]+/g, function(match) {
-            var num = 0, temp = 0;
-            for (var i = 0; i < match.length; i++) {
-              var val = chineseNums[match[i]];
-              if (val === undefined) continue;
-              if (val >= 10) {
-                if (temp === 0) temp = 1;
-                temp *= val;
-                if (val === 10 && i === match.length - 1) { num += temp; temp = 0; }
+          if (s === null || s === undefined) return null;
+          var text = String(s);
+          var chapter = /(第)(.+?)(章)/.exec(text);
+          if (!chapter) return text;
+          var numeral = chapter[2].replace(/[　]/g, '').replace(/[！-～]/g, function(c) {
+            return String.fromCharCode(c.charCodeAt(0) - 65248);
+          }).replace(/\s+/g, '');
+          var values = {'零':0,'一':1,'二':2,'三':3,'四':4,'五':5,'六':6,'七':7,'八':8,'九':9,'十':10,'〇':0,'壹':1,'贰':2,'叁':3,'肆':4,'伍':5,'陆':6,'柒':7,'捌':8,'玖':9,'拾':10,'两':2,'百':100,'佰':100,'千':1000,'仟':1000,'万':10000,'亿':100000000};
+          var decimal = /^([+-]?)([0-9]+)$/.exec(numeral);
+          var value = -1;
+          if (decimal) {
+            var sign = decimal[1] === '-' ? -1 : 1;
+            var parsed = 0;
+            var valid = true;
+            for (var i = 0; i < decimal[2].length; i++) {
+              parsed = parsed * 10 + (decimal[2].charCodeAt(i) - 48);
+              if (parsed > 2147483648) { valid = false; break; }
+            }
+            if (valid && ((sign > 0 && parsed <= 2147483647) || (sign < 0 && parsed <= 2147483648))) value = sign * parsed;
+          } else {
+            var resultNumber = 0, temporaryNumber = 0, billionNumber = 0, chineseValid = numeral.length > 0;
+            for (var index = 0; chineseValid && index < numeral.length; index++) {
+              var current = values[numeral.charAt(index)];
+              if (current === undefined) { chineseValid = false; break; }
+              if (current === 100000000) {
+                resultNumber = (resultNumber + temporaryNumber) | 0;
+                resultNumber = Math.imul(resultNumber, current);
+                billionNumber = (Math.imul(billionNumber, 100000000) + resultNumber) | 0;
+                resultNumber = 0; temporaryNumber = 0;
+              } else if (current === 10000) {
+                resultNumber = (resultNumber + temporaryNumber) | 0;
+                resultNumber = Math.imul(resultNumber, current); temporaryNumber = 0;
+              } else if (current >= 10) {
+                if (temporaryNumber === 0) temporaryNumber = 1;
+                resultNumber = (resultNumber + Math.imul(current, temporaryNumber)) | 0;
+                temporaryNumber = 0;
               } else {
-                if (temp > 0) { num += temp; temp = 0; }
-                temp = val;
+                var previous = index > 0 ? values[numeral.charAt(index - 1)] : undefined;
+                temporaryNumber = index >= 2 && index === numeral.length - 1 && previous !== undefined && previous > 10 ? Math.trunc(Math.imul(current, previous) / 10) : (Math.imul(temporaryNumber, 10) + current) | 0;
               }
             }
-            return String(num + temp);
-          });
+            if (chineseValid) value = (resultNumber + temporaryNumber + billionNumber) | 0;
+          }
+          return chapter[1] + String(value) + chapter[3];
         },
         
         // URL工具
@@ -4177,14 +5307,7 @@ export class LegadoJsEngine {
         
         // HTML实体解码
         unescapeHtml: function(str) {
-          return str.replace(/&nbsp;/g, ' ')
-                    .replace(/&lt;/g, '<')
-                    .replace(/&gt;/g, '>')
-                    .replace(/&amp;/g, '&')
-                    .replace(/&quot;/g, '"')
-                    .replace(/&#39;/g, "'")
-                    .replace(/&#x([0-9a-fA-F]+);/g, function(m, c) { return String.fromCharCode(parseInt(c, 16)); })
-                    .replace(/&#([0-9]+);/g, function(m, c) { return String.fromCharCode(parseInt(c, 10)); });
+          return __legadoDecodeHtmlEntities(str, false);
         }
       };
       
@@ -4230,6 +5353,7 @@ export class LegadoJsEngine {
           ${contextVars}
           ${variableVars}
           ${utilFunctions}
+          ${this.buildJsoupTextProjectionCompatibilityScript()}
           
           // 创建this上下文对象，供jsLib中使用this的函数访问
           var __thisContext = {
@@ -4380,16 +5504,17 @@ export class LegadoJsEngine {
    */
   private buildNativeScript(code: string, context: JsContext): string {
     // 获取sourceUrl（优先从variables中获取，否则使用baseUrl）
-    const sourceUrl = context.variables?.['sourceUrl'] || context.baseUrl || '';
+    const sourceUrl = context.variables?.['sourceUrl'] || context.baseUrl || context.source?.bookSourceUrl || '';
     const activeJsLib = context.jsLib !== undefined ? context.jsLib : this.jsLib;
-    const sourceBookSourceName = context.variables?.['__source_bookSourceName'] || '';
-    const sourceBookSourceGroup = context.variables?.['__source_bookSourceGroup'] || '';
-    const sourceBookSourceComment = context.variables?.['__source_bookSourceComment'] || '';
-    const sourceHeader = context.variables?.['__source_header'] || '';
-    const sourceLoginUrl = context.variables?.['__source_loginUrl'] || '';
-    const sourceLoginUi = context.variables?.['__source_loginUi'] || '';
-    const sourceLoginCheckJs = context.variables?.['__source_loginCheckJs'] || '';
-    const sourceVariableComment = context.variables?.['__source_variableComment'] || '';
+    const sourceBookSourceName = context.variables?.['__source_bookSourceName'] || context.source?.bookSourceName || '';
+    const sourceBookSourceGroup = context.variables?.['__source_bookSourceGroup'] || context.source?.bookSourceGroup || '';
+    const sourceBookSourceComment = context.variables?.['__source_bookSourceComment'] || context.source?.bookSourceComment || '';
+    const sourceBookSourceType = context.source?.bookSourceType || Number(context.variables?.['__source_bookSourceType'] || '0');
+    const sourceHeader = context.variables?.['__source_header'] || context.source?.header || '';
+    const sourceLoginUrl = context.variables?.['__source_loginUrl'] || context.source?.loginUrl || '';
+    const sourceLoginUi = context.variables?.['__source_loginUi'] || context.source?.loginUi || '';
+    const sourceLoginCheckJs = context.variables?.['__source_loginCheckJs'] || context.source?.loginCheckJs || '';
+    const sourceVariableComment = context.variables?.['__source_variableComment'] || context.source?.variableComment || '';
     const normalizedSourceLoginUrl = this.normalizeJsCode(sourceLoginUrl);
     const normalizedSourceLoginCheckJs = this.normalizeJsCode(sourceLoginCheckJs);
     
@@ -4550,6 +5675,7 @@ export class LegadoJsEngine {
         bookSourceName: ${JSON.stringify(sourceBookSourceName)},
         bookSourceGroup: ${JSON.stringify(sourceBookSourceGroup)},
         bookSourceComment: ${JSON.stringify(sourceBookSourceComment)},
+        bookSourceType: ${sourceBookSourceType},
         loginUrl: ${JSON.stringify(normalizedSourceLoginUrl)},
         loginUi: ${JSON.stringify(sourceLoginUi)},
         loginCheckJs: ${JSON.stringify(normalizedSourceLoginCheckJs)},
@@ -4709,7 +5835,8 @@ export class LegadoJsEngine {
         if (!html || !name) return '';
         var attrRegex = new RegExp('\\\\s' + String(name).replace(/[-\\/\\\\^$*+?.()|[\\]{}]/g, '\\\\$&') + '\\\\s*=\\\\s*(?:"([^"]*)"|\\\\\\'([^\\\\\\']*)\\\\\\'|([^\\\\s"\\\\\\'<>]+))', 'i');
         var attrMatch = String(html).match(attrRegex);
-        return attrMatch ? (attrMatch[1] || attrMatch[2] || attrMatch[3] || '') : '';
+        var rawAttrValue = attrMatch ? (attrMatch[1] || attrMatch[2] || attrMatch[3] || '') : '';
+        return __legadoDecodeHtmlEntities(rawAttrValue, true);
       };
 
       var __nativeCreateAttribute = function(name, value) {
@@ -4984,6 +6111,27 @@ export class LegadoJsEngine {
         return text;
       };
 
+      var __nativeSplitRuleReplacement = function(rule) {
+        var pieces = String(rule || '').split('##');
+        return {
+          rule: String(pieces.shift() || '').trim(),
+          regex: pieces.length > 0 ? String(pieces.shift() || '') : '',
+          replacement: pieces.length > 0 ? String(pieces.shift() || '') : '',
+          replaceFirst: pieces.length > 0
+        };
+      };
+
+      var __nativeApplyRuleReplacement = function(value, replacement) {
+        var text = value === undefined || value === null ? '' : String(value);
+        if (!replacement || !replacement.regex) return text;
+        try {
+          var flags = replacement.replaceFirst ? '' : 'g';
+          return text.replace(new RegExp(replacement.regex, flags), replacement.replacement);
+        } catch (error) {
+          return text;
+        }
+      };
+
       var __nativeSplitCssAttrRule = function(rule) {
         var text = __nativeNormalizeCssRule(rule);
         var attr = 'text';
@@ -4999,37 +6147,370 @@ export class LegadoJsEngine {
       var __nativeReadElementByAttr = function(element, attrName) {
         if (!element) return '';
         var attr = String(attrName || 'text').trim();
-        if (attr === 'text' || attr === 'textNodes') return typeof element.text === 'function' ? element.text() : '';
+        if (attr === 'text') return typeof element.text === 'function' ? element.text() : '';
+        if (attr === 'textNodes') return __legadoJsoupTextNodesTerminal(element);
+        if (attr === 'ownText') return typeof element.ownText === 'function' ? element.ownText() : '';
         if (attr === 'html') return typeof element.html === 'function' ? element.html() : '';
         if (attr === 'outerHtml') return typeof element.outerHtml === 'function' ? element.outerHtml() : String(element);
         return typeof element.attr === 'function' ? element.attr(attr) : '';
       };
 
-      var __nativeGetStringFromCurrentResult = function(rule) {
-        var split = __nativeSplitCssAttrRule(rule);
-        if (!split.selector) return String(result || src || '');
-        var documentObj = __nativeCreateParsedDocument(result || src || '');
-        var element = documentObj.selectFirst(split.selector);
-        return __nativeReadElementByAttr(element, split.attr);
+      var __nativeCreateJavaList = function(values) {
+        var list = Array.isArray(values) ? values.slice(0) : [];
+        list.get = function(index) {
+          var numericIndex = Number(index) || 0;
+          return list[numericIndex] === undefined || list[numericIndex] === null ? '' : list[numericIndex];
+        };
+        list.size = function() { return list.length; };
+        list.isEmpty = function() { return list.length === 0; };
+        list.first = function() { return list.length > 0 ? list[0] : ''; };
+        list.last = function() { return list.length > 0 ? list[list.length - 1] : ''; };
+        list.toArray = function() { return list.slice(0); };
+        list.entrySet = function() { return { toArray: function() { return list.slice(0); } }; };
+        list.toString = function() { return '[' + list.join(', ') + ']'; };
+        return list;
       };
 
-      var __nativeGetStringListFromCurrentResult = function(rule) {
-        var split = __nativeSplitCssAttrRule(rule);
+      var __nativeSplitRuleCombinators = function(rule, allowedOperators) {
+        var text = String(rule || '');
+        var operators = allowedOperators || ['&&', '||', '%%'];
+        var parts = [];
+        var current = '';
+        var firstOperator = '';
+        var squareDepth = 0;
+        var roundDepth = 0;
+        var braceDepth = 0;
+        var quote = '';
+        for (var i = 0; i < text.length; i++) {
+          var ch = text.charAt(i);
+          var next = i + 1 < text.length ? text.charAt(i + 1) : '';
+          if (quote) {
+            current += ch;
+            if (ch === '\\\\' && i + 1 < text.length) {
+              current += next;
+              i++;
+            } else if (ch === quote) {
+              quote = '';
+            }
+            continue;
+          }
+          if (ch === '"' || ch === "'") {
+            quote = ch;
+            current += ch;
+            continue;
+          }
+          if (ch === '[') squareDepth++;
+          else if (ch === ']' && squareDepth > 0) squareDepth--;
+          else if (ch === '(') roundDepth++;
+          else if (ch === ')' && roundDepth > 0) roundDepth--;
+          else if (ch === '{') braceDepth++;
+          else if (ch === '}' && braceDepth > 0) braceDepth--;
+          var matchedOperator = '';
+          if (squareDepth === 0 && roundDepth === 0 && braceDepth === 0) {
+            for (var operatorIndex = 0; operatorIndex < operators.length; operatorIndex++) {
+              var candidate = String(operators[operatorIndex] || '');
+              if (candidate && text.substring(i, i + candidate.length) === candidate) {
+                matchedOperator = candidate;
+                break;
+              }
+            }
+          }
+          if (matchedOperator && (!firstOperator || matchedOperator === firstOperator)) {
+            if (!firstOperator) firstOperator = matchedOperator;
+            if (current.trim()) parts.push(current.trim());
+            current = '';
+            i += matchedOperator.length - 1;
+            continue;
+          }
+          current += ch;
+        }
+        if (current.trim()) parts.push(current.trim());
+        return { parts: parts.length > 0 ? parts : [text.trim()], splitType: firstOperator };
+      };
+
+      var __nativeJsonPathText = function(value) {
+        if (value === undefined || value === null) return '';
+        if (typeof value === 'string' || typeof value === 'number' || typeof value === 'boolean') return String(value);
+        try { return JSON.stringify(value); } catch(e) { return String(value); }
+      };
+      var __nativeCollectJsonPathKey = function(value, key, output) {
+        if (value === undefined || value === null) return;
+        if (Array.isArray(value)) {
+          for (var arrayIndex = 0; arrayIndex < value.length; arrayIndex++) {
+            __nativeCollectJsonPathKey(value[arrayIndex], key, output);
+          }
+          return;
+        }
+        if (typeof value !== 'object') return;
+        if (Object.keys(value).indexOf(key) >= 0) output.push(value[key]);
+        Object.keys(value).forEach(function(childKey) {
+          __nativeCollectJsonPathKey(value[childKey], key, output);
+        });
+      };
+      var __nativeApplyJsonPathTokens = function(values, suffix) {
+        var current = values.slice(0);
+        var remaining = String(suffix || '').trim();
+        while (remaining.length > 0) {
+          if (remaining.indexOf('..') === 0) {
+            remaining = remaining.substring(2);
+            var recursiveEnd = 0;
+            while (recursiveEnd < remaining.length && remaining.charAt(recursiveEnd) !== '.' && remaining.charAt(recursiveEnd) !== '[') recursiveEnd++;
+            var recursiveKey = remaining.substring(0, recursiveEnd).trim();
+            remaining = remaining.substring(recursiveEnd);
+            if (!recursiveKey) return [];
+            var recursiveOutput = [];
+            for (var recursiveIndex = 0; recursiveIndex < current.length; recursiveIndex++) {
+              __nativeCollectJsonPathKey(current[recursiveIndex], recursiveKey, recursiveOutput);
+            }
+            current = recursiveOutput;
+            continue;
+          }
+          if (remaining.charAt(0) === '.') remaining = remaining.substring(1);
+          if (remaining.length === 0) break;
+          var token = '';
+          if (remaining.charAt(0) === '[') {
+            var close = remaining.indexOf(']');
+            if (close < 0) return [];
+            token = remaining.substring(1, close).trim();
+            remaining = remaining.substring(close + 1);
+            if ((token.charAt(0) === '"' && token.charAt(token.length - 1) === '"') ||
+                (token.charAt(0) === "'" && token.charAt(token.length - 1) === "'")) {
+              token = token.substring(1, token.length - 1);
+            }
+          } else {
+            var tokenEnd = 0;
+            while (tokenEnd < remaining.length && remaining.charAt(tokenEnd) !== '.' && remaining.charAt(tokenEnd) !== '[') tokenEnd++;
+            token = remaining.substring(0, tokenEnd).trim();
+            remaining = remaining.substring(tokenEnd);
+          }
+          if (!token) continue;
+          var next = [];
+          for (var valueIndex = 0; valueIndex < current.length; valueIndex++) {
+            var currentValue = current[valueIndex];
+            if (token === '*') {
+              if (Array.isArray(currentValue)) {
+                for (var wildcardIndex = 0; wildcardIndex < currentValue.length; wildcardIndex++) next.push(currentValue[wildcardIndex]);
+              } else if (currentValue && typeof currentValue === 'object') {
+                Object.keys(currentValue).forEach(function(key) { next.push(currentValue[key]); });
+              }
+              continue;
+            }
+            if (Array.isArray(currentValue) && token.indexOf(':') >= 0) {
+              var sliceParts = token.split(':');
+              if (sliceParts.length >= 2 && sliceParts.length <= 3) {
+                var sliceStep = sliceParts.length > 2 && sliceParts[2] !== '' ? parseInt(sliceParts[2], 10) : 1;
+                if (!isNaN(sliceStep) && sliceStep !== 0) {
+                  var sliceStart = sliceParts[0] === '' ? (sliceStep > 0 ? 0 : currentValue.length - 1) : parseInt(sliceParts[0], 10);
+                  var sliceEnd = sliceParts[1] === '' ? (sliceStep > 0 ? currentValue.length : -1) : parseInt(sliceParts[1], 10);
+                  if (isNaN(sliceStart) || isNaN(sliceEnd)) continue;
+                  if (sliceStart < 0) sliceStart = currentValue.length + sliceStart;
+                  if (sliceEnd < 0 && !(sliceStep < 0 && sliceParts[1] === '')) sliceEnd = currentValue.length + sliceEnd;
+                  if (sliceStep > 0) {
+                    if (sliceStart < 0) sliceStart = 0;
+                    if (sliceEnd > currentValue.length) sliceEnd = currentValue.length;
+                    for (var sliceIndex = sliceStart; sliceIndex < sliceEnd; sliceIndex += sliceStep) next.push(currentValue[sliceIndex]);
+                  } else {
+                    if (sliceStart >= currentValue.length) sliceStart = currentValue.length - 1;
+                    if (sliceEnd < -1) sliceEnd = -1;
+                    for (var reverseSliceIndex = sliceStart; reverseSliceIndex > sliceEnd; reverseSliceIndex += sliceStep) next.push(currentValue[reverseSliceIndex]);
+                  }
+                  continue;
+                }
+              }
+            }
+            if (Array.isArray(currentValue) && /^-?[0-9]+$/.test(token)) {
+              var itemIndex = parseInt(token, 10);
+              if (itemIndex < 0) itemIndex = currentValue.length + itemIndex;
+              if (itemIndex >= 0 && itemIndex < currentValue.length) next.push(currentValue[itemIndex]);
+              continue;
+            }
+            if (currentValue && typeof currentValue === 'object' && Object.keys(currentValue).indexOf(token) >= 0) {
+              next.push(currentValue[token]);
+            }
+          }
+          current = next;
+        }
+        return current;
+      };
+      var __nativeJsonPathValues = function(rule, contentValue) {
+        var text = String(rule || '').trim();
+        if (text.charAt(0) !== '$') return [];
+        var candidate = contentValue === undefined || contentValue === null ? (result || src || '') : contentValue;
+        var root = candidate;
+        if (typeof root === 'string') {
+          try { root = JSON.parse(root); } catch(e) { return []; }
+        }
+        if (root === undefined || root === null || typeof root !== 'object') return [];
+        return __nativeApplyJsonPathTokens([root], text.substring(1));
+      };
+
+      var __nativeSplitObjectContentRule = function(rule) {
+        var pieces = String(rule || '').split('##');
+        return {
+          key: String(pieces.length > 0 ? pieces[0] : '').trim(),
+          regex: pieces.length > 1 ? String(pieces[1] || '') : '',
+          replacement: pieces.length > 2 ? String(pieces[2] || '') : '',
+          replaceFirst: pieces.length > 3
+        };
+      };
+
+      var __nativeReplaceObjectContentText = function(value, ruleParts) {
+        var text = value === undefined || value === null ? '' : String(value);
+        if (!ruleParts.regex) return text;
+        try {
+          var flags = ruleParts.replaceFirst ? '' : 'g';
+          return text.replace(new RegExp(ruleParts.regex, flags), ruleParts.replacement);
+        } catch (error) {
+          return text;
+        }
+      };
+
+      var __nativeGetObjectContentValue = function(rule, contentValue) {
+        if (contentValue === undefined || contentValue === null || typeof contentValue !== 'object' || Array.isArray(contentValue)) {
+          return { matched: false, value: '' };
+        }
+        if (typeof contentValue.select === 'function' || typeof contentValue.attr === 'function' || typeof contentValue.body === 'function') {
+          return { matched: false, value: '' };
+        }
+        var ruleParts = __nativeSplitObjectContentRule(rule);
+        if (!ruleParts.key || ruleParts.key.charAt(0) === '$') return { matched: false, value: '' };
+        var keys = Object.keys(contentValue);
+        var hasKey = keys.indexOf(ruleParts.key) >= 0;
+        var rawValue = hasKey ? contentValue[ruleParts.key] : undefined;
+        return {
+          matched: true,
+          value: __nativeReplaceObjectContentText(rawValue, ruleParts),
+          hasKey: hasKey
+        };
+      };
+
+      var __nativeGetObjectContentList = function(rule, contentValue) {
+        var lookup = __nativeGetObjectContentValue(rule, contentValue);
+        if (!lookup.matched) return { matched: false, values: [] };
+        var ruleParts = __nativeSplitObjectContentRule(rule);
+        var rawValue = contentValue[ruleParts.key];
+        if (rawValue === undefined || rawValue === null) return { matched: true, values: [] };
+        var values = Array.isArray(rawValue) ? rawValue : String(rawValue).split('\n');
+        var projected = [];
+        for (var valueIndex = 0; valueIndex < values.length; valueIndex++) {
+          projected.push(__nativeReplaceObjectContentText(values[valueIndex], ruleParts));
+        }
+        return { matched: true, values: projected };
+      };
+
+      var __nativeGetStringFromContent = function(rule, contentValue, skipComposition) {
+        var replacement = __nativeSplitRuleReplacement(rule);
+        var normalizedRule = replacement.rule;
+        if (!skipComposition) {
+          var split = __nativeSplitRuleCombinators(normalizedRule, ['&&', '||']);
+          if (split.parts.length > 1) {
+            var textList = [];
+            for (var splitIndex = 0; splitIndex < split.parts.length; splitIndex++) {
+              var nestedValue = __nativeGetStringFromContent(split.parts[splitIndex], contentValue, true);
+              if (nestedValue) {
+                textList.push(nestedValue);
+                if (split.splitType === '||') break;
+              }
+            }
+            return textList.join('\n');
+          }
+        }
+        var objectLookup = __nativeGetObjectContentValue(rule, contentValue);
+        if (objectLookup.matched) return objectLookup.value;
+        if (normalizedRule.charAt(0) === '$') {
+          var jsonValues = __nativeJsonPathValues(normalizedRule, contentValue);
+          var jsonValue = jsonValues.length > 0 ? __nativeJsonPathText(jsonValues[0]) : '';
+          return __nativeApplyRuleReplacement(jsonValue, replacement);
+        }
+        var cssValues = __nativeGetStringListFromContent(normalizedRule, contentValue, true);
+        return __nativeApplyRuleReplacement(cssValues.join('\n'), replacement);
+      };
+
+      var __nativeDeduplicateLegadoAttributeValues = function(values, attr) {
+        var normalized = String(attr || '').toLowerCase();
+        if (normalized === 'text' || normalized === 'textnodes' ||
+            normalized === 'owntext' || normalized === 'html' ||
+            normalized === 'outerhtml' || normalized === 'all') {
+          return values;
+        }
+        var result = [];
+        for (var valueIndex = 0; valueIndex < values.length; valueIndex++) {
+          var value = values[valueIndex] === undefined || values[valueIndex] === null ? '' : String(values[valueIndex]);
+          if (!value.trim() || result.indexOf(value) >= 0) continue;
+          result.push(value);
+        }
+        return result;
+      };
+
+      var __nativeGetStringListFromContent = function(rule, contentValue, skipComposition) {
+        var replacement = __nativeSplitRuleReplacement(rule);
+        var normalizedRule = replacement.rule;
+        if (!skipComposition) {
+          var composition = __nativeSplitRuleCombinators(normalizedRule, ['&&', '||', '%%']);
+          if (composition.parts.length > 1) {
+            var groups = [];
+            for (var splitIndex = 0; splitIndex < composition.parts.length; splitIndex++) {
+              var nestedValues = __nativeGetStringListFromContent(composition.parts[splitIndex], contentValue, true);
+              if (nestedValues.length > 0) {
+                groups.push(nestedValues);
+                if (composition.splitType === '||') break;
+              }
+            }
+            var merged = [];
+            if (composition.splitType === '%%') {
+              var maxLength = 0;
+              for (var groupIndex = 0; groupIndex < groups.length; groupIndex++) {
+                if (groups[groupIndex].length > maxLength) maxLength = groups[groupIndex].length;
+              }
+              for (var row = 0; row < maxLength; row++) {
+                for (var column = 0; column < groups.length; column++) {
+                  if (row < groups[column].length) merged.push(groups[column][row]);
+                }
+              }
+            } else {
+              for (var mergeIndex = 0; mergeIndex < groups.length; mergeIndex++) {
+                merged = merged.concat(groups[mergeIndex]);
+              }
+            }
+            return merged.map(function(value) { return __nativeApplyRuleReplacement(value, replacement); });
+          }
+        }
+        var objectLookup = __nativeGetObjectContentList(rule, contentValue);
+        if (objectLookup.matched) return objectLookup.values;
+        if (normalizedRule.charAt(0) === '$') {
+          return __nativeJsonPathValues(normalizedRule, contentValue).map(function(value) {
+            return __nativeApplyRuleReplacement(__nativeJsonPathText(value), replacement);
+          });
+        }
+        var split = __nativeSplitCssAttrRule(normalizedRule);
         if (!split.selector) return [];
-        var documentObj = __nativeCreateParsedDocument(result || src || '');
+        var documentObj = __nativeCreateParsedDocument(__nativeResolveRuleContent(contentValue));
         var elements = documentObj.select(split.selector);
-        if (split.attr === 'text' || split.attr === 'textNodes') return elements.eachText();
+        var rawValues = [];
+        if (split.attr === 'text') rawValues = elements.eachText();
+        else if (split.attr === 'textNodes') {
+          for (var textNodeIndex = 0; textNodeIndex < elements.size(); textNodeIndex++) {
+            rawValues.push(__legadoJsoupTextNodesTerminal(elements.get(textNodeIndex)));
+          }
+        } else if (split.attr === 'ownText') {
+          for (var ownTextIndex = 0; ownTextIndex < elements.size(); ownTextIndex++) {
+            var ownTextElement = elements.get(ownTextIndex);
+            rawValues.push(ownTextElement && typeof ownTextElement.ownText === 'function' ? ownTextElement.ownText() : '');
+          }
+        }
         if (split.attr === 'html') {
-          var htmlList = [];
-          for (var i = 0; i < elements.size(); i++) htmlList.push(elements.get(i).html());
-          return htmlList;
+          for (var i = 0; i < elements.size(); i++) rawValues.push(elements.get(i).html());
+        } else if (split.attr === 'outerHtml') {
+          for (var j = 0; j < elements.size(); j++) rawValues.push(elements.get(j).outerHtml());
+        } else if (split.attr !== 'text' && split.attr !== 'textNodes' && split.attr !== 'ownText') {
+          rawValues = elements.eachAttr(split.attr);
         }
-        if (split.attr === 'outerHtml') {
-          var outerList = [];
-          for (var j = 0; j < elements.size(); j++) outerList.push(elements.get(j).outerHtml());
-          return outerList;
-        }
-        return elements.eachAttr(split.attr);
+        rawValues = __nativeDeduplicateLegadoAttributeValues(rawValues, split.attr);
+        return rawValues.map(function(value) { return __nativeApplyRuleReplacement(value, replacement); });
+      };
+
+      var __nativeGetStringFromCurrentResult = function(rule) {
+        return __nativeGetStringFromContent(rule, result || src || '');
       };
 
       var __nativeGetStringListFromCurrentResult = function(rule) {
@@ -5301,65 +6782,110 @@ export class LegadoJsEngine {
         }
         return bytes;
       };
-      var __createCryptoBytes = function(value, preferBase64) {
+      var __createCryptoBytes = function(value, encoding) {
         if (Array.isArray(value)) return value.slice(0);
         var text = String(value === undefined || value === null ? '' : value);
-        if (preferBase64 && text.length > 0) return __base64DecodeBytes(text);
-        if (__looksLikeHexString(text)) return __hexStringToBytes(text);
+        var normalizedEncoding = String(encoding || 'UTF-8').toUpperCase();
+        if (normalizedEncoding === 'BASE64') return __base64DecodeBytes(text);
+        if (normalizedEncoding === 'HEX') {
+          if (!__looksLikeHexString(text)) throw new Error('INVALID_HEX_INPUT');
+          return __hexStringToBytes(text);
+        }
         return __toJavaByteArray(text, 'UTF-8');
       };
-      var __createSymmetricCrypto = function(transformation, keyValue, ivValue) {
-        var transform = String(transformation || 'AES/CBC/PKCS5Padding');
-        var upper = transform.toUpperCase();
-        var algorithm = upper.indexOf('DES') >= 0 && upper.indexOf('AES') < 0 ? 'DES' : 'AES';
-        var modeName = upper.indexOf('/ECB') >= 0 ? 'ECB' : 'CBC';
-        var noPadding = upper.indexOf('NOPADDING') >= 0;
-        var zeroPadding = upper.indexOf('ZEROPADDING') >= 0;
-        var keyBytes = __createCryptoBytes(keyValue, false);
-        var ivBytes = ivValue === undefined || ivValue === null ? [] : __createCryptoBytes(ivValue, false);
-        var fallbackBytes = function(input, encrypted) {
-          if (Array.isArray(input)) return input.slice(0);
-          var text = String(input === undefined || input === null ? '' : input);
-          if (encrypted) {
-            if (__looksLikeHexString(text)) return __hexStringToBytes(text);
-            return __base64DecodeBytes(text);
-          }
-          return __toJavaByteArray(text, 'UTF-8');
+      var __decodeSymmetricCryptoInput = function(value) {
+        if (Array.isArray(value)) return value.slice(0);
+        var text = String(value === undefined || value === null ? '' : value);
+        return __looksLikeHexString(text)
+          ? __createCryptoBytes(text, 'HEX')
+          : __createCryptoBytes(text, 'BASE64');
+      };
+      var __parseSymmetricTransformation = function(transformation) {
+        var transform = String(transformation || 'AES/CBC/PKCS5Padding').trim();
+        if (transform.length === 0) transform = 'AES/CBC/PKCS5Padding';
+        var parts = transform.split('/');
+        if (parts.length > 3) throw new Error('UNSUPPORTED_SYMMETRIC_TRANSFORMATION:' + transform);
+        var algorithmToken = String(parts[0] || '').trim().toUpperCase();
+        var cryptoAlgorithm = algorithmToken === 'DESEDE' || algorithmToken === '3DES'
+          ? 'TripleDES'
+          : algorithmToken;
+        if (cryptoAlgorithm !== 'AES' && cryptoAlgorithm !== 'DES' && cryptoAlgorithm !== 'TripleDES') {
+          throw new Error('UNSUPPORTED_SYMMETRIC_ALGORITHM:' + transform);
+        }
+        var modeToken = parts.length > 1 ? String(parts[1] || '').trim().toUpperCase() : 'ECB';
+        if (modeToken !== 'ECB' && modeToken !== 'CBC') {
+          throw new Error('UNSUPPORTED_SYMMETRIC_MODE:' + transform);
+        }
+        var paddingToken = parts.length > 2 ? String(parts[2] || '').trim().toUpperCase() : 'PKCS5PADDING';
+        var padding = '';
+        if (paddingToken === 'PKCS5PADDING' || paddingToken === 'PKCS7PADDING') {
+          padding = 'PKCS7';
+        } else if (paddingToken === 'NOPADDING') {
+          padding = 'NoPadding';
+        } else {
+          throw new Error('UNSUPPORTED_SYMMETRIC_PADDING:' + transform);
+        }
+        return {
+          transformation: transform,
+          algorithm: algorithmToken === 'DESEDE' || algorithmToken === '3DES' ? '3DES' : algorithmToken,
+          cryptoAlgorithm: cryptoAlgorithm,
+          mode: modeToken,
+          padding: padding,
+          blockLength: cryptoAlgorithm === 'AES' ? 16 : 8
         };
+      };
+      var __createSymmetricCrypto = function(transformation, keyValue, ivValue) {
+        var spec = __parseSymmetricTransformation(transformation);
+        var keyBytes = __createCryptoBytes(keyValue, 'UTF-8');
+        var expectedKeyLength = spec.cryptoAlgorithm === 'AES'
+          ? (keyBytes.length === 16 || keyBytes.length === 24 || keyBytes.length === 32)
+          : (spec.cryptoAlgorithm === 'DES' ? keyBytes.length === 8 : keyBytes.length === 24);
+        if (!expectedKeyLength) {
+          var keyLabel = spec.cryptoAlgorithm === 'TripleDES' ? '3DES' : spec.cryptoAlgorithm;
+          throw new Error('INVALID_' + keyLabel + '_KEY_LENGTH:' + keyBytes.length);
+        }
+        var ivBytes = ivValue === undefined || ivValue === null ? [] : __createCryptoBytes(ivValue, 'UTF-8');
         var buildOptions = function() {
-          var options = {};
-          if (typeof CryptoJS !== 'undefined') {
-            options.mode = modeName === 'ECB' ? CryptoJS.mode.ECB : CryptoJS.mode.CBC;
-            if (ivBytes.length > 0 && modeName !== 'ECB') options.iv = __bytesToCryptoWordArray(ivBytes);
-            options.padding = noPadding ? CryptoJS.pad.NoPadding : (zeroPadding ? CryptoJS.pad.ZeroPadding : CryptoJS.pad.Pkcs7);
+          if (typeof CryptoJS === 'undefined' || !CryptoJS[spec.cryptoAlgorithm]) {
+            throw new Error('CRYPTO_JS_UNAVAILABLE:' + spec.cryptoAlgorithm);
+          }
+          var options = {
+            mode: spec.mode === 'ECB' ? CryptoJS.mode.ECB : CryptoJS.mode.CBC,
+            padding: spec.padding === 'NoPadding' ? CryptoJS.pad.NoPadding : CryptoJS.pad.Pkcs7
+          };
+          if (spec.mode === 'CBC') {
+            if (ivBytes.length !== spec.blockLength) {
+              throw new Error('INVALID_' + spec.algorithm + '_CBC_IV_LENGTH:' + ivBytes.length);
+            }
+            options.iv = __bytesToCryptoWordArray(ivBytes);
           }
           return options;
         };
-        var runEncrypt = function(input) {
-          if (typeof CryptoJS === 'undefined' || !CryptoJS[algorithm]) return fallbackBytes(input, false);
-          try {
-            var encrypted = CryptoJS[algorithm].encrypt(
-              __bytesToCryptoWordArray(__createCryptoBytes(input, false)),
-              __bytesToCryptoWordArray(keyBytes),
-              buildOptions()
-            );
-            return __cryptoWordArrayToBytes(encrypted.ciphertext);
-          } catch(__encryptError__) {
-            return fallbackBytes(input, false);
+        var validateBlockLength = function(bytes) {
+          if (spec.padding === 'NoPadding' && bytes.length % spec.blockLength !== 0) {
+            throw new Error('INVALID_SYMMETRIC_BLOCK_LENGTH:' + bytes.length);
           }
+          return bytes;
+        };
+        var runEncrypt = function(input) {
+          var options = buildOptions();
+          var inputBytes = validateBlockLength(__createCryptoBytes(input, 'UTF-8'));
+          var encrypted = CryptoJS[spec.cryptoAlgorithm].encrypt(
+            __bytesToCryptoWordArray(inputBytes),
+            __bytesToCryptoWordArray(keyBytes),
+            options
+          );
+          return __cryptoWordArrayToBytes(encrypted.ciphertext);
         };
         var runDecrypt = function(input) {
-          if (typeof CryptoJS === 'undefined' || !CryptoJS[algorithm]) return fallbackBytes(input, true);
-          try {
-            var decrypted = CryptoJS[algorithm].decrypt(
-              { ciphertext: __bytesToCryptoWordArray(__createCryptoBytes(input, typeof input === 'string')) },
-              __bytesToCryptoWordArray(keyBytes),
-              buildOptions()
-            );
-            return __cryptoWordArrayToBytes(decrypted);
-          } catch(__decryptError__) {
-            return fallbackBytes(input, true);
-          }
+          var options = buildOptions();
+          var inputBytes = validateBlockLength(__decodeSymmetricCryptoInput(input));
+          var decrypted = CryptoJS[spec.cryptoAlgorithm].decrypt(
+            { ciphertext: __bytesToCryptoWordArray(inputBytes) },
+            __bytesToCryptoWordArray(keyBytes),
+            options
+          );
+          return __cryptoWordArrayToBytes(decrypted);
         };
         return {
           encrypt: function(input) { return runEncrypt(input); },
@@ -5370,7 +6896,7 @@ export class LegadoJsEngine {
           decryptStr: function(input, charset) { return __javaBytesToString(runDecrypt(input), charset || 'UTF-8'); },
           decryptBase64: function(input) { return __base64EncodeString(runDecrypt(input)); },
           decryptHex: function(input) { return __bytesToHexString(runDecrypt(input)); },
-          toString: function() { return transform; }
+          toString: function() { return spec.transformation; }
         };
       };
       var __createOkHttpRequestBuilder = function() {
@@ -5522,10 +7048,23 @@ export class LegadoJsEngine {
           ENCRYPT_MODE: 1,
           DECRYPT_MODE: 2,
           getInstance: function(name) {
+            var transformation = String(name || 'AES/CBC/PKCS5Padding');
+            var operation = 0;
+            var crypto = null;
             return {
-              init: function() { return ''; },
-              doFinal: function(input) { return input === undefined ? [] : input; },
-              getBlockSize: function() { return 128; }
+              init: function(mode, keySpec, params) {
+                operation = Number(mode);
+                var keyBytes = __extractSecretKeyBytes(keySpec);
+                var ivBytes = params && params.value !== undefined ? __toJavaByteArray(params.value) : [];
+                crypto = __createSymmetricCrypto(transformation, keyBytes, ivBytes);
+                return this;
+              },
+              doFinal: function(input) {
+                if (crypto === null) throw new Error('CIPHER_NOT_INITIALIZED');
+                var bytes = input === undefined || input === null ? [] : __toJavaByteArray(input);
+                return operation === 2 ? crypto.decrypt(bytes) : crypto.encrypt(bytes);
+              },
+              getBlockSize: function() { return 16; }
             };
           }
         },
@@ -5640,16 +7179,6 @@ export class LegadoJsEngine {
             if (__ctx_variables && Object.keys(__ctx_variables).includes(varName)) {
               return __ctx_variables[varName];
             }
-            var trimmedName = varName.trim();
-            var looksLikeVariable = /^[A-Za-z_$][0-9A-Za-z_$]*$/.test(trimmedName);
-            if (looksLikeVariable) {
-              try {
-                var dynamicValue = eval(trimmedName);
-                if (typeof dynamicValue !== 'undefined') {
-                  return dynamicValue;
-                }
-              } catch(__ignoredEvalError__) { /* ignore */ }
-            }
           }
           return ''; 
         },
@@ -5691,30 +7220,96 @@ export class LegadoJsEngine {
           return __hexStringToBytes(hex);
         },
         
-        // URL编码
-        encodeURI: function(str, enc) { 
-          return encodeURIComponent(str); 
+        // JsExtensions.encodeURI delegates to Java URLEncoder. This is form
+        // encoding, not browser encodeURIComponent: spaces become '+' and
+        // the remaining Java-unescaped punctuation is percent encoded.
+        encodeURI: function(str, enc) {
+          return encodeURIComponent(String(str === undefined || str === null ? '' : str))
+            .replace(/%20/g, '+')
+            .replace(/[!'()~]/g, function(character) {
+              return '%' + character.charCodeAt(0).toString(16).toUpperCase();
+            });
         },
         
-        // 时间格式化
+        // 时间格式化（与上方 java 扩展保持同一 Legado 模式）
         timeFormat: function(time) {
-          return new Date(time).toLocaleString();
+          var date = new Date(Number(time));
+          var pad = function(value, width) { return String(value).padStart(width, '0'); };
+          return pad(date.getFullYear(), 4) + '/' + pad(date.getMonth() + 1, 2) + '/' +
+            pad(date.getDate(), 2) + ' ' + pad(date.getHours(), 2) + ':' + pad(date.getMinutes(), 2);
         },
         
         // 日志
         log: function(msg) { return msg; },
         
-        // MD5（简化实现）
-        md5Encode: function(str) {
-          var hash = 0;
-          for (var i = 0; i < str.length; i++) {
-            var char = str.charCodeAt(i);
-            hash = ((hash << 5) - hash) + char;
-            hash = hash & hash;
+        // Java MD5Utils hashes UTF-8 bytes. Keep this synchronous because the
+        // Legado JavaScript API exposes md5Encode as a synchronous method.
+        md5Encode: function(value) {
+          var source = String(value === undefined || value === null ? '' : value);
+          var utf8 = unescape(encodeURIComponent(source));
+          var words = [];
+          var bitLength = utf8.length * 8;
+          var index;
+          for (index = 0; index < utf8.length; index++) {
+            words[index >> 2] = (words[index >> 2] || 0) | (utf8.charCodeAt(index) << ((index % 4) * 8));
           }
-          var result = Math.abs(hash).toString(16);
-          while (result.length < 32) { result = result + result; }
-          return result.substring(0, 32);
+          words[utf8.length >> 2] = (words[utf8.length >> 2] || 0) | (0x80 << ((utf8.length % 4) * 8));
+          words[(((utf8.length + 8) >> 6) << 4) + 14] = bitLength;
+
+          var shift = [7, 12, 17, 22, 7, 12, 17, 22, 7, 12, 17, 22, 7, 12, 17, 22,
+            5, 9, 14, 20, 5, 9, 14, 20, 5, 9, 14, 20, 5, 9, 14, 20,
+            4, 11, 16, 23, 4, 11, 16, 23, 4, 11, 16, 23, 4, 11, 16, 23,
+            6, 10, 15, 21, 6, 10, 15, 21, 6, 10, 15, 21, 6, 10, 15, 21];
+          var constants = [];
+          for (index = 0; index < 64; index++) {
+            constants[index] = Math.floor(Math.abs(Math.sin(index + 1)) * 4294967296);
+          }
+          var add = function(left, right) { return (left + right) | 0; };
+          var rotateLeft = function(number, count) { return (number << count) | (number >>> (32 - count)); };
+          var a0 = 0x67452301;
+          var b0 = 0xefcdab89;
+          var c0 = 0x98badcfe;
+          var d0 = 0x10325476;
+          for (var offset = 0; offset < words.length; offset += 16) {
+            var a = a0;
+            var b = b0;
+            var c = c0;
+            var d = d0;
+            for (index = 0; index < 64; index++) {
+              var f;
+              var g;
+              if (index < 16) {
+                f = (b & c) | ((~b) & d);
+                g = index;
+              } else if (index < 32) {
+                f = (d & b) | ((~d) & c);
+                g = (5 * index + 1) % 16;
+              } else if (index < 48) {
+                f = b ^ c ^ d;
+                g = (3 * index + 5) % 16;
+              } else {
+                f = c ^ (b | (~d));
+                g = (7 * index) % 16;
+              }
+              var previousD = d;
+              d = c;
+              c = b;
+              b = add(b, rotateLeft(add(add(a, f), add(constants[index], words[offset + g] || 0)), shift[index]));
+              a = previousD;
+            }
+            a0 = add(a0, a);
+            b0 = add(b0, b);
+            c0 = add(c0, c);
+            d0 = add(d0, d);
+          }
+          var toLittleEndianHex = function(number) {
+            var text = '';
+            for (var byteIndex = 0; byteIndex < 4; byteIndex++) {
+              text += ('0' + ((number >>> (byteIndex * 8)) & 0xff).toString(16)).slice(-2);
+            }
+            return text;
+          };
+          return toLittleEndianHex(a0) + toLittleEndianHex(b0) + toLittleEndianHex(c0) + toLittleEndianHex(d0);
         },
         HMacHex: function(str, key, algorithm) {
           var payload = String(str || '');
@@ -5824,7 +7419,8 @@ export class LegadoJsEngine {
           return content === undefined ? __nativeGetStringFromCurrentResult(rule) : __nativeGetStringFromContent(rule, content);
         },
         getStringList: function(rule, content) {
-          return content === undefined ? __nativeGetStringListFromCurrentResult(rule) : __nativeGetStringListFromContent(rule, content);
+          var values = content === undefined ? __nativeGetStringListFromCurrentResult(rule) : __nativeGetStringListFromContent(rule, content);
+          return __nativeCreateJavaList(values);
         },
         getElement: function(rule, content) {
           return __nativeGetElementFromContent(rule, content === undefined ? (result || src || '') : content);
@@ -5910,7 +7506,7 @@ export class LegadoJsEngine {
         this._html = html || '';
         this._title = '';
         var titleMatch = this._html.match(/<title[^>]*>([^<]*)<\\/title>/i);
-        if (titleMatch) this._title = titleMatch[1];
+        if (titleMatch) this._title = __legadoDecodeHtmlEntities(titleMatch[1], false);
       }
       
       JsoupDocument.prototype.title = function() { return this._title; };
@@ -5920,7 +7516,7 @@ export class LegadoJsEngine {
         return elements.size() > 0 ? elements.get(0) : new JsoupElement('');
       };
       JsoupDocument.prototype.html = function() { return this._html; };
-      JsoupDocument.prototype.text = function() { return this._html.replace(/<[^>]+>/g, '').trim(); };
+      JsoupDocument.prototype.text = function() { return __legadoDecodeHtmlEntities(this._html.replace(/<[^>]+>/g, ''), false).trim(); };
       
       function JsoupElements(html, selector) {
         this._elements = [];
@@ -6096,7 +7692,7 @@ export class LegadoJsEngine {
       }
       
       function JsoupElement(outerHtml) { this._outerHtml = outerHtml || ''; }
-      JsoupElement.prototype.text = function() { return this._outerHtml.replace(/<[^>]+>/g, '').trim(); };
+      JsoupElement.prototype.text = function() { return __legadoDecodeHtmlEntities(this._outerHtml.replace(/<[^>]+>/g, ''), false).trim(); };
       JsoupElement.prototype.html = function() {
         var match = this._outerHtml.match(/^<[^>]+>([\\s\\S]*)<\\/[^>]+>$/);
         return match ? match[1] : '';
@@ -6105,7 +7701,7 @@ export class LegadoJsEngine {
       JsoupElement.prototype.attr = function(name) {
         var regex = new RegExp(name + '=["\\'"]([^"\\'"]*)["\\'"]', 'i');
         var match = this._outerHtml.match(regex);
-        return match ? match[1] : '';
+        return match ? __legadoDecodeHtmlEntities(match[1], true) : '';
       };
       JsoupElement.prototype.attributes = function() { return __nativeAttributesFromHtml(this._outerHtml); };
       JsoupElement.prototype.select = function(selector) { return new JsoupElements(this._outerHtml, selector); };
@@ -6137,6 +7733,7 @@ export class LegadoJsEngine {
           ${contextVars}
           ${variableVars}
           ${nativeUtilFunctions}
+          ${this.buildJsoupTextProjectionCompatibilityScript()}
           
           // 创建this上下文对象，供jsLib中使用this的函数访问
           var __thisContext = {

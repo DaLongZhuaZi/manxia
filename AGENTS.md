@@ -14,6 +14,7 @@
 - 用户明确指令优先于本文件。
 - 本文件优先于分散在 `.trae`、`.windsurf`、`.kiro`、`.cursor` 中的同类规则文件。
 - 每次进行文件读取、写入、修改时，必须显式使用 UTF-8 编码；禁止依赖系统默认编码。支持编码选项的写回操作统一使用 UTF-8（建议无 BOM）。
+- 在 Windows 环境下，只要目标 shell 支持，默认优先使用 PowerShell 7（`pwsh`）执行命令，以规避 Windows PowerShell 5.1（`powershell.exe`）及传统 cmd 的默认编码（如 GBK）导致的乱码、日志输出与管道处理等 UTF-8 问题；当 `pwsh` 不可用时再回退到其他可用 shell，且回退后仍需按本条规范显式处理 UTF-8 编码。
 - 涉及 HarmonyOS Next 导入、引用、编译、运行、API 能力、废弃接口迁移时，必须优先参考最新官方文档与官方最佳实践。
 - 需要解决报错或解释报错时，必须先查官方文档和相关声明定义，再结合源文件分析原因，最后给出修复方案。
 - 修复方案必须保持原功能等价，避免引入新的问题。
@@ -390,7 +391,72 @@
 - 如果问题仍未解决，继续按“读取源码和图源 JSON -> 由 Codex 直接执行浏览器调试或补充脚本 -> 收集新证据 -> 修改图源 JSON 或相关实现 -> 由 Codex 复测”的循环推进，直到问题定位清楚；必要时再要求用户补充受限环境下的验证结果。
 - 如果证据表明问题不属于图源 JSON 可修复范围，而是核心引擎、站点鉴权、反爬机制、WebView 行为或 HarmonyOS 平台限制，应明确说明判断依据和边界，再决定是否升级为更高层级修复任务。
 
-## 13. 历史规则中的已废弃约束
+## 13. Hypium Driver UI 自动化测试规范
+
+### 13.1 工具与环境
+
+- 本项目配套的 DevEco Testing Hypium 工具包位于 `F:\DevEcoStudioProject\devecotesting-hypium-6.1.0.210`。
+- 当前验证版本为 `hypium==6.1.0.210`，并配套使用同版本的 `xdevice`、`xdevice-devicetest`、`xdevice-ohos`。
+- 当前项目 `.venv` 已安装并验证可导入：`from hypium.action.device.uidriver import UiDriver`、`from hypium.uidriver.by import BY`。
+- HDC 入口为 `F:\DevEco Studio\sdk\default\openharmony\toolchains\hdc.exe`。运行 Driver 脚本前，必须把其所在目录加入 `PATH`，或者由脚本的 `--hdc-path` / `HDC_PATH` 配置完成。
+- 先执行 `hdc list targets`，再使用明确的设备 SN；当前已验证设备示例为 `2UCUT24724009680`，实际执行时必须以实时输出为准。
+
+### 13.2 Driver 模式与测试工程模式
+
+- 独立 Python 脚本使用 Driver 模式：`driver = UiDriver.connect(device_sn="...")`。
+- 通过 `UiDriver.connect` 创建的 Driver 在结束时必须调用 `driver.close()`，释放 UI Agent、端口转发和设备连接资源；推荐使用 `try/finally`。
+- Hypium 测试工程的 testcase 中使用 `UiDriver(self.device1)`，不要在 testcase 中再次调用 `UiDriver.connect()`，也不要主动调用 `close()`。
+- `python -m hypium --help` 在当前版本打印帮助后可能继续进入 xDevice 流程并因缺少配置报 `NoneType.config`；独立 Driver 脚本直接运行 Python 文件，不以该命令验证 Driver 能力。
+
+### 13.3 推荐 Driver 流程
+
+```python
+from hypium.action.device.uidriver import UiDriver
+from hypium.uidriver.by import BY
+
+driver = UiDriver.connect(device_sn="2UCUT24724009680")
+try:
+    driver.unlock()
+    driver.start_app("com.dlzz.manxia", "EntryAbility", wait_time=1)
+    driver.wait_for_idle(idle_time=0.2, timeout=10)
+    driver.check_current_window(bundle_name="com.dlzz.manxia")
+    driver.capture_screen("initial.jpeg")
+    target = driver.wait_for_component(BY.text("目标文本"), timeout=30)
+    if target is not None and target.isEnabled() and target.isClickable():
+        target.click()
+        driver.wait_for_idle(idle_time=0.2, timeout=10)
+        driver.capture_screen("after-click.jpeg")
+finally:
+    driver.close()
+```
+
+- 常用实例方法包括 `unlock`、`start_app`、`stop_app`、`wait_for_idle`、`wait_for_component`、`find_component`、`find_all_components`、`check_current_window`、`get_current_window`、`get_display_size`、`capture_screen`、`go_home`、`go_back`、`input_text` 和 `clear_text`。
+- `driver.device_sn` 是属性，不是函数；应写 `driver.device_sn`，不能写 `driver.device_sn()`。
+- 当前 6.1.0.210 包内的 `capture_screen` 只接受 JPEG；截图文件使用 `.jpeg` 扩展名，不要使用 `.png`。
+- 推荐通过 `BY.id`、`BY.key`、`BY.text`、`BY.type`、`BY.hint` 定位；XPath 只在选择器能力确实需要时使用，并先在实际设备验证。
+- 控件对象方法使用包内的 camelCase 名称，例如 `getText()`、`getId()`、`getKey()`、`getType()`、`getBounds()`、`isEnabled()`、`isClickable()`、`click()`。
+
+### 13.4 动态 UI 与低风险操作
+
+- `wait_for_idle()` 只表示当前 UI 在短时间内没有动作，不表示业务数据、卡片同步或异步网络加载已经完成；有明确目标时优先使用 `wait_for_component(selector, timeout=...)`。
+- 控件对象是当前 UI 树的代理。页面刷新、懒加载或路由变化后，旧代理可能报 `Widget ... does not exist on current UI`；必须在截图或状态确认后立即重新定位并操作，不要先长时间枚举再复用代理。
+- 控件探测应限制类型和数量，避免枚举整个动态 UI 树造成超时和大量陈旧代理告警；探测结果用于证据，不应替代稳定的业务断言。
+- 只有在控件明确匹配、`isEnabled()` 和 `isClickable()` 都为真时才执行点击。优先选择筛选、导航、打开详情等可恢复操作，避免删除、分享、切换持久化设置或提交网络表单。
+- 完成冒烟测试后默认 `go_home()`，必要时重新 `start_app()` 并再次 `check_current_window()`，最后恢复桌面并 `close()`。
+- 当前环境可能输出 `tracker dependency is not ok` 或关闭阶段的 `No more threads can be created in the system` 文本；应结合进程退出码、`result.json` 的 `status`、Hypium task log 和实际截图判断，不要只依据这两条环境告警下结论。
+- 独立 Driver 的控制台 JSON 在 `finally` 之前打印；`driver.close()` 是否真正成功必须以落盘后的 `result.json.driver_closed` 和 `close_error` 为准。
+- 不可点击的装饰性 `Text` 不是合格的自动化入口。测试不得回退为坐标点击；应使用其可点击且有稳定 `id/key` 的宿主控件，或将缺失的可访问性标识登记为 UI 治理问题。
+- 需要触发应用迁移后取得静止数据库快照时，使用 Driver 冒烟脚本的 `--stop-app-first --stop-after-launch`。该模式由 `UiDriver` 完成停启，捕获启动证据后停止应用，并跳过默认的枚举与重启流程；HDC 仅可用于后续只读文件诊断。
+
+### 13.5 本项目已验证的 Driver 冒烟结果
+
+- 设备 `2UCUT24724009680`（型号 `ADA-AL00U`，`phone`，分辨率 `1224x2776`）已成功执行 `unlock -> start_app -> wait_for_idle -> check_current_window`。
+- `check_current_window(bundle_name="com.dlzz.manxia")` 已返回成功，当前入口为 `EntryAbility`。
+- 通过 `BY.text("漫匣使用手册")` 等待并点击真实可交互文本，截图确认从书库页进入该书详情页。
+- 点击后执行 `go_home -> start_app -> check_current_window`，再次启动断言通过，最后恢复桌面并释放 Driver。
+- 可复用脚本位于 `.codex/skills/hypium-driver/scripts/driver_smoke.py`；它默认只探测，不盲点业务控件。需要点击时显式传入 `--click-text` 或 `--click-key`，并将证据输出到指定目录。
+
+## 14. 历史规则中的已废弃约束
 
 以下内容来自历史规则，保留为背景说明，但不应再作为新增开发的正向目标：
 
@@ -400,7 +466,7 @@
 - 原有 Native C++ 模块规范化开发规则已废弃。
 - 不应再为游戏场景设计新的架构前提。
 
-## 14. 提交修改前的简明检查清单
+## 15. 提交修改前的简明检查清单
 
 - 是否先核对了最新 HarmonyOS 官方文档与目标模块源码。
 - 是否避免了 `any`、`unknown`、未类型化对象字面量、危险空值访问。

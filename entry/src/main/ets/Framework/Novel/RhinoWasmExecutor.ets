@@ -1,4 +1,4 @@
-﻿import { SafeUtils } from '../../Utils/SafeUtils';
+import { SafeUtils } from '../../Utils/SafeUtils';
 /**
  * Rhino WASM执行器
  * 
@@ -15,6 +15,7 @@
 
 import { webview } from '@kit.ArkWeb';
 import { logger } from '../../Utils/Logger';
+import { buildJsoupEntityCompatibilityScript } from '../../libs/htmlparser';
 
 const TAG = 'RhinoWasmExecutor';
 
@@ -204,6 +205,7 @@ export class RhinoWasmExecutor {
 // ========== Rhino沙箱初始化脚本 ==========
 // 完整实现Legado书源所需的所有API
 (function() {
+  ${buildJsoupEntityCompatibilityScript()}
   // 如果已经初始化，直接返回
   if (window.rhinoSandbox && window.rhinoSandbox.ready) {
     return;
@@ -243,6 +245,193 @@ export class RhinoWasmExecutor {
       console.log('[Jsoup] DOMParser error:', e);
     }
   };
+
+  // Jsoup 1.16.2 text projection primitives. DOM textContent is not a
+  // substitute because block/br boundaries are spaces and the three scopes
+  // (text, ownText, textNodes) are distinct.
+  var legadoIsActuallyWhitespace = function(code) {
+    return code === 32 || code === 9 || code === 10 || code === 12 ||
+      code === 13 || code === 160;
+  };
+  var legadoCreateTextAccumulator = function() {
+    return { value: '', lastCharIsSpace: false };
+  };
+  var legadoAppendText = function(accumulator, value, preserveWhitespace) {
+    var text = __legadoDecodeHtmlEntities(value, false);
+    if (!text) return;
+    if (preserveWhitespace) {
+      accumulator.value += text;
+      accumulator.lastCharIsSpace = text.charAt(text.length - 1) === ' ';
+      return;
+    }
+    for (var index = 0; index < text.length; index++) {
+      var code = text.charCodeAt(index);
+      if (legadoIsActuallyWhitespace(code)) {
+        if (!accumulator.lastCharIsSpace) {
+          accumulator.value += ' ';
+          accumulator.lastCharIsSpace = true;
+        }
+        continue;
+      }
+      if (code === 8203 || code === 173) continue;
+      accumulator.value += text.charAt(index);
+      accumulator.lastCharIsSpace = false;
+    }
+  };
+  var legadoTrimJavaWhitespace = function(value) {
+    var text = String(value || '');
+    var start = 0;
+    var end = text.length;
+    while (start < end && text.charCodeAt(start) <= 32) start++;
+    while (end > start && text.charCodeAt(end - 1) <= 32) end--;
+    return text.substring(start, end);
+  };
+  var legadoAppendJsoupSpaceBoundary = function(accumulator) {
+    if (accumulator.value.length > 0 && !accumulator.lastCharIsSpace) {
+      accumulator.value += ' ';
+    }
+    accumulator.lastCharIsSpace = accumulator.value.length > 0 &&
+      accumulator.value.charAt(accumulator.value.length - 1) === ' ';
+  };
+  var legadoIsBlockTag = function(tagName) {
+    var normalized = String(tagName || '').toLowerCase();
+    var blocks = [
+      'html', 'head', 'body', 'frameset', 'script', 'noscript', 'style', 'meta',
+      'link', 'title', 'frame', 'noframes', 'section', 'nav', 'aside', 'hgroup',
+      'header', 'footer', 'p', 'h1', 'h2', 'h3', 'h4', 'h5', 'h6', 'ul', 'ol',
+      'pre', 'div', 'blockquote', 'hr', 'address', 'figure', 'figcaption', 'form',
+      'fieldset', 'ins', 'del', 'dl', 'dt', 'dd', 'li', 'table', 'caption', 'thead',
+      'tfoot', 'tbody', 'colgroup', 'col', 'tr', 'th', 'td', 'video', 'audio',
+      'canvas', 'details', 'menu', 'plaintext', 'template', 'article', 'main',
+      'svg', 'math', 'center', 'dir', 'applet', 'marquee', 'listing'
+    ];
+    return blocks.indexOf(normalized) >= 0;
+  };
+  var legadoIsFormatAsBlockTag = function(tagName) {
+    var normalized = String(tagName || '').toLowerCase();
+    var inline = [
+      'object', 'base', 'font', 'tt', 'i', 'b', 'u', 'big', 'small', 'em',
+      'strong', 'dfn', 'code', 'samp', 'kbd', 'var', 'cite', 'abbr', 'time',
+      'acronym', 'mark', 'ruby', 'rt', 'rp', 'rtc', 'a', 'img', 'br', 'wbr',
+      'map', 'q', 'sub', 'sup', 'bdo', 'iframe', 'embed', 'span', 'input',
+      'select', 'textarea', 'label', 'button', 'optgroup', 'option', 'legend',
+      'datalist', 'keygen', 'output', 'progress', 'meter', 'area', 'param',
+      'source', 'track', 'summary', 'command', 'device', 'basefont', 'bgsound',
+      'menuitem', 'data', 'bdi', 'strike', 'nobr', 'rb', 'text', 'mi', 'mo',
+      'msup', 'mn', 'mtext', 'title', 'p', 'h1', 'h2', 'h3', 'h4', 'h5', 'h6',
+      'pre', 'address', 'li', 'th', 'td', 'script', 'style', 'ins', 'del', 's'
+    ];
+    return inline.indexOf(normalized) < 0;
+  };
+  var legadoIsPreserveWhitespaceNode = function(node) {
+    var current = node;
+    var depth = 0;
+    while (current && depth < 6) {
+      if (current.nodeType === 1) {
+        var name = String(current.localName || current.tagName || '').toLowerCase();
+        if (name === 'pre' || name === 'plaintext' || name === 'title' ||
+            name === 'textarea') return true;
+      }
+      current = current.parentNode;
+      depth++;
+    }
+    return false;
+  };
+  var legadoAppendElementText = function(node, accumulator) {
+    if (!node || !node.childNodes) return;
+    for (var index = 0; index < node.childNodes.length; index++) {
+      var child = node.childNodes[index];
+      if (!child) continue;
+      if (child.nodeType === 3) {
+        legadoAppendText(accumulator, child.nodeValue || child.textContent || '',
+          legadoIsPreserveWhitespaceNode(child.parentNode));
+        continue;
+      }
+      if (child.nodeType !== 1) continue;
+      var tagName = String(child.localName || child.tagName || '').toLowerCase();
+      if (tagName === 'br') {
+        legadoAppendJsoupSpaceBoundary(accumulator);
+        continue;
+      }
+      var isBlock = legadoIsBlockTag(tagName);
+      if (isBlock && accumulator.value.length > 0 && !accumulator.lastCharIsSpace) {
+        legadoAppendJsoupSpaceBoundary(accumulator);
+      }
+      var isDataTag = tagName === 'script' || tagName === 'style';
+      if (!isDataTag) legadoAppendElementText(child, accumulator);
+      var nextSibling = child.nextSibling;
+      var nextIsInline = nextSibling && nextSibling.nodeType === 1 &&
+        !legadoIsFormatAsBlockTag(nextSibling.localName || nextSibling.tagName);
+      if (isBlock && nextSibling && (nextSibling.nodeType === 3 || nextIsInline)) {
+        legadoAppendJsoupSpaceBoundary(accumulator);
+      }
+    }
+  };
+  var legadoText = function(node) {
+    var nodeTagName = String(node && (node.localName || node.tagName) || '').toLowerCase();
+    if (nodeTagName === 'script' || nodeTagName === 'style') return '';
+    var accumulator = legadoCreateTextAccumulator();
+    legadoAppendElementText(node, accumulator);
+    return legadoTrimJavaWhitespace(accumulator.value);
+  };
+  var legadoOwnText = function(node) {
+    if (!node || !node.childNodes) return '';
+    var nodeTagName = String(node.localName || node.tagName || '').toLowerCase();
+    if (nodeTagName === 'script' || nodeTagName === 'style') return '';
+    var accumulator = legadoCreateTextAccumulator();
+    for (var index = 0; index < node.childNodes.length; index++) {
+      var child = node.childNodes[index];
+      if (!child) continue;
+      if (child.nodeType === 3) {
+        legadoAppendText(accumulator, child.nodeValue || child.textContent || '',
+          legadoIsPreserveWhitespaceNode(child.parentNode));
+      } else if (child.nodeType === 1 &&
+          String(child.localName || child.tagName || '').toLowerCase() === 'br') {
+        legadoAppendJsoupSpaceBoundary(accumulator);
+      }
+    }
+    return legadoTrimJavaWhitespace(accumulator.value);
+  };
+  var legadoDirectTextNodeValues = function(node) {
+    var values = [];
+    if (!node || !node.childNodes) return values;
+    var nodeTagName = String(node.localName || node.tagName || '').toLowerCase();
+    if (nodeTagName === 'script' || nodeTagName === 'style') return values;
+    for (var index = 0; index < node.childNodes.length; index++) {
+      var child = node.childNodes[index];
+      if (!child || (child.nodeType !== 3 && child.nodeType !== 4)) continue;
+      values.push(String(child.nodeValue || child.textContent || ''));
+    }
+    return values;
+  };
+  var legadoNormalizeTextNode = function(value) {
+    var accumulator = legadoCreateTextAccumulator();
+    legadoAppendText(accumulator, value, false);
+    return accumulator.value;
+  };
+  var legadoCreateTextNode = function(value) {
+    var wholeText = String(value || '');
+    var normalizedText = legadoNormalizeTextNode(wholeText);
+    return {
+      text: function() { return normalizedText; },
+      getWholeText: function() { return wholeText; },
+      toString: function() { return wholeText; }
+    };
+  };
+  var legadoCreateTextNodeList = function(node) {
+    var rawValues = legadoDirectTextNodeValues(node);
+    var list = [];
+    for (var index = 0; index < rawValues.length; index++) {
+      list.push(legadoCreateTextNode(rawValues[index]));
+    }
+    list.size = function() { return list.length; };
+    list.get = function(index) { return list[Number(index) || 0] || null; };
+    list.first = function() { return list.length > 0 ? list[0] : null; };
+    list.last = function() { return list.length > 0 ? list[list.length - 1] : null; };
+    list.isEmpty = function() { return list.length === 0; };
+    list.toArray = function() { return list.slice(0); };
+    return list;
+  };
   
   JsoupDocument.prototype.title = function() {
     if (this._doc) {
@@ -250,7 +439,7 @@ export class RhinoWasmExecutor {
       return el ? el.textContent : '';
     }
     var m = this._html.match(/<title[^>]*>([^<]*)<\\/title>/i);
-    return m ? m[1] : '';
+    return m ? __legadoDecodeHtmlEntities(m[1], false) : '';
   };
   
   JsoupDocument.prototype.select = function(selector) {
@@ -289,9 +478,9 @@ export class RhinoWasmExecutor {
   
   JsoupDocument.prototype.text = function() {
     if (this._doc && this._doc.body) {
-      return this._doc.body.textContent || '';
+      return legadoText(this._doc.body);
     }
-    return this._html.replace(/<[^>]+>/g, '');
+    return legadoTrimJavaWhitespace(__legadoDecodeHtmlEntities(this._html.replace(/<[^>]+>/g, ''), false));
   };
   
   JsoupDocument.prototype.html = function() { return this._html; };
@@ -329,19 +518,15 @@ export class RhinoWasmExecutor {
   };
   
   JsoupElement.prototype.text = function() { 
-    return this._el ? (this._el.textContent || '') : ''; 
+    return this._el ? legadoText(this._el) : '';
   };
   
   JsoupElement.prototype.ownText = function() {
-    if (!this._el) return '';
-    var text = '';
-    for (var i = 0; i < this._el.childNodes.length; i++) {
-      var node = this._el.childNodes[i];
-      if (node.nodeType === 3) { // TEXT_NODE
-        text += node.textContent;
-      }
-    }
-    return text.trim();
+    return this._el ? legadoOwnText(this._el) : '';
+  };
+
+  JsoupElement.prototype.textNodes = function() {
+    return this._el ? legadoCreateTextNodeList(this._el) : [];
   };
   
   JsoupElement.prototype.html = function() { 
@@ -360,6 +545,17 @@ export class RhinoWasmExecutor {
     }
     if (name === 'text') {
       return this.text();
+    }
+    if (name === 'textNodes') {
+      var textNodes = this.textNodes();
+      var textValues = [];
+      for (var textIndex = 0; textIndex < textNodes.length; textIndex++) {
+        textValues.push(legadoTrimJavaWhitespace(textNodes[textIndex].text()));
+      }
+      return textValues.filter(function(value) { return value.length > 0; }).join('\\n');
+    }
+    if (name === 'ownText') {
+      return this.ownText();
     }
     if (name === 'html') {
       return this.html();
@@ -515,6 +711,15 @@ export class RhinoWasmExecutor {
     var result = [];
     for (var i = 0; i < this._els.length; i++) {
       result.push(this._els[i].text());
+    }
+    return result;
+  };
+
+  JsoupElements.prototype.textNodes = function() {
+    var result = [];
+    for (var i = 0; i < this._els.length; i++) {
+      var nodes = this._els[i].textNodes();
+      for (var j = 0; j < nodes.length; j++) result.push(nodes[j]);
     }
     return result;
   };
@@ -756,10 +961,7 @@ export class RhinoWasmExecutor {
     
     // HTML实体编解码
     htmlDecode: function(str) {
-      if (!str) return '';
-      var div = document.createElement('div');
-      div.innerHTML = str;
-      return div.textContent || div.innerText || '';
+      return __legadoDecodeHtmlEntities(str, false);
     },
     
     // 正则
@@ -1236,6 +1438,7 @@ export class RhinoWasmExecutor {
 </head>
 <body>
 <script>
+${buildJsoupEntityCompatibilityScript()}
 // ========== 沙箱状态 ==========
 window.rhinoSandbox = {
   ready: false,
@@ -1262,7 +1465,7 @@ class JsoupDocument {
       return el ? el.textContent : '';
     }
     const m = this.html.match(/<title[^>]*>([^<]*)<\\/title>/i);
-    return m ? m[1] : '';
+    return m ? __legadoDecodeHtmlEntities(m[1], false) : '';
   }
   
   select(selector) {
@@ -1291,7 +1494,7 @@ class JsoupDocument {
     if (this._doc && this._doc.body) {
       return this._doc.body.textContent || '';
     }
-    return this.html.replace(/<[^>]+>/g, '');
+    return __legadoDecodeHtmlEntities(this.html.replace(/<[^>]+>/g, ''), false);
   }
   
   html() { return this.html; }

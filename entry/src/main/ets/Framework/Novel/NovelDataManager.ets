@@ -1,4 +1,4 @@
-﻿import { SafeUtils } from '../../Utils/SafeUtils';
+import { SafeUtils } from '../../Utils/SafeUtils';
 /**
  * 小说数据管理器
  * 独立管理小说相关数据，不影响现有数据库
@@ -11,6 +11,19 @@ import { common } from '@kit.AbilityKit';
 import { logger } from '../../Utils/Logger';
 import { NOVEL_CREATE_TABLE_SQL, NOVEL_CREATE_INDEX_SQL } from './NovelDatabaseSchema';
 import { LegadoBookSource } from './LegadoSourceTypes';
+import {
+  LegadoCompatibilityEngineMode,
+  LegadoCompatibilityStatus,
+  LegadoCompatibilityStorageRecord,
+  LegadoContentTraceDiagnostics,
+  LegadoExecutionErrorCode,
+  LegadoNetworkTraceEvidence,
+  LegadoExecutionTraceSummary,
+  LegadoFinalUrlObservation,
+  LegadoSourceVerificationRecord,
+  LegadoTransportKind,
+  LegadoWorkflowKind
+} from './LegadoCompatibilityTypes';
 import { NovelBook, NovelChapter, NovelReadProgress, NovelReaderSettings, DEFAULT_NOVEL_READER_SETTINGS, NovelReadStatus } from '../../Models/NovelModels';
 import { getNovelLoginManager } from './NovelLoginManager';
 import { getNovelCoverGenerator } from './NovelCoverGenerator';
@@ -98,12 +111,58 @@ export class NovelDataManager {
   }
 
   /**
+   * Reads SQLite's schema metadata before running a compatibility ALTER TABLE.
+   * This keeps existing installations quiet while still surfacing a genuine
+   * migration failure for a column that cannot be created.
+   */
+  private async hasTableColumn(tableName: string, columnName: string): Promise<boolean> {
+    const store: relationalStore.RdbStore = this.getStore();
+    const resultSet: relationalStore.ResultSet = await store.querySql(`PRAGMA table_info(${tableName})`);
+    try {
+      const nameColumnIndex: number = resultSet.getColumnIndex('name');
+      if (nameColumnIndex < 0) {
+        throw new Error(`无法读取小说表结构字段: ${tableName}`);
+      }
+      while (resultSet.goToNextRow()) {
+        if (resultSet.getString(nameColumnIndex) === columnName) {
+          return true;
+        }
+      }
+      return false;
+    } finally {
+      resultSet.close();
+    }
+  }
+
+  private async ensureTableColumn(
+    tableName: string,
+    columnName: string,
+    columnDefinition: string
+  ): Promise<void> {
+    if (await this.hasTableColumn(tableName, columnName)) {
+      return;
+    }
+    const store: relationalStore.RdbStore = this.getStore();
+    try {
+      await store.executeSql(`ALTER TABLE ${tableName} ADD COLUMN ${columnName} ${columnDefinition}`);
+    } catch {
+      if (!await this.hasTableColumn(tableName, columnName)) {
+        throw new Error(`新增小说数据库字段失败: ${tableName}.${columnName}`);
+      }
+    }
+  }
+
+  /**
    * 创建小说相关表
    */
   private async createNovelTables(): Promise<void> {
     const store = this.getStore();
     const tables: TableInfo[] = [
       { name: 'novel_source', sql: NOVEL_CREATE_TABLE_SQL.NOVEL_SOURCE } as TableInfo,
+      { name: 'novel_source_compatibility', sql: NOVEL_CREATE_TABLE_SQL.NOVEL_SOURCE_COMPATIBILITY } as TableInfo,
+      { name: 'novel_source_compatibility_verification', sql: NOVEL_CREATE_TABLE_SQL.NOVEL_SOURCE_COMPATIBILITY_VERIFICATION } as TableInfo,
+      { name: 'novel_source_compatibility_trace', sql: NOVEL_CREATE_TABLE_SQL.NOVEL_SOURCE_COMPATIBILITY_TRACE } as TableInfo,
+      { name: 'novel_source_compatibility_trace_workflow', sql: NOVEL_CREATE_TABLE_SQL.NOVEL_SOURCE_COMPATIBILITY_TRACE_WORKFLOW } as TableInfo,
       { name: 'novel_book', sql: NOVEL_CREATE_TABLE_SQL.NOVEL_BOOK } as TableInfo,
       { name: 'novel_chapter', sql: NOVEL_CREATE_TABLE_SQL.NOVEL_CHAPTER } as TableInfo,
       { name: 'novel_content_cache', sql: NOVEL_CREATE_TABLE_SQL.NOVEL_CONTENT_CACHE } as TableInfo,
@@ -122,22 +181,40 @@ export class NovelDataManager {
         
         // 为 novel_source 表添加可能缺失的 isNSFW 列
         if (table.name === 'novel_source') {
-          try { await store.executeSql('ALTER TABLE novel_source ADD COLUMN isNSFW INTEGER DEFAULT 0'); } catch (e) {}
-          try { await store.executeSql('UPDATE novel_source SET isNSFW = 0 WHERE isNSFW IS NULL'); } catch (e) {}
+          await this.ensureTableColumn('novel_source', 'isNSFW', 'INTEGER DEFAULT 0');
+          await store.executeSql('UPDATE novel_source SET isNSFW = 0 WHERE isNSFW IS NULL');
           logger.info(TAG, '✅ [NOVEL_SOURCE] isNSFW列添加完成');
+        }
+
+        if (table.name === 'novel_source_compatibility_trace' ||
+          table.name === 'novel_source_compatibility_trace_workflow') {
+          await this.ensureTableColumn(table.name, 'requestTargetSha256', "TEXT NOT NULL DEFAULT ''");
+          await this.ensureTableColumn(table.name, 'requestUserAgentSha256', "TEXT NOT NULL DEFAULT ''");
+          await this.ensureTableColumn(table.name, 'responseContentType', "TEXT NOT NULL DEFAULT ''");
+          await this.ensureTableColumn(table.name, 'redirectCount', 'INTEGER NOT NULL DEFAULT 0');
+          await this.ensureTableColumn(table.name, 'contentDiagnosticStatus', "TEXT NOT NULL DEFAULT ''");
+          await this.ensureTableColumn(table.name, 'contentCharacterCount', 'INTEGER NOT NULL DEFAULT 0');
+          await this.ensureTableColumn(table.name, 'contentBridgeStatus', "TEXT NOT NULL DEFAULT ''");
+          await this.ensureTableColumn(table.name, 'contentBridgeCharacterCount', 'INTEGER NOT NULL DEFAULT 0');
+          await this.ensureTableColumn(table.name, 'contentBridgeFingerprint', "TEXT NOT NULL DEFAULT ''");
+          await this.ensureTableColumn(table.name, 'contentFingerprint', "TEXT NOT NULL DEFAULT ''");
         }
         
         // 为 novel_book 表添加可能缺失的列
         if (table.name === 'novel_book') {
           logger.info(TAG, '🔧 [NOVEL_BOOK] 添加隐私列');
-          try { await store.executeSql('ALTER TABLE novel_book ADD COLUMN isPrivate INTEGER DEFAULT 0'); } catch (e) {}
-          try { await store.executeSql('ALTER TABLE novel_book ADD COLUMN isNSFW INTEGER DEFAULT 0'); } catch (e) {}
-          try { await store.executeSql('UPDATE novel_book SET isPrivate = 0 WHERE isPrivate IS NULL'); } catch (e) {}
-          try { await store.executeSql('UPDATE novel_book SET isNSFW = 0 WHERE isNSFW IS NULL'); } catch (e) {}
+          await this.ensureTableColumn('novel_book', 'isPrivate', 'INTEGER DEFAULT 0');
+          await this.ensureTableColumn('novel_book', 'isNSFW', 'INTEGER DEFAULT 0');
+          await store.executeSql('UPDATE novel_book SET isPrivate = 0 WHERE isPrivate IS NULL');
+          await store.executeSql('UPDATE novel_book SET isNSFW = 0 WHERE isNSFW IS NULL');
           logger.info(TAG, '✅ [NOVEL_BOOK] 列添加完成');
         }
       } catch (error) {
         logger.error(TAG, `创建表失败: ${table.name}, ${String(error)}`);
+        // Do not report a successful novel/source initialization after a
+        // schema migration failure. Callers must surface a blocked database
+        // state and retry after the underlying issue is fixed.
+        throw error as Error;
       }
     }
   }
@@ -151,7 +228,8 @@ export class NovelDataManager {
       try {
         await store.executeSql(sql);
       } catch (error) {
-        // 索引可能已存在，忽略错误
+        logger.error(TAG, `创建小说索引失败: ${sql}, ${String(error)}`);
+        throw error as Error;
       }
     }
   }
@@ -190,6 +268,98 @@ export class NovelDataManager {
     return id;
   }
 
+  /**
+   * Commits the legacy-normalized row and V2's verbatim document as one
+   * database transaction.  A source must never appear in novel_source while
+   * its raw JSON/hash evidence is absent: otherwise a restart turns a claimed
+   * V2 import back into an unverifiable legacy record.
+   *
+   * Use the supported RdbStore transaction lifecycle exposed by the Stage model.
+   * The transaction-id overloads (`beginTrans`/`execute(..., txId)`) are
+   * declared in the SDK but return capability-not-supported on the real
+   * HarmonyOS device used by this app. The beginTransaction/executeSql/
+   * commit/rollBack contract is the supported path and remains atomic.
+   */
+  async saveSourceWithCompatibilityRecord(
+    source: LegadoBookSource,
+    compatibilityRecord: LegadoCompatibilityStorageRecord
+  ): Promise<string> {
+    const store = this.getStore();
+    const id = this.generateId();
+    const now = Date.now();
+    store.beginTransaction();
+    let committed = false;
+
+    try {
+      const sourceSql = `INSERT OR REPLACE INTO novel_source
+        (id, bookSourceUrl, bookSourceName, bookSourceGroup, bookSourceType,
+         enabled, weight, lastUpdateTime, respondTime, configJson, isNSFW, createTime, updateTime)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`;
+      await store.executeSql(sourceSql, [
+        id,
+        source.bookSourceUrl,
+        source.bookSourceName,
+        source.bookSourceGroup || '',
+        source.bookSourceType,
+        source.enabled !== false ? 1 : 0,
+        source.weight || 0,
+        source.lastUpdateTime || now,
+        source.respondTime || 180000,
+        JSON.stringify(source),
+        source.isNSFW ? 1 : 0,
+        now,
+        now
+      ]);
+
+      const compatibilitySql = `INSERT OR REPLACE INTO novel_source_compatibility
+        (sourceUrl, rawJson, rawSha256, compilerVersion, compileStatus, engineMode,
+         capabilityJson, diagnosticsJson, compiledAt, updateTime)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`;
+      await store.executeSql(compatibilitySql, [
+        compatibilityRecord.sourceUrl,
+        compatibilityRecord.rawJson,
+        compatibilityRecord.rawSha256,
+        compatibilityRecord.compilerVersion,
+        compatibilityRecord.status,
+        compatibilityRecord.engineMode,
+        compatibilityRecord.capabilityJson,
+        compatibilityRecord.diagnosticsJson,
+        compatibilityRecord.compiledAt,
+        compatibilityRecord.updatedAt
+      ]);
+
+      // Evidence belongs to a specific raw document. Keeping it after the JSON
+      // changes would falsely qualify an untested source after a restart.
+      await store.executeSql(
+        'DELETE FROM novel_source_compatibility_verification WHERE sourceUrl = ? AND rawSha256 <> ?',
+        [source.bookSourceUrl, compatibilityRecord.rawSha256]
+      );
+      await store.executeSql(
+        'DELETE FROM novel_source_compatibility_trace WHERE sourceUrl = ? AND rawSha256 <> ?',
+        [source.bookSourceUrl, compatibilityRecord.rawSha256]
+      );
+      await store.executeSql(
+        'DELETE FROM novel_source_compatibility_trace_workflow WHERE sourceUrl = ? AND rawSha256 <> ?',
+        [source.bookSourceUrl, compatibilityRecord.rawSha256]
+      );
+
+      store.commit();
+      committed = true;
+      return id;
+    } catch (error) {
+      if (!committed) {
+        try {
+          store.rollBack();
+        } catch (rollbackError) {
+          logger.error(TAG, `V2 无损导入事务回滚失败: ${String(rollbackError)}`);
+        }
+      }
+      const errorMessage = String(error);
+      logger.error(TAG, `V2 无损导入事务失败: ${errorMessage}`);
+      throw new Error(errorMessage);
+    }
+  }
+
   async updateBookCoverLocalPath(bookId: string, coverLocalPath: string): Promise<void> {
     const store = this.getStore();
     await store.executeSql(
@@ -204,21 +374,404 @@ export class NovelDataManager {
    */
   async getAllSources(): Promise<LegadoBookSource[]> {
     const store = this.getStore();
-    const rs = await store.querySql('SELECT configJson FROM novel_source ORDER BY weight DESC');
+    const rs: relationalStore.ResultSet = await store.querySql('SELECT configJson FROM novel_source ORDER BY weight DESC');
     const sources: LegadoBookSource[] = [];
 
-    if (rs.goToFirstRow()) {
-      do {
-        try {
-          const json = rs.getString(0);
-          sources.push(SafeUtils.parseObj(json) as LegadoBookSource);
-        } catch (e) {
-          // 忽略解析错误
-        }
-      } while (rs.goToNextRow());
+    let rowIndex: number = 0;
+    try {
+      if (rs.goToFirstRow()) {
+        do {
+          rowIndex += 1;
+          try {
+            const json = rs.getString(0);
+            sources.push(SafeUtils.parseObj(json) as LegadoBookSource);
+          } catch (error) {
+            throw new Error(`持久化书源 JSON 解析失败: row=${rowIndex}; ${String(error)}`);
+          }
+        } while (rs.goToNextRow());
+      }
+      return sources;
+    } finally {
+      rs.close();
     }
-    rs.close();
-    return sources;
+  }
+
+  /**
+   * V2 persistence is intentionally separate from novel_source.configJson so a
+   * failed compiler rollout cannot overwrite a user's legacy configuration.
+   */
+  async saveCompatibilityRecord(record: LegadoCompatibilityStorageRecord): Promise<void> {
+    const store = this.getStore();
+    await store.executeSql(
+      `INSERT OR REPLACE INTO novel_source_compatibility
+        (sourceUrl, rawJson, rawSha256, compilerVersion, compileStatus, engineMode,
+         capabilityJson, diagnosticsJson, compiledAt, updateTime)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      [
+        record.sourceUrl,
+        record.rawJson,
+        record.rawSha256,
+        record.compilerVersion,
+        record.status,
+        record.engineMode,
+        record.capabilityJson,
+        record.diagnosticsJson,
+        record.compiledAt,
+        record.updatedAt
+      ]
+    );
+  }
+
+  async getCompatibilityRecord(sourceUrl: string): Promise<LegadoCompatibilityStorageRecord | null> {
+    const store = this.getStore();
+    const result = await store.querySql(
+      `SELECT sourceUrl, rawJson, rawSha256, compilerVersion, compileStatus, engineMode,
+              capabilityJson, diagnosticsJson, compiledAt, updateTime
+       FROM novel_source_compatibility WHERE sourceUrl = ?`,
+      [sourceUrl]
+    );
+    if (!result.goToFirstRow()) {
+      result.close();
+      return null;
+    }
+    const record = new LegadoCompatibilityStorageRecord(
+      result.getString(result.getColumnIndex('sourceUrl')),
+      result.getString(result.getColumnIndex('rawJson')),
+      result.getString(result.getColumnIndex('rawSha256')),
+      result.getLong(result.getColumnIndex('compilerVersion')),
+      result.getString(result.getColumnIndex('compileStatus')) as LegadoCompatibilityStatus,
+      result.getString(result.getColumnIndex('engineMode')) as LegadoCompatibilityEngineMode,
+      result.getString(result.getColumnIndex('capabilityJson')),
+      result.getString(result.getColumnIndex('diagnosticsJson')),
+      result.getLong(result.getColumnIndex('compiledAt')),
+      result.getLong(result.getColumnIndex('updateTime'))
+    );
+    result.close();
+    return record;
+  }
+
+  async getAllCompatibilityRecords(): Promise<LegadoCompatibilityStorageRecord[]> {
+    const store = this.getStore();
+    const result = await store.querySql(
+      `SELECT sourceUrl, rawJson, rawSha256, compilerVersion, compileStatus, engineMode,
+              capabilityJson, diagnosticsJson, compiledAt, updateTime
+       FROM novel_source_compatibility ORDER BY updateTime DESC`
+    );
+    const records: LegadoCompatibilityStorageRecord[] = [];
+    if (result.goToFirstRow()) {
+      do {
+        records.push(new LegadoCompatibilityStorageRecord(
+          result.getString(result.getColumnIndex('sourceUrl')),
+          result.getString(result.getColumnIndex('rawJson')),
+          result.getString(result.getColumnIndex('rawSha256')),
+          result.getLong(result.getColumnIndex('compilerVersion')),
+          result.getString(result.getColumnIndex('compileStatus')) as LegadoCompatibilityStatus,
+          result.getString(result.getColumnIndex('engineMode')) as LegadoCompatibilityEngineMode,
+          result.getString(result.getColumnIndex('capabilityJson')),
+          result.getString(result.getColumnIndex('diagnosticsJson')),
+          result.getLong(result.getColumnIndex('compiledAt')),
+          result.getLong(result.getColumnIndex('updateTime'))
+        ));
+      } while (result.goToNextRow());
+    }
+    result.close();
+    return records;
+  }
+
+  async updateCompatibilityEngineMode(sourceUrl: string, mode: LegadoCompatibilityEngineMode): Promise<void> {
+    const store = this.getStore();
+    await store.executeSql(
+      'UPDATE novel_source_compatibility SET engineMode = ?, updateTime = ? WHERE sourceUrl = ?',
+      [mode, Date.now(), sourceUrl]
+    );
+  }
+
+  async deleteCompatibilityRecord(sourceUrl: string): Promise<void> {
+    const store = this.getStore();
+    await store.executeSql('DELETE FROM novel_source_compatibility WHERE sourceUrl = ?', [sourceUrl]);
+    await store.executeSql('DELETE FROM novel_source_compatibility_verification WHERE sourceUrl = ?', [sourceUrl]);
+  }
+
+  async saveCompatibilityVerification(record: LegadoSourceVerificationRecord): Promise<void> {
+    const store = this.getStore();
+    await store.executeSql(
+      `INSERT OR REPLACE INTO novel_source_compatibility_verification
+        (sourceUrl, rawSha256, workflows, evidenceDigest, verifiedAt, updateTime)
+       VALUES (?, ?, ?, ?, ?, ?)`,
+      [
+        record.sourceUrl,
+        record.rawSha256,
+        record.workflows.join('|'),
+        record.evidenceDigest,
+        record.verifiedAt,
+        record.updatedAt
+      ]
+    );
+  }
+
+  async getAllCompatibilityVerifications(): Promise<LegadoSourceVerificationRecord[]> {
+    const store = this.getStore();
+    const result = await store.querySql(
+      `SELECT sourceUrl, rawSha256, workflows, evidenceDigest, verifiedAt, updateTime
+       FROM novel_source_compatibility_verification ORDER BY updateTime DESC`
+    );
+    const records: LegadoSourceVerificationRecord[] = [];
+    if (result.goToFirstRow()) {
+      do {
+        records.push(new LegadoSourceVerificationRecord(
+          result.getString(result.getColumnIndex('sourceUrl')),
+          result.getString(result.getColumnIndex('rawSha256')),
+          this.decodeVerifiedWorkflows(result.getString(result.getColumnIndex('workflows'))),
+          result.getString(result.getColumnIndex('evidenceDigest')),
+          result.getLong(result.getColumnIndex('verifiedAt')),
+          result.getLong(result.getColumnIndex('updateTime'))
+        ));
+      } while (result.goToNextRow());
+    }
+    result.close();
+    return records;
+  }
+
+  async deleteCompatibilityVerification(sourceUrl: string): Promise<void> {
+    const store = this.getStore();
+    await store.executeSql('DELETE FROM novel_source_compatibility_verification WHERE sourceUrl = ?', [sourceUrl]);
+  }
+
+  /**
+   * Persist only the last redacted V2 trace summary for a source. The full
+   * trace remains in memory for instrumentation and is never written here.
+   */
+  async saveCompatibilityTraceSummary(summary: LegadoExecutionTraceSummary): Promise<void> {
+    const store = this.getStore();
+    await store.executeSql(
+      `INSERT OR REPLACE INTO novel_source_compatibility_trace
+        (sourceUrl, rawSha256, workflow, transport, statusCode, finalUrlObservation,
+         errorCode, outputSummary, optionCount, variableCount, requestTargetSha256,
+         requestUserAgentSha256, responseContentType, redirectCount, contentDiagnosticStatus,
+         contentCharacterCount, contentBridgeStatus, contentBridgeCharacterCount,
+         contentBridgeFingerprint, contentFingerprint, occurredAt, updateTime)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)` ,
+      [
+        summary.sourceUrl,
+        summary.rawSha256,
+        summary.workflow,
+        summary.transport,
+        summary.statusCode,
+        summary.finalUrlObservation,
+        summary.errorCode,
+        summary.outputSummary,
+        summary.optionCount,
+        summary.variableCount,
+        summary.networkEvidence.requestTargetSha256,
+        summary.networkEvidence.requestUserAgentSha256,
+        summary.networkEvidence.responseContentType,
+        summary.networkEvidence.redirectCount,
+        summary.contentDiagnostics.status,
+        summary.contentDiagnostics.characterCount,
+        summary.contentDiagnostics.bridgeStatus,
+        summary.contentDiagnostics.bridgeCharacterCount,
+        summary.contentDiagnostics.bridgeFingerprint,
+        summary.contentDiagnostics.contentFingerprint,
+        summary.occurredAt,
+        summary.updatedAt
+      ]
+    );
+  }
+
+  /**
+   * Keep one redacted result per workflow so a normal search → reader path can
+   * be audited after process recreation without storing raw trace payloads.
+   */
+  async saveCompatibilityTraceWorkflowSummary(summary: LegadoExecutionTraceSummary): Promise<void> {
+    const store = this.getStore();
+    await store.executeSql(
+      `INSERT OR REPLACE INTO novel_source_compatibility_trace_workflow
+        (sourceUrl, rawSha256, workflow, transport, statusCode, finalUrlObservation,
+         errorCode, outputSummary, optionCount, variableCount, requestTargetSha256,
+         requestUserAgentSha256, responseContentType, redirectCount, contentDiagnosticStatus,
+         contentCharacterCount, contentBridgeStatus, contentBridgeCharacterCount,
+         contentBridgeFingerprint, contentFingerprint, occurredAt, updateTime)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)` ,
+      [
+        summary.sourceUrl,
+        summary.rawSha256,
+        summary.workflow,
+        summary.transport,
+        summary.statusCode,
+        summary.finalUrlObservation,
+        summary.errorCode,
+        summary.outputSummary,
+        summary.optionCount,
+        summary.variableCount,
+        summary.networkEvidence.requestTargetSha256,
+        summary.networkEvidence.requestUserAgentSha256,
+        summary.networkEvidence.responseContentType,
+        summary.networkEvidence.redirectCount,
+        summary.contentDiagnostics.status,
+        summary.contentDiagnostics.characterCount,
+        summary.contentDiagnostics.bridgeStatus,
+        summary.contentDiagnostics.bridgeCharacterCount,
+        summary.contentDiagnostics.bridgeFingerprint,
+        summary.contentDiagnostics.contentFingerprint,
+        summary.occurredAt,
+        summary.updatedAt
+      ]
+    );
+  }
+
+  /**
+   * Verifies that a just-written workflow trace is visible through the same
+   * durable query contract used by a returning detail page. This deliberately
+   * proves RDB visibility, not merely that executeSql resolved successfully.
+   */
+  async isCompatibilityTraceWorkflowSummaryPersisted(
+    summary: LegadoExecutionTraceSummary
+  ): Promise<boolean> {
+    const store = this.getStore();
+    const result = await store.querySql(
+      `SELECT occurredAt, updateTime
+       FROM novel_source_compatibility_trace_workflow
+       WHERE sourceUrl = ? AND rawSha256 = ? AND workflow = ?
+       ORDER BY updateTime DESC LIMIT 1`,
+      [summary.sourceUrl, summary.rawSha256, summary.workflow]
+    );
+    try {
+      if (!result.goToFirstRow()) {
+        return false;
+      }
+      const occurredAt = result.getLong(result.getColumnIndex('occurredAt'));
+      const updatedAt = result.getLong(result.getColumnIndex('updateTime'));
+      return occurredAt === summary.occurredAt && updatedAt >= summary.updatedAt;
+    } finally {
+      result.close();
+    }
+  }
+
+  async getAllCompatibilityTraceSummaries(): Promise<LegadoExecutionTraceSummary[]> {
+    const store = this.getStore();
+    const result = await store.querySql(
+      `SELECT sourceUrl, rawSha256, workflow, transport, statusCode, finalUrlObservation,
+              errorCode, outputSummary, optionCount, variableCount, requestTargetSha256,
+              requestUserAgentSha256, responseContentType, redirectCount, contentDiagnosticStatus,
+              contentCharacterCount, contentBridgeStatus, contentBridgeCharacterCount,
+              contentBridgeFingerprint, contentFingerprint, occurredAt, updateTime
+       FROM novel_source_compatibility_trace ORDER BY updateTime DESC`
+    );
+    const summaries: LegadoExecutionTraceSummary[] = [];
+    if (result.goToFirstRow()) {
+      do {
+        summaries.push(new LegadoExecutionTraceSummary(
+          result.getString(result.getColumnIndex('sourceUrl')),
+          result.getString(result.getColumnIndex('rawSha256')),
+          result.getString(result.getColumnIndex('workflow')) as LegadoWorkflowKind,
+          result.getString(result.getColumnIndex('transport')) as LegadoTransportKind,
+          result.getLong(result.getColumnIndex('statusCode')),
+          result.getString(result.getColumnIndex('finalUrlObservation')) as LegadoFinalUrlObservation,
+          result.getString(result.getColumnIndex('errorCode')) as LegadoExecutionErrorCode,
+          result.getString(result.getColumnIndex('outputSummary')),
+          result.getLong(result.getColumnIndex('optionCount')),
+          result.getLong(result.getColumnIndex('variableCount')),
+          result.getLong(result.getColumnIndex('occurredAt')),
+          result.getLong(result.getColumnIndex('updateTime')),
+          new LegadoNetworkTraceEvidence(
+            result.getString(result.getColumnIndex('requestTargetSha256')),
+            result.getString(result.getColumnIndex('requestUserAgentSha256')),
+            result.getString(result.getColumnIndex('responseContentType')),
+            result.getLong(result.getColumnIndex('redirectCount'))
+          ),
+          new LegadoContentTraceDiagnostics(
+            result.getString(result.getColumnIndex('contentDiagnosticStatus')),
+            result.getLong(result.getColumnIndex('contentCharacterCount')),
+            result.getString(result.getColumnIndex('contentBridgeStatus')),
+            result.getLong(result.getColumnIndex('contentBridgeCharacterCount')),
+            result.getString(result.getColumnIndex('contentBridgeFingerprint')),
+            result.getString(result.getColumnIndex('contentFingerprint'))
+          )
+        ));
+      } while (result.goToNextRow());
+    }
+    result.close();
+    return summaries;
+  }
+
+  /** Returns the latest redacted trace for each workflow of every source. */
+  async getAllCompatibilityTraceWorkflowSummaries(): Promise<LegadoExecutionTraceSummary[]> {
+    const store = this.getStore();
+    const result = await store.querySql(
+      `SELECT sourceUrl, rawSha256, workflow, transport, statusCode, finalUrlObservation,
+              errorCode, outputSummary, optionCount, variableCount, requestTargetSha256,
+              requestUserAgentSha256, responseContentType, redirectCount, contentDiagnosticStatus,
+              contentCharacterCount, contentBridgeStatus, contentBridgeCharacterCount,
+              contentBridgeFingerprint, contentFingerprint, occurredAt, updateTime
+       FROM novel_source_compatibility_trace_workflow ORDER BY updateTime DESC`
+    );
+    const summaries: LegadoExecutionTraceSummary[] = [];
+    if (result.goToFirstRow()) {
+      do {
+        summaries.push(new LegadoExecutionTraceSummary(
+          result.getString(result.getColumnIndex('sourceUrl')),
+          result.getString(result.getColumnIndex('rawSha256')),
+          result.getString(result.getColumnIndex('workflow')) as LegadoWorkflowKind,
+          result.getString(result.getColumnIndex('transport')) as LegadoTransportKind,
+          result.getLong(result.getColumnIndex('statusCode')),
+          result.getString(result.getColumnIndex('finalUrlObservation')) as LegadoFinalUrlObservation,
+          result.getString(result.getColumnIndex('errorCode')) as LegadoExecutionErrorCode,
+          result.getString(result.getColumnIndex('outputSummary')),
+          result.getLong(result.getColumnIndex('optionCount')),
+          result.getLong(result.getColumnIndex('variableCount')),
+          result.getLong(result.getColumnIndex('occurredAt')),
+          result.getLong(result.getColumnIndex('updateTime')),
+          new LegadoNetworkTraceEvidence(
+            result.getString(result.getColumnIndex('requestTargetSha256')),
+            result.getString(result.getColumnIndex('requestUserAgentSha256')),
+            result.getString(result.getColumnIndex('responseContentType')),
+            result.getLong(result.getColumnIndex('redirectCount'))
+          ),
+          new LegadoContentTraceDiagnostics(
+            result.getString(result.getColumnIndex('contentDiagnosticStatus')),
+            result.getLong(result.getColumnIndex('contentCharacterCount')),
+            result.getString(result.getColumnIndex('contentBridgeStatus')),
+            result.getLong(result.getColumnIndex('contentBridgeCharacterCount')),
+            result.getString(result.getColumnIndex('contentBridgeFingerprint')),
+            result.getString(result.getColumnIndex('contentFingerprint'))
+          )
+        ));
+      } while (result.goToNextRow());
+    }
+    result.close();
+    return summaries;
+  }
+
+  async deleteCompatibilityTraceSummary(sourceUrl: string): Promise<void> {
+    const store = this.getStore();
+    await store.executeSql('DELETE FROM novel_source_compatibility_trace WHERE sourceUrl = ?', [sourceUrl]);
+  }
+
+  async deleteCompatibilityTraceWorkflowSummaries(sourceUrl: string): Promise<void> {
+    const store = this.getStore();
+    await store.executeSql('DELETE FROM novel_source_compatibility_trace_workflow WHERE sourceUrl = ?', [sourceUrl]);
+  }
+
+  private decodeVerifiedWorkflows(value: string): LegadoWorkflowKind[] {
+    const values = value.split('|');
+    const workflows: LegadoWorkflowKind[] = [];
+    for (let i = 0; i < values.length; i++) {
+      const workflow = values[i] as LegadoWorkflowKind;
+      if (this.isKnownWorkflow(workflow) && !workflows.includes(workflow)) {
+        workflows.push(workflow);
+      }
+    }
+    return workflows;
+  }
+
+  private isKnownWorkflow(value: LegadoWorkflowKind): boolean {
+    return value === LegadoWorkflowKind.SEARCH ||
+      value === LegadoWorkflowKind.EXPLORE ||
+      value === LegadoWorkflowKind.BOOK_INFO ||
+      value === LegadoWorkflowKind.TOC ||
+      value === LegadoWorkflowKind.CONTENT ||
+      value === LegadoWorkflowKind.FILE ||
+      value === LegadoWorkflowKind.REVIEW;
   }
 
   /**
@@ -227,6 +780,10 @@ export class NovelDataManager {
   async deleteSource(bookSourceUrl: string): Promise<void> {
     const store = this.getStore();
     await store.executeSql('DELETE FROM novel_source WHERE bookSourceUrl = ?', [bookSourceUrl]);
+    await store.executeSql('DELETE FROM novel_source_compatibility WHERE sourceUrl = ?', [bookSourceUrl]);
+    await store.executeSql('DELETE FROM novel_source_compatibility_verification WHERE sourceUrl = ?', [bookSourceUrl]);
+    await store.executeSql('DELETE FROM novel_source_compatibility_trace WHERE sourceUrl = ?', [bookSourceUrl]);
+    await store.executeSql('DELETE FROM novel_source_compatibility_trace_workflow WHERE sourceUrl = ?', [bookSourceUrl]);
   }
 
   // ==================== 书籍操作 ====================

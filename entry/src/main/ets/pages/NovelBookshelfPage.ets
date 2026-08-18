@@ -59,6 +59,10 @@ export interface NovelDetailPageParams {
   latestChapterTitle?: string;
   wordCount?: string;
   sourceName?: string;
+  /** Opaque V2 request-carrier identity; it never contains a URL option or header value. */
+  requestCarrierKey?: string;
+  /** In-memory-only V2 book rule-data snapshot; never persist or log this value. */
+  bookVariable?: string;
 }
 
 /**
@@ -84,6 +88,14 @@ export interface NovelReaderPageParams {
   chapterPageIndex?: number; // 可选：进入章节后的页码定位
   chapterStartOffset?: number; // 可选：进入章节后的字符偏移定位
   tocUrl?: string; // 目录URL，用于加载章节列表
+  /**
+   * V2 execution-only book carrier. These values must survive the Detail →
+   * isolated Reader boundary so Toc and Content can restore the exact
+   * source-scoped request/variable semantics produced by Search/BookInfo.
+   */
+  bookVariable?: string;
+  bookRequestUrlTemplate?: string;
+  tocRequestUrlTemplate?: string;
   // [修复] 添加用于记录浏览历史的字段
   author?: string;
   coverUrl?: string;
@@ -96,6 +108,11 @@ export interface NovelReaderPageParams {
   readerInstanceId?: string;
   readerTitle?: string;
   readerOpenFlowId?: string;
+  /**
+   * A search result that already forced fresh book-info/toc must not let a
+   * prior chapter cache hide the V2 Content workflow on first open.
+   */
+  forceNetworkContentRefresh?: boolean;
 }
 
 /**

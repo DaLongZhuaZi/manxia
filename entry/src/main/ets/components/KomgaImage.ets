@@ -4,6 +4,12 @@ import fs from '@ohos.file.fs';
 import { logger } from '../Utils/Logger';
 import KomgaCacheManager from '../Framework/Source/KomgaCacheManager';
 import { getKomgaSourceExecutor } from '../Framework/Source/KomgaSourceExecutor';
+import { MangaAssetRetryMode } from '../Framework/Reader/MangaAssetTypes';
+import {
+  buildMangaImageRetryKey,
+  MangaImageRetryCoordinator,
+  MangaImageRetryDecision
+} from '../Framework/Reader/MangaImageRetryCoordinator';
 
 const TAG = 'KomgaImage';
 
@@ -17,15 +23,19 @@ export struct KomgaImage {
   @Prop placeholderColor: ResourceColor = '#2A2A2A';
   @Prop requestHeaders: Record<string, string> = {};
   @Prop cacheKey: string = '';
+  @Prop enableRetry: boolean = false;
 
   @State private pixelMap: image.PixelMap | null = null;
   @State private isLoading: boolean = false;
   @State private loadError: boolean = false;
   @State private useDirectImage: boolean = false;
+  @State private renderEpoch: number = 0;
 
   private currentSrc: string = '';
   private effectiveSrc: string = '';
   private loadingAborted: boolean = false;
+  private mangaImageRetryCoordinator: MangaImageRetryCoordinator = new MangaImageRetryCoordinator();
+  private loadGeneration: number = 0;
 
   aboutToAppear(): void {
     if (this.src.length > 0) {
@@ -40,10 +50,14 @@ export struct KomgaImage {
     this.effectiveSrc = '';
     this.useDirectImage = false;
     this.loadError = false;
+    this.loadGeneration = this.loadGeneration + 1;
+    this.mangaImageRetryCoordinator.resetAll();
   }
 
   onSrcChange(): void {
     if (this.src.length > 0 && this.src !== this.currentSrc) {
+      this.loadGeneration = this.loadGeneration + 1;
+      this.mangaImageRetryCoordinator.resetAll();
       void this.loadImage();
     }
   }
@@ -187,7 +201,7 @@ export struct KomgaImage {
     this.pixelMap = null;
   }
 
-  private async loadImage(): Promise<void> {
+  private async loadImage(retryMode: MangaAssetRetryMode = MangaAssetRetryMode.NONE): Promise<void> {
     if (this.src.length <= 0 || this.isLoading) {
       return;
     }
@@ -203,11 +217,13 @@ export struct KomgaImage {
     this.useDirectImage = false;
     this.releasePixelMap();
     this.loadingAborted = false;
+    const generation: number = this.loadGeneration;
+    let failureMessage: string = '';
 
     try {
       if (!this.isHttpImageUrl(resolvedSrc)) {
         const localPixelMap = await this.decodeLocalFileToPixelMap(resolvedSrc);
-        if (this.loadingAborted) {
+        if (this.loadingAborted || generation !== this.loadGeneration) {
           localPixelMap?.release();
           return;
         }
@@ -222,13 +238,17 @@ export struct KomgaImage {
       }
 
       const headers = this.getHeaders();
-      const cachedFileUrl = await this.resolveCachedFileUrl(resolvedSrc, headers);
-      if (this.loadingAborted) {
+      const cachedFileUrl = await this.resolveCachedFileUrl(
+        resolvedSrc,
+        headers,
+        retryMode === MangaAssetRetryMode.FORCE_REFRESH
+      );
+      if (this.loadingAborted || generation !== this.loadGeneration) {
         return;
       }
       if (cachedFileUrl.length > 0) {
         const cachedPixelMap = await this.decodeLocalFileToPixelMap(cachedFileUrl);
-        if (this.loadingAborted) {
+        if (this.loadingAborted || generation !== this.loadGeneration) {
           cachedPixelMap?.release();
           return;
         }
@@ -252,29 +272,49 @@ export struct KomgaImage {
       if (!buffer) {
         throw new Error('Failed to download Komga image');
       }
-      if (this.loadingAborted) {
+      if (this.loadingAborted || generation !== this.loadGeneration) {
         return;
       }
 
       const imageSource = image.createImageSource(buffer);
       const pixelMap = await imageSource.createPixelMap();
       imageSource.release();
-      if (this.loadingAborted) {
+      if (this.loadingAborted || generation !== this.loadGeneration) {
         pixelMap.release();
         return;
       }
       this.pixelMap = pixelMap;
     } catch (error) {
       logger.error(TAG, `Failed to load Komga image: ${String(error)}`);
-      this.loadError = true;
-      this.useDirectImage = true;
+      if (!this.loadingAborted && generation === this.loadGeneration) {
+        if (this.enableRetry) {
+          failureMessage = String(error);
+          this.useDirectImage = false;
+        } else {
+          this.loadError = true;
+          this.useDirectImage = true;
+        }
+      }
     } finally {
       this.isLoading = false;
+      if (!this.loadingAborted && this.src.length > 0 && this.src !== this.currentSrc) {
+        void this.loadImage();
+      }
+    }
+    if (failureMessage.length > 0 && !this.loadingAborted && generation === this.loadGeneration) {
+      this.handleLoadFailure(failureMessage);
     }
   }
 
-  private async resolveCachedFileUrl(url: string, headers: Record<string, string>): Promise<string> {
+  private async resolveCachedFileUrl(
+    url: string,
+    headers: Record<string, string>,
+    forceRefresh: boolean
+  ): Promise<string> {
     if (this.cacheKey.length <= 0) {
+      return '';
+    }
+    if (forceRefresh && !KomgaCacheManager.invalidateCoverCache(this.cacheKey, url)) {
       return '';
     }
     const cachedPath = KomgaCacheManager.getCachedCoverPath(this.cacheKey, url);
@@ -312,24 +352,85 @@ export struct KomgaImage {
     }
   }
 
+  private getRetryKey(): string {
+    return buildMangaImageRetryKey('komga_image', this.src);
+  }
+
+  private handleLoadFailure(errorMessage: string): void {
+    if (!this.enableRetry) {
+      this.loadError = true;
+      return;
+    }
+    const decision: MangaImageRetryDecision = this.mangaImageRetryCoordinator.recordFailure(
+      this.getRetryKey(),
+      errorMessage
+    );
+    if (decision.shouldRetry) {
+      logger.warn(TAG, `KomgaImage 单图自动重试: src=${this.previewUrl(this.src)}, attempt=${decision.attempt}`);
+      this.prepareRetry();
+      void this.loadImage(decision.retryMode);
+      return;
+    }
+    this.loadError = true;
+    logger.error(TAG, `KomgaImage 单图最终失败: src=${this.previewUrl(this.src)}, error=${errorMessage}`);
+  }
+
+  private retryLoadImage(): void {
+    const decision: MangaImageRetryDecision = this.mangaImageRetryCoordinator.beginManualRetry(this.getRetryKey());
+    if (!decision.shouldRetry) {
+      return;
+    }
+    logger.info(TAG, `KomgaImage 单图手动重试: src=${this.previewUrl(this.src)}, mode=${decision.retryMode}, attempt=${decision.attempt}`);
+    this.prepareRetry();
+    void this.loadImage(decision.retryMode);
+  }
+
+  private prepareRetry(): void {
+    this.loadGeneration = this.loadGeneration + 1;
+    this.releasePixelMap();
+    this.currentSrc = '';
+    this.effectiveSrc = '';
+    this.useDirectImage = false;
+    this.loadError = false;
+    this.renderEpoch = this.renderEpoch + 1;
+  }
+
+  private markRenderSuccess(): void {
+    this.mangaImageRetryCoordinator.markSuccess(this.getRetryKey());
+    this.loadError = false;
+    logger.info(TAG, `KomgaImage 单图恢复成功: src=${this.previewUrl(this.src)}`);
+  }
+
   build() {
     Stack() {
       if (this.pixelMap) {
         Image(this.pixelMap)
+          .key(`komga_pixel_${this.renderEpoch}`)
           .width(this.imageWidth)
           .height(this.imageHeight)
           .objectFit(this.objectFit)
           .borderRadius(this.imgBorderRadius)
+          .onComplete(() => {
+            this.markRenderSuccess();
+          })
+          .onError(() => {
+            this.releasePixelMap();
+            this.handleLoadFailure('PixelMap 渲染失败');
+          })
       } else if (this.useDirectImage && this.effectiveSrc.length > 0) {
         Image(this.effectiveSrc)
+          .key(`komga_direct_${this.renderEpoch}`)
           .width(this.imageWidth)
           .height(this.imageHeight)
           .objectFit(this.objectFit)
           .borderRadius(this.imgBorderRadius)
+          .onComplete(() => {
+            this.markRenderSuccess();
+          })
           .onError(() => {
             logger.warn(TAG, `KomgaImage direct render failed: ${this.previewUrl(this.effectiveSrc)}`);
             this.useDirectImage = false;
-            this.loadError = true;
+            this.handleLoadFailure('直接图片渲染失败');
           })
       } else {
         Column({ space: 8 }) {
@@ -341,6 +442,15 @@ export struct KomgaImage {
             Text('加载失败')
               .fontSize(12)
               .fontColor('#A0A0A0')
+            if (this.enableRetry) {
+              Button('重试')
+                .fontSize(12)
+                .height(30)
+                .enabled(!this.isLoading)
+                .onClick(() => {
+                  this.retryLoadImage();
+                })
+            }
           }
         }
         .width(this.imageWidth)

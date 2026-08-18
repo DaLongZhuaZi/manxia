@@ -111,6 +111,8 @@ import { resolveGuideHighlightRectInRoot } from '../Framework/Components/AppGuid
 import { AppGuideManager, AppGuidePageId, AppGuideStep } from '../Framework/Managers/AppGuideManager';
 import { distributedReadingService } from '../Framework/Distributed/DistributedReadingService';
 import { distributedDataSyncManager, SyncReadingState } from '../Framework/Distributed/DistributedDataSyncManager';
+import { distributedPermissionManager } from '../Framework/Distributed/DistributedPermissionManager';
+import { continuationStateHelper } from '../Framework/Distributed/ContinuationStateHelper';
 
 const TAG = 'EBookReaderPage';
 
@@ -236,6 +238,9 @@ struct EBookReaderPage {
   // 文本阅读器状态（用于 TXT 等纯文本格式）
   @State textReaderSettings: TextReaderSettings = DEFAULT_TEXT_READER_SETTINGS;
   @State textCurrentPageIndex: number = 0;
+  // [修复] 跨端接续恢复的待应用状态（onReady 读取 wantParam 快照，loadEBook 恢复进度后应用）
+  private pendingContinuationChapterIndex: number = -1;
+  private pendingContinuationPageIndex: number = -1;
   @State textContent: string = '';
   @State textCurrentPageStartCharIndex: number = 0;
   @State textCurrentPageEndCharIndex: number = 0;
@@ -338,6 +343,13 @@ struct EBookReaderPage {
   aboutToAppear(): void {
     this.isPageVisible = true;
     distributedReadingService.attachToReader();
+    // [修复] 阅读器进入是窗口就绪的可靠时机：稳定提起分布式数据同步权限请求
+    // （管理器内部节流；未授权且满足间隔时会再次弹窗，被打断会在下次进入时重试）
+    this.requestDistributedDataSyncPermission();
+    // [修复] 权限前置激活系统接续入口（覆盖 NavPath 宿主场景下主页的 INACTIVE；权限未授权时不进入接续状态）
+    this.applyMissionContinueStateWithPermission();
+    // [修复] 标记阅读器页面在前台（供 onContinue 守卫判定有效阅读状态）
+    AppStorage.setOrCreate('currentReaderHostPage', 'EBookReaderPage');
     eventBus.subscribe(GameEvent.READ_ALOUD_STATE_CHANGED, this.onReadAloudStateChanged);
     AppStorage.setOrCreate('ReadAloudCurrentHostPage', 'EBookReaderPage');
     ThemeAwareHelper.initializeThemeAware(this.componentId, this.themeState, (theme: ThemeType) => {
@@ -363,6 +375,57 @@ struct EBookReaderPage {
     // 注册音量键翻页监听
     this.updateVolumeKeyListener();
     void this.refreshPageGuide('aboutToAppear');
+  }
+
+  /**
+   * [修复] 稳定提起分布式数据同步权限请求（阅读器检查点）
+   * 窗口已完全就绪，弹窗不会被启动时序打断；未授权且满足间隔时会再次弹出
+   */
+  private requestDistributedDataSyncPermission(): void {
+    try {
+      const hostContext = this.getUIContext().getHostContext() as common.UIAbilityContext;
+      if (!hostContext) {
+        logger.warn(TAG, '分布式权限请求跳过：无法获取 UIAbilityContext');
+        return;
+      }
+      setTimeout(() => {
+        void distributedPermissionManager.ensurePermission(hostContext);
+      }, 800);
+    } catch (error) {
+      logger.warn(TAG, `分布式权限请求异常: ${String(error)}`);
+    }
+  }
+
+  /**
+   * [修复] 应用当前 mission 的接续状态（ACTIVE=显示系统接续入口）
+   * 独立阅读器 Ability 宿主时由 Ability 自身设置；NavPath 宿主（EntryAbility）时由页面设置
+   */
+  private applyMissionContinueState(active: boolean): void {
+    try {
+      const hostContext = this.getUIContext().getHostContext() as common.UIAbilityContext;
+      if (!hostContext) {
+        return;
+      }
+      continuationStateHelper.setMissionContinueState(hostContext, active);
+    } catch (error) {
+      logger.warn(TAG, `设置接续状态失败: ${String(error)}`);
+    }
+  }
+
+  /**
+   * [修复] 激活接续入口（页面检查点）：
+   * 入口按场景无条件显示；权限在触发接续时校验，此处异步确保权限就绪
+   */
+  private applyMissionContinueStateWithPermission(): void {
+    try {
+      const hostContext = this.getUIContext().getHostContext() as common.UIAbilityContext;
+      if (!hostContext) {
+        return;
+      }
+      continuationStateHelper.activateMissionContinueEntry(hostContext);
+    } catch (error) {
+      logger.warn(TAG, `设置接续状态失败: ${String(error)}`);
+    }
   }
 
   private areReaderMenusVisible(): boolean {
@@ -534,6 +597,12 @@ struct EBookReaderPage {
         this.previousChapter();
         break;
       case 'cmd:toggle_auto_read':
+        if (!this.isUsingTextReader()) {
+          const unsupportedFormat = this.ebook ? String(this.ebook.format) : 'unknown';
+          logger.warn(TAG, `[RemoteControl] 当前书籍格式不支持自动朗读，回执遥控端: format=${unsupportedFormat}`);
+          distributedDataSyncManager.sendInstruction('ack_toggle_auto_read_unsupported', unsupportedFormat);
+          return;
+        }
         this.toggleTextReadAloud();
         break;
       default:
@@ -559,6 +628,8 @@ struct EBookReaderPage {
     this.getUIContext().getPromptAction().showToast({ message: '遥控已连接' });
     distributedDataSyncManager.addOnDataChangedCallback(this.onRemoteDataChanged);
     distributedDataSyncManager.addOnStatusChangedCallback(this.onRemoteStatusChanged);
+    // [诊断] 被控端输出会话状态：确认目标端是否已加入分布式会话并收到过设备状态事件
+    distributedDataSyncManager.diagnoseSession('电子书被控端注册');
   }
 
   private handleVolumeKeyPageTurn(keyCode: number): boolean {
@@ -606,6 +677,17 @@ struct EBookReaderPage {
   aboutToDisappear(): void {
     this.isPageVisible = false;
     distributedReadingService.detach();
+    // [修复] 退出阅读器时清理当前阅读状态与接续标志：
+    // 1) 防止陈旧 currentRead* 被 onContinue 打包流转（未阅读却显示接续状态）
+    // 2) 防止未消费的 continuation* 残留导致下次打开阅读器误触发接续
+    distributedReadingService.clearCurrentReadingState();
+    distributedReadingService.clearContinuationFlags();
+    this.pendingContinuationChapterIndex = -1;
+    this.pendingContinuationPageIndex = -1;
+    // [修复] 阅读器退出时关闭系统接续入口
+    this.applyMissionContinueState(false);
+    // [修复] 清理阅读器前台标志（防止守卫误判有效阅读状态）
+    AppStorage.setOrCreate('currentReaderHostPage', '');
     // 断开遥控器监听，避免内存泄漏和回调冲突
     distributedDataSyncManager.removeOnDataChangedCallback(this.onRemoteDataChanged);
     distributedDataSyncManager.removeOnStatusChangedCallback(this.onRemoteStatusChanged);
@@ -673,6 +755,8 @@ struct EBookReaderPage {
 
   onPageShow(): void {
     this.isPageVisible = true;
+    // [修复] 页面重新显示时按权限条件保持接续入口（覆盖主页/回前台时的 INACTIVE）
+    this.applyMissionContinueStateWithPermission();
     this.setupFullscreenMode();
     this.scheduleFullscreenRestore('page_show');
     this.tryShowQueuedInteractionHint('page_show', 260);
@@ -1574,6 +1658,13 @@ struct EBookReaderPage {
         this.clearReaderKitStartupGuard('no_saved_progress');
       }
 
+      // [修复] 跨端接续：在本地进度恢复后，用源端快照位置覆盖（wantParam 优先）
+      this.applyPendingEBookContinuation();
+
+      // [修复] 内容就绪后立即同步一次阅读进度（确保 currentRead* 状态与时间戳就绪，
+      // 避免进入阅读器早期触发接续时守卫误判或打包空状态）
+      distributedReadingService.syncProgress(ebook.id, this.currentChapterIndex, this.textCurrentPageIndex, 0, 'ebook');
+
       // 调试日志：检查章节内容
       this.reportTransitionLoadingProgress(0.48, 'settings_restored');
       if (!this.isUsingTextReader()) {
@@ -1643,6 +1734,72 @@ struct EBookReaderPage {
       logger.error(TAG, '加载章节内容失败', String(error instanceof Error ? error.message : error));
       this.notifyTransitionReaderReadyOnce('ebook_load_failed');
     }
+  }
+
+  /**
+   * [修复] 跨端接续恢复：在本地进度恢复后应用源端快照位置
+   * 源端 syncProgress 打包的 chapterIndex 即阅读器 currentChapterIndex（图片模式为页），
+   * pageIndex 即 currentPosition / 文本页码，语义自洽可直接回放。
+   */
+  private applyPendingEBookContinuation(): void {
+    if (this.pendingContinuationChapterIndex < 0) {
+      // [日志完善] 无待应用接续状态（无接续会话或快照已消费），记录以确认恢复链路是否进入
+      logger.debug(TAG, '[Distributed] 接续恢复: 无待应用快照（跳过），pendingChapterIndex=-1');
+      this.clearPendingEBookContinuation();
+      return;
+    }
+    const chapterCount = this.ebook?.chapters?.length || 0;
+    const safeChapterIndex = chapterCount > 0
+      ? Math.max(0, Math.min(this.pendingContinuationChapterIndex, chapterCount - 1))
+      : this.pendingContinuationChapterIndex;
+    this.currentChapterIndex = safeChapterIndex;
+    // 文本阅读器：页码语义一致，直接回放
+    if (this.isUsingTextReader() && this.pendingContinuationPageIndex >= 0) {
+      this.textCurrentPageIndex = this.pendingContinuationPageIndex;
+    }
+    this.getUIContext().getPromptAction().showToast({ message: '已从其他设备接续阅读' });
+    logger.info(TAG, `[Distributed] 接续阅读命中(快照): chapterIndex=${safeChapterIndex}, pageIndex=${this.pendingContinuationPageIndex}`);
+    this.clearPendingEBookContinuation();
+  }
+
+  /**
+   * [修复] 跨端接续兜底：wantParam 快照缺失时，等待分布式数据对象把源端进度同步过来
+   */
+  private async tryRestoreEBookFromDistributedObject(): Promise<void> {
+    const distributedState = await distributedDataSyncManager.waitForRemoteState(4000);
+    if (distributedState && distributedState.bookId.length > 0) {
+      if (this.ebook && distributedState.bookId === this.ebook.id) {
+        if (distributedState.chapterIndex >= 0) {
+          const chapterCount = this.ebook.chapters?.length || 0;
+          this.currentChapterIndex = chapterCount > 0
+            ? Math.max(0, Math.min(distributedState.chapterIndex, chapterCount - 1))
+            : distributedState.chapterIndex;
+          if (this.isUsingTextReader() && distributedState.pageIndex >= 0) {
+            this.textCurrentPageIndex = distributedState.pageIndex;
+          }
+          this.getUIContext().getPromptAction().showToast({ message: '已从其他设备接续阅读' });
+          logger.info(TAG, `[Distributed] 接续阅读命中(分布式对象): chapterIndex=${distributedState.chapterIndex}, pageIndex=${distributedState.pageIndex}`);
+        }
+      } else if (!this.ebook) {
+        // 电子书尚未加载完成：存入待应用状态，由 loadEBook 恢复段应用
+        this.pendingContinuationChapterIndex = distributedState.chapterIndex;
+        this.pendingContinuationPageIndex = distributedState.pageIndex;
+        logger.info(TAG, `[Distributed] 分布式对象状态存入待应用: chapterIndex=${distributedState.chapterIndex}, pageIndex=${distributedState.pageIndex}`);
+        return;
+      } else {
+        logger.warn(TAG, `[Distributed] 分布式对象 bookId 不匹配: remote=${distributedState.bookId}, local=${this.ebook.id}`);
+      }
+    } else {
+      logger.warn(TAG, '[Distributed] 电子书接续恢复未命中（分布式对象未同步到数据）');
+    }
+    this.clearPendingEBookContinuation();
+  }
+
+  private clearPendingEBookContinuation(): void {
+    this.pendingContinuationChapterIndex = -1;
+    this.pendingContinuationPageIndex = -1;
+    // 无论是否命中都清理接续标志，防止残留导致后续误触发
+    distributedReadingService.clearContinuationFlags();
   }
 
   /**
@@ -3472,11 +3629,21 @@ struct EBookReaderPage {
           }, 96);
         }
         this.loadEBook(params.bookId);
+        // [修复] 跨端接续恢复：读取 wantParam 快照存入待应用状态，由 loadEBook
+        // 在本地进度恢复后覆盖为源端位置；命中后才提示用户，避免"显示接续状态却恢复失败"。
         const continuationSessionId = AppStorage.get<string>('continuationSessionId');
         if (continuationSessionId) {
-          this.getUIContext().getPromptAction().showToast({ message: '已从其他设备接续阅读' });
+          const snapshot = distributedReadingService.readContinuationSnapshot();
+          if (snapshot) {
+            this.pendingContinuationChapterIndex = snapshot.chapterIndex;
+            this.pendingContinuationPageIndex = snapshot.pageIndex;
+            logger.info(TAG, `[Distributed] 接续快照待应用: chapterIndex=${snapshot.chapterIndex}, pageIndex=${snapshot.pageIndex}`);
+          } else {
+            // 快照缺失：等待分布式数据对象同步（兜底）
+            void this.tryRestoreEBookFromDistributedObject();
+          }
+          // 遥控监听与会话是否命中无关，直接注册
           this.registerRemoteControlListener();
-          AppStorage.setOrCreate('continuationSessionId', '');
         }
       } else {
         this.errorMessage = '电子书 ID 参数无效';

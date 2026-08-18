@@ -14,6 +14,7 @@ import { SettingsPageSurfaceManager } from '../../pages/settings/SettingsPageSur
 import { SuwayomiImage } from '../../components/SuwayomiImage';
 import { SuwayomiSourceBrowseParams } from '../../pages/SuwayomiSourceBrowsePage';
 import { eventBus, GameEvent, IEventPayload, RemoteLibraryConfigChangedPayload } from '../EventBus';
+import { BasicDataSource } from '../../Utils/BasicDataSource';
 
 const TAG = 'SuwayomiTabContent';
 
@@ -52,7 +53,7 @@ export struct SuwayomiTabContent {
   @State suwayomiSelectedLanguage: string = 'all';
   @State suwayomiAvailableLanguages: string[] = [];
   @State suwayomiPinnedSourceIds: string[] = [];
-  @State suwayomiSourceIconCachePaths: Map<string, string> = new Map();
+  @State suwayomiFilteredSourceCount: number = 0;
   @State suwayomiCategoriesExpanded: boolean = false;
   @State suwayomiRefreshHintVisible: boolean = false;
 
@@ -63,6 +64,9 @@ export struct SuwayomiTabContent {
   private tabContentCacheManager: TabContentCacheManager = TabContentCacheManager.getInstance();
   private readonly SUWAYOMI_PAGE_SIZE: number = 50;
   private readonly componentId: string = 'SuwayomiTabContent';
+  private suwayomiSourceListDataSource: BasicDataSource<SuwayomiExtensionSource> =
+    new BasicDataSource<SuwayomiExtensionSource>();
+  private suwayomiSourceIconCacheEpoch: number = 0;
   private remoteConfigChangedListener: (payload: IEventPayload) => void = (payload: IEventPayload) => {
     this.handleRemoteConfigChanged(payload);
   };
@@ -76,6 +80,7 @@ export struct SuwayomiTabContent {
   }
 
   aboutToDisappear(): void {
+    this.suwayomiSourceIconCacheEpoch += 1;
     ThemeAwareHelper.cleanupThemeAware(this.componentId);
     eventBus.unsubscribe(GameEvent.REMOTE_LIBRARY_CONFIG_CHANGED, this.remoteConfigChangedListener);
     if (this.suwayomiRefreshHintTimer !== -1) {
@@ -98,6 +103,7 @@ export struct SuwayomiTabContent {
   }
 
   private async refreshAfterConfigChanged(): Promise<void> {
+    this.suwayomiSourceIconCacheEpoch += 1;
     this.suwayomiInitialized = false;
     this.suwayomiErrorMessage = '';
     this.suwayomiSelectedCategoryId = -1;
@@ -108,7 +114,8 @@ export struct SuwayomiTabContent {
     this.suwayomiSources = [];
     this.suwayomiCategories = [];
     this.suwayomiCoverCachePaths = new Map<string, string>();
-    this.suwayomiSourceIconCachePaths = new Map<string, string>();
+    this.suwayomiSourceListDataSource.setData(this.suwayomiSources);
+    this.suwayomiFilteredSourceCount = 0;
     this.isLoadingSuwayomi = true;
 
     try {
@@ -340,45 +347,14 @@ export struct SuwayomiTabContent {
     try {
       this.suwayomiSources = await this.suwayomiExecutor.getAvailableSources();
       this.extractSuwayomiLanguages();
-      this.cacheSuwayomiSourceIcons();
+      this.syncFilteredSuwayomiSources('load');
+      this.scheduleSuwayomiSourceIconCaching();
       logger.info(TAG, `加载Suwayomi图源: ${this.suwayomiSources.length} 个`);
     } catch (error) {
       logger.error(TAG, `加载Suwayomi图源失败: ${String(error)}`);
       this.suwayomiErrorMessage = `加载失败: ${String(error)}`;
     }
     this.isLoadingSuwayomi = false;
-  }
-
-  /**
-   * 缓存Suwayomi图源图标
-   */
-  private async cacheSuwayomiSourceIcons(): Promise<void> {
-    if (!DownloadDirManager.isReady()) return;
-    const headers = this.suwayomiExecutor.getImageHeaders();
-    for (const source of this.suwayomiSources) {
-      if (source.iconUrl && !this.suwayomiSourceIconCachePaths.has(source.id)) {
-        // 构建完整URL
-        const fullIconUrl = this.resolveSuwayomiAssetUrl(source.iconUrl);
-        if (!fullIconUrl) {
-          continue;
-        }
-        const cachedPath = SuwayomiCacheManager.getCachedSourceIconPath(source.id, fullIconUrl);
-        if (cachedPath) {
-          this.suwayomiSourceIconCachePaths.set(source.id, cachedPath);
-        } else {
-          SuwayomiCacheManager.cacheSourceIcon(source.id, fullIconUrl, headers).then((path: string | null) => {
-            if (path) {
-              this.suwayomiSourceIconCachePaths.set(source.id, path);
-              this.suwayomiSourceIconCachePaths = new Map(this.suwayomiSourceIconCachePaths);
-            } else {
-              logger.warn(TAG, `Suwayomi图标缓存失败: sourceId=${source.id}, iconUrl=${fullIconUrl.substring(0, 120)}`);
-            }
-          }).catch((error: Object | string | number | boolean) => {
-            logger.warn(TAG, `Suwayomi图标缓存异常: sourceId=${source.id}, error=${String(error)}`);
-          });
-        }
-      }
-    }
   }
 
   /**
@@ -435,14 +411,47 @@ export struct SuwayomiTabContent {
    * 获取图源图标URL（优先使用缓存）
    */
   private getSuwayomiSourceIconUrl(source: SuwayomiExtensionSource): string {
-    const cachedPath = this.suwayomiSourceIconCachePaths.get(source.id);
-    if (cachedPath) {
-      return `file://${cachedPath}`;
-    }
     if (source.iconUrl) {
-      return this.resolveSuwayomiAssetUrl(source.iconUrl);
+      const fullIconUrl = this.resolveSuwayomiAssetUrl(source.iconUrl);
+      const cachedPath = SuwayomiCacheManager.getCachedSourceIconPath(source.id, fullIconUrl);
+      return cachedPath ? `file://${cachedPath}` : fullIconUrl;
     }
     return '';
+  }
+
+  private scheduleSuwayomiSourceIconCaching(): void {
+    this.suwayomiSourceIconCacheEpoch += 1;
+    const cacheEpoch = this.suwayomiSourceIconCacheEpoch;
+    void this.cacheSuwayomiSourceIconsSequentially(cacheEpoch);
+  }
+
+  private async cacheSuwayomiSourceIconsSequentially(cacheEpoch: number): Promise<void> {
+    if (!DownloadDirManager.isReady()) {
+      return;
+    }
+    const headers = this.suwayomiExecutor.getImageHeaders();
+    const sources = this.suwayomiSources.concat();
+    let cachedCount = 0;
+    for (const source of sources) {
+      if (cacheEpoch !== this.suwayomiSourceIconCacheEpoch) {
+        return;
+      }
+      if (!source.iconUrl) {
+        continue;
+      }
+      const fullIconUrl = this.resolveSuwayomiAssetUrl(source.iconUrl);
+      if (!fullIconUrl || SuwayomiCacheManager.getCachedSourceIconPath(source.id, fullIconUrl)) {
+        continue;
+      }
+      const cachedPath = await SuwayomiCacheManager.cacheSourceIcon(source.id, fullIconUrl, headers);
+      if (cacheEpoch !== this.suwayomiSourceIconCacheEpoch) {
+        return;
+      }
+      if (cachedPath) {
+        cachedCount += 1;
+      }
+    }
+    logger.debug(TAG, `Suwayomi图源图标串行缓存完成: cached=${cachedCount}, total=${sources.length}`);
   }
 
   /**
@@ -479,6 +488,13 @@ export struct SuwayomiTabContent {
     });
   }
 
+  private syncFilteredSuwayomiSources(reason: string): void {
+    const filteredSources = this.getFilteredSuwayomiSources();
+    this.suwayomiSourceListDataSource.setData(filteredSources);
+    this.suwayomiFilteredSourceCount = filteredSources.length;
+    logger.debug(TAG, `刷新Suwayomi图源惰性列表: reason=${reason}, count=${filteredSources.length}`);
+  }
+
   /**
    * 切换Suwayomi图源置顶状态
    */
@@ -490,6 +506,7 @@ export struct SuwayomiTabContent {
       this.suwayomiPinnedSourceIds.push(sourceId);
     }
     this.suwayomiPinnedSourceIds = [...this.suwayomiPinnedSourceIds]; // 触发更新
+    this.syncFilteredSuwayomiSources('pin');
   }
 
   /**
@@ -991,6 +1008,9 @@ export struct SuwayomiTabContent {
               .searchButton('搜索')
               .onChange((value: string) => {
                 this.suwayomiSearchQuery = value;
+                if (this.suwayomiBrowseMode === 'sources') {
+                  this.syncFilteredSuwayomiSources('search');
+                }
               })
 
             Button() {
@@ -1287,6 +1307,7 @@ export struct SuwayomiTabContent {
                       curve: Curve.EaseInOut
                     }, () => {
                       this.suwayomiSelectedLanguage = 'all';
+                      this.syncFilteredSuwayomiSources('language');
                     });
                   })
                 ForEach(this.suwayomiAvailableLanguages, (lang: string) => {
@@ -1323,6 +1344,7 @@ export struct SuwayomiTabContent {
                         curve: Curve.EaseInOut
                       }, () => {
                         this.suwayomiSelectedLanguage = lang;
+                        this.syncFilteredSuwayomiSources('language');
                       });
                     })
                 })
@@ -1377,7 +1399,7 @@ export struct SuwayomiTabContent {
 
           // 图源统计信息（图源模式）
           if (this.suwayomiBrowseMode === 'sources') {
-            Text(`共 ${this.getFilteredSuwayomiSources().length} 个图源`)
+            Text(`共 ${this.suwayomiFilteredSourceCount} 个图源`)
               .fontSize(12)
               .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_muted', this.themeState.currentTheme))
               .fontFamily(this.appFontFamily)
@@ -1431,7 +1453,7 @@ export struct SuwayomiTabContent {
             .padding(16)
           } else if (this.suwayomiBrowseMode === 'sources') {
             // 图源列表
-            if (this.getFilteredSuwayomiSources().length === 0) {
+            if (this.suwayomiFilteredSourceCount === 0) {
               Column() {
                 SymbolGlyph($r('sys.symbol.square_grid_2x2'))
                   .fontSize(48)
@@ -1450,43 +1472,36 @@ export struct SuwayomiTabContent {
               Stack() {
                 // 网格视图
                 if (this.suwayomiDisplayMode === 'grid') {
-                  Scroll() {
-                    Column() {
-                      Grid() {
-                        ForEach(this.getFilteredSuwayomiSources(), (source: SuwayomiExtensionSource) => {
-                          GridItem() {
-                            this.buildSuwayomiSourceGridItem(source)
-                          }
-                        })
+                  Grid() {
+                    LazyForEach(this.suwayomiSourceListDataSource, (source: SuwayomiExtensionSource) => {
+                      GridItem() {
+                        this.buildSuwayomiSourceGridItem(source)
                       }
-                      .columnsTemplate('1fr 1fr 1fr 1fr')
-                      .columnsGap(8)
-                      .rowsGap(8)
-                      .width('100%')
-                      Blank().height(this.bottomSpacerHeight)
-                    }
-                    .width('100%')
-                    .padding(16)
+                    }, (source: SuwayomiExtensionSource) => source.id)
                   }
+                  .columnsTemplate('1fr 1fr 1fr 1fr')
+                  .columnsGap(8)
+                  .rowsGap(8)
+                  .cachedCount(12)
                   .width('100%')
                   .height('100%')
+                  .padding({ left: 16, right: 16, top: 16, bottom: this.bottomSpacerHeight + 16 })
                   .transition(TransitionEffect.OPACITY.animation({ duration: 200, curve: Curve.EaseInOut }))
                 }
 
                 // 列表视图
                 if (this.suwayomiDisplayMode === 'list') {
-                  Scroll() {
-                    Column({ space: 8 }) {
-                      ForEach(this.getFilteredSuwayomiSources(), (source: SuwayomiExtensionSource) => {
+                  List({ space: 8 }) {
+                    LazyForEach(this.suwayomiSourceListDataSource, (source: SuwayomiExtensionSource) => {
+                      ListItem() {
                         this.buildSuwayomiSourceListItem(source)
-                      })
-                      Blank().height(this.bottomSpacerHeight)
-                    }
-                    .width('100%')
-                    .padding(16)
+                      }
+                    }, (source: SuwayomiExtensionSource) => source.id)
                   }
                   .width('100%')
                   .height('100%')
+                  .cachedCount(8)
+                  .padding({ left: 16, right: 16, top: 16, bottom: this.bottomSpacerHeight + 16 })
                   .transition(TransitionEffect.OPACITY.animation({ duration: 200, curve: Curve.EaseInOut }))
                 }
               }

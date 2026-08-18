@@ -1,4 +1,3 @@
-import { SafeFileUtils } from '../Utils/SafeFileUtils';
 import { SafeUtils } from '../Utils/SafeUtils';
 /**
  * 小说书源管理页面
@@ -11,13 +10,12 @@ import { SafeUtils } from '../Utils/SafeUtils';
 import { HdsNavDestination, HdsNavDestinationAttribute, ScrollEffectType } from '@kit.UIDesignKit';
 import { promptAction } from '@kit.ArkUI';
 import { picker } from '@kit.CoreFileKit';
-import { fileIo as fs } from '@kit.CoreFileKit';
-import { util } from '@kit.ArkTS';
 import { common } from '@kit.AbilityKit';
 import { http } from '@kit.NetworkKit';
 import { logger } from '../Utils/Logger';
 import { PageLifecycleManager } from '../Framework/Lifecycle';
 import { getNovelSourceManager, NovelSourceManager } from '../Framework/Novel/NovelSourceManager';
+import { getNovelInitializer } from '../Framework/Novel/NovelInitializer';
 import { getNovelDataManager } from '../Framework/Novel/NovelDataManager';
 import { getNovelSourceValidator, ValidationConfig, NovelSourceValidator, SourceValidationResult, SPECIAL_GROUP_NAMES } from '../Framework/Novel/NovelSourceValidator';
 import { NovelSourceInfo } from '../Models/NovelModels';
@@ -30,7 +28,9 @@ import { SourceDialogScaffold } from '../Framework/Components/SourceDialogScaffo
 import { NovelSearchPageParams } from './NovelBookshelfPage';
 import { ValidationProgressDialog, ValidationProgressController, ValidationProgressInfo } from '../Framework/Components/ValidationProgressDialog';
 import { GroupManagementDialog, GroupInfo, SplitCondition } from '../Framework/Components/GroupManagementDialog';
-import { LegadoWebViewComponent } from '../Framework/Novel/LegadoWebViewComponent';
+import { LegadoCompatibilityStatus, LegadoV2ExecutionPolicy } from '../Framework/Novel/LegadoCompatibilityTypes';
+import { getLegadoSourceAutomationToken } from '../Framework/Novel/LegadoSourceAutomationIdentity';
+import { LegadoV2QualificationResult, LegadoV2QualificationRunner } from '../Framework/Novel/LegadoV2QualificationRunner';
 import {
   DEFAULT_NOVEL_SOURCE_REPOSITORY_URL,
   getNovelSourceRepositoryManager,
@@ -114,6 +114,50 @@ interface DeleteDialogPayload {
   message: string;
 }
 
+/**
+ * One source-of-truth projection for the V2-compatible raw book-source
+ * records currently loaded by the management page.  It deliberately does
+ * not inspect validation groups: those groups are historical user labels and
+ * cannot prove that the current raw JSON completed the required V2 workflows.
+ */
+class V2SourceValidationStats {
+  readonly totalSourceCount: number;
+  readonly verifiedSourceCount: number;
+  readonly readyForVerificationSourceCount: number;
+  readonly preparingSourceCount: number;
+  readonly needsInteractionSourceCount: number;
+  readonly unsupportedSourceCount: number;
+  readonly blockedSourceCount: number;
+  readonly legacyUnverifiableSourceCount: number;
+
+  constructor(
+    totalSourceCount: number,
+    verifiedSourceCount: number,
+    readyForVerificationSourceCount: number,
+    preparingSourceCount: number,
+    needsInteractionSourceCount: number,
+    unsupportedSourceCount: number,
+    blockedSourceCount: number,
+    legacyUnverifiableSourceCount: number
+  ) {
+    this.totalSourceCount = totalSourceCount;
+    this.verifiedSourceCount = verifiedSourceCount;
+    this.readyForVerificationSourceCount = readyForVerificationSourceCount;
+    this.preparingSourceCount = preparingSourceCount;
+    this.needsInteractionSourceCount = needsInteractionSourceCount;
+    this.unsupportedSourceCount = unsupportedSourceCount;
+    this.blockedSourceCount = blockedSourceCount;
+    this.legacyUnverifiableSourceCount = legacyUnverifiableSourceCount;
+  }
+
+  getClassifiedSourceCount(): number {
+    return this.verifiedSourceCount + this.readyForVerificationSourceCount +
+      this.preparingSourceCount + this.needsInteractionSourceCount +
+      this.unsupportedSourceCount + this.blockedSourceCount +
+      this.legacyUnverifiableSourceCount;
+  }
+}
+
 @Component
 export struct NovelSourceManagementPage {
   @Consume('NavPathStack') pathStack: NavPathStack;
@@ -159,7 +203,8 @@ export struct NovelSourceManagementPage {
   // 书源搜索
   @State searchKeyword: string = '';
   @State showSearchBar: boolean = false;
-  @State showQuickActionPanel: boolean = true;
+  @State showQuickActionPanel: boolean = false;
+  @State showV2ExecutionDetails: boolean = false;
   @State groupFilterDisplayMode: GroupFilterDisplayMode = GroupFilterDisplayMode.SINGLE_LINE;
   // 多选模式
   @State isMultiSelectMode: boolean = false;
@@ -173,13 +218,30 @@ export struct NovelSourceManagementPage {
   @State totalSourceCount: number = 0;
   @State enabledSourceCount: number = 0;
   @State searchableSourceCount: number = 0;
-  @State validatedSourceCount: number = 0;  // 已验证的书源数量
-  @State workingSourceCount: number = 0;    // 正常工作的书源数量
+  @State v2ExecutionPolicy: LegadoV2ExecutionPolicy = LegadoV2ExecutionPolicy.V2_FULL_CUTOVER;
+  @State v2VerifiedSourceCount: number = 0;
+  @State v2ReadyForVerificationSourceCount: number = 0;
+  @State v2PreparingSourceCount: number = 0;
+  @State v2NeedsInteractionSourceCount: number = 0;
+  @State v2UnsupportedSourceCount: number = 0;
+  @State v2BlockedSourceCount: number = 0;
+  @State v2LegacyUnverifiableSourceCount: number = 0;
+  @State isV2QualificationRunning: boolean = false;
+  @State v2QualificationTargetName: string = '';
+  @State v2QualificationEvidence: string = '';
+  @State v2TraceRevision: number = 0;
+  @State showV2TraceDetailDialog: boolean = false;
+  @State v2TraceDetailSourceId: string = '';
+  @State v2TraceDetailSourceName: string = '';
+  @State v2TraceDetailContent: string = '';
   // 分页加载状态
   private currentPage: number = 0;
-  private hasMoreData: boolean = true;
+  // This value controls a visible loading footer, so it must participate in
+  // ArkUI state updates when a filtered first page already contains all rows.
+  @State private hasMoreData: boolean = true;
   private isLoadingMore: boolean = false;
   private sourceManager: NovelSourceManager = getNovelSourceManager();
+  private v2QualificationRunner: LegadoV2QualificationRunner = new LegadoV2QualificationRunner(this.sourceManager);
   private settingsManager: SettingsManager = SettingsManager.getInstance();
   private listScroller: Scroller = new Scroller();
   // 校验进度对话框
@@ -229,6 +291,18 @@ export struct NovelSourceManagementPage {
         this.fontState = newState;
       }
     );
+    // V2 traces are kept by the shared source manager. Trigger a render when
+    // returning from search/detail/reader so the source card exposes the most
+    // recent ordinary-user-path trace instead of a stale card snapshot.
+    this.v2TraceRevision++;
+    if (getNovelInitializer().isReady()) {
+      this.loadSources();
+      void this.refreshV2TraceSummaries();
+    } else {
+      // Do not expose a card that can still route through the legacy map while
+      // its V2 raw-document records are being restored.
+      this.isLoading = true;
+    }
     eventBus.subscribe(GameEvent.FILE_EDITOR_SAVED, this.onFileEditorSaved);
   }
 
@@ -252,30 +326,24 @@ export struct NovelSourceManagementPage {
 
   loadSources(): void {
     this.isLoading = true;
+    this.v2ExecutionPolicy = this.sourceManager.getV2ExecutionPolicy();
     // 获取所有书源（已按 customOrder 排序，未启用的在末尾）
     const sources = this.sourceManager.getAllSources();
     // getAllSources 已经按 customOrder 排序，直接使用
     this.allSources = sources;
     
     // 更新统计数据
-    this.totalSourceCount = this.allSources.length;
+    const v2ValidationStats: V2SourceValidationStats = this.buildV2SourceValidationStats(this.allSources);
+    this.totalSourceCount = v2ValidationStats.totalSourceCount;
     this.enabledSourceCount = this.allSources.filter(s => s.enabled).length;
     this.searchableSourceCount = this.allSources.filter(s => s.searchable).length;
-    
-    // 统计工作正常的书源（分组包含"✅工作正常"）
-    const workingSources = this.allSources.filter(s => 
-      s.group && s.group.includes(SPECIAL_GROUP_NAMES.WORKING)
-    );
-    this.workingSourceCount = workingSources.length;
-    
-    // 错误分组标记前缀
-    const errorGroupPrefixes = ['🔍', '🔗', '⏱', '🔒', '📡', '❌', '校验', '💥', '🚫', '⚠️', '🌐', '📜'];
-    // 已验证：分组中包含错误标记的书源（验证失败）+ 工作正常的书源
-    const failedSources = this.allSources.filter(s => {
-      if (!s.group) return false;
-      return errorGroupPrefixes.some(prefix => s.group!.includes(prefix));
-    });
-    this.validatedSourceCount = failedSources.length + workingSources.length;
+    this.applyV2SourceValidationStats(v2ValidationStats);
+    if (v2ValidationStats.getClassifiedSourceCount() !== this.totalSourceCount) {
+      logger.error(
+        TAG,
+        `V2 书源状态统计不闭合: classified=${v2ValidationStats.getClassifiedSourceCount()}, total=${this.totalSourceCount}`
+      );
+    }
     
     // 统计未分组的书源数量
     const ungroupedCount = this.allSources.filter(s => !s.group || s.group.trim() === '').length;
@@ -322,6 +390,88 @@ export struct NovelSourceManagementPage {
     this.isLoading = false;
   }
 
+  /**
+   * Converts the manager's V2 compatibility state into the only statistics
+   * shown by this page.  "verified" requires a raw-hash-bound record that
+   * covers every required V2 workflow; "ready" is explicitly kept separate
+   * as pending verification and is never presented as working.
+   */
+  private buildV2SourceValidationStats(sources: NovelSourceInfo[]): V2SourceValidationStats {
+    let verifiedSourceCount = 0;
+    let readyForVerificationSourceCount = 0;
+    let preparingSourceCount = 0;
+    let needsInteractionSourceCount = 0;
+    let unsupportedSourceCount = 0;
+    let blockedSourceCount = 0;
+    let legacyUnverifiableSourceCount = 0;
+
+    for (let index = 0; index < sources.length; index++) {
+      const source = sources[index];
+      const status: string = source.compatibilityStatus || LegadoCompatibilityStatus.LEGACY_UNVERIFIABLE;
+      if (status === LegadoCompatibilityStatus.VERIFIED) {
+        verifiedSourceCount++;
+      } else if (status === LegadoCompatibilityStatus.READY) {
+        readyForVerificationSourceCount++;
+      } else if (status === LegadoCompatibilityStatus.PARSED ||
+        status === LegadoCompatibilityStatus.COMPILED) {
+        preparingSourceCount++;
+      } else if (status === LegadoCompatibilityStatus.NEEDS_INTERACTION) {
+        needsInteractionSourceCount++;
+      } else if (status === LegadoCompatibilityStatus.UNSUPPORTED) {
+        unsupportedSourceCount++;
+      } else if (status === LegadoCompatibilityStatus.BLOCKED) {
+        blockedSourceCount++;
+      } else {
+        legacyUnverifiableSourceCount++;
+      }
+    }
+
+    return new V2SourceValidationStats(
+      sources.length,
+      verifiedSourceCount,
+      readyForVerificationSourceCount,
+      preparingSourceCount,
+      needsInteractionSourceCount,
+      unsupportedSourceCount,
+      blockedSourceCount,
+      legacyUnverifiableSourceCount
+    );
+  }
+
+  private applyV2SourceValidationStats(stats: V2SourceValidationStats): void {
+    this.v2VerifiedSourceCount = stats.verifiedSourceCount;
+    this.v2ReadyForVerificationSourceCount = stats.readyForVerificationSourceCount;
+    this.v2PreparingSourceCount = stats.preparingSourceCount;
+    this.v2NeedsInteractionSourceCount = stats.needsInteractionSourceCount;
+    this.v2UnsupportedSourceCount = stats.unsupportedSourceCount;
+    this.v2BlockedSourceCount = stats.blockedSourceCount;
+    this.v2LegacyUnverifiableSourceCount = stats.legacyUnverifiableSourceCount;
+  }
+
+  /** Rehydrates the redacted V2 proof after a normal user-path navigation. */
+  private async refreshV2TraceSummaries(): Promise<void> {
+    await this.sourceManager.refreshExecutionTraceSummaries();
+    this.v2TraceRevision++;
+    this.loadSources();
+  }
+
+  /** Completes the shared source restore before this route exposes actions. */
+  private async ensureNovelModuleReady(): Promise<void> {
+    if (getNovelInitializer().isReady()) {
+      this.loadSources();
+      await this.refreshV2TraceSummaries();
+      return;
+    }
+    this.isLoading = true;
+    const context = this.getUIContext().getHostContext() as common.UIAbilityContext;
+    const result = await getNovelInitializer().initialize(context);
+    if (!result.success) {
+      throw new Error(`NOVEL_MODULE_INITIALIZATION_FAILED:${result.errors.length}`);
+    }
+    this.loadSources();
+    await this.refreshV2TraceSummaries();
+  }
+
   applyFilter(): void {
     let result = this.allSources;
     
@@ -342,10 +492,13 @@ export struct NovelSourceManagementPage {
     
     // 搜索筛选
     if (this.searchKeyword.trim()) {
-      const keyword = this.searchKeyword.toLowerCase();
-      const isAudioKeyword: boolean = keyword.includes('听书') || keyword.includes('有声') || keyword.includes('audio');
-      const isImageMangaKeyword: boolean = keyword.includes('漫画') || keyword.includes('图片') ||
-        keyword.includes('image') || keyword.includes('manga');
+      const keyword = this.searchKeyword.trim().toLowerCase();
+      // Type shortcuts are deliberately exact aliases. Treating every source
+      // name that merely contains “漫画” or “听书” as a type query makes an
+      // exact source lookup return unrelated cards.
+      const isAudioKeyword: boolean = keyword === '听书' || keyword === '有声' || keyword === 'audio';
+      const isImageMangaKeyword: boolean = keyword === '漫画' || keyword === '图片' ||
+        keyword === 'image' || keyword === 'manga';
       result = result.filter(s => 
         s.name.toLowerCase().includes(keyword) || 
         (s.group && s.group.toLowerCase().includes(keyword)) ||
@@ -424,8 +577,258 @@ export struct NovelSourceManagementPage {
     this.applyFilter();
   }
 
+  private getV2ExecutionPolicyLabel(): string {
+    if (this.v2ExecutionPolicy === LegadoV2ExecutionPolicy.V2_VERIFIED_ONLY) {
+      return 'V2 已验证书源';
+    }
+    if (this.v2ExecutionPolicy === LegadoV2ExecutionPolicy.V2_FULL_CUTOVER) {
+      return 'V2 全量切换';
+    }
+    return '旧内核（手动回退）';
+  }
+
+  /**
+   * This exact numerator and denominator are intentionally reused by the
+   * summary and V2 policy panel so a historical validation group can never
+   * produce a conflicting verification claim.
+   */
+  private getV2VerificationHeadline(): string {
+    return `${this.v2VerifiedSourceCount}/${this.totalSourceCount}`;
+  }
+
+  private getV2VerificationStatusLabel(): string {
+    return `已完整验证 ${this.v2VerifiedSourceCount} · 待完整验证 ${this.v2ReadyForVerificationSourceCount} · ` +
+      `准备中 ${this.v2PreparingSourceCount}`;
+  }
+
+  private getV2BlockerStatusLabel(): string {
+    return `需交互 ${this.v2NeedsInteractionSourceCount} · 不支持 ${this.v2UnsupportedSourceCount} · ` +
+      `已阻断 ${this.v2BlockedSourceCount} · 旧记录 ${this.v2LegacyUnverifiableSourceCount}`;
+  }
+
+  private getV2ValidationActivityLabel(): string {
+    if (this.isV2QualificationRunning) {
+      return `完整验证进行中：${this.v2QualificationTargetName}`;
+    }
+    if (this.isValidating) {
+      return 'V2 批量可用性校验进行中；完成不等同于完整验证。';
+    }
+    return '已完整验证仅计入当前原始 JSON 哈希一致且所需 V2 工作流均有证据的书源。';
+  }
+
+  private getSourceV2RuntimeLabel(source: NovelSourceInfo): string {
+    const fullCutoverReason = this.sourceManager.getV2FullCutoverBlockReason(source.id);
+    if (fullCutoverReason.length > 0) {
+      return `V2 全量切换受阻：${fullCutoverReason}`;
+    }
+    if (source.engineMode === 'v2_enabled') {
+      return this.v2ExecutionPolicy === LegadoV2ExecutionPolicy.V2_FULL_CUTOVER
+        ? 'V2 全量执行（无旧内核回退）'
+        : 'V2 正在执行';
+    }
+    if (source.compatibilityStatus === LegadoCompatibilityStatus.VERIFIED) {
+      return 'V2 已验证，等待全局切换';
+    }
+    if (source.compatibilityStatus === LegadoCompatibilityStatus.NEEDS_INTERACTION) {
+      return 'V2 需登录或交互';
+    }
+    if (source.compatibilityStatus === LegadoCompatibilityStatus.UNSUPPORTED) {
+      return 'V2 不支持';
+    }
+    return '旧内核';
+  }
+
+  /** Evidence-safe summary of the last V2 request made by this source. */
+  private getSourceV2TraceSummary(source: NovelSourceInfo): string {
+    // Read this reactive value so a navigation return refreshes the trace label.
+    if (this.v2TraceRevision < 0) {
+      return '';
+    }
+    const workflowSummaries = this.sourceManager.getExecutionTraceWorkflowSummaries(source.id);
+    if (workflowSummaries.length > 0) {
+      const lines: string[] = [];
+      for (let i = 0; i < workflowSummaries.length; i++) {
+        const summary = workflowSummaries[i];
+        lines.push(
+          `V2 trace：${summary.workflow} · ${summary.transport} · HTTP ${summary.statusCode} · ` +
+          `${summary.errorCode} · ${summary.outputSummary}`
+        );
+      }
+      return lines.join('\n');
+    }
+    const persistedSummary = this.sourceManager.getLastExecutionTraceSummary(source.id);
+    if (persistedSummary !== null) {
+      return `最近 V2 trace：${persistedSummary.workflow} · ${persistedSummary.transport} · ` +
+        `HTTP ${persistedSummary.statusCode} · ${persistedSummary.errorCode} · ` +
+        `${persistedSummary.outputSummary}`;
+    }
+    const trace = this.sourceManager.getLastExecutionTrace(source.id);
+    if (trace === null) {
+      return '';
+    }
+    return `最近 V2 trace：${trace.workflow} · ${trace.response.transport} · HTTP ${trace.response.statusCode} · ` +
+      `${trace.response.errorCode} · ${trace.outputSummary}`;
+  }
+
+  private getSourceV2TraceCardSummary(source: NovelSourceInfo): string {
+    const fullSummary = this.getSourceV2TraceSummary(source);
+    if (fullSummary.length === 0) {
+      return '';
+    }
+    const firstLine = fullSummary.split('\n')[0];
+    const segments = firstLine.split(' · ');
+    if (segments.length < 5) {
+      return firstLine;
+    }
+    const workflow = segments[0]
+      .replace('V2 trace：', '')
+      .replace('最近 V2 trace：', '');
+    const transport = segments[1];
+    const httpStatus = segments[2];
+    const errorCode = segments[3];
+    const outcome = this.describeV2TraceOutput(segments[4]);
+    const errorSuffix = errorCode === 'none' ? '' : ' · ' + errorCode;
+    return 'V2 · ' + workflow + ' · ' + transport + ' · ' + httpStatus + ' · ' + outcome + errorSuffix;
+  }
+
+  private describeV2TraceOutput(outputSummary: string): string {
+    const primary = outputSummary.split(';')[0].trim();
+    if (primary.startsWith('search:')) {
+      return '搜索 ' + primary.substring('search:'.length) + ' 项';
+    }
+    if (primary.startsWith('toc:')) {
+      return '目录 ' + primary.substring('toc:'.length) + ' 章';
+    }
+    if (primary.startsWith('content:')) {
+      return '正文 ' + primary.substring('content:'.length) + ' 段';
+    }
+    if (primary.startsWith('bookInfo:')) {
+      return '详情 ' + primary.substring('bookInfo:'.length) + ' 字段';
+    }
+    return primary.length > 0 ? primary : '已记录结果';
+  }
+
+  private openV2TraceDetailDialog(source: NovelSourceInfo): void {
+    if (this.getSourceV2TraceSummary(source).length === 0) {
+      this.getUIContext().getPromptAction().showToast({ message: '该书源尚无可复核的 V2 trace' });
+      return;
+    }
+    this.v2TraceDetailSourceId = source.id;
+    this.v2TraceDetailSourceName = source.name;
+    this.v2TraceDetailContent = this.getSourceV2TraceSummary(source);
+    this.showV2TraceDetailDialog = true;
+  }
+
+  private closeV2TraceDetailDialog(): void {
+    this.showV2TraceDetailDialog = false;
+    this.v2TraceDetailSourceId = '';
+    this.v2TraceDetailSourceName = '';
+    this.v2TraceDetailContent = '';
+  }
+
+  /**
+   * Gives a full-cutover rejection an evidence-safe, actionable explanation.
+   * Diagnostics are compiler-generated codes and capability messages only;
+   * they never include raw rules, URLs, headers, cookies or response bodies.
+   */
+  private getSourceV2CompilationDiagnosticLabel(source: NovelSourceInfo): string {
+    if (source.v2FullCutoverBlockReason === undefined || source.v2FullCutoverBlockReason.length === 0) {
+      return '';
+    }
+    const summary = this.sourceManager.getCompatibilitySummary(source.id);
+    if (summary === null) {
+      return 'V2 编译诊断：缺少当前书源的无损编译快照';
+    }
+    if (summary.diagnostics.length === 0) {
+      return `V2 编译诊断：状态 ${summary.status}，未返回额外诊断`;
+    }
+    return `V2 编译诊断：${summary.diagnostics.join(' · ')}`;
+  }
+
+  /** Never includes URL, body, header, cookie or variable values. */
+  private buildV2QualificationEvidence(result: LegadoV2QualificationResult): string {
+    if (result.workflowResults.length === 0) {
+      return result.summary;
+    }
+    const lines: string[] = [];
+    for (let i = 0; i < result.workflowResults.length; i++) {
+      const workflowResult = result.workflowResults[i];
+      lines.push(
+        `${workflowResult.workflow}: ${workflowResult.status}/${workflowResult.errorCode} · ` +
+        `outputs=${workflowResult.outputCount} · ${workflowResult.traceDigest}`
+      );
+    }
+    return lines.join('\n');
+  }
+
+  private async updateV2ExecutionPolicy(policy: LegadoV2ExecutionPolicy): Promise<void> {
+    if (this.isOperating || this.v2ExecutionPolicy === policy) {
+      return;
+    }
+    this.isOperating = true;
+    this.operatingMessage = '正在切换 Legado V2 全局执行策略...';
+    try {
+      await this.sourceManager.setV2ExecutionPolicy(policy);
+      this.v2ExecutionPolicy = policy;
+      this.loadSources();
+      this.getUIContext().getPromptAction().showToast({
+        message: `已切换为${this.getV2ExecutionPolicyLabel()}；所有书源工作流将统一按此策略路由。`
+      });
+    } catch (error) {
+      logger.error(TAG, `切换 Legado V2 执行策略失败: ${String(error)}`);
+      this.getUIContext().getPromptAction().showToast({ message: 'V2 执行策略切换失败' });
+    } finally {
+      this.isOperating = false;
+      this.operatingMessage = '';
+    }
+  }
+
+  private async qualifySourceWithV2(source: NovelSourceInfo): Promise<void> {
+    if (this.isOperating) {
+      return;
+    }
+    this.isOperating = true;
+    this.isV2QualificationRunning = true;
+    this.v2QualificationTargetName = source.name;
+    this.operatingMessage = `正在用 V2 完整验证 ${source.name}...`;
+    try {
+      const result = await this.v2QualificationRunner.qualify(source.id, '无职转生');
+      this.v2QualificationEvidence = this.buildV2QualificationEvidence(result);
+      this.loadSources();
+      this.getUIContext().getPromptAction().showToast({
+        message: result.passed ? 'V2 全工作流验证通过，已写入哈希绑定记录' : result.summary
+      });
+    } catch (error) {
+      logger.error(TAG, `V2 资格验证失败: ${String(error)}`);
+      this.v2QualificationEvidence = 'V2 资格验证执行异常；未产生可用 trace。';
+      this.getUIContext().getPromptAction().showToast({ message: 'V2 资格验证执行失败' });
+    } finally {
+      this.isOperating = false;
+      this.isV2QualificationRunning = false;
+      this.v2QualificationTargetName = '';
+      this.operatingMessage = '';
+    }
+  }
+
   private hasActiveSourceFilter(): boolean {
     return this.searchKeyword.trim().length > 0 || this.selectedGroup.length > 0;
+  }
+
+  private getActiveSourceFilterSummary(): string {
+    const keyword: string = this.searchKeyword.trim();
+    if (keyword.length > 0 && this.selectedGroup.length > 0) {
+      return `搜索：${keyword} · 分组：${this.selectedGroup}`;
+    }
+    if (keyword.length > 0) {
+      return `搜索：${keyword}`;
+    }
+    return `分组：${this.selectedGroup}`;
+  }
+
+  private clearActiveSourceFilter(): void {
+    this.searchKeyword = '';
+    this.selectedGroup = '';
+    this.applyFilter();
   }
 
   private isAudioSource(source: NovelSourceInfo): boolean {
@@ -461,10 +864,10 @@ export struct NovelSourceManagementPage {
 
   private getGroupFilterSwitchLabel(): string {
     if (this.groupFilterDisplayMode === GroupFilterDisplayMode.COLLAPSED) {
-      return '单行';
+      return '显示';
     }
     if (this.groupFilterDisplayMode === GroupFilterDisplayMode.SINGLE_LINE) {
-      return '全部';
+      return '展开';
     }
     return '收起';
   }
@@ -657,9 +1060,6 @@ export struct NovelSourceManagementPage {
   build() {
     HdsNavDestination() {
       Stack() {
-        // 隐藏的WebView组件，用于执行JS网络请求
-        LegadoWebViewComponent()
-        
         // 背景层：扩展到系统栏区域，实现完全沉浸式背景
         SharedPageBackgroundLayer({
           defaultBackgroundColor: ThemeAwareHelper.getTestManagementThemedColor('background', this.themeState.currentTheme),
@@ -701,9 +1101,13 @@ export struct NovelSourceManagementPage {
             this.buildSortModeBar()
           }
           
-          // 统计信息和分组筛选（排序模式下隐藏）
+          // 筛选时优先显示结果卡片；完整统计与批量操作仍保留在未筛选态。
           if (!this.isSortMode) {
-            this.buildStats()
+            if (this.hasActiveSourceFilter()) {
+              this.buildFilteredSourceSummary()
+            } else {
+              this.buildStats()
+            }
           }
 
           // 一级快捷操作（展开/收起动画参考搜索栏）
@@ -711,14 +1115,20 @@ export struct NovelSourceManagementPage {
             this.buildQuickActionPanel()
           }
           .width('100%')
-          .height(!this.isSortMode && !this.isMultiSelectMode && this.showQuickActionPanel
+          .height(!this.isSortMode && !this.isMultiSelectMode && !this.hasActiveSourceFilter() && this.showQuickActionPanel
             ? QUICK_ACTION_PANEL_ANIMATED_HEIGHT
             : 0)
-          .opacity(!this.isSortMode && !this.isMultiSelectMode && this.showQuickActionPanel ? 1 : 0)
+          .opacity(!this.isSortMode && !this.isMultiSelectMode && !this.hasActiveSourceFilter() && this.showQuickActionPanel ? 1 : 0)
           .clip(true)
           .animation({ duration: 200, curve: Curve.EaseOut })
 
-          this.buildListGuideHeader(!this.isSortMode && !this.isMultiSelectMode && this.showQuickActionPanel)
+          // A filtered empty state already explains the zero result and keeps
+          // the filter-summary clear action visible. Rendering the list guide
+          // as well repeats the same "0 项" information and pushes the useful
+          // recovery action away from the empty-state explanation.
+          if (!(this.hasActiveSourceFilter() && this.filteredSources.length === 0)) {
+            this.buildListGuideHeader(!this.isSortMode && !this.isMultiSelectMode && !this.hasActiveSourceFilter() && this.showQuickActionPanel)
+          }
           
           // 书源列表
           if (this.isLoading) {
@@ -765,6 +1175,10 @@ export struct NovelSourceManagementPage {
         if (this.showDeleteConfirmDialog) {
           this.buildDeleteConfirmDialog()
         }
+
+        if (this.showV2TraceDetailDialog) {
+          this.buildV2TraceDetailDialog()
+        }
         
         // 操作加载遮罩层
         if (this.isOperating) {
@@ -790,7 +1204,11 @@ export struct NovelSourceManagementPage {
     .onReady((context: NavDestinationContext) => {
       logger.info(TAG, 'HdsNavDestination.onReady 已触发');
       this.pathStack = context.pathStack;
-      this.loadSources();
+      void this.ensureNovelModuleReady().catch((error: Error): void => {
+        logger.error(TAG, `书源模块初始化失败: ${error.message}`);
+        this.isLoading = false;
+        this.getUIContext().getPromptAction().showToast({ message: '书源模块初始化失败，已阻止执行书源请求' });
+      });
     })
   }
 
@@ -798,6 +1216,7 @@ export struct NovelSourceManagementPage {
   buildSearchBar() {
     Row() {
       TextInput({ placeholder: '搜索书源名称、分组或网址...', text: this.searchKeyword })
+        .id('novel_source_management_filter')
         .layoutWeight(1)
         .height(40)
         .backgroundColor(this.getGlassActionButtonBackground('neutral'))
@@ -812,6 +1231,9 @@ export struct NovelSourceManagementPage {
         .padding({ left: 16, right: 16 })
         .onChange((value: string) => {
           this.onSearchChange(value);
+        })
+        .onSubmit((): void => {
+          this.getUIContext().getFocusController().clearFocus();
         })
       
       if (this.searchKeyword) {
@@ -1648,17 +2070,220 @@ export struct NovelSourceManagementPage {
   }
 
   @Builder
+  buildFilteredSourceSummary() {
+    Row({ space: 12 }) {
+      Column({ space: 2 }) {
+        Text('筛选结果')
+          .fontSize(12)
+          .fontWeight(FontWeight.Medium)
+          .fontFamily(this.appFontFamily)
+          .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
+        Text(this.getActiveSourceFilterSummary())
+          .fontSize(11)
+          .fontFamily(this.appFontFamily)
+          .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
+          .maxLines(1)
+          .textOverflow({ overflow: TextOverflow.Ellipsis })
+      }
+      .layoutWeight(1)
+      .alignItems(HorizontalAlign.Start)
+
+      Text(`${this.filteredSources.length} 项`)
+        .fontSize(12)
+        .fontWeight(FontWeight.Medium)
+        .fontFamily(this.appFontFamily)
+        .fontColor(ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme))
+        .id('novel_source_filter_result_count')
+
+      Button('清除')
+        .fontSize(11)
+        .fontFamily(this.appFontFamily)
+        .fontColor(this.getGlassActionButtonTextColor('neutral'))
+        .backgroundColor(this.getGlassActionButtonBackground('neutral'))
+        .linearGradient(this.getGlassActionButtonGradient())
+        .backgroundBlurStyle(this.getGlassActionButtonBlurStyle(), this.getGlassActionButtonBlurOptions())
+        .backgroundEffect(this.getGlassActionButtonBackgroundEffect())
+        .border({ width: 1, color: this.getGlassActionButtonBorderColor('neutral') })
+        .borderRadius(14)
+        .height(28)
+        .padding({ left: 12, right: 12 })
+        .onClick(() => this.clearActiveSourceFilter())
+    }
+    .width('100%')
+    .padding({ left: 16, right: 16, top: 10, bottom: 10 })
+    .backgroundColor(SettingsPanelSurfaceHelper.getBackground(this.themeState.currentTheme))
+    .linearGradient(SettingsPanelSurfaceHelper.getSurfaceGradient(this.themeState.currentTheme))
+    .backgroundBlurStyle(
+      SettingsPanelSurfaceHelper.getBlurStyle(this.themeState.currentTheme),
+      SettingsPanelSurfaceHelper.getBlurOptions(this.themeState.currentTheme)
+    )
+    .backgroundEffect(SettingsPanelSurfaceHelper.getBackgroundEffect(this.themeState.currentTheme))
+    .borderRadius(SettingsPanelSurfaceHelper.getRadius(this.themeState.currentTheme))
+    .clip(true)
+    .border({
+      width: SettingsPanelSurfaceHelper.getBorderWidth(this.themeState.currentTheme),
+      color: SettingsPanelSurfaceHelper.getBorderColor(this.themeState.currentTheme)
+    })
+    .margin({ top: 8 })
+  }
+
+  @Builder
+  buildV2ExecutionPolicyPanel() {
+    Column({ space: 8 }) {
+      Row() {
+        Text('Legado V2 执行策略')
+          .fontSize(12)
+          .fontWeight(FontWeight.Medium)
+          .fontFamily(this.appFontFamily)
+          .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
+        Blank()
+        Button(this.showV2ExecutionDetails ? '收起' : '详情')
+          .id('novel_source_policy_detail_toggle')
+          .fontSize(11)
+          .fontFamily(this.appFontFamily)
+          .fontColor(this.getGlassActionButtonTextColor('neutral'))
+          .backgroundColor(this.getGlassActionButtonBackground('neutral'))
+          .linearGradient(this.getGlassActionButtonGradient())
+          .backgroundBlurStyle(this.getGlassActionButtonBlurStyle(), this.getGlassActionButtonBlurOptions())
+          .backgroundEffect(this.getGlassActionButtonBackgroundEffect())
+          .border({ width: 1, color: this.getGlassActionButtonBorderColor('neutral') })
+          .borderRadius(14)
+          .height(28)
+          .padding({ left: 12, right: 12 })
+          .onClick(() => {
+            this.showV2ExecutionDetails = !this.showV2ExecutionDetails;
+          })
+      }
+      .width('100%')
+
+      Text(`${this.getV2ExecutionPolicyLabel()} · 完整验证 ${this.getV2VerificationHeadline()}`)
+        .id('novel_source_policy_summary')
+        .fontSize(10)
+        .fontFamily(this.appFontFamily)
+        .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
+        .maxLines(1)
+        .textOverflow({ overflow: TextOverflow.Ellipsis })
+        .width('100%')
+
+      Row({ space: 8 }) {
+        Button('回退旧内核')
+          .fontSize(11)
+          .fontFamily(this.appFontFamily)
+          .fontColor(this.getGlassActionButtonTextColor('neutral'))
+          .backgroundColor(this.v2ExecutionPolicy === LegadoV2ExecutionPolicy.LEGACY_ONLY
+            ? this.getGlassActionButtonBackground('primary')
+            : this.getGlassActionButtonBackground('neutral'))
+          .linearGradient(this.getGlassActionButtonGradient())
+          .backgroundBlurStyle(this.getGlassActionButtonBlurStyle(), this.getGlassActionButtonBlurOptions())
+          .backgroundEffect(this.getGlassActionButtonBackgroundEffect())
+          .border({ width: 1, color: this.getGlassActionButtonBorderColor('neutral') })
+          .borderRadius(14)
+          .height(28)
+          .layoutWeight(1)
+          .enabled(!this.isOperating)
+          .onClick(() => { void this.updateV2ExecutionPolicy(LegadoV2ExecutionPolicy.LEGACY_ONLY); })
+
+        Button('V2 已验证')
+          .fontSize(11)
+          .fontFamily(this.appFontFamily)
+          .fontColor(this.v2ExecutionPolicy === LegadoV2ExecutionPolicy.V2_VERIFIED_ONLY
+            ? this.getGlassActionButtonTextColor('success')
+            : this.getGlassActionButtonTextColor('neutral'))
+          .backgroundColor(this.v2ExecutionPolicy === LegadoV2ExecutionPolicy.V2_VERIFIED_ONLY
+            ? this.getGlassActionButtonBackground('success')
+            : this.getGlassActionButtonBackground('neutral'))
+          .linearGradient(this.getGlassActionButtonGradient())
+          .backgroundBlurStyle(this.getGlassActionButtonBlurStyle(), this.getGlassActionButtonBlurOptions())
+          .backgroundEffect(this.getGlassActionButtonBackgroundEffect())
+          .border({
+            width: 1,
+            color: this.v2ExecutionPolicy === LegadoV2ExecutionPolicy.V2_VERIFIED_ONLY
+              ? this.getGlassActionButtonBorderColor('success')
+              : this.getGlassActionButtonBorderColor('neutral')
+          })
+          .borderRadius(14)
+          .height(28)
+          .layoutWeight(1)
+          .enabled(!this.isOperating)
+          .onClick(() => { void this.updateV2ExecutionPolicy(LegadoV2ExecutionPolicy.V2_VERIFIED_ONLY); })
+
+        Button('V2 全量切换')
+          .id('novel_source_policy_v2_full_cutover')
+          .fontSize(11)
+          .fontFamily(this.appFontFamily)
+          .fontColor(this.getGlassActionButtonTextColor('warning'))
+          .backgroundColor(this.v2ExecutionPolicy === LegadoV2ExecutionPolicy.V2_FULL_CUTOVER
+            ? this.getGlassActionButtonBackground('warning')
+            : this.getGlassActionButtonBackground('neutral'))
+          .linearGradient(this.getGlassActionButtonGradient())
+          .backgroundBlurStyle(this.getGlassActionButtonBlurStyle(), this.getGlassActionButtonBlurOptions())
+          .backgroundEffect(this.getGlassActionButtonBackgroundEffect())
+          .border({ width: 1, color: this.getGlassActionButtonBorderColor('warning') })
+          .borderRadius(14)
+          .height(28)
+          .layoutWeight(1)
+          .enabled(!this.isOperating)
+          .onClick(() => { void this.updateV2ExecutionPolicy(LegadoV2ExecutionPolicy.V2_FULL_CUTOVER); })
+      }
+      .width('100%')
+
+      if (this.showV2ExecutionDetails) {
+        Column({ space: 4 }) {
+          Text(this.getV2VerificationStatusLabel())
+            .fontSize(10)
+            .fontFamily(this.appFontFamily)
+            .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
+            .maxLines(2)
+            .textOverflow({ overflow: TextOverflow.Ellipsis })
+            .width('100%')
+
+          Text(this.getV2BlockerStatusLabel())
+            .fontSize(10)
+            .fontFamily(this.appFontFamily)
+            .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_tertiary', this.themeState.currentTheme))
+            .maxLines(2)
+            .textOverflow({ overflow: TextOverflow.Ellipsis })
+            .width('100%')
+
+          Text(this.getV2ValidationActivityLabel())
+            .fontSize(9)
+            .fontFamily(this.appFontFamily)
+            .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_tertiary', this.themeState.currentTheme))
+            .maxLines(2)
+            .textOverflow({ overflow: TextOverflow.Ellipsis })
+            .width('100%')
+
+          if (this.v2QualificationEvidence.length > 0) {
+            Text(this.v2QualificationEvidence)
+              .fontSize(9)
+              .fontFamily(this.appFontFamily)
+              .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_tertiary', this.themeState.currentTheme))
+              .maxLines(4)
+              .textOverflow({ overflow: TextOverflow.Ellipsis })
+              .width('100%')
+          }
+        }
+        .id('novel_source_policy_detail_content')
+        .width('100%')
+      }
+    }
+    .width('100%')
+    .padding({ left: 16, right: 16, bottom: 12 })
+  }
+
+  @Builder
   buildStats() {
     Column() {
       Row() {
-        Column() {
-          Text(String(this.totalSourceCount))
-            .fontSize(24)
-            .fontWeight(FontWeight.Bold)
-            .fontFamily(this.appFontFamily)
-            .fontColor(ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme))
-          Row() {
-            Text('总书源')
+          Column() {
+            Text(String(this.totalSourceCount))
+              .fontSize(24)
+              .fontWeight(FontWeight.Bold)
+              .fontFamily(this.appFontFamily)
+              .fontColor(ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme))
+              .id('novel_source_total_count')
+            Row() {
+              Text('总书源')
               .fontSize(12)
               .fontFamily(this.appFontFamily)
               .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
@@ -1672,12 +2297,13 @@ export struct NovelSourceManagementPage {
         .layoutWeight(1)
         
         Column() {
-          Text(`${this.workingSourceCount}/${this.validatedSourceCount}`)
+          Text(this.getV2VerificationHeadline())
             .fontSize(24)
             .fontWeight(FontWeight.Bold)
             .fontFamily(this.appFontFamily)
             .fontColor(ThemeAwareHelper.getTestManagementThemedColor('color_success', this.themeState.currentTheme))
-          Text('正常工作/已验证')
+            .id('novel_source_v2_verified_count')
+          Text('V2 已完整验证 / 总书源')
             .fontSize(12)
             .fontFamily(this.appFontFamily)
             .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
@@ -1687,6 +2313,8 @@ export struct NovelSourceManagementPage {
       }
       .width('100%')
       .padding({ left: 16, right: 16, top: 16, bottom: 12 })
+
+      this.buildV2ExecutionPolicyPanel()
       
       // 分组筛选
       if (this.sourceGroups.length > 0) {
@@ -2258,6 +2886,7 @@ export struct NovelSourceManagementPage {
     Column() {
       Column() {
         Text(this.hasActiveSourceFilter() ? '未找到匹配的书源' : '暂无书源')
+          .id('novel_source_management_empty_message')
           .fontSize(14)
           .fontFamily(this.appFontFamily)
           .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_tertiary', this.themeState.currentTheme))
@@ -2289,12 +2918,13 @@ export struct NovelSourceManagementPage {
         offsetY: 8
       })
     }
+    .id('novel_source_management_empty_state')
     .width('100%')
-    .height('100%')
     .expandSafeArea([SafeAreaType.SYSTEM], [SafeAreaEdge.TOP, SafeAreaEdge.BOTTOM])
     .layoutWeight(1)
-    .justifyContent(FlexAlign.Center)
+    .justifyContent(FlexAlign.Start)
     .alignItems(HorizontalAlign.Center)
+    .padding({ top: 48 })
   }
 
   @Builder
@@ -2435,6 +3065,65 @@ export struct NovelSourceManagementPage {
           }
         }
         .width('100%')
+
+        Text(this.getSourceV2RuntimeLabel(source))
+          .fontSize(10)
+          .fontFamily(this.appFontFamily)
+          .fontColor(source.engineMode === 'v2_enabled'
+            ? ThemeAwareHelper.getTestManagementThemedColor('color_success', this.themeState.currentTheme)
+            : ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
+          .margin({ top: 4 })
+
+        if (this.getSourceV2CompilationDiagnosticLabel(source).length > 0) {
+          Text(this.getSourceV2CompilationDiagnosticLabel(source))
+            .id(`novel_source_compile_diagnostic_${getLegadoSourceAutomationToken(source.id)}`)
+            .fontSize(9)
+            .fontFamily(this.appFontFamily)
+            .fontColor(ThemeAwareHelper.getTestManagementThemedColor('color_warning', this.themeState.currentTheme))
+            .margin({ top: 2 })
+            .maxLines(3)
+            .textOverflow({ overflow: TextOverflow.Ellipsis })
+        }
+
+        if (this.getSourceV2TraceSummary(source).length > 0) {
+          Text(this.getSourceV2TraceCardSummary(source))
+            .id(`novel_source_trace_${source.id}`)
+            .fontSize(9)
+            .fontFamily(this.appFontFamily)
+            .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_tertiary', this.themeState.currentTheme))
+            .margin({ top: 2 })
+            .maxLines(1)
+            .textOverflow({ overflow: TextOverflow.Ellipsis })
+        }
+
+        if (this.getSourceV2TraceSummary(source).length > 0) {
+          Button('详情')
+            .id('novel_source_trace_detail_action_' + source.id)
+            .fontSize(10)
+            .fontFamily(this.appFontFamily)
+            .fontColor(this.getGlassActionButtonTextColor('neutral'))
+            .backgroundColor(this.getGlassActionButtonBackground('neutral'))
+            .linearGradient(this.getGlassActionButtonGradient())
+            .backgroundBlurStyle(this.getGlassActionButtonBlurStyle(), this.getGlassActionButtonBlurOptions())
+            .backgroundEffect(this.getGlassActionButtonBackgroundEffect())
+            .border({ width: 1, color: this.getGlassActionButtonBorderColor('neutral') })
+            .borderRadius(12)
+            .height(24)
+            .padding({ left: 10, right: 10 })
+            .margin({ top: 4 })
+            .onClick(() => {
+              this.openV2TraceDetailDialog(source);
+            })
+        } else if (source.engineMode === 'v2_enabled') {
+          Text('V2 trace：尚未获得可复核的用户路径证据')
+            .id(`novel_source_trace_${source.id}`)
+            .fontSize(9)
+            .fontFamily(this.appFontFamily)
+            .fontColor(ThemeAwareHelper.getTestManagementThemedColor('color_warning', this.themeState.currentTheme))
+            .margin({ top: 2 })
+            .maxLines(1)
+            .textOverflow({ overflow: TextOverflow.Ellipsis })
+        }
         
         Text(source.group || '未分组')
           .fontSize(12)
@@ -2597,10 +3286,11 @@ export struct NovelSourceManagementPage {
           .onClick(() => {
             this.showSourceActionMenu(source);
           })
-        }
       }
     }
+    }
     .width('100%')
+    .id(`novel_source_card_${getLegadoSourceAutomationToken(source.id)}`)
     .padding({ left: 12, right: 16, top: 12, bottom: 12 })
     .backgroundColor(SettingsPanelSurfaceHelper.getBackground(this.themeState.currentTheme))
     .linearGradient(SettingsPanelSurfaceHelper.getSurfaceGradient(this.themeState.currentTheme))
@@ -2791,6 +3481,44 @@ export struct NovelSourceManagementPage {
         this.hideSourceContextMenu();
         if (sourceToDebug) {
           this.goToDebugSource(sourceToDebug);
+        }
+      })
+
+      Divider().color(ThemeAwareHelper.getTestManagementThemedColor('divider', this.themeState.currentTheme))
+
+      // V2 全工作流资格验证按钮
+      Button({ type: ButtonType.Normal }) {
+        Row({ space: 8 }) {
+          SymbolGlyph($r('sys.symbol.wrench_and_screwdriver'))
+            .fontSize(16)
+            .fontColor([ThemeAwareHelper.getTestManagementThemedColor('color_success', this.themeState.currentTheme)])
+          Text('V2 资格验证')
+            .fontSize(14)
+            .fontFamily(this.appFontFamily)
+            .fontColor(ThemeAwareHelper.getTestManagementThemedColor('color_success', this.themeState.currentTheme))
+        }
+        .width('100%')
+        .justifyContent(FlexAlign.Start)
+      }
+      .width('100%')
+      .height(40)
+      .padding({ left: 12, right: 12 })
+      .backgroundColor(this.isContextMenuActionHighlighted('debug')
+        ? SettingsPanelSurfaceHelper.getBackground(this.themeState.currentTheme)
+        : Color.Transparent)
+      .backgroundBlurStyle(
+        this.isContextMenuActionHighlighted('debug') ? this.getGlassActionButtonBlurStyle() : undefined,
+        this.getGlassActionButtonBlurOptions()
+      )
+      .backgroundEffect(this.isContextMenuActionHighlighted('debug')
+        ? this.getGlassActionButtonBackgroundEffect()
+        : undefined)
+      .borderRadius(6)
+      .onClick(() => {
+        const sourceToQualify = this.contextMenuSource;
+        this.hideSourceContextMenu();
+        if (sourceToQualify) {
+          void this.qualifySourceWithV2(sourceToQualify);
         }
       })
 
@@ -3306,6 +4034,68 @@ export struct NovelSourceManagementPage {
     .position({ x: 0, y: 0 })
     .expandSafeArea([SafeAreaType.SYSTEM], [SafeAreaEdge.TOP, SafeAreaEdge.BOTTOM])
     .zIndex(3000)
+  }
+
+  @Builder
+  buildV2TraceDetailDialog() {
+    SourceDialogScaffold({
+      themeState: this.themeState,
+      onMaskTap: () => {
+        this.closeV2TraceDetailDialog();
+      }
+    }) {
+      Column({ space: 12 }) {
+          Text('V2 执行详情')
+            .id('novel_source_trace_detail_dialog')
+            .fontSize(18)
+            .fontWeight(FontWeight.Medium)
+            .fontFamily(this.appFontFamily)
+            .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
+
+          Text(this.v2TraceDetailSourceName)
+            .fontSize(13)
+            .fontFamily(this.appFontFamily)
+            .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
+            .maxLines(1)
+            .textOverflow({ overflow: TextOverflow.Ellipsis })
+
+          Text('以下内容为脱敏的 V2 执行证据，仅用于排查书源兼容性。')
+            .fontSize(11)
+            .fontFamily(this.appFontFamily)
+            .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
+            .lineHeight(17)
+
+          Scroll() {
+            Text(this.v2TraceDetailContent)
+              .id('novel_source_trace_detail_content')
+              .width('100%')
+              .fontSize(12)
+              .fontFamily(this.appFontFamily)
+              .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
+              .lineHeight(19)
+              .textSelectable(TextSelectableMode.SELECTABLE_UNFOCUSABLE)
+          }
+          .width('100%')
+          .constraintSize({ maxHeight: 360 })
+
+          Button('关闭')
+            .id('novel_source_trace_detail_close')
+            .width('100%')
+            .height(36)
+            .borderRadius(8)
+            .fontFamily(this.appFontFamily)
+            .fontColor(this.getGlassActionButtonTextColor('neutral'))
+            .backgroundColor(this.getGlassActionButtonBackground('neutral'))
+            .linearGradient(this.getGlassActionButtonGradient())
+            .backgroundBlurStyle(this.getGlassActionButtonBlurStyle(), this.getGlassActionButtonBlurOptions())
+            .backgroundEffect(this.getGlassActionButtonBackgroundEffect())
+            .border({ width: 1, color: this.getGlassActionButtonBorderColor('neutral') })
+            .onClick(() => {
+              this.closeV2TraceDetailDialog();
+            })
+      }
+      .width('100%')
+    }
   }
 
   @Builder
@@ -4382,38 +5172,33 @@ export struct NovelSourceManagementPage {
     this.operatingMessage = `正在处理文件 ${fileProcessed}/${fileCount}...`;
     logger.info(TAG, `处理文件 ${fileProcessed}/${fileCount}: ${fileUri}`);
 
-    const file: fs.File = SafeFileUtils.openSync(fileUri, fs.OpenMode.READ_ONLY);
-    try {
-      const stat: fs.Stat = SafeFileUtils.statSync(file.fd);
-      const fileSize: number = stat.size;
-      logger.info(TAG, `文件大小: ${fileSize} 字节`);
-
-      const maxBufferSize = 50 * 1024 * 1024;
-      const bufferSize = Math.min(fileSize, maxBufferSize);
-      const buffer = new ArrayBuffer(bufferSize);
-      const readLen: number = SafeFileUtils.readSync(file.fd, buffer);
-      if (readLen < fileSize) {
-        logger.warn(TAG, `文件过大，只读取了 ${readLen}/${fileSize} 字节`);
+    // Do not branch on file size. The previous 50 MiB path silently truncated
+    // a book-source package before compilation; every local file now reaches
+    // the same UTF-8 streaming parser and transactional V2 write boundary.
+    const importResult = await this.sourceManager.importFromLargeFile(fileUri, {
+      onFileReadProgress: (percent: number, _bytesRead: number, _totalBytes: number): void => {
+        this.operatingMessage = `正在读取文件 ${fileProcessed}/${fileCount}... ${percent}%`;
+      },
+      onParseProgress: (parsedCount: number, _sourceName: string): void => {
+        this.operatingMessage = `正在解析并编译文件 ${fileProcessed}/${fileCount}... 已解析 ${parsedCount} 条`;
+      },
+      onImportProgress: (importedCount: number, totalCount: number, _sourceName: string): void => {
+        this.operatingMessage = totalCount > 0
+          ? `正在无损写入文件 ${fileProcessed}/${fileCount}... ${importedCount}/${totalCount}`
+          : `正在无损写入文件 ${fileProcessed}/${fileCount}... 已写入 ${importedCount} 条，仍在扫描`;
+      },
+      onError: (message: string, sourceName?: string): void => {
+        logger.warn(TAG, `V2 文件导入警告: ${message}${sourceName ? ` (${sourceName})` : ''}`);
       }
-      if (readLen <= 0) {
-        throw new Error('文件读取失败或内容为空');
-      }
-
-      const uint8Array = new Uint8Array(buffer, 0, readLen);
-      const decoder = new util.TextDecoder('utf-8', { ignoreBOM: true });
-      const jsonContent = decoder.decodeToString(uint8Array);
-
-      logger.debug(TAG, `读取到JSON内容，长度: ${jsonContent.length}`);
-      this.operatingMessage = `正在导入文件 ${fileProcessed}/${fileCount} 的书源...`;
-
-      const results = await this.sourceManager.importFromJSON(jsonContent);
-      const successCount = results.filter((r: LegadoSourceImportResult) => r.success).length;
-      const failCount = results.filter((r: LegadoSourceImportResult) => !r.success).length;
-      logger.info(TAG, `文件 ${fileProcessed} 导入完成: 成功${successCount}个, 失败${failCount}个`);
-      return [successCount, failCount];
-    } finally {
-      SafeFileUtils.closeSync(file);
-    }
+    });
+    const documentFailureCount = importResult.failedCount + importResult.skippedCount;
+    const fileFailureCount = importResult.success ? documentFailureCount : documentFailureCount + 1;
+    logger.info(
+      TAG,
+      `V2 文件 ${fileProcessed} 导入完成: parsed=${importResult.totalParsed}, ` +
+      `success=${importResult.successCount}, failed=${fileFailureCount}`
+    );
+    return [importResult.successCount, fileFailureCount];
   }
 
   async importFromNetwork(): Promise<void> {

@@ -52,6 +52,7 @@ export struct NovelDetailPage {
   @State book: LegadoBook | null = null;
   @State chapters: LegadoChapter[] = [];
   @State isLoading: boolean = true;
+  @State loadErrorMessage: string = '';
   @State isFavorite: boolean = false;
   @State showAllChapters: boolean = false;
   @State showFullIntro: boolean = false; // 是否展开完整简介
@@ -82,6 +83,8 @@ export struct NovelDetailPage {
   private settingsManager: SettingsManager = SettingsManager.getInstance();
   private sourceId: string = '';
   private bookUrl: string = '';
+  private requestCarrierKey: string = '';
+  private bookVariable: string = '';
   private bookId: string = ''; // 用于获取阅读进度
   private sourceManager = getNovelSourceManager();
   private dataManager = getNovelDataManager();
@@ -145,6 +148,7 @@ export struct NovelDetailPage {
       return;
     }
 
+    this.loadErrorMessage = '';
     try {
       /* if (this.bookId) {
         const settingsKey = `${SettingKeys.NOVEL_READER_SETTINGS}_${this.bookId}`;
@@ -155,7 +159,13 @@ export struct NovelDetailPage {
         return;
       } */
       // 尝试获取书籍详情
-      this.book = await this.sourceManager.getBookInfo(this.sourceId, this.bookUrl);
+      this.book = await this.sourceManager.getBookInfo(
+        this.sourceId,
+        this.bookUrl,
+        undefined,
+        this.bookVariable.length > 0 ? this.bookVariable : undefined,
+        this.requestCarrierKey.length > 0 ? this.requestCarrierKey : undefined
+      );
       
       // 如果详情页返回了部分结果（如只有tocUrl没有name），用fallback补充缺失字段
       if (this.book && !this.book.name && this.fallbackBookInfo && this.fallbackBookInfo.bookName) {
@@ -163,8 +173,16 @@ export struct NovelDetailPage {
         this.book = this.mergeBookWithFallback(this.book);
       }
       
-      // 如果详情页解析完全失败，使用搜索结果中的fallback信息
-      if (!this.book && this.fallbackBookInfo && this.fallbackBookInfo.bookName) {
+      // V2 全量/已验证执行时，搜索结果只能作为展示初值，不能替代
+      // 失败的详情工作流继续进入目录和正文；否则会把 V2 语义错误
+      // 伪装为一次成功阅读。
+      if (!this.book && this.isV2DetailFailureTerminal()) {
+        this.loadErrorMessage = 'V2 详情工作流未成功完成，请在书源管理查看脱敏 trace。';
+        logger.warn(TAG, `V2 详情工作流失败，拒绝搜索结果 fallback: ${this.sourceId}`);
+      }
+
+      // 只有明确运行旧内核的路径才允许旧有搜索结果 fallback。
+      if (!this.book && !this.isV2DetailFailureTerminal() && this.fallbackBookInfo && this.fallbackBookInfo.bookName) {
         logger.info(TAG, `详情页解析失败，使用fallback信息: ${this.fallbackBookInfo.bookName}`);
         this.book = this.createBookFromFallback();
       }
@@ -207,6 +225,11 @@ export struct NovelDetailPage {
       }
     } catch (error) {
       logger.error(TAG, `加载失败: ${String(error)}`);
+      if (this.isV2DetailFailureTerminal()) {
+        this.loadErrorMessage = 'V2 详情工作流发生异常，请在书源管理查看脱敏 trace。';
+        this.isLoading = false;
+        return;
+      }
       // 发生异常时也尝试使用fallback
       if (!this.book && this.fallbackBookInfo && this.fallbackBookInfo.bookName) {
         logger.info(TAG, `异常后使用fallback信息: ${this.fallbackBookInfo.bookName}`);
@@ -222,6 +245,16 @@ export struct NovelDetailPage {
       }
     }
     this.isLoading = false;
+  }
+
+  /**
+   * A full V2 cutover must never turn a failed detail request into a usable
+   * book merely because the preceding search result contained enough display
+   * metadata to build a fallback object.  Verified-only mode uses the same
+   * rule only for sources that are actually routed to V2.
+   */
+  private isV2DetailFailureTerminal(): boolean {
+    return this.sourceManager.shouldBlockLegacyFallback(this.sourceId);
   }
 
   /**
@@ -336,6 +369,7 @@ export struct NovelDetailPage {
         .width('100%')
         .height('100%')
         .align(Alignment.TopStart)
+        .id('novel_detail_root')
         .expandSafeArea([SafeAreaType.SYSTEM], [SafeAreaEdge.TOP, SafeAreaEdge.BOTTOM])
         
         // 章节列表面板
@@ -460,6 +494,8 @@ export struct NovelDetailPage {
       if (param) {
         this.sourceId = param.sourceId || '';
         this.bookUrl = param.bookUrl || '';
+        this.requestCarrierKey = param.requestCarrierKey || '';
+        this.bookVariable = param.bookVariable || '';
         // 生成bookId用于获取阅读进度
         this.bookId = `${this.sourceId}_${encodeURIComponent(this.bookUrl)}`;
         // 保存fallback信息
@@ -518,7 +554,7 @@ export struct NovelDetailPage {
   @Builder
   buildError() {
     Column() {
-      Text('加载失败')
+      Text(this.loadErrorMessage.length > 0 ? this.loadErrorMessage : '加载失败')
         .fontSize(14)
         .fontFamily(this.appFontFamily)
         .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_tertiary', this.themeState.currentTheme))
@@ -595,6 +631,7 @@ export struct NovelDetailPage {
             .borderRadius(2)
           
           Text(`${this.chapters.length}章`)
+            .id('novel_detail_chapter_count')
             .fontSize(11)
             .fontFamily(this.appFontFamily)
             .fontColor('#52C41A')
@@ -704,6 +741,7 @@ export struct NovelDetailPage {
           .onClick(() => this.toggleFavorite())
         
         Button(this.lastReadChapterIndex >= 0 ? '继续阅读' : '开始阅读')
+          .id('novel_detail_start_reading')
           .fontSize(14)
           .fontFamily(this.appFontFamily)
           .fontColor('#FFFFFF')

@@ -5,7 +5,9 @@
  * 使用标签页样式，支持主题切换
  */
 
+import { common } from '@kit.AbilityKit';
 import { logger } from '../Utils/Logger';
+import { FeedbackCenterCacheManager, FeedbackCenterCacheStats } from '../Framework/Cache/FeedbackCenterCacheManager';
 import { CacheConfigManager, CacheConfig, MemoryCacheConfig, DiskCacheConfig, PreloadConfig } from '../Framework/Cache/CacheConfigManager';
 import { SmartPreloadStrategy, PreloadStats } from '../Framework/Cache/SmartPreloadStrategy';
 import { DiskCacheManager } from '../Framework/Cache/DiskCacheManager';
@@ -19,6 +21,16 @@ interface DiskCacheStatsInfo {
   count: number;
   totalSize: number;
   usagePercent: number;
+}
+
+interface FeedbackCacheStatsInfo {
+  entryCount: number;
+  sizeBytes: number;
+  lastUpdated: number;
+  draftExists: boolean;
+  draftSizeBytes: number;
+  pendingAttachmentCount: number;
+  pendingAttachmentBytes: number;
 }
 
 interface ThemeState {
@@ -37,6 +49,7 @@ export struct CacheManagementPanel {
   @Local cacheConfig: CacheConfig | null = null;
   @Local preloadStats: PreloadStats | null = null;
   @Local diskCacheStats: DiskCacheStatsInfo | null = null;
+  @Local feedbackCacheStats: FeedbackCacheStatsInfo | null = null;
   @Local isLoading: boolean = true;
   @Local currentTab: CacheTab = CacheTab.STATISTICS;
   @Local themeState: ThemeState = { currentTheme: ThemeType.DARK };
@@ -46,6 +59,7 @@ export struct CacheManagementPanel {
   private cacheConfigManager: CacheConfigManager = CacheConfigManager.getInstance();
   private smartPreloadStrategy: SmartPreloadStrategy = SmartPreloadStrategy.getInstance();
   private diskCacheManager: DiskCacheManager = DiskCacheManager.getInstance();
+  private feedbackCacheManager: FeedbackCenterCacheManager = FeedbackCenterCacheManager.getInstance();
   private themeManager: ThemeManager = ThemeManager.getInstance();
 
   aboutToAppear(): void {
@@ -71,6 +85,11 @@ export struct CacheManagementPanel {
     try {
       this.isLoading = true;
       
+      const hostContext = this.getUIContext().getHostContext();
+      if (hostContext !== null) {
+        await this.feedbackCacheManager.initialize(hostContext as common.UIAbilityContext);
+      }
+
       // 加载缓存配置
       this.cacheConfig = this.cacheConfigManager.getConfig();
       
@@ -83,6 +102,17 @@ export struct CacheManagementPanel {
         count: stats.count,
         totalSize: stats.totalSize,
         usagePercent: stats.usagePercent
+      };
+      await this.feedbackCacheManager.refreshLocalStats();
+      const feedbackStats: FeedbackCenterCacheStats = this.feedbackCacheManager.getStats();
+      this.feedbackCacheStats = {
+        entryCount: feedbackStats.entryCount,
+        sizeBytes: feedbackStats.sizeBytes,
+        lastUpdated: feedbackStats.lastUpdated,
+        draftExists: feedbackStats.draftExists,
+        draftSizeBytes: feedbackStats.draftSizeBytes,
+        pendingAttachmentCount: feedbackStats.pendingAttachmentCount,
+        pendingAttachmentBytes: feedbackStats.pendingAttachmentBytes
       };
       
       logger.info(TAG, '数据加载完成');
@@ -202,6 +232,19 @@ export struct CacheManagementPanel {
       logger.info(TAG, '磁盘缓存已清空');
     } catch (error) {
       logger.error(TAG, `清空失败: ${String(error)}`);
+    }
+  }
+
+  /**
+   * 清空反馈中心远程数据缓存
+   */
+  private async clearFeedbackCenterCache(): Promise<void> {
+    try {
+      await this.feedbackCacheManager.clear();
+      await this.refreshData();
+      logger.info(TAG, '反馈中心缓存已清空');
+    } catch (error) {
+      logger.error(TAG, '反馈中心缓存清空失败: ' + String(error));
     }
   }
 
@@ -366,6 +409,7 @@ export struct CacheManagementPanel {
   buildStatisticsTab() {
     Column({ space: 16 }) {
       this.buildDiskCacheStats()
+      this.buildFeedbackCacheStats()
     }
     .width('100%')
     .padding(16)
@@ -504,6 +548,176 @@ export struct CacheManagementPanel {
     .border({ width: 1, color: ThemeAwareHelper.getTestManagementThemedColor('panel_border', this.themeState.currentTheme) })
   }
 
+  @Builder
+  buildFeedbackCacheStats() {
+    Column({ space: 12 }) {
+      Row() {
+        Text('反馈中心缓存')
+          .fontSize(15)
+          .fontFamily(this.appFontFamily)
+          .fontWeight(FontWeight.Medium)
+          .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
+        Blank()
+        Button({ type: ButtonType.Normal }) {
+          Row({ space: 4 }) {
+            SymbolGlyph($r('sys.symbol.trash'))
+              .fontSize(14)
+              .fontColor([Color.White])
+            Text('清空')
+              .fontSize(12)
+              .fontFamily(this.appFontFamily)
+              .fontColor(Color.White)
+          }
+        }
+        .height(28)
+        .padding({ left: 12, right: 12 })
+        .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme))
+        .borderRadius(14)
+        .stateStyles({
+          pressed: {
+            .scale({ x: 0.95, y: 0.95 })
+            .opacity(0.8)
+          }
+        })
+        .animation({ duration: 150, curve: Curve.EaseOut })
+        .onClick(() => {
+          this.getUIContext().showAlertDialog({
+            title: '确认清空',
+            message: '这会清理反馈中心列表和详情的本地缓存，不会删除服务器 Issue。',
+            primaryButton: {
+              value: '取消',
+              action: () => {}
+            },
+            secondaryButton: {
+              value: '确认',
+              action: () => this.clearFeedbackCenterCache()
+            }
+          });
+        })
+      }
+      .width('100%')
+
+      Row({ space: 8 }) {
+        Button({ type: ButtonType.Normal }) {
+          Row({ space: 4 }) {
+            SymbolGlyph($r('sys.symbol.doc_text'))
+              .fontSize(13)
+              .fontColor([ThemeAwareHelper.getTestManagementThemedColor('accent_orange', this.themeState.currentTheme)])
+            Text('删除草稿')
+              .fontSize(12)
+              .fontFamily(this.appFontFamily)
+              .fontColor(ThemeAwareHelper.getTestManagementThemedColor('accent_orange', this.themeState.currentTheme))
+          }
+        }
+        .layoutWeight(1)
+        .height(30)
+        .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('button_inactive', this.themeState.currentTheme))
+        .borderRadius(15)
+        .onClick(() => {
+          this.getUIContext().showAlertDialog({
+            title: '确认删除草稿',
+            message: '草稿和它引用的待上传附件都会被删除，服务器上的 Issue 不受影响。',
+            primaryButton: { value: '取消', action: () => {} },
+            secondaryButton: { value: '确认', action: () => this.deleteFeedbackDraft() }
+          });
+        })
+        Button({ type: ButtonType.Normal }) {
+          Row({ space: 4 }) {
+            SymbolGlyph($r('sys.symbol.trash'))
+              .fontSize(13)
+              .fontColor([ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme)])
+            Text('清理孤儿附件')
+              .fontSize(12)
+              .fontFamily(this.appFontFamily)
+              .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
+          }
+        }
+        .layoutWeight(1)
+        .height(30)
+        .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('button_inactive', this.themeState.currentTheme))
+        .borderRadius(15)
+        .onClick(() => this.cleanupFeedbackOrphans())
+      }
+      .width('100%')
+
+      if (this.feedbackCacheStats !== null) {
+        Row() {
+          Text('缓存条目')
+            .fontSize(13)
+            .fontFamily(this.appFontFamily)
+            .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
+          Blank()
+          Text(String(this.feedbackCacheStats.entryCount) + ' 条 · ' + this.formatFeedbackBytes(this.feedbackCacheStats.sizeBytes))
+            .fontSize(13)
+            .fontFamily(this.appFontFamily)
+            .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
+        }
+        .width('100%')
+        Row() {
+          Text('反馈草稿')
+            .fontSize(13)
+            .fontFamily(this.appFontFamily)
+            .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
+          Blank()
+          Text(this.feedbackCacheStats.draftExists
+            ? `已保存 · ${this.formatFeedbackBytes(this.feedbackCacheStats.draftSizeBytes)}`
+            : '无')
+            .fontSize(13)
+            .fontFamily(this.appFontFamily)
+            .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
+        }
+        .width('100%')
+        Row() {
+          Text('待上传附件')
+            .fontSize(13)
+            .fontFamily(this.appFontFamily)
+            .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
+          Blank()
+          Text(`${this.feedbackCacheStats.pendingAttachmentCount} 个 · ${this.formatFeedbackBytes(this.feedbackCacheStats.pendingAttachmentBytes)}`)
+            .fontSize(13)
+            .fontFamily(this.appFontFamily)
+            .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
+        }
+        .width('100%')
+        Text('缓存有效期：列表 5 分钟，详情 2 分钟；创建、支持、补充或上传完成后自动失效。')
+          .fontSize(11)
+          .fontFamily(this.appFontFamily)
+          .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_muted', this.themeState.currentTheme))
+      }
+    }
+    .width('100%')
+    .padding(14)
+    .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('panel_background', this.themeState.currentTheme))
+    .borderRadius(12)
+    .border({ width: 1, color: ThemeAwareHelper.getTestManagementThemedColor('panel_border', this.themeState.currentTheme) })
+  }
+
+  private async deleteFeedbackDraft(): Promise<void> {
+    try {
+      await this.feedbackCacheManager.deleteFeedbackDraftAndAttachments();
+      await this.refreshData();
+      logger.info(TAG, '反馈中心草稿及附件已删除');
+    } catch (error) {
+      logger.error(TAG, '反馈中心草稿删除失败: ' + String(error));
+    }
+  }
+
+  private async cleanupFeedbackOrphans(): Promise<void> {
+    try {
+      await this.feedbackCacheManager.cleanupOrphanPendingAttachments();
+      await this.refreshData();
+      logger.info(TAG, '反馈中心孤儿待上传附件已清理');
+    } catch (error) {
+      logger.error(TAG, '反馈中心孤儿附件清理失败: ' + String(error));
+    }
+  }
+
+  private formatFeedbackBytes(value: number): string {
+    if (value >= 1024 * 1024) {
+      return `${(value / 1024 / 1024).toFixed(1)} MiB`;
+    }
+    return `${(value / 1024).toFixed(1)} KiB`;
+  }
   @Builder
   buildCacheConfig() {
     Column({ space: 16 }) {

@@ -130,6 +130,50 @@ export class LegadoCookieStore {
   }
 
   /**
+   * 保存浏览器或 HTTP 请求返回的 Cookie 请求头。
+   *
+   * 与 setCookie 不同，cookieHeader 的格式是 "name=value; name2=value2"，
+   * 不携带 Set-Cookie 属性；因此每一项都必须独立保存，不能把后续项误判为
+   * 第一个 Cookie 的属性。
+   */
+  async setCookieHeader(url: string, cookieHeader: string): Promise<void> {
+    const domain = this.extractDomain(url);
+    if (!domain || cookieHeader.trim().length === 0) return;
+
+    if (!this.cookies.has(domain)) {
+      this.cookies.set(domain, new Map<string, CookieItem>());
+    }
+
+    const domainCookies = this.cookies.get(domain);
+    if (!domainCookies) return;
+
+    const parts: string[] = cookieHeader.split(';');
+    let savedCount: number = 0;
+    for (let i = 0; i < parts.length; i++) {
+      const part: string = parts[i].trim();
+      const separator: number = part.indexOf('=');
+      if (separator <= 0) continue;
+
+      const name: string = part.substring(0, separator).trim();
+      const value: string = part.substring(separator + 1).trim();
+      if (name.length === 0) continue;
+
+      const cookie: CookieItem = {
+        name: name,
+        value: value,
+        domain: domain,
+        path: '/'
+      };
+      domainCookies.set(cookie.name, cookie);
+      savedCount++;
+    }
+
+    if (savedCount > 0) {
+      await this.saveCookies();
+    }
+  }
+
+  /**
    * 获取Cookie
    */
   getCookie(url: string): string {

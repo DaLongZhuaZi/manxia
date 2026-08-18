@@ -21,6 +21,10 @@ export class DialogSurfaceStyleHelper {
     return DialogSurfaceStyleHelper.getPopupCardSurface(themeState.currentTheme).backgroundColor;
   }
 
+  static getPopupCardGradient(themeState: ThemeAwareState): LinearGradient {
+    return DialogSurfaceStyleHelper.getPopupCardSurface(themeState.currentTheme).surfaceGradient;
+  }
+
   static getPopupCardBorderColor(themeState: ThemeAwareState): ResourceColor {
     return DialogSurfaceStyleHelper.getPopupCardSurface(themeState.currentTheme).borderColor;
   }

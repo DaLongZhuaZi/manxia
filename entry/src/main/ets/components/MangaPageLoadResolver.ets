@@ -77,10 +77,13 @@ export class MangaPageLoadResolver {
     fallbackIndex: number,
     context: MangaPageResolveContext
   ): number {
-    let pageIndex: number = this.getPageIndexById(context.chapter, page.id);
-    if (pageIndex < 0 && context.isWebtoonMode) {
+    let pageIndex: number = -1;
+    if (context.isWebtoonMode) {
       const ref: WebtoonPageRef | undefined = context.webtoonPageRefById.get(page.id);
       pageIndex = ref ? ref.itemIndex : -1;
+    }
+    if (pageIndex < 0) {
+      pageIndex = this.getPageIndexById(context.chapter, page.id);
     }
     if (pageIndex < 0) {
       pageIndex = page.index !== undefined ? page.index : fallbackIndex;

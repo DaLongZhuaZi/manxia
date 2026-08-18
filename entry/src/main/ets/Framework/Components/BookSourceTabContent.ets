@@ -8,16 +8,22 @@ import { ThemeAwareState, ThemeAwareHelper } from './ThemeAware';
 import { ThemeType } from '../Managers/ThemeManager';
 import { TabContentCacheManager, BookSourceCacheData } from '../Cache/TabContentCacheManager';
 import { ContentFilterManager } from '../Managers/ContentFilterManager';
-import { getNovelSourceManager } from '../Novel/NovelSourceManager';
+import { getNovelSourceManager, NovelSourceManager } from '../Novel/NovelSourceManager';
 import { LegadoBookSourceType } from '../Novel/LegadoSourceTypes';
-import { getLegadoMangaSourceBridge, LegadoMangaVirtualSource } from '../Novel/LegadoMangaSourceBridge';
-import { LegadoWebViewComponent } from '../Novel/LegadoWebViewComponent';
+import {
+  LegadoCompatibilityEngineMode,
+  LegadoCompatibilityStatus,
+  LegadoExecutionTraceSummary,
+  LegadoWorkflowKind
+} from '../Novel/LegadoCompatibilityTypes';
 import { getNovelInitializer } from '../Novel/NovelInitializer';
 import { NovelBook, NovelReadStatus, NovelSearchResult, NovelSourceInfo } from '../../Models/NovelModels';
-import { UnifiedDetailPageParams, UnifiedContentType } from '../../Models/UnifiedContentModels';
-import { PageSettingsHelper, DetailPageType } from '../../pages/settings/PageSettingsSubPage';
-import { NovelDetailPageParams, NovelSearchPageParams } from '../../pages/NovelBookshelfPage';
-import { MangaDetailPageParams } from '../../pages/MangaDetailPage';
+import { NovelSearchPageParams } from '../../pages/NovelBookshelfPage';
+import {
+  LegadoExploreDetailOpenResult,
+  LegadoExploreDetailOpenStatus,
+  openLegadoExploreDetail
+} from '../Novel/LegadoExploreDetailNavigator';
 import { SettingsPageSurfaceManager } from '../../pages/settings/SettingsPageSurfaceManager';
 import { AvifImage } from '../../components/AvifImage';
 import { DataManager } from '../Data/DataManager';
@@ -33,11 +39,6 @@ export interface ExploreKind {
 export interface BookSourceLoadOptions {
   loadBooks?: boolean;
   silent?: boolean;
-}
-
-interface BookSourceExploreFallback {
-  source: NovelSourceInfo;
-  kinds: ExploreKind[];
 }
 
 export enum LibraryViewMode {
@@ -72,6 +73,8 @@ export struct BookSourceTabContent {
   @State selectedBookSourceId: string = '';
   @State selectedBookSourceName: string = '';
   @State bookSourceExploreKinds: ExploreKind[] = [];
+  @State bookSourceExploreError: string = '';
+  @State bookSourceExploreTraceSummary: string = '';
   @State selectedBookSourceKindIndex: number = 0;
   @State bookSourceBooks: NovelSearchResult[] = [];
   @State isLoadingBookSource: boolean = false;
@@ -95,6 +98,19 @@ export struct BookSourceTabContent {
   private contentFilterManager: ContentFilterManager = ContentFilterManager.getInstance();
   private tabContentCacheManager: TabContentCacheManager = TabContentCacheManager.getInstance();
   private settingsManager: SettingsManager = SettingsManager.getInstance();
+  // Every source selection starts a new generation. Async kind/book requests
+  // must prove they still belong to that generation before touching UI state.
+  private bookSourceSelectionGeneration: number = 0;
+
+  private beginBookSourceSelection(sourceId: string): number {
+    this.bookSourceSelectionGeneration++;
+    logger.debug(TAG, `书源选择代次更新: generation=${this.bookSourceSelectionGeneration};source=${sourceId}`);
+    return this.bookSourceSelectionGeneration;
+  }
+
+  private isBookSourceSelectionCurrent(sourceId: string, generation: number): boolean {
+    return generation === this.bookSourceSelectionGeneration && sourceId === this.selectedBookSourceId;
+  }
 
   // ============ 生命周期 ============
 
@@ -247,9 +263,14 @@ export struct BookSourceTabContent {
         this.selectedBookSourceName = cache.selectedBookSourceName;
         this.bookSourceExploreKinds = cache.bookSourceExploreKinds;
         this.selectedBookSourceKindIndex = cache.selectedBookSourceKindIndex;
-        this.bookSourceBooks = cache.bookSourceBooks;
+        // A cache record may have been written by an older request before a
+        // source switch settled. Never display a book whose source identity
+        // differs from the cached selected source.
+        this.bookSourceBooks = cache.bookSourceBooks.filter(
+          (book: NovelSearchResult): boolean => book.sourceId === cache.selectedBookSourceId
+        );
         logger.info(TAG,
-          `从缓存恢复书源数据: ${cache.bookSourceBooks.length} 本书, 书源: ${cache.selectedBookSourceName}`);
+          `从缓存恢复书源数据: ${this.bookSourceBooks.length} 本书, 书源: ${cache.selectedBookSourceName}`);
       }
     }
   }
@@ -350,6 +371,14 @@ export struct BookSourceTabContent {
       }
       if (existing.isNSFW !== next.isNSFW) {
         existing.isNSFW = next.isNSFW;
+        hasChanges = true;
+      }
+      if (existing.compatibilityStatus !== next.compatibilityStatus) {
+        existing.compatibilityStatus = next.compatibilityStatus;
+        hasChanges = true;
+      }
+      if (existing.engineMode !== next.engineMode) {
+        existing.engineMode = next.engineMode;
         hasChanges = true;
       }
     }
@@ -494,6 +523,7 @@ export struct BookSourceTabContent {
       if (this.bookSourceList.length === 0) {
         this.selectedBookSourceId = '';
         this.selectedBookSourceName = '';
+        this.beginBookSourceSelection('');
         this.bookSourceExploreKinds = [];
         this.selectedBookSourceKindIndex = 0;
         this.bookSourceBooks = [];
@@ -503,6 +533,7 @@ export struct BookSourceTabContent {
       if (!this.selectedBookSourceId) {
         this.selectedBookSourceId = this.bookSourceList[0].id;
         this.selectedBookSourceName = this.bookSourceList[0].name;
+        this.beginBookSourceSelection(this.selectedBookSourceId);
         this.bookSourceExploreKinds = [];
         this.selectedBookSourceKindIndex = 0;
         this.bookSourceBooks = [];
@@ -517,6 +548,7 @@ export struct BookSourceTabContent {
       } else {
         this.selectedBookSourceId = this.bookSourceList[0].id;
         this.selectedBookSourceName = this.bookSourceList[0].name;
+        this.beginBookSourceSelection(this.selectedBookSourceId);
         this.bookSourceExploreKinds = [];
         this.selectedBookSourceKindIndex = 0;
         this.bookSourceBooks = [];
@@ -571,7 +603,44 @@ export struct BookSourceTabContent {
     if (sourceType === LegadoBookSourceType.FILE) {
       return '文件书源';
     }
+    if (sourceType < LegadoBookSourceType.TEXT || sourceType > LegadoBookSourceType.FILE) {
+      return '外部/插件书源';
+    }
     return '纯书源';
+  }
+
+  private getCompatibilityLabel(source: NovelSourceInfo): string {
+    const status = source.compatibilityStatus || LegadoCompatibilityStatus.LEGACY_UNVERIFIABLE;
+    const mode = source.engineMode || LegadoCompatibilityEngineMode.LEGACY;
+    const fullCutoverBlockReason = source.v2FullCutoverBlockReason || '';
+    if (fullCutoverBlockReason.length > 0) {
+      return `V2 受阻：${fullCutoverBlockReason}`;
+    }
+    if (status === LegadoCompatibilityStatus.LEGACY_UNVERIFIABLE) {
+      return '旧记录/未无损验证';
+    }
+    if (status === LegadoCompatibilityStatus.NEEDS_INTERACTION) {
+      return '需登录或交互';
+    }
+    if (status === LegadoCompatibilityStatus.UNSUPPORTED) {
+      return '不支持';
+    }
+    if (status === LegadoCompatibilityStatus.BLOCKED) {
+      return '兼容受阻';
+    }
+    if (status === LegadoCompatibilityStatus.VERIFIED && mode === LegadoCompatibilityEngineMode.V2_ENABLED) {
+      return 'V2 已验证';
+    }
+    if (status === LegadoCompatibilityStatus.VERIFIED && mode === LegadoCompatibilityEngineMode.V2_SHADOW) {
+      return 'V2 对照中';
+    }
+    if (status === LegadoCompatibilityStatus.VERIFIED) {
+      return '已验证工作流';
+    }
+    if (status === LegadoCompatibilityStatus.READY) {
+      return mode === LegadoCompatibilityEngineMode.V2_ENABLED ? 'V2 正在执行' : '可编译/待切换';
+    }
+    return '已解析';
   }
 
   private getBookSourceGroups(source: NovelSourceInfo): string[] {
@@ -635,31 +704,28 @@ export struct BookSourceTabContent {
     }, 2000) as number;
   }
 
-  private async loadBookSourceExploreKinds(loadBooks: boolean = true): Promise<void> {
-    if (!this.selectedBookSourceId) return;
+  private async loadBookSourceExploreKinds(
+    loadBooks: boolean = true,
+    requestSourceId: string = this.selectedBookSourceId,
+    requestGeneration: number = this.bookSourceSelectionGeneration
+  ): Promise<void> {
+    if (!requestSourceId || !this.isBookSourceSelectionCurrent(requestSourceId, requestGeneration)) {
+      return;
+    }
+    this.bookSourceExploreError = '';
+    this.bookSourceExploreTraceSummary = '';
     try {
       const sourceManager = getNovelSourceManager();
-      const newKinds = await sourceManager.getExploreKindsAsync(this.selectedBookSourceId);
+      const newKinds = await sourceManager.getExploreKindsAsync(requestSourceId);
+      if (!this.isBookSourceSelectionCurrent(requestSourceId, requestGeneration)) {
+        logger.debug(TAG, `丢弃过期书源分类结果: generation=${requestGeneration};source=${requestSourceId}`);
+        return;
+      }
       if (newKinds.length <= 0) {
-        const fallback = await this.findNextBookSourceWithExploreKinds(this.selectedBookSourceId);
-        if (fallback) {
-          logger.warn(TAG,
-            `当前书源无可用发现分类，自动切换到下一个可用书源: from=${this.selectedBookSourceName}, to=${fallback.source.name}`);
-          this.selectedBookSourceId = fallback.source.id;
-          this.selectedBookSourceName = fallback.source.name;
-          this.bookSourceCurrentPage = 1;
-          this.bookSourceExploreKinds = fallback.kinds;
-          this.selectedBookSourceKindIndex = 0;
-          this.bookSourceBooks = [];
-          this.bookSourceHasMore = true;
-          this.saveBookSourceToCache();
-          if (loadBooks) {
-            await this.loadBookSourceBooks(true);
-          }
-          return;
-        }
         logger.warn(TAG, `书源发现分类为空: ${this.selectedBookSourceName || this.selectedBookSourceId}`);
         this.bookSourceExploreKinds = [];
+        this.bookSourceExploreError = '该书源没有可执行的发现分类';
+        this.bookSourceExploreTraceSummary = '';
         this.selectedBookSourceKindIndex = 0;
         if (loadBooks) {
           this.bookSourceBooks = [];
@@ -668,50 +734,77 @@ export struct BookSourceTabContent {
         return;
       }
       const cachedIndex = this.selectedBookSourceKindIndex;
+      const defaultKindIndex = this.findFirstExecutableExploreKindIndex(newKinds);
       this.bookSourceExploreKinds = newKinds;
-      if (cachedIndex >= 0 && cachedIndex < newKinds.length) {
+      if (cachedIndex >= 0 && cachedIndex < newKinds.length && newKinds[cachedIndex].url.trim().length > 0) {
         this.selectedBookSourceKindIndex = cachedIndex;
+      } else if (defaultKindIndex >= 0) {
+        this.selectedBookSourceKindIndex = defaultKindIndex;
       } else {
         this.selectedBookSourceKindIndex = 0;
       }
+      this.bookSourceExploreError = defaultKindIndex >= 0 ? '' : '该书源没有可执行的发现分类';
       this.saveBookSourceToCache();
-      if (loadBooks && this.bookSourceExploreKinds.length > 0) {
-        await this.loadBookSourceBooks(true);
+      if (loadBooks && defaultKindIndex >= 0) {
+        await this.loadBookSourceBooks(true, requestSourceId, requestGeneration);
+      } else if (loadBooks) {
+        this.bookSourceBooks = [];
+        this.bookSourceHasMore = false;
       }
     } catch (error) {
+      if (!this.isBookSourceSelectionCurrent(requestSourceId, requestGeneration)) {
+        logger.debug(TAG, `忽略过期书源分类异常: generation=${requestGeneration};source=${requestSourceId}`);
+        return;
+      }
       logger.error(TAG, `加载书源发现分类失败: ${String(error)}`);
+      this.bookSourceExploreKinds = [];
+      this.bookSourceBooks = [];
+      this.bookSourceHasMore = false;
+      this.bookSourceExploreError = this.resolveExploreKindsErrorMessage(String(error));
+      // Dynamic kind scripts persist a redacted workflow trace before they
+      // reject. Refresh it here as well as on successful book-list loading so
+      // a transport failure remains visible and machine-readable in the
+      // no-result state.
+      await this.refreshBookSourceExploreTrace(getNovelSourceManager());
     }
   }
 
-  private async findNextBookSourceWithExploreKinds(currentSourceId: string): Promise<BookSourceExploreFallback | null> {
-    if (this.bookSourceList.length <= 1) {
-      return null;
+  private resolveExploreKindsErrorMessage(error: string): string {
+    if (error.includes('WEBVIEW_NOT_READY')) {
+      return '动态分类运行环境尚未就绪，请稍后重试';
     }
-    const sourceManager = getNovelSourceManager();
-    const currentIndex =
-      this.bookSourceList.findIndex((source: NovelSourceInfo): boolean => source.id === currentSourceId);
-    for (let offset = 1; offset <= this.bookSourceList.length; offset++) {
-      const index = currentIndex >= 0
-        ? (currentIndex + offset) % this.bookSourceList.length
-        : offset - 1;
-      const source = this.bookSourceList[index];
-      if (!source || source.id === currentSourceId || !source.hasExplore || !source.enabled) {
-        continue;
-      }
-      const kinds = await sourceManager.getExploreKindsAsync(source.id);
-      if (kinds.length > 0) {
-        const result: BookSourceExploreFallback = {
-          source: source,
-          kinds: kinds
-        };
-        return result;
-      }
+    if (error.includes('JS_CONTRACT_BLOCKED')) {
+      return '该书源的动态分类需要尚未支持的脚本能力';
     }
-    return null;
+    if (error.includes('SCRIPT_NETWORK')) {
+      return '动态分类请求失败，请检查网络后重试';
+    }
+    if (error.includes('EXPLORE_KINDS_JSON_PARSE_FAILED') || error.includes('EXPLORE_KINDS_JSON_NOT_ARRAY')) {
+      return '该书源的发现分类格式无效，已记录诊断';
+    }
+    return '动态分类执行失败，请刷新重试';
   }
 
-  private async loadBookSourceBooks(reset: boolean = false): Promise<void> {
-    if (!this.selectedBookSourceId || this.bookSourceExploreKinds.length === 0) return;
+  private findFirstExecutableExploreKindIndex(kinds: ExploreKind[]): number {
+    for (let index = 0; index < kinds.length; index++) {
+      if (kinds[index].url.trim().length > 0) {
+        return index;
+      }
+    }
+    return -1;
+  }
+
+  private async loadBookSourceBooks(
+    reset: boolean = false,
+    requestSourceId: string = this.selectedBookSourceId,
+    requestGeneration: number = this.bookSourceSelectionGeneration,
+    requestKindIndex: number = this.selectedBookSourceKindIndex,
+    requestPage: number = this.bookSourceCurrentPage
+  ): Promise<void> {
+    if (!requestSourceId || !this.isBookSourceSelectionCurrent(requestSourceId, requestGeneration) ||
+      this.bookSourceExploreKinds.length === 0) {
+      return;
+    }
     const hasCachedData = reset && this.bookSourceBooks.length > 0;
     if (reset) {
       this.bookSourceCurrentPage = 1;
@@ -724,8 +817,29 @@ export struct BookSourceTabContent {
     }
     try {
       const sourceManager = getNovelSourceManager();
-      const kind = this.bookSourceExploreKinds[this.selectedBookSourceKindIndex];
-      const results = await sourceManager.explore(this.selectedBookSourceId, kind.url, this.bookSourceCurrentPage);
+      const kind = this.bookSourceExploreKinds[requestKindIndex];
+      if (!kind) {
+        this.isLoadingBookSource = false;
+        return;
+      }
+      if (kind.url.trim().length === 0) {
+        this.isLoadingBookSource = false;
+        this.bookSourceHasMore = false;
+        this.bookSourceExploreError = '该分类仅用于分组展示，未定义可执行地址';
+        return;
+      }
+      const results = await sourceManager.explore(requestSourceId, kind.url, requestPage);
+      if (!this.isBookSourceSelectionCurrent(requestSourceId, requestGeneration)) {
+        logger.debug(TAG, `丢弃过期书源书籍结果: generation=${requestGeneration};source=${requestSourceId}`);
+        return;
+      }
+      for (const result of results) {
+        if (result.sourceId !== requestSourceId) {
+          logger.error(TAG,
+            `书源结果身份不一致，拒绝写入列表: expected=${requestSourceId};actual=${result.sourceId}`);
+          return;
+        }
+      }
       if (reset) {
         if (hasCachedData) {
           const changed = this.incrementalUpdateBookSourceBooks(results);
@@ -740,10 +854,49 @@ export struct BookSourceTabContent {
       }
       this.bookSourceHasMore = results.length >= 20;
       this.saveBookSourceToCache();
+      await this.refreshBookSourceExploreTrace(sourceManager);
     } catch (error) {
+      if (!this.isBookSourceSelectionCurrent(requestSourceId, requestGeneration)) {
+        logger.debug(TAG, `忽略过期书源书籍异常: generation=${requestGeneration};source=${requestSourceId}`);
+        return;
+      }
       logger.error(TAG, `加载书源书籍失败: ${String(error)}`);
+      await this.refreshBookSourceExploreTrace(getNovelSourceManager());
     }
-    this.isLoadingBookSource = false;
+    if (this.isBookSourceSelectionCurrent(requestSourceId, requestGeneration)) {
+      this.isLoadingBookSource = false;
+    }
+  }
+
+  private async refreshBookSourceExploreTrace(sourceManager: NovelSourceManager): Promise<void> {
+    if (this.selectedBookSourceId.length === 0) {
+      this.bookSourceExploreTraceSummary = '';
+      return;
+    }
+    try {
+      const summaries: LegadoExecutionTraceSummary[] =
+        await sourceManager.getPersistedExecutionTraceWorkflowSummaries(this.selectedBookSourceId);
+      let latestExplore: LegadoExecutionTraceSummary | null = null;
+      for (let index = 0; index < summaries.length; index++) {
+        const summary = summaries[index];
+        if (summary.workflow === LegadoWorkflowKind.EXPLORE &&
+          (latestExplore === null || summary.updatedAt > latestExplore.updatedAt)) {
+          latestExplore = summary;
+        }
+      }
+      if (latestExplore === null) {
+        this.bookSourceExploreTraceSummary = '';
+        return;
+      }
+      this.bookSourceExploreTraceSummary =
+        `workflow=${latestExplore.workflow};transport=${latestExplore.transport};` +
+        `http=${latestExplore.statusCode};error=${latestExplore.errorCode};` +
+        `options=${latestExplore.optionCount};variables=${latestExplore.variableCount};` +
+        `output=${latestExplore.outputSummary}`;
+    } catch (error) {
+      logger.warn(TAG, `刷新发现页脱敏 trace 失败: ${String(error)}`);
+      this.bookSourceExploreTraceSummary = '';
+    }
   }
 
   private performBookSourceSearch(): void {
@@ -766,8 +919,11 @@ export struct BookSourceTabContent {
     if (this.selectedBookSourceId !== source.id) {
       this.selectedBookSourceId = source.id;
       this.selectedBookSourceName = source.name;
+      const selectionGeneration = this.beginBookSourceSelection(source.id);
       this.bookSourceCurrentPage = 1;
       this.bookSourceExploreKinds = [];
+      this.bookSourceExploreError = '';
+      this.bookSourceExploreTraceSummary = '';
       this.selectedBookSourceKindIndex = 0;
       this.bookSourceBooks = [];
       this.isBookSourceSearchMode = false;
@@ -776,8 +932,9 @@ export struct BookSourceTabContent {
       this.bookSourceSearchKeyword = '';
       this.filterBookSourceList(this.bookSourceSearchKeyword);
       this.saveBookSourceToCache();
-      await this.loadBookSourceExploreKinds();
+      await this.loadBookSourceExploreKinds(true, source.id, selectionGeneration);
     } else {
+      this.beginBookSourceSelection(source.id);
       this.showBookSourcePicker = false;
       this.bookSourceSearchKeyword = '';
       this.filterBookSourceList(this.bookSourceSearchKeyword);
@@ -786,79 +943,31 @@ export struct BookSourceTabContent {
 
   private selectBookSourceKind(index: number): void {
     if (this.selectedBookSourceKindIndex !== index) {
+      const requestSourceId = this.selectedBookSourceId;
+      const requestGeneration = this.bookSourceSelectionGeneration;
+      this.bookSourceCurrentPage = 1;
+      this.bookSourceBooks = [];
+      this.isBookSourceSearchMode = false;
       this.getUIContext().animateTo({ duration: 250, curve: Curve.EaseInOut }, () => {
         this.selectedBookSourceKindIndex = index;
-        this.bookSourceCurrentPage = 1;
-        this.bookSourceBooks = [];
-        this.isBookSourceSearchMode = false;
       });
-      this.loadBookSourceBooks(true);
+      void this.loadBookSourceBooks(true, requestSourceId, requestGeneration, index, 1);
     }
   }
 
   private async openBookDetail(book: NovelSearchResult): Promise<void> {
-    const sourceManager = getNovelSourceManager();
-    const source = sourceManager.getSource(book.sourceId);
-    if (source && source.bookSourceType === LegadoBookSourceType.IMAGE) {
-      const virtualSource: LegadoMangaVirtualSource | null =
-        await getLegadoMangaSourceBridge().ensureVirtualComicSource(source);
-      if (!virtualSource || virtualSource.sourceId <= 0) {
-        promptAction.showToast({ message: '漫画书源桥接失败，请稍后重试' });
-        return;
-      }
-
-      const pageType = PageSettingsHelper.getMangaDetailPageType();
-      if (pageType === DetailPageType.UNIFIED) {
-        const unifiedParams: UnifiedDetailPageParams = {
-          contentType: UnifiedContentType.MANGA,
-          contentId: book.bookUrl,
-          sourceId: String(virtualSource.sourceId),
-          sourceName: book.sourceName,
-          sourcePkg: virtualSource.pkg,
-          cachedTitle: book.name,
-          cachedCover: book.coverUrl,
-          cachedAuthor: book.author
-        };
-        this.pathStack.pushPathByName('UnifiedDetailPage', unifiedParams);
-      } else {
-        const params: MangaDetailPageParams = {
-          mangaId: book.bookUrl,
-          sourceId: virtualSource.sourceId,
-          sourcePkg: virtualSource.pkg,
-          cachedTitle: book.name,
-          cachedCover: book.coverUrl
-        };
-        this.pathStack.pushPathByName('MangaDetailPage', params);
-      }
+    if (book.sourceId.length === 0 || book.sourceId !== this.selectedBookSourceId) {
+      logger.error(
+        TAG,
+        `拒绝打开跨书源结果: selected=${this.selectedBookSourceId};result=${book.sourceId}`
+      );
+      promptAction.showToast({ message: '书源结果已过期，请刷新后重试' });
       return;
     }
-
-    const pageType = PageSettingsHelper.getNovelDetailPageType();
-    if (pageType === DetailPageType.UNIFIED) {
-      const unifiedParams: UnifiedDetailPageParams = {
-        contentType: UnifiedContentType.NOVEL,
-        contentId: book.bookUrl,
-        sourceId: book.sourceId,
-        sourceName: book.sourceName,
-        cachedTitle: book.name,
-        cachedCover: book.coverUrl,
-        cachedAuthor: book.author
-      };
-      this.pathStack.pushPathByName('UnifiedDetailPage', unifiedParams);
-    } else {
-      const params: NovelDetailPageParams = {
-        sourceId: book.sourceId,
-        bookUrl: book.bookUrl,
-        bookName: book.name,
-        author: book.author,
-        kind: book.kind,
-        intro: book.intro,
-        coverUrl: book.coverUrl,
-        latestChapterTitle: book.latestChapterTitle,
-        wordCount: book.wordCount,
-        sourceName: book.sourceName
-      };
-      this.pathStack.pushPathByName('NovelDetailPage', params);
+    const result: LegadoExploreDetailOpenResult =
+      await openLegadoExploreDetail(this.pathStack, this.selectedBookSourceId, book);
+    if (result.status === LegadoExploreDetailOpenStatus.REJECTED) {
+      promptAction.showToast({ message: result.userMessage });
     }
   }
 
@@ -915,6 +1024,19 @@ export struct BookSourceTabContent {
   // ============ Builder 方法 ============
 
   @Builder
+  buildBookSourceExploreTraceSummary() {
+    Text(this.bookSourceExploreTraceSummary)
+      .id('novel_book_source_explore_v2_trace')
+      .fontSize(10)
+      .fontFamily(this.appFontFamily)
+      .fontColor(this.getBookSourceReadableTertiaryColor())
+      .maxLines(2)
+      .textOverflow({ overflow: TextOverflow.Ellipsis })
+      .width('100%')
+      .padding({ left: 16, right: 16, top: 4, bottom: 4 })
+  }
+
+  @Builder
   buildBookSourceViewModeToggleButton() {
     Row({ space: 6 }) {
       SymbolGlyph(this.bookSourceViewMode === LibraryViewMode.LIST
@@ -950,7 +1072,7 @@ export struct BookSourceTabContent {
   }
 
   @Builder
-  buildBookSourceGridCard(book: NovelSearchResult) {
+  buildBookSourceGridCard(book: NovelSearchResult, index: number) {
     Column({ space: 8 }) {
       Stack() {
         if (book.coverUrl && book.coverUrl.length > 0) {
@@ -1024,6 +1146,7 @@ export struct BookSourceTabContent {
       })
     }
     .width('100%')
+    .id(`novel_book_source_explore_result_${index}`)
     .padding({
       left: 2,
       right: 2,
@@ -1033,7 +1156,7 @@ export struct BookSourceTabContent {
   }
 
   @Builder
-  buildBookItem(book: NovelSearchResult) {
+  buildBookItem(book: NovelSearchResult, index: number) {
     Row() {
       if (book.coverUrl) {
         Image(book.coverUrl)
@@ -1082,6 +1205,7 @@ export struct BookSourceTabContent {
       .margin({ left: 12 })
     }
     .width('100%')
+    .id(`novel_book_source_explore_result_${index}`)
     .padding(12)
     .backgroundColor(this.getCardBackground())
     .backgroundBlurStyle(this.getCardBlurStyle(), this.getCardBlurOptions())
@@ -1185,6 +1309,7 @@ export struct BookSourceTabContent {
         .width('100%')
 
         TextInput({ placeholder: '输入书源名称进行筛选', text: this.bookSourceSearchKeyword })
+          .id('novel_book_source_picker_filter')
           .width('100%')
           .height(42)
           .fontFamily(this.appFontFamily)
@@ -1241,7 +1366,7 @@ export struct BookSourceTabContent {
                       .fontWeight(this.selectedBookSourceId === source.id ? FontWeight.Medium : FontWeight.Normal)
                       .maxLines(1)
                       .textOverflow({ overflow: TextOverflow.Ellipsis })
-                    Text(`${this.getBookSourceTypeLabel(source)} · ${this.getBookSourceGroupSummary(source)}`)
+                    Text(`${this.getBookSourceTypeLabel(source)} · ${this.getBookSourceGroupSummary(source)} · ${this.getCompatibilityLabel(source)}`)
                       .fontSize(11)
                       .fontFamily(this.appFontFamily)
                       .fontColor(this.getBookSourceReadableTertiaryColor())
@@ -1260,6 +1385,7 @@ export struct BookSourceTabContent {
                 }
                 .width('100%')
                 .height(56)
+                .id(`novel_book_source_picker_item_${source.id}`)
                 .padding({ left: 16, right: 16 })
                 .backgroundColor(this.selectedBookSourceId === source.id ?
                   ThemeAwareHelper.getTestManagementThemedColor('accent_primary_dimmed', this.themeState.currentTheme) :
@@ -1308,9 +1434,6 @@ export struct BookSourceTabContent {
 
   build() {
     Stack() {
-      // 隐藏的WebView组件，用于执行动态发现分类和书源JS。
-      LegadoWebViewComponent()
-
       Column({ space: 0 }) {
         Blank().height(this.topSpacerHeight)
 
@@ -1354,6 +1477,7 @@ export struct BookSourceTabContent {
             offsetY: 2
           })
           .clip(true)
+          .id('novel_book_source_picker_open')
           .onClick(() => {
             this.bookSourceSearchKeyword = '';
             this.filterBookSourceList(this.bookSourceSearchKeyword);
@@ -1433,6 +1557,7 @@ export struct BookSourceTabContent {
             offsetY: 2
           })
           .clip(true)
+          .id('book_source_open_management')
           .onClick(() => {
             this.pathStack.pushPathByName('NovelSourceManagementPage', null);
           })
@@ -1574,6 +1699,7 @@ export struct BookSourceTabContent {
                       offsetY: 2
                     })
                     .clip(true)
+                    .id(`novel_book_source_explore_kind_${index}`)
                     .margin({ right: 8, bottom: 8 })
                     .onClick(() => this.selectBookSourceKind(index))
                 })
@@ -1617,6 +1743,7 @@ export struct BookSourceTabContent {
                         offsetY: 2
                       })
                       .clip(true)
+                      .id(`novel_book_source_explore_kind_${index}`)
                       .onClick(() => this.selectBookSourceKind(index))
                   })
                 }
@@ -1629,6 +1756,14 @@ export struct BookSourceTabContent {
           }
           .width('100%')
           .margin({ bottom: 12 })
+        }
+
+        // Keep the redacted V2 Explore witness adjacent to the selected
+        // categories.  Result cards live in a virtualized Scroll and may
+        // push the old disclosure below the initial viewport, making a real
+        // completed request look unobservable to both users and Hypium.
+        if (this.bookSourceExploreTraceSummary.length > 0) {
+          this.buildBookSourceExploreTraceSummary()
         }
 
         // 刷新提示浮层
@@ -1681,14 +1816,44 @@ export struct BookSourceTabContent {
           .alignItems(HorizontalAlign.Center)
         } else if (this.bookSourceBooks.length === 0) {
           Column({ space: 12 }) {
-            SymbolGlyph($r('sys.symbol.book'))
+            SymbolGlyph(this.bookSourceExploreError.length > 0
+              ? $r('sys.symbol.exclamationmark_triangle')
+              : $r('sys.symbol.book'))
               .fontSize(48)
               .fontColor([ThemeAwareHelper.getTestManagementThemedColor('text_muted', this.themeState.currentTheme)])
               .opacity(0.45)
-            Text(this.selectedBookSourceId ? '该书源暂无发现内容' : '请先选择一个书源')
+            Text(this.bookSourceExploreError.length > 0
+              ? this.bookSourceExploreError
+              : (this.selectedBookSourceId ? '该书源暂无发现内容' : '请先选择一个书源'))
               .fontSize(14)
               .fontFamily(this.appFontFamily)
               .fontColor(this.getBookSourceReadableTertiaryColor())
+              .id(this.bookSourceExploreError.length > 0
+                ? 'novel_book_source_explore_error'
+                : 'novel_book_source_explore_empty')
+            // A valid Explore request can complete with an empty result set.
+            // Keep the persisted transport trace visible in that state so the
+            // harness can distinguish an externally empty response from a UI
+            // or engine failure.
+            if (this.bookSourceExploreTraceSummary.length > 0) {
+              this.buildBookSourceExploreTraceSummary()
+            }
+            if (this.bookSourceExploreError.length > 0) {
+              Button('重新加载')
+                .height(36)
+                .fontSize(13)
+                .fontFamily(this.appFontFamily)
+                .fontColor(ThemeAwareHelper.getTestManagementThemedColor(
+                  'accent_primary',
+                  this.themeState.currentTheme
+                ))
+                .backgroundColor(this.getCardBackground())
+                .border({ width: this.getCardBorderWidth(), color: this.getCardBorderColor() })
+                .borderRadius(18)
+                .onClick(() => {
+                  void this.loadBookSourceExploreKinds(true);
+                })
+            }
           }
           .width('100%')
           .layoutWeight(1)
@@ -1699,17 +1864,17 @@ export struct BookSourceTabContent {
             Column({ space: 0 }) {
               if (this.bookSourceViewMode === LibraryViewMode.LIST) {
                 Column({ space: 8 }) {
-                  ForEach(this.bookSourceBooks, (book: NovelSearchResult) => {
-                    this.buildBookItem(book)
+                  ForEach(this.bookSourceBooks, (book: NovelSearchResult, index: number) => {
+                    this.buildBookItem(book, index)
                   })
                 }
                 .width('100%')
                 .padding({ left: 16, right: 16 })
               } else {
                 Flex({ wrap: FlexWrap.Wrap }) {
-                  ForEach(this.bookSourceBooks, (book: NovelSearchResult) => {
+                  ForEach(this.bookSourceBooks, (book: NovelSearchResult, index: number) => {
                     Column() {
-                      this.buildBookSourceGridCard(book)
+                      this.buildBookSourceGridCard(book, index)
                     }
                     .width('33.33%')
                     .padding(4)

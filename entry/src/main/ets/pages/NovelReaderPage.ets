@@ -1,4 +1,5 @@
 import { SafeUtils } from '../Utils/SafeUtils';
+import { sha256Hash } from '../Utils/CryptoUtils';
 /**
  * 小说阅读器页面
  * 使用 TextReaderComponent 实现专业的文本阅读体验
@@ -16,6 +17,11 @@ import { getNovelChapterCacheManager } from '../Framework/Novel/NovelChapterCach
 import { getNovelContentProcessor, ContentProcessConfig } from '../Framework/Novel/NovelContentProcessor';
 import { ReplaceScope, NovelReplaceRuleManager, AddRuleParams } from '../Framework/Novel/NovelReplaceRuleManager';
 import { LegadoChapter, LegadoBook, LegadoBookSourceType } from '../Framework/Novel/LegadoSourceTypes';
+import {
+  LegadoCompatibilityEngineMode,
+  LegadoWorkflowKind,
+  LegadoWorkflowOutputKind
+} from '../Framework/Novel/LegadoCompatibilityTypes';
 import { NovelReaderPageParams } from './NovelBookshelfPage';
 import { NovelBook, NovelReadStatus } from '../Models/NovelModels';
 import {
@@ -90,6 +96,8 @@ import { READER_ABILITY_HOST_MULTITON } from '../Framework/Reader/MangaReaderAbi
 import { openReadAloudPlayerInIsolatedAbility } from '../Framework/ReadAloud/ReadAloudPlayerAbilityLauncher';
 import { distributedReadingService } from '../Framework/Distributed/DistributedReadingService';
 import { distributedDataSyncManager, SyncReadingState } from '../Framework/Distributed/DistributedDataSyncManager';
+import { distributedPermissionManager } from '../Framework/Distributed/DistributedPermissionManager';
+import { continuationStateHelper } from '../Framework/Distributed/ContinuationStateHelper';
 import { DetailOpenFlowMonitor } from '../Framework/Reader/DetailOpenFlowMonitor';
 import {
   DetailOpenFlowEventType,
@@ -124,6 +132,13 @@ interface LocalTextDomPosition {
 interface PreparedTextChapter {
   content: string;
   wordCount: number;
+}
+
+interface RedactedContentStructure {
+  lineFeedCount: number;
+  carriageReturnCount: number;
+  leadingWhitespaceCount: number;
+  trailingWhitespaceCount: number;
 }
 
 @Component
@@ -176,6 +191,10 @@ export struct NovelReaderPage {
   private readerHostMode: string = '';
   private readerInstanceId: string = '';
   private readerOpenFlowId: string = '';
+  private forceNetworkContentRefresh: boolean = false;
+  @State private v2ContentRefreshDiagnostic: string = 'force=0;origin=not_loaded';
+  // Redacted proof of the forced Content result; never includes chapter text.
+  @State private v2ContentExecutionDiagnostic: string = 'state=not_requested;engine=unresolved;length=0;digest=empty;lf=0;cr=0;leadingWs=0;trailingWs=0;traceAt=0;persisted=0';
   private novelReadFlowId: string = '';
   private novelReadLoadStartedAt: number = 0;
   private hasNotifiedTransitionReaderReady: boolean = false;
@@ -228,6 +247,10 @@ export struct NovelReaderPage {
   private localEbookId: string = '';
   private localEbook: EBook | null = null;
   private tocUrl: string = ''; // 目录URL
+  /** V2-only book carriers restored across the isolated Reader boundary. */
+  private bookVariable: string = '';
+  private bookRequestUrlTemplate: string = '';
+  private tocRequestUrlTemplate: string = '';
   private chapterList: LegadoChapter[] = [];// 完整章节列表
   private sourceManager = getNovelSourceManager();
   private dataManager = getNovelDataManager();
@@ -250,6 +273,10 @@ export struct NovelReaderPage {
   private currentChapterTotalPages: number = 0;
   private pendingSeekChapterIndex: number = -1;
   private pendingSeekChapterFraction: number = -1;
+  // [修复] 跨端接续恢复的待应用状态：正文加载完成后覆盖本地进度（避免被 loadReadProgress 覆盖）
+  private pendingContinuationPageIndex: number = -1;
+  private pendingContinuationStartOffset: number = -1;
+  private pendingContinuationDistributedWait: boolean = false;
   private shouldAutoStartReadAloud: boolean = false;
   private shouldAutoOpenReadAloudPlayer: boolean = false;
   private lastReadAloudResumePersistTime: number = 0;
@@ -304,6 +331,13 @@ export struct NovelReaderPage {
 
   aboutToAppear(): void {
     distributedReadingService.attachToReader();
+    // [修复] 阅读器进入是窗口就绪的可靠时机：稳定提起分布式数据同步权限请求
+    // （管理器内部节流；未授权且满足间隔时会再次弹窗，被打断会在下次进入时重试）
+    this.requestDistributedDataSyncPermission();
+    // [修复] 权限前置激活系统接续入口（覆盖 NavPath 宿主场景下主页的 INACTIVE；权限未授权时不进入接续状态）
+    this.applyMissionContinueStateWithPermission();
+    // [修复] 标记阅读器页面在前台（供 onContinue 守卫判定有效阅读状态）
+    AppStorage.setOrCreate('currentReaderHostPage', 'NovelReaderPage');
     // 初始化主题感知
     ThemeAwareHelper.initializeThemeAware(this.componentId, this.themeState, (theme: ThemeType) => {
       logger.info(TAG, `主题切换到: ${theme}`);
@@ -325,8 +359,69 @@ export struct NovelReaderPage {
     void this.refreshPageGuide('aboutToAppear');
   }
 
+  /**
+   * [修复] 稳定提起分布式数据同步权限请求（阅读器检查点）
+   * 窗口已完全就绪，弹窗不会被启动时序打断；未授权且满足间隔时会再次弹出
+   */
+  private requestDistributedDataSyncPermission(): void {
+    try {
+      const hostContext = this.getUIContext().getHostContext() as common.UIAbilityContext;
+      if (!hostContext) {
+        logger.warn(TAG, '分布式权限请求跳过：无法获取 UIAbilityContext');
+        return;
+      }
+      setTimeout(() => {
+        void distributedPermissionManager.ensurePermission(hostContext);
+      }, 800);
+    } catch (error) {
+      logger.warn(TAG, `分布式权限请求异常: ${String(error)}`);
+    }
+  }
+
+  /**
+   * [修复] 应用当前 mission 的接续状态（ACTIVE=显示系统接续入口）
+   * 独立阅读器 Ability 宿主时由 Ability 自身设置；NavPath 宿主（EntryAbility）时由页面设置
+   */
+  private applyMissionContinueState(active: boolean): void {
+    try {
+      const hostContext = this.getUIContext().getHostContext() as common.UIAbilityContext;
+      if (!hostContext) {
+        return;
+      }
+      continuationStateHelper.setMissionContinueState(hostContext, active);
+    } catch (error) {
+      logger.warn(TAG, `设置接续状态失败: ${String(error)}`);
+    }
+  }
+
+  /**
+   * [修复] 激活接续入口（页面检查点）：
+   * 入口按场景无条件显示；权限在触发接续时校验，此处异步确保权限就绪
+   */
+  private applyMissionContinueStateWithPermission(): void {
+    try {
+      const hostContext = this.getUIContext().getHostContext() as common.UIAbilityContext;
+      if (!hostContext) {
+        return;
+      }
+      continuationStateHelper.activateMissionContinueEntry(hostContext);
+    } catch (error) {
+      logger.warn(TAG, `设置接续状态失败: ${String(error)}`);
+    }
+  }
+
   aboutToDisappear(): void {
     distributedReadingService.detach();
+    // [修复] 退出阅读器时清理当前阅读状态与接续标志：
+    // 1) 防止陈旧 currentRead* 被 onContinue 打包流转（未阅读却显示接续状态）
+    // 2) 防止未消费的 continuation* 残留导致下次打开阅读器误触发接续
+    distributedReadingService.clearCurrentReadingState();
+    distributedReadingService.clearContinuationFlags();
+    this.clearPendingContinuationState();
+    // [修复] 阅读器退出时关闭系统接续入口
+    this.applyMissionContinueState(false);
+    // [修复] 清理阅读器前台标志（防止守卫误判有效阅读状态）
+    AppStorage.setOrCreate('currentReaderHostPage', '');
     // 断开遥控器监听，避免内存泄漏和回调冲突
     distributedDataSyncManager.removeOnDataChangedCallback(this.onRemoteDataChanged);
     distributedDataSyncManager.removeOnStatusChangedCallback(this.onRemoteStatusChanged);
@@ -372,6 +467,8 @@ export struct NovelReaderPage {
 
   onPageShow(): void {
     this.isPageVisible = true;
+    // [修复] 页面重新显示时按权限条件保持接续入口（覆盖主页/回前台时的 INACTIVE）
+    this.applyMissionContinueStateWithPermission();
     this.setupFullscreenMode();
     this.scheduleFullscreenRestore('page_show');
     this.tryShowQueuedInteractionHint('page_show', 260);
@@ -1056,8 +1153,24 @@ export struct NovelReaderPage {
   }
 
   private async initializeReaderAfterReady(): Promise<void> {
-    await this.loadSettings();
+    try {
+      await this.loadSettings();
+    } catch (error) {
+      // Reader settings and orientation policy must never prevent the
+      // independent reader from requesting the chapter the user selected.
+      logger.warn(TAG, `阅读器设置初始化失败，继续加载正文: ${String(error)}`);
+    }
     await this.loadContent();
+  }
+
+  private startInitialContentLoad(): void {
+    void this.initializeReaderAfterReady().catch((error: Error): void => {
+      logger.error(TAG, `阅读器正文初始化失败: ${String(error)}`);
+      if (this.forceNetworkContentRefresh) {
+        this.v2ContentExecutionDiagnostic =
+          'state=failed;engine=unresolved;length=0;digest=empty;lf=0;cr=0;leadingWs=0;trailingWs=0;traceAt=0;persisted=0';
+      }
+    });
   }
 
   async loadSettings(): Promise<void> {
@@ -1442,7 +1555,7 @@ export struct NovelReaderPage {
       if (!rawContent || rawContent.length <= 0) {
         const currentChapter = this.chapterList[this.currentChapterIndex];
         if (currentChapter) {
-          rawContent = await this.sourceManager.getContent(this.sourceId, currentChapter);
+          rawContent = await this.getTypedContentPayload(currentChapter);
         }
       }
 
@@ -1742,8 +1855,23 @@ export struct NovelReaderPage {
       return chapter?.content || null;
     }
 
-    let rawContent = await this.cacheManager.getChapterCache(this.bookId, chapterIndex);
+    // A V2 result opened directly from a forced fresh search/detail flow must
+    // execute its current Content rule once. Shelf and offline entries retain
+    // the normal cache-first reading behavior.
+    const shouldForceCurrentChapterRefresh: boolean = this.forceNetworkContentRefresh &&
+      chapterIndex === this.currentChapterIndex;
+    this.v2ContentRefreshDiagnostic = shouldForceCurrentChapterRefresh
+      ? 'force=1;origin=network'
+      : 'force=0;origin=cache_candidate';
+    logger.info(
+      TAG,
+      `正文加载来源决策: chapterIndex=${chapterIndex}, forceNetwork=${shouldForceCurrentChapterRefresh}`
+    );
+    let rawContent: string | null = shouldForceCurrentChapterRefresh
+      ? null
+      : await this.cacheManager.getChapterCache(this.bookId, chapterIndex);
     if (rawContent) {
+      this.v2ContentRefreshDiagnostic = 'force=0;origin=persistent_cache';
       return rawContent;
     }
 
@@ -1756,11 +1884,105 @@ export struct NovelReaderPage {
       id: chapter.id || '',
       bookUrl: this.bookUrl,
       url: chapter.url,
+      // Do not reduce a V2 chapter to its display fields. The TOC workflow
+      // attaches an item-scoped variable snapshot and an unresolved URL
+      // option carrier; Content must restore both before planning its request.
+      requestUrlTemplate: chapter.requestUrlTemplate,
       title: chapter.title,
-      index: chapterIndex
+      index: chapterIndex,
+      variable: chapter.variable
     };
-    rawContent = await this.sourceManager.getContent(this.sourceId, chapterForRequest);
+    const effectiveEngine = this.sourceManager.getEffectiveCompatibilityEngineMode(this.sourceId);
+    const engineLabel = effectiveEngine === LegadoCompatibilityEngineMode.V2_ENABLED ? 'v2' : 'legacy_or_blocked';
+    if (shouldForceCurrentChapterRefresh) {
+      this.v2ContentExecutionDiagnostic = `state=requesting;engine=${engineLabel};length=0;digest=empty;lf=0;cr=0;leadingWs=0;trailingWs=0;traceAt=0;persisted=0`;
+    }
+    try {
+      rawContent = await this.getTypedContentPayload(chapterForRequest);
+    } catch (error) {
+      if (shouldForceCurrentChapterRefresh) {
+        this.v2ContentExecutionDiagnostic = `state=failed;engine=${engineLabel};length=0;digest=empty;lf=0;cr=0;leadingWs=0;trailingWs=0;traceAt=0;persisted=0`;
+      }
+      throw new Error(String(error));
+    }
+    if (shouldForceCurrentChapterRefresh) {
+      const contentLength = rawContent ? rawContent.length : 0;
+      const contentState = rawContent ? 'ready' : 'empty';
+      let contentDigest = 'empty';
+      if (rawContent) {
+        try {
+          contentDigest = (await sha256Hash(rawContent)).substring(0, 16);
+        } catch (error) {
+          contentDigest = 'digest_error';
+          logger.warn(TAG, `正文诊断摘要生成失败: ${String(error)}`);
+        }
+      }
+      const contentStructure = this.getRedactedContentStructure(rawContent || '');
+      const latestTrace = this.sourceManager.getLastExecutionTraceSummary(this.sourceId);
+      const traceAt = latestTrace !== null && latestTrace.workflow === LegadoWorkflowKind.CONTENT
+        ? latestTrace.updatedAt
+        : 0;
+      const tracePersisted = this.sourceManager.getLastExecutionTracePersistenceSucceeded(this.sourceId) ? 1 : 0;
+      this.v2ContentExecutionDiagnostic = `state=${contentState};engine=${engineLabel};length=${contentLength};digest=${contentDigest};lf=${contentStructure.lineFeedCount};cr=${contentStructure.carriageReturnCount};leadingWs=${contentStructure.leadingWhitespaceCount};trailingWs=${contentStructure.trailingWhitespaceCount};traceAt=${traceAt};persisted=${tracePersisted}`;
+    }
+    if (rawContent && shouldForceCurrentChapterRefresh) {
+      this.forceNetworkContentRefresh = false;
+    }
     return rawContent || null;
+  }
+
+  private async getTypedContentPayload(chapter: LegadoChapter): Promise<string> {
+    const result = await this.sourceManager.getContentWithResult(this.sourceId, chapter);
+    if (!result.handoff.isReady()) {
+      throw new Error(
+        `V2_OUTPUT_HANDOFF_BLOCKED;workflow=content;kind=${result.handoff.kind};` +
+        `status=${result.handoff.status};reason=${result.handoff.reasonCode}`
+      );
+    }
+    if (result.handoff.kind === LegadoWorkflowOutputKind.TEXT) {
+      return result.handoff.textContent;
+    }
+    if (result.handoff.kind === LegadoWorkflowOutputKind.IMAGE) {
+      return result.handoff.imageContent;
+    }
+    if (result.handoff.kind === LegadoWorkflowOutputKind.AUDIO) {
+      return result.handoff.mediaUrl;
+    }
+    throw new Error(
+      `V2_OUTPUT_HANDOFF_BLOCKED;workflow=content;kind=${result.handoff.kind};reason=file_consumer_missing`
+    );
+  }
+
+  private getRedactedContentStructure(content: string): RedactedContentStructure {
+    let lineFeedCount = 0;
+    let carriageReturnCount = 0;
+    let leadingWhitespaceCount = 0;
+    let trailingWhitespaceCount = 0;
+    const contentLength = content.length;
+    for (let index = 0; index < contentLength; index++) {
+      const character = content.charAt(index);
+      if (character === '\n') {
+        lineFeedCount++;
+      } else if (character === '\r') {
+        carriageReturnCount++;
+      }
+      if (leadingWhitespaceCount === index && character.trim().length === 0) {
+        leadingWhitespaceCount++;
+      }
+    }
+    for (let index = contentLength - 1; index >= 0; index--) {
+      if (content.charAt(index).trim().length === 0) {
+        trailingWhitespaceCount++;
+      } else {
+        break;
+      }
+    }
+    return {
+      lineFeedCount,
+      carriageReturnCount,
+      leadingWhitespaceCount,
+      trailingWhitespaceCount
+    };
   }
 
   async loadContent(): Promise<void> {
@@ -1815,12 +2037,21 @@ export struct NovelReaderPage {
         this.chapterId = `${this.bookId}_${this.currentChapterIndex}`;
       }
       
-      // Prefer preparsed chapter content when available to avoid duplicate parsing.
+      // A forced V2 reader open must execute the Content workflow for its
+      // initial chapter. Do not allow an in-memory prefetch to hide that run.
       const chapterContentStartedAt = Date.now();
-      const preparsedContent = this.preparsedChapterContent.get(this.currentChapterIndex);
+      const shouldBypassCurrentPreparsedCache: boolean = this.forceNetworkContentRefresh;
+      if (shouldBypassCurrentPreparsedCache) {
+        this.preparsedChapterContent.delete(this.currentChapterIndex);
+        this.clearPreparedTextChapterContentState(this.currentChapterIndex);
+      }
+      const preparsedContent = shouldBypassCurrentPreparsedCache
+        ? undefined
+        : this.preparsedChapterContent.get(this.currentChapterIndex);
       if (preparsedContent !== undefined) {
         this.preparsedChapterContent.delete(this.currentChapterIndex);
         this.content = preparsedContent.content;
+        this.v2ContentRefreshDiagnostic = 'force=0;origin=preparsed_cache';
         this.updatePreparedTextChapterState(this.currentChapterIndex, preparsedContent);
         logger.info(TAG, `hit preparsed chapter cache: index=${this.currentChapterIndex}`);
         this.reportTransitionLoadingProgress(0.62, 'chapter_content_ready');
@@ -1875,6 +2106,8 @@ export struct NovelReaderPage {
       this.isReadProgressReady = true;
       this.currentPageStartCharIndex = 0;
       this.currentPageEndCharIndex = 0;
+      // [修复] 跨端接续恢复：在本地进度加载完成后覆盖为源端位置（快照优先，分布式对象兜底）
+      await this.applyPendingContinuationPosition();
       this.restoreReadAloudResumeCharIndex();
       this.syncReadAloudStateFromController();
       this.updateReadAloudContextByPosition();
@@ -1887,7 +2120,18 @@ export struct NovelReaderPage {
         true,
         `page=${this.currentPageIndex}, startOffset=${this.currentPageStartCharIndex}`
       );
-      this.scheduleCrossChapterPrefetch();
+      // V2 workflows share source-scoped variables and an execution trace.
+      // Background prefetch would issue additional Content requests after the
+      // foreground chapter has been read, which can mutate those variables
+      // and overwrite the evidence bound to the chapter the reader displays.
+      // Keep V2 reads single-flight until the scheduler owns isolated source
+      // contexts; legacy prefetch behavior remains unchanged.
+      const contentEngine = this.sourceManager.getEffectiveCompatibilityEngineMode(this.sourceId);
+      if (contentEngine === LegadoCompatibilityEngineMode.V2_ENABLED) {
+        logger.info(TAG, 'skip cross-chapter prefetch for V2 source-scoped execution');
+      } else {
+        this.scheduleCrossChapterPrefetch();
+      }
       this.syncOverallReadProgress('load_content_success');
       this.refreshCurrentNovelBookmarkState('load_content_success');
     } catch (error) {
@@ -1980,11 +2224,14 @@ export struct NovelReaderPage {
         id: '',
         type: sourceType,
         bookUrl: this.bookUrl,
+        requestUrlTemplate: this.bookRequestUrlTemplate || undefined,
         tocUrl: tocUrl,// 使用tocUrl加载章节列表
+        tocRequestUrlTemplate: this.tocRequestUrlTemplate || undefined,
         name: this.bookName,
         author: '',
         origin: this.sourceId,
-        originName: ''
+        originName: '',
+        variable: this.bookVariable || undefined
       };
       const chapters = await this.sourceManager.getChapterList(this.sourceId, book);
       if (chapters && chapters.length > 0) {
@@ -2831,6 +3078,74 @@ export struct NovelReaderPage {
   }
 
   /**
+   * [修复] 跨端接续恢复：在本地阅读进度加载完成后应用源端位置
+   * 快照（wantParam）优先；快照缺失时等待分布式数据对象同步（兜底，限时）。
+   * 命中后才提示用户，避免"显示接续状态却恢复失败"。
+   */
+  private async applyPendingContinuationPosition(): Promise<void> {
+    if (!this.pendingContinuationDistributedWait) {
+      // 快照路径：直接应用待定位置
+      if (this.pendingContinuationPageIndex >= 0 || this.pendingContinuationStartOffset >= 0) {
+        if (this.pendingContinuationPageIndex >= 0) {
+          this.currentPageIndex = this.pendingContinuationPageIndex;
+        }
+        if (this.pendingContinuationStartOffset >= 0) {
+          // [修复] 越界保护：目标端重新排版后字符偏移可能超出内容长度，clamp 防止位置异常
+          const maxOffset = this.content && this.content.length > 0 ? this.content.length - 1 : 0;
+          const safeOffset = Math.max(0, Math.min(this.pendingContinuationStartOffset, maxOffset));
+          if (safeOffset !== this.pendingContinuationStartOffset) {
+            logger.warn(TAG, `[Distributed] 接续字符偏移越界已修正: original=${this.pendingContinuationStartOffset}, safe=${safeOffset}, contentLength=${this.content ? this.content.length : 0}`);
+          }
+          this.currentPageStartCharIndex = safeOffset;
+        }
+        this.getUIContext().getPromptAction().showToast({ message: '已从其他设备接续阅读' });
+        logger.info(TAG, `[Distributed] 接续阅读命中(快照): chapterIndex=${this.currentChapterIndex}, pageIndex=${this.currentPageIndex}, offset=${this.currentPageStartCharIndex}`);
+      } else {
+        // [日志完善] 快照会话存在但页码/偏移均无效：说明源端打包时无有效位置，走本地进度
+        logger.debug(TAG, `[Distributed] 接续快照位置无效（pageIndex=${this.pendingContinuationPageIndex}, offset=${this.pendingContinuationStartOffset}），走本地进度`);
+      }
+      this.clearPendingContinuationState();
+      return;
+    }
+
+    // 分布式对象兜底：等待源端进度同步到达
+    const distributedState = await distributedDataSyncManager.waitForRemoteState(4000);
+    if (distributedState &&
+      (distributedState.bookId === this.bookId || distributedState.bookId.includes(encodeURIComponent(this.bookUrl)))) {
+      // 仅当源端章节与当前加载章节一致时应用页码/偏移（章节不一致时保持本地进度，避免双重加载）
+      if (distributedState.chapterIndex === this.currentChapterIndex) {
+        if (distributedState.pageIndex >= 0) {
+          this.currentPageIndex = distributedState.pageIndex;
+        }
+        if (distributedState.offset >= 0) {
+          // [修复] 越界保护：目标端重新排版后字符偏移可能超出内容长度，clamp 防止位置异常
+          const maxOffset = this.content && this.content.length > 0 ? this.content.length - 1 : 0;
+          const safeOffset = Math.max(0, Math.min(distributedState.offset, maxOffset));
+          if (safeOffset !== distributedState.offset) {
+            logger.warn(TAG, `[Distributed] 接续字符偏移越界已修正: original=${distributedState.offset}, safe=${safeOffset}, contentLength=${this.content ? this.content.length : 0}`);
+          }
+          this.currentPageStartCharIndex = safeOffset;
+        }
+        this.getUIContext().getPromptAction().showToast({ message: '已从其他设备接续阅读' });
+        logger.info(TAG, `[Distributed] 接续阅读命中(分布式对象): chapterIndex=${this.currentChapterIndex}, pageIndex=${this.currentPageIndex}, offset=${this.currentPageStartCharIndex}`);
+      } else {
+        logger.warn(TAG, `[Distributed] 分布式对象命中但章节不一致，走本地进度: remoteChapter=${distributedState.chapterIndex}, currentChapter=${this.currentChapterIndex}`);
+      }
+    } else {
+      logger.warn(TAG, '[Distributed] 接续恢复未命中（分布式对象未同步到数据）');
+    }
+    this.clearPendingContinuationState();
+  }
+
+  private clearPendingContinuationState(): void {
+    this.pendingContinuationPageIndex = -1;
+    this.pendingContinuationStartOffset = -1;
+    this.pendingContinuationDistributedWait = false;
+    // 无论是否命中都清理接续标志，防止残留导致后续误触发
+    distributedReadingService.clearContinuationFlags();
+  }
+
+  /**
   * [修复] 记录浏览历史
   * 确保阅读过的小说出现在历史浏览中，即使没有加入书架
   */
@@ -3029,6 +3344,9 @@ export struct NovelReaderPage {
       chapterIndex: this.currentChapterIndex,
       totalChapters: this.totalChapters,
       tocUrl: this.tocUrl || this.bookUrl,
+      bookVariable: this.bookVariable || undefined,
+      bookRequestUrlTemplate: this.bookRequestUrlTemplate || undefined,
+      tocRequestUrlTemplate: this.tocRequestUrlTemplate || undefined,
       author: this.author,
       coverUrl: this.bookCoverUrl,
       coverComponentId: this.sourceCoverComponentId || undefined,
@@ -4131,6 +4449,22 @@ export struct NovelReaderPage {
         .height('100%')
         .expandSafeArea([SafeAreaType.SYSTEM], [SafeAreaEdge.TOP, SafeAreaEdge.BOTTOM])
 
+        // A fixed, redacted test-only semantic signal for the initial V2
+        // Content decision. It contains neither source nor chapter data.
+        Text(this.v2ContentRefreshDiagnostic)
+          .id('novel_reader_v2_content_refresh_diagnostic')
+          .fontSize(1)
+          .opacity(0.01)
+          .width('100%')
+          .height(1)
+
+        Text(this.v2ContentExecutionDiagnostic)
+          .id('novel_reader_v2_content_execution_diagnostic')
+          .fontSize(1)
+          .opacity(0.01)
+          .width('100%')
+          .height(1)
+
         if (this.isRemoteControlled) {
           Row({ space: 8 }) {
             SymbolGlyph($r('sys.symbol.computer_share_fill'))
@@ -4303,6 +4637,17 @@ export struct NovelReaderPage {
         this.readerHostMode = param.readerHostMode || '';
         this.readerInstanceId = param.readerInstanceId || '';
         this.readerOpenFlowId = param.readerOpenFlowId || '';
+        this.forceNetworkContentRefresh = param.forceNetworkContentRefresh === true;
+        this.v2ContentRefreshDiagnostic = this.forceNetworkContentRefresh
+          ? 'force=1;origin=not_loaded'
+          : 'force=0;origin=not_loaded';
+        this.v2ContentExecutionDiagnostic = this.forceNetworkContentRefresh
+          ? 'state=not_started;engine=unresolved;length=0;digest=empty;traceAt=0;persisted=0'
+          : 'state=not_requested;engine=unresolved;length=0;digest=empty;traceAt=0;persisted=0';
+        logger.info(
+          TAG,
+          `阅读器刷新意图已接收: forceContentRefresh=${this.forceNetworkContentRefresh}`
+        );
         this.sourceId = param.sourceId;
         this.localEbook = null;
         this.localEbookId = param.localEbookId
@@ -4325,44 +4670,79 @@ export struct NovelReaderPage {
           logger.info(TAG, `应用小说定位字符偏移参数: startOffset=${this.currentPageStartCharIndex}`);
         }
         this.tocUrl = param.tocUrl || param.bookUrl; // 使用传递的tocUrl或bookUrl
+        this.bookVariable = param.bookVariable || '';
+        this.bookRequestUrlTemplate = param.bookRequestUrlTemplate || '';
+        this.tocRequestUrlTemplate = param.tocRequestUrlTemplate || '';
+        logger.info(
+          TAG,
+          `阅读器 V2 书籍载体已接收: variable=${this.bookVariable.length > 0 ? 'present' : 'absent'}, ` +
+            `bookRequestTemplate=${this.bookRequestUrlTemplate.length > 0 ? 'present' : 'absent'}, ` +
+            `tocRequestTemplate=${this.tocRequestUrlTemplate.length > 0 ? 'present' : 'absent'}`
+        );
         // 生成bookId和chapterId
         const localBookIdentity = this.localEbookId.length > 0 ? this.localEbookId : encodeURIComponent(param.bookUrl);
         this.bookId = this.isLocalTxtNovelMode()
           ? buildLocalTextNovelBookId(localBookIdentity)
           : `${param.sourceId}_${encodeURIComponent(param.bookUrl)}`;
 
-        // 拦截分布式进度
-        const continuationSessionId = AppStorage.get<string>('continuationSessionId');
-        if (continuationSessionId) {
-          this.getUIContext().getPromptAction().showToast({ message: '已从其他设备接续阅读' });
-          const distributedState = distributedDataSyncManager.getCurrentState();
-          // 如果命中bookUrl或bookId，或者小说由于本地和远程bookId不同，则使用较为宽泛的判断（这里使用bookUrl或bookId）
-          if (distributedState && (distributedState.bookId === this.bookId || distributedState.bookId.includes(encodeURIComponent(param.bookUrl)))) {
-            this.currentChapterIndex = distributedState.chapterIndex;
-            // 对于小说，pageIndex保存的是页面索引，offset保存的是字符偏移
-            if (distributedState.pageIndex >= 0) {
-              this.currentPageIndex = distributedState.pageIndex;
-            }
-            if (distributedState.offset >= 0) {
-              this.currentPageStartCharIndex = distributedState.offset;
-            }
-            logger.info(TAG, `[Distributed] 接续阅读命中: chapterIndex=${this.currentChapterIndex}, pageIndex=${this.currentPageIndex}, offset=${this.currentPageStartCharIndex}`);
-            // 清除session避免重复触发
-            AppStorage.setOrCreate('continuationSessionId', '');
-          }
+        // Start the required online-content path as soon as the identity is
+        // available. Optional continuation/telemetry work below must not be
+        // able to prevent Content from being requested.
+        this.startInitialContentLoad();
 
-          // 注册遥控器指令监听（被控端）
-          this.registerRemoteControlListener();
+        // Distributed continuation is optional. Its host/UI operations must
+        // not abort an ordinary online chapter open before Content starts.
+        try {
+          const continuationSessionId = AppStorage.get<string>('continuationSessionId');
+          if (continuationSessionId) {
+            logger.info(TAG, `[Distributed] 检测到跨端接续会话，开始恢复阅读位置: sessionId=${continuationSessionId}`);
+            // [修复] 跨端接续恢复：优先使用 wantParam 快照（系统保证送达、不依赖组网）。
+            // 章节索引同步应用（保证正文加载使用接续章节）；页码与字符偏移延迟到
+            // 正文加载完成（loadReadProgress 之后）再应用，避免被本地进度覆盖。
+            const snapshot = distributedReadingService.readContinuationSnapshot();
+            if (snapshot) {
+              // 章节索引同步应用，保证正文加载使用接续章节。
+              // 注意：接续导航时 totalChapters 可能为 0（待章节列表加载），此处只校验非负，
+              // 越界由后续章节加载逻辑（safeChapterIndex）兜底修正。
+              if (snapshot.chapterIndex >= 0) {
+                this.currentChapterIndex = snapshot.chapterIndex;
+                logger.info(TAG, `[Distributed] 接续快照应用章节: chapterIndex=${this.currentChapterIndex}`);
+              }
+              this.pendingContinuationPageIndex = snapshot.pageIndex;
+              this.pendingContinuationStartOffset = snapshot.offset;
+            } else {
+              // 快照缺失：启用分布式数据对象等待兜底（正文加载完成后异步等待同步）
+              this.pendingContinuationDistributedWait = true;
+              logger.info(TAG, '[Distributed] 接续快照缺失，启用分布式数据对象等待兜底');
+            }
+
+            // 注册遥控器指令监听（被控端）
+            this.registerRemoteControlListener();
+          }
+        } catch (error) {
+          logger.warn(TAG, `分布式续读初始化失败，不影响正文加载: ${String(error)}`);
         }
 
         this.chapterId = `${this.bookId}_${this.currentChapterIndex}`;
+        // [修复] 内容就绪后立即同步一次阅读进度（确保 currentRead* 状态与时间戳就绪，
+        // 避免进入阅读器早期触发接续时守卫误判或打包空状态；Novel 定时保存间隔 30s）
+        distributedReadingService.syncProgress(
+          this.bookId,
+          this.currentChapterIndex,
+          this.currentPageIndex,
+          this.currentPageStartCharIndex,
+          'novel'
+        );
         this.bookCoverUrl = param.coverUrl || '';
         this.shouldAutoStartReadAloud = param.autoStartReadAloud === true;
         this.shouldAutoOpenReadAloudPlayer = param.autoOpenReadAloudPlayer === true;
-        this.startNovelReadFlowSession('nav_destination_ready');
-        this.syncOverallReadProgress('on_ready_params');
-        AppStorage.setOrCreate('ReadAloudCurrentHostPage', 'NovelReaderPage');
-        void this.initializeReaderAfterReady();
+        try {
+          this.startNovelReadFlowSession('nav_destination_ready');
+          this.syncOverallReadProgress('on_ready_params');
+          AppStorage.setOrCreate('ReadAloudCurrentHostPage', 'NovelReaderPage');
+        } catch (error) {
+          logger.warn(TAG, `阅读器旁路初始化失败，不影响正文加载: ${String(error)}`);
+        }
         
         // [修复] 记录浏览历史，确保阅读过的小说出现在历史浏览中
         this.recordBrowseHistory(param);

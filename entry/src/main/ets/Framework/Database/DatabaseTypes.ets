@@ -1,4 +1,4 @@
-﻿import { SafeUtils } from '../../Utils/SafeUtils';
+import { SafeUtils } from '../../Utils/SafeUtils';
 // 文件路径: src/main/ets/Framework/Database/DatabaseTypes.ets
 /**
  * 数据库类型定义
@@ -117,6 +117,7 @@ export interface PageInfoDatabaseRecord {
   id: string;
   chapterId: string;
   index: number;
+  pageNumber?: number; // [修复] page 表实际列名为 pageNumber，读库记录按列名生成该键
   imageUrl: string;
   localPath: string | null;
   width: number;

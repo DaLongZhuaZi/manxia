@@ -151,6 +151,11 @@ export class MangaIdentityResolver {
       return;
     }
 
+    if (this.requiresStrictOnlineSourceIdentity(result)) {
+      await this.tryResolveOnlineChapter(result, result.inputChapterId);
+      return;
+    }
+
     if (this.shouldPreferOnline(result)) {
       const onlineResolved = await this.tryResolveOnlineChapter(result, result.inputChapterId);
       if (onlineResolved) {
@@ -172,6 +177,11 @@ export class MangaIdentityResolver {
 
   private async resolveByMangaId(result: MangaIdentityResolveResult): Promise<void> {
     if (result.canonicalMangaId.length > 0 || result.inputMangaId.length <= 0) {
+      return;
+    }
+
+    if (this.requiresStrictOnlineSourceIdentity(result)) {
+      await this.tryResolveOnlineManga(result, result.inputMangaId);
       return;
     }
 
@@ -252,8 +262,11 @@ export class MangaIdentityResolver {
   private async tryResolveOnlineManga(result: MangaIdentityResolveResult, mangaId: string): Promise<boolean> {
     const directOnline = await this.dataManager.getOnlineComicInfoById(mangaId);
     if (directOnline) {
-      this.applyOnlineComic(result, directOnline, 'online_manga_by_id');
-      return true;
+      if (this.matchesExpectedOnlineSource(result, directOnline)) {
+        this.applyOnlineComic(result, directOnline, 'online_manga_by_id');
+        return true;
+      }
+      logger.warn(TAG, 'direct online manga identity mismatch; rejecting cached record');
     }
 
     let externalOnline: OnlineComicInfo | null = await this.queryOnlineComicByExternalId(
@@ -274,6 +287,37 @@ export class MangaIdentityResolver {
 
   private hasSourceIdentityHint(result: MangaIdentityResolveResult): boolean {
     return result.sourceId > 0 || result.sourcePkg.length > 0 || result.sourceName.length > 0;
+  }
+
+  /**
+   * Legado IMAGE routes carry a deterministic virtual package. Cache recovery
+   * must never exchange that package for a same-shaped local or online row.
+   */
+  private requiresStrictOnlineSourceIdentity(result: MangaIdentityResolveResult): boolean {
+    return result.sourcePkg.startsWith('legado.image.');
+  }
+
+  private matchesExpectedOnlineSource(
+    result: MangaIdentityResolveResult,
+    comic: OnlineComicInfo | null
+  ): boolean {
+    if (!this.hasSourceIdentityHint(result)) {
+      return true;
+    }
+    if (comic === null) {
+      return false;
+    }
+    if (result.sourcePkg.length > 0 && comic.sourcePkg !== result.sourcePkg) {
+      return false;
+    }
+    if (result.sourceId > 0 && String(comic.sourceId) !== String(result.sourceId)) {
+      return false;
+    }
+    if (result.sourcePkg.length <= 0 && result.sourceId <= 0 && result.sourceName.length > 0 &&
+      comic.sourceName !== result.sourceName) {
+      return false;
+    }
+    return true;
   }
 
   private async tryResolveLocalChapter(result: MangaIdentityResolveResult, chapterId: string): Promise<boolean> {
@@ -310,12 +354,15 @@ export class MangaIdentityResolver {
   private async tryResolveOnlineChapter(result: MangaIdentityResolveResult, chapterId: string): Promise<boolean> {
     const directChapter = await this.dataManager.getOnlineChapterById(chapterId);
     if (directChapter) {
-      this.applyOnlineChapter(result, directChapter, 'online_chapter_by_id');
       const comic = await this.dataManager.getOnlineComicInfoById(directChapter.comicId);
-      if (comic) {
-        this.applyOnlineComic(result, comic, 'online_manga_by_chapter');
+      if (this.matchesExpectedOnlineSource(result, comic)) {
+        this.applyOnlineChapter(result, directChapter, 'online_chapter_by_id');
+        if (comic) {
+          this.applyOnlineComic(result, comic, 'online_manga_by_chapter');
+        }
         return true;
       }
+      logger.warn(TAG, 'direct online chapter identity mismatch; rejecting cached record');
     }
 
     const externalChapter = await this.queryOnlineChapterByExternalId(

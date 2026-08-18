@@ -25,6 +25,13 @@ import {
   MangaReadFlowSeverity,
   MangaReadFlowSourceKind
 } from '../Framework/Reader/MangaReadFlowTypes';
+import { MangaAssetRetryMode } from '../Framework/Reader/MangaAssetTypes';
+import {
+  buildMangaImageRetryKey,
+  MangaImageRetryCoordinator,
+  MangaImageRetryDecision,
+  MangaImageRetryPhase
+} from '../Framework/Reader/MangaImageRetryCoordinator';
 
 const TAG = 'SuwayomiReaderPage';
 
@@ -98,6 +105,7 @@ export struct SuwayomiReaderPage {
   private mangaReadFlowMonitor: MangaReadFlowMonitor = MangaReadFlowMonitor.getInstance();
   private mangaReadFlowSessionId: string = '';
   private mangaReadFlowLoadStartedAt: number = 0;
+  private mangaImageRetryCoordinator: MangaImageRetryCoordinator = new MangaImageRetryCoordinator();
 
   aboutToDisappear(): void {
     // 保存阅读进度并标记章节为已读
@@ -120,6 +128,7 @@ export struct SuwayomiReaderPage {
     }
     // 恢复默认显示模式
     this.restoreDefaultMode();
+    this.mangaImageRetryCoordinator.resetAll();
   }
 
   onPageHide(): void {
@@ -149,7 +158,11 @@ export struct SuwayomiReaderPage {
   /**
    * 下载并解码图片（支持 AVIF）
    */
-  private async loadAndDecodeImage(url: string, pageIndex: number): Promise<void> {
+  private async loadAndDecodeImage(
+    url: string,
+    pageIndex: number,
+    retryMode: MangaAssetRetryMode = MangaAssetRetryMode.NONE
+  ): Promise<void> {
     // 已经在加载或已加载完成，跳过
     if (this.avifLoadingPages.has(pageIndex) || this.avifPixelMaps.has(pageIndex)) {
       return;
@@ -158,8 +171,13 @@ export struct SuwayomiReaderPage {
     // 标记为加载中
     this.avifLoadingPages.add(pageIndex);
     this.avifLoadingPages = new Set(this.avifLoadingPages);
+    const chapterIdAtStart: string = this.chapterId;
+    let failureMessage: string = '';
 
     try {
+      if (retryMode === MangaAssetRetryMode.FORCE_REFRESH) {
+        this.imageHeaders = this.executor.getImageHeaders();
+      }
       // 下载图片数据
       const buffer = await this.downloadImageWithAuth(url);
       if (!buffer) {
@@ -192,19 +210,28 @@ export struct SuwayomiReaderPage {
       }
 
       if (pixelMap) {
+        if (chapterIdAtStart !== this.chapterId) {
+          pixelMap.release();
+          return;
+        }
         this.avifPixelMaps.set(pageIndex, pixelMap);
         this.loadedPages.add(pageIndex);
         this.loadedPages = new Set(this.loadedPages);
+        this.failedPages.delete(pageIndex);
+        this.failedPages = new Set(this.failedPages);
+        logger.info(TAG, `Suwayomi 单图解码成功: page=${pageIndex + 1}, mode=${retryMode}`);
       } else {
         throw new Error('解码图片失败');
       }
     } catch (error) {
       logger.error(TAG, `页面 ${pageIndex + 1} 加载失败: ${error}`);
-      this.failedPages.add(pageIndex);
-      this.failedPages = new Set(this.failedPages);
+      failureMessage = String(error);
     } finally {
       this.avifLoadingPages.delete(pageIndex);
       this.avifLoadingPages = new Set(this.avifLoadingPages);
+    }
+    if (failureMessage.length > 0 && chapterIdAtStart === this.chapterId) {
+      this.handleSuwayomiPageFailure(pageIndex, url, failureMessage);
     }
   }
 
@@ -343,9 +370,68 @@ export struct SuwayomiReaderPage {
    * 重试加载失败的页面
    */
   private retryLoadPage(pageIndex: number, url: string): void {
+    const decision: MangaImageRetryDecision = this.mangaImageRetryCoordinator.beginManualRetry(
+      this.getSuwayomiRetryKey(pageIndex)
+    );
+    if (!decision.shouldRetry) {
+      return;
+    }
     this.failedPages.delete(pageIndex);
     this.failedPages = new Set(this.failedPages);
-    this.loadAndDecodeImage(url, pageIndex);
+    this.prepareSuwayomiPageRetry(pageIndex);
+    logger.info(TAG, `Suwayomi 单图手动重试: page=${pageIndex + 1}, mode=${decision.retryMode}, attempt=${decision.attempt}`);
+    this.loadAndDecodeImage(url, pageIndex, decision.retryMode);
+  }
+
+  private getSuwayomiRetryKey(pageIndex: number): string {
+    return buildMangaImageRetryKey(this.chapterId, String(pageIndex));
+  }
+
+  private handleSuwayomiPageFailure(pageIndex: number, url: string, errorMessage: string): void {
+    const decision: MangaImageRetryDecision = this.mangaImageRetryCoordinator.recordFailure(
+      this.getSuwayomiRetryKey(pageIndex),
+      errorMessage
+    );
+    this.recordReadFlowError(
+      decision.shouldRetry ? 'legacy_suwayomi_page_auto_retry' : 'legacy_suwayomi_page_final_failed',
+      `page=${pageIndex + 1}, error=${errorMessage}`
+    );
+    if (decision.shouldRetry) {
+      logger.warn(TAG, `Suwayomi 单图自动重试: page=${pageIndex + 1}, attempt=${decision.attempt}`);
+      this.prepareSuwayomiPageRetry(pageIndex);
+      this.loadAndDecodeImage(url, pageIndex, decision.retryMode);
+      return;
+    }
+    this.failedPages.add(pageIndex);
+    this.failedPages = new Set(this.failedPages);
+  }
+
+  private prepareSuwayomiPageRetry(pageIndex: number): void {
+    this.loadedPages.delete(pageIndex);
+    this.loadedPages = new Set(this.loadedPages);
+    const oldPixelMap: image.PixelMap | undefined = this.avifPixelMaps.get(pageIndex);
+    if (oldPixelMap) {
+      oldPixelMap.release();
+      this.avifPixelMaps.delete(pageIndex);
+    }
+  }
+
+  private markSuwayomiPageRenderSuccess(pageIndex: number): void {
+    const retryKey: string = this.getSuwayomiRetryKey(pageIndex);
+    const retryPhase: MangaImageRetryPhase = this.mangaImageRetryCoordinator.getPhase(retryKey);
+    if (retryPhase !== MangaImageRetryPhase.IDLE) {
+      this.recordReadFlowEvent(
+        MangaReadFlowEventType.FLOW_RECOVERED,
+        'legacy_suwayomi_page_retry_recovered',
+        true,
+        0,
+        `page=${pageIndex + 1}, phase=${retryPhase}`
+      );
+    }
+    this.mangaImageRetryCoordinator.markSuccess(retryKey);
+    this.failedPages.delete(pageIndex);
+    this.failedPages = new Set(this.failedPages);
+    logger.info(TAG, `Suwayomi 单图渲染成功: page=${pageIndex + 1}`);
   }
 
   private async loadChapterPages(): Promise<void> {
@@ -356,6 +442,7 @@ export struct SuwayomiReaderPage {
     }
 
     this.isLoading = true;
+    this.mangaImageRetryCoordinator.resetAll();
     this.errorMessage = '';
     this.mangaReadFlowLoadStartedAt = Date.now();
     this.recordReadFlowEvent(MangaReadFlowEventType.CHAPTER_RESOLVED, 'legacy_suwayomi_chapter_bound', true, 0, 'not unified asset pipeline');
@@ -827,6 +914,13 @@ export struct SuwayomiReaderPage {
         Image(this.avifPixelMaps.get(index))
           .width('100%')
           .objectFit(ImageFit.Contain)
+          .onComplete(() => {
+            this.markSuwayomiPageRenderSuccess(index);
+          })
+          .onError(() => {
+            this.prepareSuwayomiPageRetry(index);
+            this.handleSuwayomiPageFailure(index, page.url, '图片渲染失败');
+          })
       } else if (!this.failedPages.has(index) && !this.avifLoadingPages.has(index)) {
         // 尚未加载，显示透明占位并触发加载
         Column()

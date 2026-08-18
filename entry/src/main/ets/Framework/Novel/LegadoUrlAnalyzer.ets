@@ -13,7 +13,7 @@
  */
 
 import { logger } from '../../Utils/Logger';
-import { LegadoHeaderOption, LegadoUrlOption } from './LegadoSourceTypes';
+import { LegadoHeaderOption, LegadoUrlOption, LegadoUrlOptionBody } from './LegadoSourceTypes';
 import {
   getLegadoJsEngine,
   JsContext,
@@ -46,6 +46,10 @@ export interface ParsedUrlRequest {
   useWebView?: boolean;
   webJs?: string;
   retry?: number;
+  responseType?: string;
+  serverId?: number;
+  webViewDelayTime?: number;
+  optionJs?: string;
 }
 
 /**
@@ -82,6 +86,9 @@ interface NormalizedUrlOption {
   useWebView?: boolean;
   webJs?: string;
   retry?: number;
+  responseType?: string;
+  serverId?: number;
+  webViewDelayTime?: number;
   js?: string;
 }
 
@@ -175,6 +182,9 @@ export class LegadoUrlAnalyzer {
     let useWebView = false;
     let webJs: string | undefined;
     let retry = 0;
+    let responseType: string | undefined;
+    let serverId = 0;
+    let webViewDelayTime = 0;
     let optionJs: string | undefined;
     
     // 特殊处理: data:协议URL直接返回，不进行任何解析
@@ -188,7 +198,11 @@ export class LegadoUrlAnalyzer {
         charset,
         useWebView,
         webJs,
-        retry
+        retry,
+        responseType,
+        serverId,
+        webViewDelayTime,
+        optionJs
       };
     }
 
@@ -220,6 +234,9 @@ export class LegadoUrlAnalyzer {
         if (normalizedOption.useWebView) useWebView = true;
         if (normalizedOption.webJs) webJs = normalizedOption.webJs;
         if (normalizedOption.retry !== undefined) retry = normalizedOption.retry;
+        if (normalizedOption.responseType !== undefined) responseType = normalizedOption.responseType;
+        if (normalizedOption.serverId !== undefined) serverId = normalizedOption.serverId;
+        if (normalizedOption.webViewDelayTime !== undefined) webViewDelayTime = normalizedOption.webViewDelayTime;
         if (normalizedOption.js) optionJs = normalizedOption.js;
       }
     }
@@ -257,7 +274,11 @@ export class LegadoUrlAnalyzer {
       charset,
       useWebView,
       webJs,
-      retry
+      retry,
+      responseType,
+      serverId,
+      webViewDelayTime,
+      optionJs
     };
   }
 
@@ -284,6 +305,9 @@ export class LegadoUrlAnalyzer {
     let useWebView = false;
     let webJs: string | undefined;
     let retry = 0;
+    let responseType: string | undefined;
+    let serverId = 0;
+    let webViewDelayTime = 0;
     let optionJs: string | undefined;
     
     // 特殊处理: data:协议URL直接返回，不进行任何解析
@@ -297,7 +321,11 @@ export class LegadoUrlAnalyzer {
         charset,
         useWebView,
         webJs,
-        retry
+        retry,
+        responseType,
+        serverId,
+        webViewDelayTime,
+        optionJs
       };
     }
 
@@ -329,6 +357,9 @@ export class LegadoUrlAnalyzer {
         if (normalizedOption.useWebView) useWebView = true;
         if (normalizedOption.webJs) webJs = normalizedOption.webJs;
         if (normalizedOption.retry !== undefined) retry = normalizedOption.retry;
+        if (normalizedOption.responseType !== undefined) responseType = normalizedOption.responseType;
+        if (normalizedOption.serverId !== undefined) serverId = normalizedOption.serverId;
+        if (normalizedOption.webViewDelayTime !== undefined) webViewDelayTime = normalizedOption.webViewDelayTime;
         if (normalizedOption.js) optionJs = normalizedOption.js;
       }
     }
@@ -368,7 +399,11 @@ export class LegadoUrlAnalyzer {
       charset,
       useWebView,
       webJs,
-      retry
+      retry,
+      responseType,
+      serverId,
+      webViewDelayTime,
+      optionJs
     };
   }
 
@@ -377,32 +412,30 @@ export class LegadoUrlAnalyzer {
    * 参考: AnalyzeUrl.kt 的 analyzeJs()
    */
   private analyzeJs(ruleUrl: string): string {
-    const jsMatch = ruleUrl.match(JS_PATTERN);
-    if (!jsMatch) {
-      return ruleUrl;
+    let result = ruleUrl;
+    let start = 0;
+    while (start < ruleUrl.length) {
+      const match = ruleUrl.substring(start).match(JS_PATTERN);
+      if (match === null) {
+        break;
+      }
+      const matchStart = start + (match.index || 0);
+      const matchEnd = matchStart + match[0].length;
+      const prefix = ruleUrl.substring(start, matchStart).trim();
+      if (prefix.length > 0) {
+        result = prefix.replace('@result', result);
+      }
+      const jsCode = match[1] || match[2] || '';
+      const jsResult = this.executeJsSimple(jsCode, result);
+      if (jsResult === null) {
+        logger.warn(TAG, `JS规则需要异步执行: ${jsCode.substring(0, 50)}...`);
+        return result;
+      }
+      result = jsResult;
+      start = matchEnd;
     }
-
-    // 提取JS代码
-    const jsCode = jsMatch[1] || jsMatch[2];
-    if (!jsCode) {
-      return ruleUrl;
-    }
-
-    // 同步版本：尝试简单执行
-    const jsResult = this.executeJsSimple(jsCode);
-    if (jsResult !== null) {
-      this.variables.set('result', jsResult);
-      // JS执行成功，替换结果
-      const beforeJs = ruleUrl.substring(0, jsMatch.index || 0).trim();
-      const afterJs = ruleUrl.substring((jsMatch.index || 0) + jsMatch[0].length).trim();
-      
-      return this.mergeJsRuleResult(beforeJs, jsResult, afterJs);
-    }
-
-    // JS执行失败，返回原始内容（去除JS部分）
-    logger.warn(TAG, `JS规则需要异步执行: ${jsCode.substring(0, 50)}...`);
-    const beforeJs = ruleUrl.substring(0, jsMatch.index || 0).trim();
-    return beforeJs || ruleUrl.replace(JS_PATTERN, '');
+    const suffix = ruleUrl.substring(start).trim();
+    return suffix.length > 0 ? suffix.replace('@result', result) : result;
   }
 
   /**
@@ -411,77 +444,28 @@ export class LegadoUrlAnalyzer {
   private async analyzeJsAsync(ruleUrl: string): Promise<string> {
     let result = ruleUrl;
     let start = 0;
-    let iterationCount = 0;
-    const maxIterations = 24;
-    
-    // 循环处理所有JS代码块
-    while (true) {
-      iterationCount++;
-      if (iterationCount > maxIterations) {
-        logger.warn(TAG, `JS规则解析达到安全上限，提前终止以避免主线程阻塞: ${ruleUrl.substring(0, 120)}`);
-        break;
-      }
-
-      const remaining = result.substring(start);
-      const jsMatch = remaining.match(JS_PATTERN);
+    while (start < ruleUrl.length) {
+      const jsMatch = ruleUrl.substring(start).match(JS_PATTERN);
       if (!jsMatch) {
         break;
       }
-
-      const jsCode = jsMatch[1] || jsMatch[2];
-      if (!jsCode) {
-        start += (jsMatch.index || 0) + jsMatch[0].length;
-        continue;
-      }
-
       const matchStart = start + (jsMatch.index || 0);
       const matchEnd = matchStart + jsMatch[0].length;
-      const beforeJs = result.substring(0, matchStart).trim();
-      const afterJs = result.substring(matchEnd).trim();
-
-      // 执行JS
-      const contextResult = this.variables.has('result') ? (this.variables.get('result') || beforeJs) : beforeJs;
-      const jsResult = await this.executeJsAsync(jsCode, contextResult);
-      if (jsResult.success && jsResult.result.trim().length === 0 && this.isLikelyComplexJs(jsCode)) {
-        // 复杂JS可能仅做副作用，优先移除当前JS片段继续解析，避免残留@js导致URL无效
-        const mergedEmptyResult = this.mergeJsRuleResult(beforeJs, '', afterJs);
-        if (mergedEmptyResult !== result) {
-          result = mergedEmptyResult;
-          start = beforeJs.length;
-          continue;
-        }
-        logger.warn(TAG, `JS执行结果为空，保留原规则片段: ${jsCode.substring(0, Math.min(80, jsCode.length))}`);
-        start = matchEnd;
-        continue;
+      const prefix = ruleUrl.substring(start, matchStart).trim();
+      if (prefix.length > 0) {
+        result = prefix.replace('@result', result);
       }
+      const jsCode = jsMatch[1] || jsMatch[2] || '';
+      const jsResult = await this.executeJsAsync(jsCode, result);
       if (!jsResult.success) {
-        logger.warn(TAG, `JS执行失败，移除当前规则片段避免污染URL: ${jsCode.substring(0, Math.min(80, jsCode.length))}`);
-        const mergedFailedResult = this.mergeJsRuleResult(beforeJs, '', afterJs);
-        if (mergedFailedResult !== result) {
-          result = mergedFailedResult;
-          start = beforeJs.length;
-          continue;
-        }
-        start = matchEnd;
-        continue;
+        logger.warn(TAG, `JS执行失败，保留上一个原版语义结果: ${jsCode.substring(0, Math.min(80, jsCode.length))}`);
+        return result;
       }
-      this.variables.set('result', jsResult.result);
-
-      // 替换结果
-      const mergedResult = this.mergeJsRuleResult(beforeJs, jsResult.result, afterJs);
-
-      // 避免“JS返回原始规则”导致在同一位置无限循环
-      if (mergedResult === result) {
-        logger.warn(TAG, `JS替换后无变化，跳过当前片段避免循环: ${jsCode.substring(0, Math.min(80, jsCode.length))}`);
-        start = matchEnd;
-        continue;
-      }
-
-      result = mergedResult;
-      start = beforeJs.length;
+      result = jsResult.result;
+      start = matchEnd;
     }
-
-    return result;
+    const suffix = ruleUrl.substring(start).trim();
+    return suffix.length > 0 ? suffix.replace('@result', result) : result;
   }
 
   /**
@@ -1549,11 +1533,12 @@ export class LegadoUrlAnalyzer {
   private normalizeUrlOption(option: LegadoUrlOption): NormalizedUrlOption {
     const normalized: NormalizedUrlOption = {};
     const methodText = option.method ? option.method.trim().toUpperCase() : '';
-    let bodyText = option.body;
+    let bodyValue: LegadoUrlOptionBody | undefined = option.body;
 
-    if ((bodyText === undefined || bodyText === null) && option.data !== undefined && option.data !== null) {
-      bodyText = this.stringifyOptionData(option.data);
+    if ((bodyValue === undefined || bodyValue === null) && option.data !== undefined && option.data !== null) {
+      bodyValue = this.stringifyOptionData(option.data);
     }
+    const bodyText = this.normalizeUrlOptionBody(bodyValue);
 
     if (methodText === 'POST' || (methodText.length <= 0 && bodyText !== undefined)) {
       normalized.method = RequestMethod.POST;
@@ -1573,8 +1558,34 @@ export class LegadoUrlAnalyzer {
     if (option.webView) normalized.useWebView = true;
     if (option.webJs) normalized.webJs = option.webJs;
     if (option.retry !== undefined) normalized.retry = option.retry;
+    if (option.type !== undefined) normalized.responseType = option.type;
+    if (option.serverID !== undefined && Number.isFinite(option.serverID)) normalized.serverId = option.serverID;
+    if (option.webViewDelayTime !== undefined && Number.isFinite(option.webViewDelayTime)) {
+      normalized.webViewDelayTime = Math.max(0, option.webViewDelayTime);
+    }
     if (option.js) normalized.js = option.js;
     return normalized;
+  }
+
+  /**
+   * AnalyzeUrl.UrlOption.getBody() in the pinned Legado implementation returns
+   * the original text for string values and GSON JSON for object/array values.
+   * Preserve that distinction before template substitution reaches the request
+   * planner; treating an object as a string otherwise fails at `.replace()`.
+   */
+  private normalizeUrlOptionBody(value: LegadoUrlOptionBody | undefined | null): string | undefined {
+    if (value === undefined || value === null) {
+      return undefined;
+    }
+    if (typeof value === 'string') {
+      return value;
+    }
+    const serialized = SafeUtils.stringifyJson(value, '');
+    if (serialized.length <= 0) {
+      logger.warn(TAG, 'LEGADO_URL_OPTION_BODY_SERIALIZATION_FAILED');
+      return undefined;
+    }
+    return serialized;
   }
 
   private mergeHeaders(target: Record<string, string>, source?: LegadoHeaderOption): void {
@@ -1882,7 +1893,8 @@ export class LegadoUrlAnalyzer {
     
     // 如果至少提取到了method或body，认为解析成功
     if (option.method || option.body || option.data) {
-      logger.debug(TAG, `手动解析URL选项成功: method=${option.method}, body=${option.body?.substring(0, 50)}`);
+      const bodyForLog = this.normalizeUrlOptionBody(option.body);
+      logger.debug(TAG, `手动解析URL选项成功: method=${option.method}, body=${bodyForLog?.substring(0, 50)}`);
       return option;
     }
     
@@ -1898,7 +1910,12 @@ export class LegadoUrlAnalyzer {
    * 2. JSON选项以{开头
    * 3. 需要找到最后一个有效的分隔符（逗号后紧跟{）
    */
-  private findOptionSeparator(url: string): OptionSeparatorResult {
+  /**
+   * Splits a completed Legado URL expression into its URL and trailing option
+   * JSON boundary. Rule extraction uses this before request dispatch because
+   * original Legado keeps URL options on a SearchBook until the next workflow.
+   */
+  findOptionSeparator(url: string): OptionSeparatorResult {
     if (!url || !url.includes(',')) {
       const result: OptionSeparatorResult = { found: false, index: -1 };
       return result;

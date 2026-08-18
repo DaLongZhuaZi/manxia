@@ -499,7 +499,7 @@ struct AboutPage {
    * 构建按钮项
    */
   @Builder
-  buildButtonItem(title: string, onClick: () => void) {
+  buildButtonItem(title: string, onClick: () => void, actionId: string = '') {
     Row() {
       Text(title)
         .fontSize(16)
@@ -514,6 +514,7 @@ struct AboutPage {
     .width('100%')
     .height(56)
     .padding({ left: 16, right: 16 })
+    .id(actionId.length > 0 ? actionId : `about_action_${title}`)
     .backgroundColor(SettingsPanelSurfaceHelper.getBackground(this.themeState.currentTheme))
     .linearGradient(SettingsPanelSurfaceHelper.getSurfaceGradient(this.themeState.currentTheme))
     .backgroundBlurStyle(
@@ -687,9 +688,13 @@ struct AboutPage {
       })
 
       this.buildButtonItem('问题反馈', () => {
-        logger.info(TAG, '问题反馈');
-        this.copyQQGroupAndOpen();
-      })
+        try {
+          logger.info(TAG, '导航到反馈中心');
+          this.pathStack.pushPath({ name: 'MangaFeedbackPage' });
+        } catch (error) {
+          logger.error(TAG, '导航到反馈中心失败', String(error));
+        }
+      }, 'about_action_feedback')
 
       this.buildButtonItem('用户协议', () => {
         try {

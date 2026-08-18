@@ -19,6 +19,7 @@ import {
   ReadAloudFlowSeverity
 } from './ReadAloudFlowTypes';
 import { DetailOpenFlowMonitor } from '../Reader/DetailOpenFlowMonitor';
+import { LegadoWorkflowOutputKind } from '../Novel/LegadoCompatibilityTypes';
 import {
   DetailOpenFlowEventType,
   DetailOpenFlowTargetKind
@@ -1040,7 +1041,7 @@ export class NovelAudioReadAloudSessionManager {
         title: this.chapterTitle,
         index: safeIndex
       };
-      rawContent = await this.sourceManager.getContent(this.sourceId, chapter);
+      rawContent = await this.getTypedAudioPayload(chapter);
       if (rawContent && rawContent.length > 0) {
         logger.debug(
           TAG,
@@ -1242,6 +1243,17 @@ export class NovelAudioReadAloudSessionManager {
       return '';
     }
     return '';
+  }
+
+  private async getTypedAudioPayload(chapter: LegadoChapter): Promise<string> {
+    const result = await this.sourceManager.getContentWithResult(this.sourceId, chapter);
+    if (!result.handoff.isReady() || result.handoff.kind !== LegadoWorkflowOutputKind.AUDIO) {
+      throw new Error(
+        `V2_OUTPUT_HANDOFF_BLOCKED;workflow=audio;kind=${result.handoff.kind};` +
+        `status=${result.handoff.status};reason=${result.handoff.reasonCode}`
+      );
+    }
+    return result.handoff.mediaUrl;
   }
 
   private resolveAudioSourceUrl(rawContent: string, baseUrl: string): string {

@@ -11,7 +11,7 @@ import { AvifTestPage, AvifTestPageParams } from './AvifTestPage';
 import { FileEditorPage } from './FileEditorPage';
 import { SourceManager } from '../Framework/Source/SourceManager';
 import { getNovelSourceManager } from '../Framework/Novel/NovelSourceManager';
-import { LegadoSourceImportResult } from '../Framework/Novel/LegadoSourceTypes';
+import { getNovelInitializer } from '../Framework/Novel/NovelInitializer';
 import { FontManager, CustomFont } from '../Framework/Managers/FontManager';
 import {
   fileEditorService,
@@ -60,13 +60,18 @@ struct ExternalFileTaskAbilityPage {
   @State private taskParams: ExternalFileTaskParams | null = null;
   @State private statusText: string = '正在准备文件任务';
   @State private errorText: string = '';
+  @State private isNavigationDestinationActive: boolean = false;
   @StorageLink('source_features_enabled') private sourceFeaturesEnabled: boolean = false;
   private hasDispatchedTask: boolean = false;
   private importFlowMonitor: ImportFlowMonitor = getImportFlowMonitor();
 
   aboutToAppear(): void {
     this.resolveTaskLaunchPayload('appear');
-    this.dispatchInitialTask();
+    // Navigation mutates the NavPathStack held in @State. Dispatching it
+    // synchronously from the first appearance lifecycle races ArkUI's
+    // initial render and is rejected as a state change during render.
+    // Resolve the payload now, then perform the single dispatch after the
+    // first render turn so JSON import can safely open its action menu.
     setTimeout((): void => {
       this.resolveTaskLaunchPayload('deferred');
       this.dispatchInitialTask();
@@ -173,6 +178,7 @@ struct ExternalFileTaskAbilityPage {
       externalFileTask: ExternalFileTaskFactory.clone(this.taskParams)
     };
     this.statusText = '正在打开文件导入';
+    this.isNavigationDestinationActive = true;
     this.pathStack.pushPathByName('DataManagementPage', params);
     logger.info(TAG, `已打开文件导入任务: kind=${kind}, uri=${primaryUri}`);
   }
@@ -199,6 +205,7 @@ struct ExternalFileTaskAbilityPage {
       externalTaskInstanceId: this.taskInstanceId
     };
     this.statusText = '正在打开备份恢复';
+    this.isNavigationDestinationActive = true;
     this.pathStack.pushPathByName('BackupPage', params);
     logger.info(TAG, `已打开备份恢复任务: uri=${primaryUri}`);
   }
@@ -216,6 +223,7 @@ struct ExternalFileTaskAbilityPage {
       fileUri: primaryUri
     };
     this.statusText = '正在打开图片预览';
+    this.isNavigationDestinationActive = true;
     this.pathStack.pushPathByName('AvifTestPage', params);
     this.finalizeTrackedTransferImport('imported');
     logger.info(TAG, `已打开图片预览任务: uri=${primaryUri}`);
@@ -392,21 +400,52 @@ struct ExternalFileTaskAbilityPage {
 
   private async importJsonAsNovelSource(jsonUri: string): Promise<void> {
     try {
-      this.statusText = '正在导入书源';
-      const jsonContent = this.readTextFromExternalUri(jsonUri);
-      const results = await getNovelSourceManager().importFromJSON(jsonContent);
-      const successCount = results.filter((result: LegadoSourceImportResult): boolean => result.success).length;
-      const failCount = results.length - successCount;
+      const readablePath = this.resolveReadableImportPath(jsonUri);
+      const displayName = this.taskParams
+        ? ExternalFileTaskFactory.resolveDisplayName(this.taskParams)
+        : ExternalFileTaskFactory.extractFileName(jsonUri);
+      this.statusText = '正在校验书源文件';
+      logger.info(TAG, `书源导入预检开始: name=${displayName}`);
+      if (this.isGrantedExternalUri(readablePath)) {
+        // The V2 parser owns the sole open of a picker/file-association URI.
+        // Opening it for a separate preflight can invalidate its temporary
+        // grant before the stream is created.
+        this.statusText = '正在打开授权书源文件';
+        logger.info(TAG, '书源导入预检通过: 使用授权 URI 流式读取');
+      } else {
+        const fileStat = SafeFileUtils.statSyncStrict(readablePath);
+        if (fileStat.size <= 0) {
+          throw new Error('书源文件为空');
+        }
+        this.statusText = `正在读取书源文件（${fileStat.size} bytes）`;
+        logger.info(TAG, `书源导入预检通过: bytes=${fileStat.size}`);
+      }
+      await this.ensureNovelModuleReadyForImport();
+      const importResult = await getNovelSourceManager().importFromLargeFile(readablePath, {
+        onFileReadProgress: (percent: number, _bytesRead: number, _totalBytes: number): void => {
+          this.statusText = `正在读取书源文件 ${percent}%`;
+        },
+        onParseProgress: (parsedCount: number, _sourceName: string): void => {
+          this.statusText = `正在解析并编译书源：${parsedCount} 条`;
+        },
+        onImportProgress: (importedCount: number, totalCount: number, _sourceName: string): void => {
+          this.statusText = totalCount > 0
+            ? `正在无损写入书源：${importedCount}/${totalCount}`
+            : `正在无损写入书源：${importedCount} 条，仍在扫描`;
+        }
+      });
+      const successCount = importResult.successCount;
+      const failCount = importResult.failedCount + importResult.skippedCount;
       if (successCount > 0) {
         this.showToast(`成功导入 ${successCount} 个书源${failCount > 0 ? `，${failCount} 个失败` : ''}`);
-        this.statusText = '书源导入完成';
+        this.statusText = failCount > 0 ? '书源部分导入完成' : '书源无损导入完成';
         this.finalizeTrackedTransferImport('imported');
         await this.navigateMainAfterSuccessfulImport(
           ExternalImportNavigationTarget.NOVEL_SOURCE_MANAGEMENT,
           '书源导入完成'
         );
       } else {
-        this.errorText = '导入失败：没有有效的书源数据';
+        this.errorText = `导入失败：${importResult.errors.length > 0 ? importResult.errors[0] : '没有有效的书源数据'}`;
         this.showToast(this.errorText);
         this.finalizeTrackedTransferImport('import_failed');
       }
@@ -416,6 +455,28 @@ struct ExternalFileTaskAbilityPage {
       this.showToast('导入书源失败');
       this.finalizeTrackedTransferImport('import_failed');
     }
+  }
+
+  /**
+   * An isolated external-file Ability has an independent UI lifecycle.  It
+   * must establish the same database/source-manager readiness boundary as the
+   * regular source-management page before it can persist V2 raw documents.
+   */
+  private async ensureNovelModuleReadyForImport(): Promise<void> {
+    if (getNovelInitializer().isReady()) {
+      return;
+    }
+    const abilityContext = this.resolveAbilityContext();
+    if (abilityContext === null) {
+      throw new Error('无法获取书源导入所需的 AbilityContext');
+    }
+    this.statusText = '正在初始化书源模块';
+    const initResult = await getNovelInitializer().initialize(abilityContext);
+    if (!initResult.success) {
+      logger.error(TAG, `书源导入初始化失败: errors=${initResult.errors.length}`);
+      throw new Error(`书源模块初始化失败：${initResult.errors.length} 项`);
+    }
+    logger.info(TAG, `书源导入模块初始化完成: durationMs=${initResult.duration}`);
   }
 
   private async importJsonAsMangaSource(jsonUri: string): Promise<void> {
@@ -472,6 +533,7 @@ struct ExternalFileTaskAbilityPage {
         )
       };
       const params = FileEditorOpenFactory.createParams(openParams);
+      this.isNavigationDestinationActive = true;
       this.pathStack.pushPathByName('FileEditorPage', params);
       this.statusText = '文件编辑器已打开';
       this.finalizeTrackedTransferImport('imported');
@@ -505,6 +567,9 @@ struct ExternalFileTaskAbilityPage {
 
   private resolveReadableImportPath(sourceUri: string): string {
     const trimmedUri = sourceUri.trim();
+    if (this.isGrantedExternalUri(trimmedUri)) {
+      return trimmedUri;
+    }
     try {
       return new coreFileUri.FileUri(trimmedUri).path;
     } catch (_error) {
@@ -516,6 +581,10 @@ struct ExternalFileTaskAbilityPage {
       return trimmedUri.replace('file://', '');
     }
     return trimmedUri;
+  }
+
+  private isGrantedExternalUri(value: string): boolean {
+    return value.includes('://');
   }
 
   private readTextFromExternalUri(uri: string): string {
@@ -571,13 +640,24 @@ struct ExternalFileTaskAbilityPage {
   @Builder
   private buildFallbackContent() {
     Column() {
-      Text(this.errorText.length > 0 ? this.errorText : this.statusText)
+      Text(this.statusText)
+        .id('external_file_task_status')
         .fontSize(16)
         .fontColor($r('app.color.text_primary'))
         .maxLines(3)
         .textOverflow({ overflow: TextOverflow.Ellipsis })
         .textAlign(TextAlign.Center)
         .padding({ left: 28, right: 28 })
+      if (this.errorText.length > 0) {
+        Text(this.errorText)
+          .id('external_file_task_error')
+          .fontSize(14)
+          .fontColor($r('app.color.text_secondary'))
+          .maxLines(5)
+          .textOverflow({ overflow: TextOverflow.Ellipsis })
+          .textAlign(TextAlign.Center)
+          .padding({ left: 28, right: 28, top: 12 })
+      }
     }
     .width('100%')
     .height('100%')
@@ -586,12 +666,31 @@ struct ExternalFileTaskAbilityPage {
   }
 
   build() {
-    Navigation(this.pathStack) {
-      this.buildFallbackContent()
+    Stack() {
+      Navigation(this.pathStack) {
+        // Navigation's child slot is not a reliable task-status surface when
+        // the external Ability has no destination on its NavPathStack. Keep a
+        // neutral content node here and render status as a sibling overlay so
+        // file preflight, initialization and import progress are always
+        // attached to the first window.
+        Column() {
+          Blank()
+        }
+        .width('100%')
+        .height('100%')
+        .backgroundColor($r('app.color.background_primary'))
+      }
+      .hideNavBar(true)
+      .navDestination(this.buildDestination)
+      .mode(NavigationMode.Stack)
+      .width('100%')
+      .height('100%')
+      .backgroundColor($r('app.color.background_primary'))
+
+      if (!this.isNavigationDestinationActive) {
+        this.buildFallbackContent()
+      }
     }
-    .hideNavBar(true)
-    .navDestination(this.buildDestination)
-    .mode(NavigationMode.Stack)
     .width('100%')
     .height('100%')
     .backgroundColor($r('app.color.background_primary'))

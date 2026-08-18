@@ -1,5 +1,9 @@
 ﻿import { SafeFileUtils } from '../../Utils/SafeFileUtils';
 import { SafeUtils } from '../../Utils/SafeUtils';
+import {
+  getNetworkTransportFailureCoordinator,
+  NetworkTransportFailureCoordinator
+} from '../Network/NetworkTransportFailureCoordinator';
 // 文件路径: entry/src/main/ets/Framework/Debug/ErrorRecordManager.ets
 /**
  * 统一错误记录管理器
@@ -82,6 +86,9 @@ export class ErrorRecordManager {
   private isLoaded: boolean = false;
   private isInitialized: boolean = false;
   private static readonly MAX_RECORDS: number = 200;
+  private static readonly NETWORK_FINGERPRINT_DEDUPE_MS: number = 60 * 1000;
+  private transportFailureCoordinator: NetworkTransportFailureCoordinator =
+    getNetworkTransportFailureCoordinator();
 
   private constructor() {}
 
@@ -168,6 +175,10 @@ export class ErrorRecordManager {
     category: ErrorCategory = ErrorCategory.NETWORK
   ): string {
     const now = Date.now();
+    const existingRecord: ErrorRecord | null = this.findRecentNetworkRecord(message, now);
+    if (existingRecord !== null) {
+      return existingRecord.id;
+    }
     const record: ErrorRecord = {
       id: `net_${now}_${Math.floor(Math.random() * 10000)}`,
       source: ErrorSource.NETWORK_ERROR,
@@ -184,6 +195,27 @@ export class ErrorRecordManager {
     };
     this.pushRecord(record);
     return record.id;
+  }
+
+  private findRecentNetworkRecord(message: string, now: number): ErrorRecord | null {
+    const fingerprint: string = this.transportFailureCoordinator.extractFingerprint(message);
+    if (fingerprint.length <= 0) {
+      return null;
+    }
+    for (let index: number = this.records.length - 1; index >= 0; index--) {
+      const record: ErrorRecord = this.records[index];
+      if (now - record.timestamp > ErrorRecordManager.NETWORK_FINGERPRINT_DEDUPE_MS) {
+        break;
+      }
+      if (record.source !== ErrorSource.NETWORK_ERROR) {
+        continue;
+      }
+      const existingFingerprint: string = this.transportFailureCoordinator.extractFingerprint(record.message);
+      if (existingFingerprint === fingerprint) {
+        return record;
+      }
+    }
+    return null;
   }
 
   private pushRecord(record: ErrorRecord): void {

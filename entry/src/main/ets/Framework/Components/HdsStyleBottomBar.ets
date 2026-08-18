@@ -181,6 +181,51 @@ export struct HdsStyleBottomBar {
     return selected ? this.getActiveColor() : this.getInactiveColor();
   }
 
+  /**
+   * Keep HDS tab identities aligned with the classic MainMenu bottom bar.
+   * These identifiers are both accessibility contracts and stable anchors for
+   * selector-only Hypium UI automation.
+   */
+  private getSemanticTabId(tabIndex: number): string {
+    switch (tabIndex) {
+      case 0:
+        return 'guide_main_tab_home';
+      case 1:
+        return 'guide_main_tab_library';
+      case 2:
+        return 'guide_main_tab_discover';
+      case 3:
+        return 'guide_main_tab_source';
+      case 4:
+        return 'guide_main_tab_book_source';
+      case 5:
+        return 'guide_main_tab_suwayomi';
+      case 6:
+        return 'guide_main_tab_settings';
+      default:
+        return `guide_main_tab_${tabIndex}`;
+    }
+  }
+
+  private handleSemanticTabClick(actualIndex: number): void {
+    if (this.isSearchTabIndex(actualIndex)) {
+      this.searchCallback();
+      this.restoreCurrentSelectedTab();
+      return;
+    }
+    const realIndex: number = this.getRealIndexForVisualIndex(actualIndex);
+    this.updateVisualSelectedIndex(realIndex);
+    // The custom tab-bar builder owns the click target, so HdsTabs does not
+    // reliably commit its own selection before the parent Swiper re-renders.
+    // Commit the visual index explicitly, then forward the actual Swiper index.
+    this.isSyncingIndex = true;
+    this.controller.changeIndex(this.getSafeSelectedIndex(realIndex));
+    this.isSyncingIndex = false;
+    if (!this.isSyncingIndex && this.selectedIndex !== realIndex) {
+      this.onChangeCallback(realIndex);
+    }
+  }
+
   private getSystemIcon(config: HdsBottomBarTabConfig): Resource {
     if (this.isPrivacyMode && config.index === 1) {
       return $r('sys.symbol.lock');
@@ -531,6 +576,10 @@ export struct HdsStyleBottomBar {
       }
       .width(HDS_VERTICAL_BAR_WIDTH)
       .height(HDS_VERTICAL_TAB_ITEM_HEIGHT)
+      .id(this.getSemanticTabId(config.index))
+      .onClick((): void => {
+        this.handleSemanticTabClick(actualIndex);
+      })
       .gesture(
         LongPressGesture({ repeat: false, duration: 500 })
           .onAction((): void => {
@@ -585,6 +634,10 @@ export struct HdsStyleBottomBar {
       .height(44)
       .justifyContent(FlexAlign.Center)
       .padding({ left: 4, right: 4 })
+      .id(this.getSemanticTabId(config.index))
+      .onClick((): void => {
+        this.handleSemanticTabClick(actualIndex);
+      })
       .gesture(
         LongPressGesture({ repeat: false, duration: 500 })
           .onAction((): void => {

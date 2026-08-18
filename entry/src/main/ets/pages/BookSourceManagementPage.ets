@@ -1,4 +1,3 @@
-import { SafeFileUtils } from '../Utils/SafeFileUtils';
 /**
  * 书源管理页面（新版）
  * 采用图源页面的现代化设计风格
@@ -15,14 +14,10 @@ import { getNovelDataManager } from '../Framework/Novel/NovelDataManager';
 import { NovelSourceInfo } from '../Models/NovelModels';
 import { promptAction } from '@kit.ArkUI';
 import { picker } from '@kit.CoreFileKit';
-import { fileIo as fs } from '@kit.CoreFileKit';
 import { pasteboard } from '@kit.BasicServicesKit';
 import { GlobalBackgroundLayerMode } from '../Framework/Components/GlobalBackgroundLayer';
 import { SharedPageBackgroundLayer } from '../Framework/Components/SharedPageBackgroundLayer';
 import { SettingsPanelSurfaceHelper } from './settings/SettingsPanelSurfaceHelper';
-
-// 大文件导入阈值（5MB）
-const LARGE_FILE_THRESHOLD = 5 * 1024 * 1024;
 
 const TAG = 'BookSourceManagementPage';
 
@@ -380,10 +375,7 @@ export struct BookSourceManagementPage {
     }
   }
 
-  /**
-   * 从文件导入书源
-   * 自动检测文件大小，小文件使用传统方式，大文件使用流式导入
-   */
+  /** Every local file enters the same lossless V2 streaming import pipeline. */
   private async importFromFile(): Promise<void> {
     try {
       const documentPicker = new picker.DocumentViewPicker();
@@ -393,22 +385,10 @@ export struct BookSourceManagementPage {
       
       if (result && result.length > 0) {
         const filePath = result[0];
-        
-        // 获取文件大小
-        const stat = SafeFileUtils.statSync(filePath);
-        const fileSize = stat.size;
+        const fileSize = NovelSourceManager.getFileSize(filePath);
         const fileSizeStr = NovelSourceManager.formatFileSize(fileSize);
-        
         logger.info(TAG, `选择的文件: ${filePath}, 大小: ${fileSizeStr}`);
-        
-        if (fileSize > LARGE_FILE_THRESHOLD) {
-          // 大文件：使用流式导入
-          logger.info(TAG, `检测到大文件 (${fileSizeStr})，使用流式导入`);
-          await this.importLargeFile(filePath, fileSize);
-        } else {
-          // 小文件：使用传统方式
-          await this.importSmallFile(filePath);
-        }
+        await this.importFileThroughV2Pipeline(filePath, fileSize);
       }
     } catch (error) {
       logger.error(TAG, '从文件导入失败', String(error));
@@ -418,57 +398,14 @@ export struct BookSourceManagementPage {
   }
   
   /**
-   * 小文件导入（传统方式，适用于5MB以下文件）
+   * Does not use a size threshold: a small file must retain exactly the same
+   * UTF-8/raw-document semantics as a large file.
    */
-  private async importSmallFile(filePath: string): Promise<void> {
+  private async importFileThroughV2Pipeline(filePath: string, fileSize: number): Promise<void> {
     try {
       this.isImporting = true;
       this.showProgressDialog = true;
-      this.importStage = '读取文件...';
-      this.importProgress = 10;
-      this.importCurrentCount = 0;
-      this.importTotalCount = 0;
-      
-      const file = SafeFileUtils.openSync(filePath, fs.OpenMode.READ_ONLY);
-      const stat = SafeFileUtils.statSync(filePath);
-      const fileSize = stat.size;
-      
-      // 分配足够大的缓冲区
-      const buffer = new ArrayBuffer(fileSize);
-      const readLen = SafeFileUtils.readSync(file.fd, buffer);
-      SafeFileUtils.closeSync(file);
-      
-      this.importStage = '解析JSON...';
-      this.importProgress = 30;
-      
-      // 分批解码字符串，避免栈溢出
-      const uint8Array = new Uint8Array(buffer, 0, readLen);
-      let jsonStr = '';
-      const chunkSize = 32768;  // 32KB 每批
-      for (let i = 0; i < uint8Array.length; i += chunkSize) {
-        const end = Math.min(i + chunkSize, uint8Array.length);
-        const slice = uint8Array.slice(i, end);
-        jsonStr += String.fromCharCode(...slice);
-      }
-      
-      this.importStage = '导入书源...';
-      this.importProgress = 50;
-      
-      await this.importSourcesFromJson(jsonStr);
-      
-    } finally {
-      this.hideProgressDialog();
-    }
-  }
-  
-  /**
-   * 大文件流式导入（适用于5MB以上文件）
-   */
-  private async importLargeFile(filePath: string, fileSize: number): Promise<void> {
-    try {
-      this.isImporting = true;
-      this.showProgressDialog = true;
-      this.importStage = '准备导入大文件...';
+      this.importStage = '准备无损导入...';
       this.importDetail = `文件大小: ${NovelSourceManager.formatFileSize(fileSize)}`;
       this.importProgress = 0;
       this.importCurrentCount = 0;
@@ -477,20 +414,20 @@ export struct BookSourceManagementPage {
       const result = await this.sourceManager.importFromLargeFile(filePath, {
         onFileReadProgress: (percent, bytesRead, totalBytes) => {
           this.importStage = '读取文件...';
-          this.importProgress = Math.round(percent * 0.3);  // 文件读取占30%
+          this.importProgress = Math.min(95, percent);
           this.importDetail = `${NovelSourceManager.formatFileSize(bytesRead)} / ${NovelSourceManager.formatFileSize(totalBytes)}`;
         },
         onParseProgress: (parsedCount, currentSourceName) => {
-          this.importStage = '解析书源...';
-          this.importProgress = Math.min(59, 30 + Math.floor(parsedCount / 10));  // 解析阶段平滑推进
-          this.importDetail = `已解析: ${parsedCount} 个 - ${currentSourceName}`;
+          this.importStage = '解析并编译书源...';
+          this.importDetail = `已解析 ${parsedCount} 个 - ${currentSourceName}`;
           this.importCurrentCount = parsedCount;
           this.importTotalCount = 0;
         },
         onImportProgress: (importedCount, totalCount, currentSourceName) => {
-          this.importStage = '导入书源...';
-          this.importProgress = 60 + Math.round((importedCount / totalCount) * 40);  // 导入占40%
-          this.importDetail = `${importedCount} / ${totalCount} - ${currentSourceName}`;
+          this.importStage = '无损写入 V2 记录...';
+          this.importDetail = totalCount > 0
+            ? `${importedCount} / ${totalCount} - ${currentSourceName}`
+            : `已无损写入 ${importedCount} 个，仍在扫描文件 - ${currentSourceName}`;
           this.importCurrentCount = importedCount;
           this.importTotalCount = totalCount;
         },
@@ -500,10 +437,10 @@ export struct BookSourceManagementPage {
               this.importStage = '读取文件中...';
               break;
             case 'parsing':
-              this.importStage = '解析书源中...';
+              this.importStage = '解析并编译书源中...';
               break;
             case 'importing':
-              this.importStage = '导入数据库中...';
+              this.importStage = '无损写入 V2 记录中...';
               break;
             case 'complete':
               this.importStage = '导入完成！';

@@ -31,6 +31,11 @@ export class PseudoClass {
   }
 }
 
+interface LegadoRegexPrefix {
+  pattern: string;
+  flags: string;
+}
+
 /**
  * 解析后的选择器部分
  */
@@ -134,17 +139,56 @@ export class Matcher {
   private static splitByComma(selector: string): string[] {
     const result: string[] = [];
     let current = '';
-    let depth = 0;
+    let parenthesisDepth = 0;
+    let bracketDepth = 0;
+    let quote = '';
+    let escaped = false;
 
     for (let i = 0; i < selector.length; i++) {
       const char = selector[i];
-      if (char === '(' || char === '[') {
-        depth++;
+      if (escaped) {
         current += char;
-      } else if (char === ')' || char === ']') {
-        depth--;
+        escaped = false;
+        continue;
+      }
+      if (char === '\\') {
         current += char;
-      } else if (char === ',' && depth === 0) {
+        escaped = true;
+        continue;
+      }
+      if (quote.length > 0) {
+        current += char;
+        if (char === quote) {
+          quote = '';
+        }
+        continue;
+      }
+      if (char === '"' || char === "'") {
+        current += char;
+        quote = char;
+        continue;
+      }
+      if (char === '[') {
+        bracketDepth++;
+        current += char;
+        continue;
+      }
+      if (char === ']' && bracketDepth > 0) {
+        bracketDepth--;
+        current += char;
+        continue;
+      }
+      if (char === '(' && bracketDepth === 0) {
+        parenthesisDepth++;
+        current += char;
+        continue;
+      }
+      if (char === ')' && parenthesisDepth > 0 && bracketDepth === 0) {
+        parenthesisDepth--;
+        current += char;
+        continue;
+      }
+      if (char === ',' && parenthesisDepth === 0 && bracketDepth === 0) {
         if (current.trim()) {
           result.push(current.trim());
         }
@@ -314,10 +358,46 @@ export class Matcher {
         if (quote === '"' || quote === "'") {
           i++;
           while (i < len && selector[i] !== quote) {
+            if (selector[i] === '\\' && i + 1 < len) {
+              value += selector[i];
+              i++;
+            }
             value += selector[i];
             i++;
           }
           if (i < len) i++;
+        } else if (operator === '~=') {
+          // Legado delegates ~= to Jsoup's regex attribute selector. Regex
+          // character classes contain a nested closing bracket, so the first
+          // `]` is not necessarily the end of the CSS attribute selector.
+          let characterClassDepth = 0;
+          while (i < len) {
+            const current = selector[i];
+            if (current === '\\' && i + 1 < len) {
+              value += current;
+              i++;
+              value += selector[i];
+              i++;
+              continue;
+            }
+            if (current === '[') {
+              characterClassDepth++;
+              value += current;
+              i++;
+              continue;
+            }
+            if (current === ']' && characterClassDepth > 0) {
+              characterClassDepth--;
+              value += current;
+              i++;
+              continue;
+            }
+            if (current === ']' && characterClassDepth === 0) {
+              break;
+            }
+            value += current;
+            i++;
+          }
         } else {
           while (i < len && selector[i] !== ']' && !/\s/.test(selector[i])) {
             value += selector[i];
@@ -356,11 +436,53 @@ export class Matcher {
     if (i < len && selector[i] === '(') {
       i++;
       let depth = 1;
+      let quote = '';
+      let escaped = false;
+      let characterClassDepth = 0;
       while (i < len && depth > 0) {
-        if (selector[i] === '(') depth++;
-        else if (selector[i] === ')') depth--;
+        const current = selector[i];
+        if (escaped) {
+          argument += current;
+          escaped = false;
+          i++;
+          continue;
+        }
+        if (current === '\\') {
+          argument += current;
+          escaped = true;
+          i++;
+          continue;
+        }
+        if (quote) {
+          if (current === quote) {
+            quote = '';
+          }
+          argument += current;
+          i++;
+          continue;
+        }
+        if (current === '"' || current === "'") {
+          quote = current;
+          argument += current;
+          i++;
+          continue;
+        }
+        if (current === '[') {
+          characterClassDepth++;
+          argument += current;
+          i++;
+          continue;
+        }
+        if (current === ']' && characterClassDepth > 0) {
+          characterClassDepth--;
+          argument += current;
+          i++;
+          continue;
+        }
+        if (characterClassDepth === 0 && current === '(') depth++;
+        else if (characterClassDepth === 0 && current === ')') depth--;
         if (depth > 0) {
-          argument += selector[i];
+          argument += current;
         }
         i++;
       }
@@ -368,6 +490,33 @@ export class Matcher {
 
     const pseudo = new PseudoClass(name.toLowerCase(), argument.trim());
     return new PseudoClassResult(pseudo, i);
+  }
+
+  private static parseLegadoRegexPrefix(pattern: string): LegadoRegexPrefix {
+    const prefix = pattern.match(/^\(\?([imsu-]+)\)/);
+    if (!prefix) {
+      return { pattern: pattern, flags: '' };
+    }
+    let flags = '';
+    for (const flag of prefix[1]) {
+      if ((flag === 'i' || flag === 'm' || flag === 's' || flag === 'u') && !flags.includes(flag)) {
+        flags += flag;
+      }
+    }
+    return { pattern: pattern.substring(prefix[0].length), flags: flags };
+  }
+
+  static isValidLegadoAttributeSelector(selector: AttributeSelector): boolean {
+    if (selector.operator !== '~=') {
+      return true;
+    }
+    try {
+      const regexParts = Matcher.parseLegadoRegexPrefix(selector.value);
+      new RegExp(regexParts.pattern, regexParts.flags);
+      return true;
+    } catch (error) {
+      return false;
+    }
   }
 
   /**
@@ -390,7 +539,18 @@ export class Matcher {
       case '*=':
         return attrValue.includes(selector.value);
       case '~=':
-        return attrValue.split(/\s+/).includes(selector.value);
+        // Unlike browser CSS, Jsoup's ~= operator treats the right-hand side
+        // as a regular expression. This is heavily used by Legado sources,
+        // for example `[property~=category|status|update_time]`.
+        try {
+          if (!Matcher.isValidLegadoAttributeSelector(selector)) {
+            return false;
+          }
+          const regexParts = Matcher.parseLegadoRegexPrefix(selector.value);
+          return new RegExp(regexParts.pattern, regexParts.flags).test(attrValue);
+        } catch (error) {
+          return false;
+        }
       case '|=':
         return attrValue === selector.value || attrValue.startsWith(selector.value + '-');
       default:

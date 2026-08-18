@@ -96,7 +96,16 @@ import { getNovelChapterCacheManager } from '../Framework/Novel/NovelChapterCach
 import { getNovelContentProcessor } from '../Framework/Novel/NovelContentProcessor';
 import { getNovelTxtTocRuleManager, TxtTocRule } from '../Framework/Novel/NovelTxtTocRuleManager';
 import { NovelReplaceRuleManager, ReplaceScope, ReplaceRule } from '../Framework/Novel/NovelReplaceRuleManager';
-import { getLegadoMangaSourceBridge, LegadoMangaPageResult } from '../Framework/Novel/LegadoMangaSourceBridge';
+import {
+  getLegadoMangaSourceBridge,
+  LegadoMangaPageResult,
+  LegadoMangaSourceBridge
+} from '../Framework/Novel/LegadoMangaSourceBridge';
+import {
+  LegadoExecutionTraceSummary,
+  LegadoV2ExecutionPolicy,
+  LegadoWorkflowKind
+} from '../Framework/Novel/LegadoCompatibilityTypes';
 
 import { getCacheStatusService, CacheStatusService, ContentCacheStats, CacheContentType } from '../Framework/Services/CacheStatusService';
 import { getChapterOrderService, ChapterOrderService } from '../Framework/Services/ChapterOrderService';
@@ -385,6 +394,21 @@ export struct UnifiedDetailPage {
   @State resolvedDisplaySourceName: string = '';
   @State isLoading: boolean = true;
   @State errorMessage: string = '';
+  // This disclosure is intentionally opt-in. It renders only hash-bound,
+  // persistence-safe summaries and never request material or page content.
+  @State showNovelV2Trace: boolean = false;
+  @State novelV2TraceSummary: string = '';
+  @State novelV2ContentDiagnostics: string = '';
+  @State novelV2TraceStorageDiagnostic: string = '';
+  private novelV2TraceRefreshTimers: number[] = [];
+  // Timer cancellation cannot stop an already-running asynchronous RDB read.
+  // This generation invalidates such reads before they can overwrite a newer
+  // cross-Ability evidence projection on the returning detail page.
+  private novelV2TraceRehydrationGeneration: number = 0;
+  // Timers within one rehydration batch are also asynchronous. A timer fired
+  // first may observe the pre-reader database snapshot and finish after the
+  // later retry, so every individual RDB request needs a newest-wins token.
+  private novelV2TraceSnapshotRequestGeneration: number = 0;
   
   // 分阶段加载状态
   @State isBasicInfoLoaded: boolean = false;  // 基本信息是否加载完成
@@ -1410,14 +1434,209 @@ export struct UnifiedDetailPage {
   }
 
   private getCurrentNovelSourceId(): string {
-    if (!this.content || this.content.contentType !== UnifiedContentType.NOVEL) {
+    if (this.content && this.content.contentType === UnifiedContentType.NOVEL) {
+      const contentSourceId = this.normalizeTrackingText(this.content.sourceId);
+      if (contentSourceId.length > 0) {
+        return contentSourceId;
+      }
+    }
+    if (this.pageParams?.contentType !== UnifiedContentType.NOVEL) {
       return '';
     }
-    const contentSourceId = this.normalizeTrackingText(this.content.sourceId);
-    if (contentSourceId.length > 0) {
-      return contentSourceId;
-    }
     return this.normalizeTrackingText(this.pageParams?.sourceId);
+  }
+
+  /**
+   * Resolves the V2 trace storage key without widening the existing novel
+   * source-id contract. IMAGE book sources enter this page as manga records:
+   * their numeric comic sourceId is not the Legado storage key, while
+   * UnifiedContent.sourceUrl retains the original bookSourceUrl used by the
+   * V2 BookInfo/TOC execution trace.
+   */
+  private getCurrentLegadoV2TraceSourceId(): string {
+    const novelSourceId: string = this.getCurrentNovelSourceId();
+    if (novelSourceId.length > 0) {
+      return novelSourceId;
+    }
+    if (!this.content || this.content.contentType !== UnifiedContentType.MANGA) {
+      return '';
+    }
+    const sourcePkg: string = this.normalizeTrackingText(this.content.sourcePkg);
+    if (!LegadoMangaSourceBridge.isLegadoMangaPkg(sourcePkg)) {
+      return '';
+    }
+    return this.normalizeTrackingText(this.content.sourceUrl);
+  }
+
+  private refreshNovelV2TraceSummary(persistedSummaries?: LegadoExecutionTraceSummary[]): void {
+    this.novelV2TraceSummary = '';
+    this.novelV2ContentDiagnostics = '';
+    this.novelV2TraceStorageDiagnostic = '';
+    const sourceId: string = this.getCurrentLegadoV2TraceSourceId();
+    if (sourceId.length <= 0) {
+      return;
+    }
+    const summaries = persistedSummaries !== undefined
+      ? persistedSummaries
+      : this.novelSourceManager.getExecutionTraceWorkflowSummaries(sourceId);
+    const lines: string[] = [];
+    for (let index = 0; index < summaries.length; index++) {
+      const summary = summaries[index];
+      if (summary.workflow !== LegadoWorkflowKind.BOOK_INFO &&
+        summary.workflow !== LegadoWorkflowKind.TOC &&
+        summary.workflow !== LegadoWorkflowKind.CONTENT) {
+        continue;
+      }
+      lines.push(
+        `V2 trace：${summary.workflow} · ${summary.transport} · HTTP ${summary.statusCode} · ` +
+        `${summary.errorCode} · ${summary.outputSummary}` +
+        this.buildNovelV2NetworkEvidenceSuffix(summary)
+      );
+      if (summary.workflow === LegadoWorkflowKind.CONTENT &&
+        summary.contentDiagnostics.status.length > 0) {
+        const diagnostics = summary.contentDiagnostics;
+        this.novelV2ContentDiagnostics =
+          `content_diag:status=${diagnostics.status};chars=${diagnostics.characterCount};` +
+          `bridge=${diagnostics.bridgeStatus};bridgeChars=${diagnostics.bridgeCharacterCount};` +
+          `bridgeDigest=${diagnostics.bridgeFingerprint};digest=${diagnostics.contentFingerprint};` +
+          `traceAt=${summary.occurredAt}`;
+      }
+    }
+    this.novelV2TraceSummary = lines.join('\n');
+  }
+
+  /** Rehydrate redacted V2 workflow evidence written by an isolated reader Ability. */
+  private async rehydrateNovelV2TraceSummary(rehydrationGeneration: number): Promise<void> {
+    if (rehydrationGeneration !== this.novelV2TraceRehydrationGeneration) {
+      return;
+    }
+    const snapshotRequestGeneration = ++this.novelV2TraceSnapshotRequestGeneration;
+    await this.novelSourceManager.refreshExecutionTraceSummaries(true);
+    const sourceId = this.getCurrentLegadoV2TraceSourceId();
+    if (sourceId.length <= 0 || rehydrationGeneration !== this.novelV2TraceRehydrationGeneration ||
+      snapshotRequestGeneration !== this.novelV2TraceSnapshotRequestGeneration) {
+      return;
+    }
+    const persistedSummaries = await this.novelSourceManager.getPersistedExecutionTraceWorkflowSummaries(sourceId);
+    if (rehydrationGeneration !== this.novelV2TraceRehydrationGeneration ||
+      snapshotRequestGeneration !== this.novelV2TraceSnapshotRequestGeneration) {
+      return;
+    }
+    this.refreshNovelV2TraceSummary(persistedSummaries);
+    const storageDiagnostic = await this.novelSourceManager.getExecutionTraceStorageDiagnostic(sourceId);
+    if (rehydrationGeneration === this.novelV2TraceRehydrationGeneration &&
+      snapshotRequestGeneration === this.novelV2TraceSnapshotRequestGeneration) {
+      this.novelV2TraceStorageDiagnostic = storageDiagnostic;
+    }
+  }
+
+  /**
+   * An isolated reader can finish its RDB transaction while the host detail
+   * window is becoming visible. Re-read a bounded number of times so the
+   * disclosure never permanently renders the previous workflow witness.
+   */
+  private scheduleNovelV2TraceRehydration(): void {
+    this.clearNovelV2TraceRehydration();
+    const rehydrationGeneration = ++this.novelV2TraceRehydrationGeneration;
+    // A reader Ability has independently read back its transaction before it
+    // returns, but a host Ability can still observe an older RDB snapshot for
+    // several seconds. Cover that visibility window without an unbounded
+    // polling loop; every attempt remains lifecycle-cancellable and guarded
+    // by the request token above.
+    const delays: number[] = [0, 800, 2500, 6000, 12000];
+    for (let index = 0; index < delays.length; index++) {
+      const timerId = setTimeout((): void => {
+        void this.rehydrateNovelV2TraceSummary(rehydrationGeneration);
+      }, delays[index]);
+      this.novelV2TraceRefreshTimers.push(timerId);
+    }
+  }
+
+  private clearNovelV2TraceRehydration(): void {
+    for (let index = 0; index < this.novelV2TraceRefreshTimers.length; index++) {
+      clearTimeout(this.novelV2TraceRefreshTimers[index]);
+    }
+    this.novelV2TraceRefreshTimers = [];
+  }
+
+  /**
+   * Keeps the on-device compatibility evidence comparable with the upstream
+   * reference runner without exposing a URL, header, cookie, or response.
+   */
+  private buildNovelV2NetworkEvidenceSuffix(summary: LegadoExecutionTraceSummary): string {
+    const evidence = summary.networkEvidence;
+    return `;reqTarget=${evidence.requestTargetSha256};ua=${evidence.requestUserAgentSha256};` +
+      `contentType=${evidence.responseContentType || 'empty'};redirects=${evidence.redirectCount}`;
+  }
+
+  @Builder
+  private buildNovelV2TraceDisclosure(): void {
+    if (this.novelV2TraceSummary.length > 0) {
+      Column() {
+        // Keep the already-redacted, persisted workflow witness adjacent to
+        // its control. The expanded body can be virtualized out of ArkUI's
+        // active tree on long novel details, which must not turn a completed
+        // V2 BookInfo/TOC operation into an unverifiable Harness failure.
+        // This node is deliberately non-visual and contains no raw request,
+        // response, cookie, variable, URL, or book-content material.
+        Text(this.novelV2TraceSummary)
+          .id('unified_detail_v2_trace_evidence')
+          .fontSize(1)
+          .fontColor(Color.Transparent)
+          .height(1)
+          .opacity(0.01)
+        Button(this.showNovelV2Trace ? '收起诊断' : '执行诊断')
+          .id('unified_detail_v2_trace_toggle')
+          .type(ButtonType.Normal)
+          .fontSize(12)
+          .fontFamily(this.appFontFamily)
+          .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
+          .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('panel_background', this.themeState.currentTheme))
+          .border({
+            width: 1,
+            color: ThemeAwareHelper.getTestManagementThemedColor('panel_border', this.themeState.currentTheme)
+          })
+          .borderRadius(6)
+          .padding({ left: 10, right: 10, top: 5, bottom: 5 })
+          .onClick(() => {
+            this.showNovelV2Trace = !this.showNovelV2Trace;
+            if (this.showNovelV2Trace) {
+              // The disclosure is also a deliberate refresh boundary for a
+              // trace committed by an isolated reader window moments earlier.
+              this.scheduleNovelV2TraceRehydration();
+            }
+          })
+        if (this.showNovelV2Trace) {
+          if (this.novelV2ContentDiagnostics.length > 0) {
+            Text(this.novelV2ContentDiagnostics)
+              .id('unified_detail_v2_content_diagnostics')
+              .fontSize(1)
+              .fontColor(Color.Transparent)
+              .height(1)
+              .opacity(0.01)
+          }
+          if (this.novelV2TraceStorageDiagnostic.length > 0) {
+            Text(this.novelV2TraceStorageDiagnostic)
+              .id('unified_detail_v2_trace_storage_diagnostic')
+              .fontSize(1)
+              .fontColor(Color.Transparent)
+              .height(1)
+              .opacity(0.01)
+          }
+          Text(this.novelV2TraceSummary)
+            .id('unified_detail_v2_trace_detail')
+            .fontSize(11)
+            .fontFamily(this.appFontFamily)
+            .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_tertiary', this.themeState.currentTheme))
+            .width('100%')
+            .textAlign(TextAlign.Start)
+            .margin({ top: 6 })
+        }
+      }
+      .width('100%')
+      .alignItems(HorizontalAlign.Start)
+      .margin({ top: 4 })
+    }
   }
 
   private getCurrentNovelBookUrl(): string {
@@ -2217,10 +2436,19 @@ export struct UnifiedDetailPage {
     );
 
     this.initializeResponsiveLayout();
+    // The isolated reader writes its V2 trace in a different UI Ability.
+    // Rehydrate the redacted summary whenever this detail page returns.
+    this.scheduleNovelV2TraceRehydration();
     this.webViewControllerAttached = false;
     eventBus.subscribe(GameEvent.MANGA_CACHE_UPDATED, this.onMangaCacheUpdated);
     logger.info(TAG, 'Waiting hidden WebView controller attach');
     void this.refreshPageGuide('aboutToAppear');
+  }
+
+  onPageShow(): void {
+    // Returning from the isolated reader keeps this component alive, so the
+    // persisted V2 trace must also be rehydrated at the page-show boundary.
+    this.scheduleNovelV2TraceRehydration();
   }
 
   private resolveGuideHighlightRect(anchorId?: string, borderRadius: number = 18): GuideHighlightRect | null {
@@ -2297,7 +2525,8 @@ export struct UnifiedDetailPage {
       return;
     }
 
-    if (!this.webViewControllerAttached) {
+    const canDispatchV2ImageWithoutWebView: boolean = this.canDispatchV2ImageWithoutWebView();
+    if (!this.webViewControllerAttached && !canDispatchV2ImageWithoutWebView) {
       this.pendingInitialContentLoad = true;
       logger.info(TAG, 'WebView控制器未附加，延迟加载详情页内容');
       return;
@@ -2305,7 +2534,32 @@ export struct UnifiedDetailPage {
 
     this.pendingInitialContentLoad = false;
     this.initialContentLoadTriggered = true;
+    if (canDispatchV2ImageWithoutWebView && !this.webViewControllerAttached) {
+      logger.warn(TAG, 'V2 IMAGE HTTP详情不等待隐藏WebView控制器，直接开始工作流');
+    }
     this.loadContent();
+  }
+
+  /**
+   * V2 IMAGE sources are already routed by the compatibility planner. Their
+   * pure HTTP detail path must not be stalled by the page-only WebView used by
+   * legacy online-source integrations. Sources that actually require ArkWeb
+   * remain governed by the V2 planner and its capability status.
+   */
+  private canDispatchV2ImageWithoutWebView(): boolean {
+    if (!this.pageParams || this.pageParams.contentType !== UnifiedContentType.MANGA) {
+      return false;
+    }
+    const sourcePkg: string = this.pageParams.sourcePkg || '';
+    if (!sourcePkg.startsWith('legado.image.')) {
+      return false;
+    }
+    return this.novelSourceManager.getV2ExecutionPolicy() === LegadoV2ExecutionPolicy.V2_FULL_CUTOVER;
+  }
+
+  /** Cached search metadata must never make a failed full-cutover run look readable. */
+  private shouldSurfaceV2ImageFailure(): boolean {
+    return this.errorMessage.length > 0 && this.canDispatchV2ImageWithoutWebView();
   }
 
   private lifecycle = new PageLifecycleManager('UnifiedDetailPage', { enableDebug: true });
@@ -2313,6 +2567,9 @@ export struct UnifiedDetailPage {
   aboutToDisappear(): void {
     // 注意：不要在离开时强制恢复窗口模式，避免前进跳转过程中覆盖目标页沉浸策略。
     // 目标页由各自的页面策略接管；本页在 aboutToAppear/onShown 时重新声明自身模式。
+    this.clearNovelV2TraceRehydration();
+    ++this.novelV2TraceRehydrationGeneration;
+    ++this.novelV2TraceSnapshotRequestGeneration;
     this.lifecycle.destroy();
     ThemeAwareHelper.cleanupThemeAware(this.componentId);
     FontAwareHelper.cleanupFontAware(this.componentId);
@@ -2453,9 +2710,17 @@ export struct UnifiedDetailPage {
     } catch (error) {
       logger.error(TAG, '加载内容失败', String(error));
       this.errorMessage = '加载失败，请重试';
+      if (this.pageParams?.contentType === UnifiedContentType.NOVEL) {
+        this.isChaptersLoading = false;
+        this.chaptersLoadProgress = '';
+      }
     } finally {
       this.isLoading = false;
       this.isPrimarySectionReady = this.hasRenderablePrimaryContent();
+      // The helper rejects non-Legado content, while IMAGE book sources are
+      // represented as manga here. Always refresh through that narrow key
+      // resolver so BookInfo/TOC evidence is not silently novel-only.
+      this.refreshNovelV2TraceSummary();
     }
   }
 
@@ -2745,6 +3010,14 @@ export struct UnifiedDetailPage {
       }
     } else {
       logger.info(TAG, `漫画内容加载完成: ${this.content?.title}`);
+    }
+    // V2 IMAGE detail executes through the manga bridge, but its trace is
+    // stored under the original bookSourceUrl. Rehydrate after the bridge has
+    // settled the detail result so the diagnostic disclosure can expose the
+    // actual BookInfo/TOC outcome to users and Hypium.
+    if (this.getCurrentLegadoV2TraceSourceId().length > 0) {
+      this.refreshNovelV2TraceSummary();
+      this.scheduleNovelV2TraceRehydration();
     }
   }
 
@@ -3445,8 +3718,10 @@ export struct UnifiedDetailPage {
     let book: LegadoBook | null = null;
     let chapters: LegadoChapter[] = [];
     
-    // 换源模式：强制从网络加载并保存
-    const shouldForceNetworkLoad = this.isFromChangeSource;
+    // 换源以及 V2 全量搜索结果都必须执行当前详情工作流。后者只由
+    // NovelSearchPage 设置，不改变书架/离线入口原有的缓存优先语义。
+    const shouldForceNetworkLoad = this.isFromChangeSource ||
+      this.pageParams.forceNovelNetworkRefresh === true;
 
     if (bookInDb && !shouldForceNetworkLoad) {
       // 数据库中有书籍信息，尝试从缓存获取章节
@@ -3492,7 +3767,13 @@ export struct UnifiedDetailPage {
       const loadBookUrl = shouldForceNetworkLoad ? bookUrl : actualBookUrl;
       
       logger.info(TAG, `从网络加载小说: ${loadBookUrl}, 换源模式=${shouldForceNetworkLoad}`);
-      book = await this.novelSourceManager.getBookInfo(loadSourceId, loadBookUrl);
+      book = await this.novelSourceManager.getBookInfo(
+        loadSourceId,
+        loadBookUrl,
+        undefined,
+        this.pageParams?.novelBookVariable,
+        this.pageParams?.novelRequestCarrierKey
+      );
       if (!book) {
         this.errorMessage = '小说不存在';
         this.isChaptersLoading = false;
@@ -3582,6 +3863,9 @@ export struct UnifiedDetailPage {
       lastReadIndex,
       actualSourceId
     );
+    // Book-info and TOC traces have completed before the adapter receives the
+    // result. Refresh the opt-in disclosure at that exact workflow boundary.
+    this.refreshNovelV2TraceSummary();
     const ruleScopeId = this.getNovelCacheBookId(actualSourceId, actualBookUrl);
     const scopedTocRuleIds = await this.getScopedRuleIds(ruleScopeId, this.buildBookTocRuleKey(ruleScopeId));
     const scopedReplaceRuleIds = await this.getScopedRuleIds(ruleScopeId, this.buildBookReplaceRuleKey(ruleScopeId));
@@ -4411,9 +4695,13 @@ export struct UnifiedDetailPage {
       chapterIndex: chapterIndex,
       totalChapters: this.content.totalChapters,
       tocUrl: originalBook?.tocUrl,
+      bookVariable: originalBook?.variable,
+      bookRequestUrlTemplate: originalBook?.requestUrlTemplate,
+      tocRequestUrlTemplate: originalBook?.tocRequestUrlTemplate,
       author: this.content.author,
       coverUrl: this.content.coverUrl,
-      readerOpenFlowId: detailOpenFlowId
+      readerOpenFlowId: detailOpenFlowId,
+      forceNetworkContentRefresh: this.pageParams?.forceNovelNetworkRefresh === true
     };
 
     // 触发翻开过渡动画
@@ -7438,6 +7726,9 @@ export struct UnifiedDetailPage {
             .fontSize(12)
             .fontFamily(this.appFontFamily)
             .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_muted', this.themeState.currentTheme))
+            // Keep the V2 conformance contract stable without reusing the
+            // legacy detail page's compile-time component identifiers.
+            .id('unified_detail_chapter_count_portrait')
         }
         .width('100%')
 
@@ -7450,6 +7741,8 @@ export struct UnifiedDetailPage {
             .textOverflow({ overflow: TextOverflow.Ellipsis })
             .width('100%')
         }
+
+        this.buildNovelV2TraceDisclosure()
 
         Blank()
 
@@ -7516,7 +7809,7 @@ export struct UnifiedDetailPage {
             .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme))
             .height(36)
             .width('100%')
-            .id('' as string)
+            .id('unified_detail_start_reading_portrait')
             .enabled(!this.isReadActionBusy())
             .onClick(() => this.continueReading())
 
@@ -10814,6 +11107,7 @@ export struct UnifiedDetailPage {
               .fontSize(12)
               .fontFamily(this.appFontFamily)
               .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_muted', this.themeState.currentTheme))
+              .id('unified_detail_chapter_count_landscape')
           }
           .width('100%')
 
@@ -10826,6 +11120,8 @@ export struct UnifiedDetailPage {
               .textOverflow({ overflow: TextOverflow.Ellipsis })
               .width('100%')
           }
+
+          this.buildNovelV2TraceDisclosure()
         }
         .width('100%')
         .alignItems(HorizontalAlign.Start)
@@ -11052,6 +11348,7 @@ export struct UnifiedDetailPage {
         offsetY: 3
       })
       .enabled(!this.isReadActionBusy())
+      .id('unified_detail_start_reading_landscape')
       .onClick(() => this.continueReading())
 
       if (this.canShowReadAloudButton()) {
@@ -11301,7 +11598,7 @@ export struct UnifiedDetailPage {
         .expandSafeArea([SafeAreaType.SYSTEM], [SafeAreaEdge.TOP, SafeAreaEdge.BOTTOM])
 
         Column() {
-          if (this.errorMessage && !this.hasRenderablePrimaryContent()) {
+          if (this.errorMessage && (!this.hasRenderablePrimaryContent() || this.shouldSurfaceV2ImageFailure())) {
             this.buildErrorView()
           } else if (this.responsive_isLandscape) {
             // 横屏布局：左侧封面信息 + 右侧章节列表
@@ -11362,7 +11659,7 @@ export struct UnifiedDetailPage {
         }
         .width('100%')
         .height('100%')
-        .id('' as string)
+        .id('unified_detail_root')
         .padding({ top: this.statusBarHeight })
         
         // 封面预览弹窗

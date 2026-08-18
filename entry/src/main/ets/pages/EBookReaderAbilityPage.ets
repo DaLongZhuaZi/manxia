@@ -1,4 +1,5 @@
 import { common } from '@kit.AbilityKit';
+import { FrameCallback, UIContext } from '@kit.ArkUI';
 import { logger } from '../Utils/Logger';
 import { DisplayMode, WindowManager } from '../Utils/WindowManager';
 import { EBookReaderPage } from './EBookReaderPage';
@@ -16,36 +17,113 @@ import {
 } from '../Models/EBookModels';
 import { createUserManualEBookFromRawFile, isUserManualId } from '../Data/UserManualData';
 import { READER_ABILITY_HOST_MULTITON } from '../Framework/Reader/MangaReaderAbilityConstants';
+import { RemoteControlSocketChannel, RemoteFileRequestOptions } from '../Framework/Distributed/RemoteControlSocketChannel';
+import { OnlineEBookImportService } from '../Framework/Services/OnlineEBookImportService';
+import { SafeFileUtils } from '../Utils/SafeFileUtils';
 import { ReaderAbilityBackgroundBlurOverlay } from '../Framework/Reader/ReaderAbilityBackgroundBlurOverlay';
 import {
   EBookReaderAbilityParamStore,
   EBookReaderAbilityWindowPayload
 } from '../Framework/Reader/EBookReaderAbilityParamStore';
+import { ContinuationBootstrap } from '../Framework/Initialization/ContinuationBootstrap';
 
 const TAG: string = 'EBookReaderAbilityPage';
+
+class EBookReaderNavigationFrameCallback extends FrameCallback {
+  private callback: () => void;
+  private hasRun: boolean = false;
+
+  constructor(callback: () => void) {
+    super();
+    this.callback = callback;
+  }
+
+  onFrame(_frameTimeInNano: number): void {
+  }
+
+  onIdle(_timeLeftInNano: number): void {
+    if (this.hasRun) {
+      return;
+    }
+    this.hasRun = true;
+    this.callback();
+  }
+}
 
 @Entry
 @Component
 struct EBookReaderAbilityPage {
-  @State private pathStack: NavPathStack = new NavPathStack();
+  private pathStack: NavPathStack = new NavPathStack();
   @State private readerParams: EBookReaderParams | null = null;
-  @State private readerInstanceId: string = '';
+  // [跨端接续] 本地书籍从源设备传输期间的加载动画状态
+  @State private transferProgressVisible: boolean = false;
+  @State private transferProgressPercent: number = 0;
+  @State private transferProgressText: string = '';
+  private readerInstanceId: string = '';
   private hasOpenedReader: boolean = false;
+  private hasScheduledInitialReaderOpen: boolean = false;
+  private navigationScheduleGeneration: number = 0;
+  private openingScheduleGeneration: number = 0;
+  private isOpeningReader: boolean = false;
+  private isPageActive: boolean = false;
+  private scheduledFrameCallback: EBookReaderNavigationFrameCallback | null = null;
   private ebookDataManager: EBookDataManager = EBookDataManager.getInstance();
 
   aboutToAppear(): void {
+    this.isPageActive = true;
     this.applyRootImmersiveWindow('appear');
     this.resolveReaderLaunchPayload('appear');
-    void this.openInitialReader();
-    setTimeout((): void => {
-      this.applyRootImmersiveWindow('deferred');
-      this.resolveReaderLaunchPayload('deferred');
-      void this.openInitialReader();
-    }, 0);
+    this.scheduleInitialReaderOpen();
   }
 
   onPageShow(): void {
+    this.isPageActive = true;
     this.applyRootImmersiveWindow('page_show');
+    if (this.hasOpenedReader) {
+      return;
+    }
+    this.resolveReaderLaunchPayload('page_show');
+    this.scheduleInitialReaderOpen();
+  }
+
+  aboutToDisappear(): void {
+    this.isPageActive = false;
+    this.navigationScheduleGeneration += 1;
+    this.hasScheduledInitialReaderOpen = false;
+    this.scheduledFrameCallback = null;
+  }
+
+  private scheduleInitialReaderOpen(): void {
+    if (!this.isPageActive ||
+      this.hasOpenedReader ||
+      this.hasScheduledInitialReaderOpen) {
+      return;
+    }
+    try {
+      const uiContext: UIContext = this.getUIContext();
+      const scheduleGeneration: number = this.navigationScheduleGeneration + 1;
+      this.navigationScheduleGeneration = scheduleGeneration;
+      this.hasScheduledInitialReaderOpen = true;
+      const frameCallback = new EBookReaderNavigationFrameCallback((): void => {
+        if (scheduleGeneration !== this.navigationScheduleGeneration) {
+          return;
+        }
+        this.scheduledFrameCallback = null;
+        this.hasScheduledInitialReaderOpen = false;
+        if (!this.isPageActive || this.hasOpenedReader) {
+          return;
+        }
+        this.applyRootImmersiveWindow('frame_idle');
+        this.resolveReaderLaunchPayload('frame_idle');
+        void this.openInitialReader(scheduleGeneration);
+      });
+      this.scheduledFrameCallback = frameCallback;
+      uiContext.postFrameCallback(frameCallback);
+    } catch (error) {
+      this.scheduledFrameCallback = null;
+      this.hasScheduledInitialReaderOpen = false;
+      logger.warn(TAG, `调度独立电子书阅读器初始路由失败: ${String(error)}`);
+    }
   }
 
   private applyRootImmersiveWindow(source: string): void {
@@ -95,7 +173,22 @@ struct EBookReaderAbilityPage {
     }
   }
 
-  private async openInitialReader(): Promise<void> {
+  private async ensureReaderBootstrapReady(): Promise<void> {
+    try {
+      const hostContext = this.getUIContext()?.getHostContext() as common.UIAbilityContext;
+      if (!hostContext) {
+        logger.warn(TAG, '等待全局依赖就绪：无法获取宿主上下文，跳过等待');
+        return;
+      }
+      const startTime = Date.now();
+      await ContinuationBootstrap.getInstance().ensureReady(hostContext);
+      logger.info(TAG, `全局依赖已就绪（GlobalContext + 数据库），等待耗时${Date.now() - startTime}ms`);
+    } catch (error) {
+      logger.warn(TAG, `等待全局依赖就绪失败，继续尝试打开阅读器: ${String(error)}`);
+    }
+  }
+
+  private async openInitialReader(scheduleGeneration: number): Promise<void> {
     if (this.hasOpenedReader) {
       return;
     }
@@ -105,11 +198,32 @@ struct EBookReaderAbilityPage {
       return;
     }
 
-    this.hasOpenedReader = true;
-    const params = this.buildIsolatedReaderParams(this.readerParams);
-    const routeName = await this.resolveInitialRouteName(params);
-    logger.info(TAG, `打开独立电子书阅读器目标页: instanceId=${this.readerInstanceId}, route=${routeName}, bookId=${params.bookId}`);
-    this.pathStack.pushPathByName(routeName, params);
+    if (this.isOpeningReader && this.openingScheduleGeneration === scheduleGeneration) {
+      return;
+    }
+    this.isOpeningReader = true;
+    this.openingScheduleGeneration = scheduleGeneration;
+    try {
+      // [修复] 接续冷启动落地时，等待 GlobalContext + 数据库就绪后再解析 bookId，
+      // 避免“数据库未初始化 / 电子书不存在”；正常应用内打开时此处立即返回。
+      await this.ensureReaderBootstrapReady();
+      const params = this.buildIsolatedReaderParams(this.readerParams);
+      const routeName = await this.resolveInitialRouteName(params);
+      if (scheduleGeneration !== this.navigationScheduleGeneration ||
+        !this.isPageActive ||
+        this.hasOpenedReader) {
+        return;
+      }
+      logger.info(TAG, `打开独立电子书阅读器目标页: instanceId=${this.readerInstanceId}, route=${routeName}, bookId=${params.bookId}`);
+      this.pathStack.pushPathByName(routeName, params, false);
+      this.hasOpenedReader = true;
+    } catch (error) {
+      logger.error(TAG, `打开独立电子书阅读器目标页失败: instanceId=${this.readerInstanceId}, error=${String(error)}`);
+    } finally {
+      if (this.openingScheduleGeneration === scheduleGeneration) {
+        this.isOpeningReader = false;
+      }
+    }
   }
 
   private buildIsolatedReaderParams(source: EBookReaderParams): EBookReaderParams {
@@ -159,7 +273,104 @@ struct EBookReaderAbilityPage {
         params.bookId = ebook.id;
       }
     }
+    // [修复] 接续时若命中此前“传输损坏被降级解析入库”的残留记录（文件缺失或 EPUB 无 zip 魔数），
+    // 先清理记录再经通道重新拉取，避免直接打开损坏文件报“File is not exist”。
+    if (ebook && this.isContinuationRestoreActive() && !this.isLocalBookFileUsable(ebook)) {
+      logger.warn(TAG, `接续命中损坏的本地书籍残留记录，清理后重新从源设备拉取: bookId=${params.bookId}`);
+      try {
+        await this.ebookDataManager.deleteEBook(ebook.id);
+      } catch (deleteError) {
+        logger.warn(TAG, `清理损坏书籍记录失败: ${String(deleteError)}`);
+      }
+      ebook = null;
+    }
+    // [修复] 本地书跨端接续：目标端没有该书时，经独立连接通道向源端拉取文件并自动导入（保留源端 bookId）
+    if (!ebook) {
+      ebook = await this.recoverLocalEBookViaSocket(params.bookId);
+    }
     return ebook;
+  }
+
+  private isContinuationRestoreActive(): boolean {
+    const sessionId = AppStorage.get<string>('continuationSessionId');
+    return sessionId !== undefined && sessionId.length > 0;
+  }
+
+  private isLocalBookFileUsable(ebook: EBook): boolean {
+    const filePath = ebook.filePath || '';
+    if (filePath.length <= 0 || !SafeFileUtils.accessSync(filePath)) {
+      return false;
+    }
+    if (ebook.format === EBookFormat.EPUB) {
+      return this.hasZipMagic(filePath);
+    }
+    return true;
+  }
+
+  private hasZipMagic(filePath: string): boolean {
+    try {
+      const file = SafeFileUtils.openSync(filePath);
+      if (typeof file.fd !== 'number' || file.fd < 0) {
+        return false;
+      }
+      const head = new ArrayBuffer(4);
+      const readBytes = SafeFileUtils.readSync(file.fd, head);
+      SafeFileUtils.closeSync(file.fd);
+      if (readBytes < 4) {
+        return false;
+      }
+      const view = new Uint8Array(head);
+      return view[0] === 0x50 && view[1] === 0x4B;
+    } catch (error) {
+      return false;
+    }
+  }
+
+  private async recoverLocalEBookViaSocket(bookId: string): Promise<EBook | null> {
+    const continuationSessionId = AppStorage.get<string>('continuationSessionId');
+    if (!continuationSessionId || continuationSessionId.length <= 0) {
+      return null;
+    }
+    this.transferProgressVisible = true;
+    this.transferProgressPercent = 0;
+    this.transferProgressText = '正在从源设备同步本地书籍…';
+    let receivedTempPath = '';
+    try {
+      const options: RemoteFileRequestOptions = {
+        onProgress: (receivedBytes: number, totalBytes: number): void => {
+          const percent = totalBytes > 0 ? Math.min(100, Math.round(receivedBytes * 100 / totalBytes)) : 0;
+          this.transferProgressPercent = percent;
+          this.transferProgressText = `正在从源设备同步本地书籍… ${percent}%`;
+        }
+      };
+      const receiveResult = await RemoteControlSocketChannel.getInstance().requestBookFile(bookId, options);
+      if (!receiveResult) {
+        logger.warn(TAG, `从源设备传输书籍文件失败: bookId=${bookId}`);
+        this.getUIContext().getPromptAction().showToast({ message: '本地书籍传输失败，请确认源设备遥控通道正常' });
+        return null;
+      }
+      receivedTempPath = receiveResult.tempPath;
+      this.transferProgressText = '正在导入本地书籍…';
+      const imported = await OnlineEBookImportService.getInstance().importTransferredBook(
+        receiveResult.tempPath,
+        bookId,
+        receiveResult.fileName
+      );
+      this.getUIContext().getPromptAction().showToast({ message: '本地书籍已从源设备同步完成' });
+      return imported;
+    } catch (error) {
+      logger.warn(TAG, `恢复本地书籍失败（经独立通道传输）: bookId=${bookId}, error=${String(error)}`);
+      return null;
+    } finally {
+      this.transferProgressVisible = false;
+      if (receivedTempPath.length > 0) {
+        try {
+          SafeFileUtils.unlinkSync(receivedTempPath);
+        } catch (cleanupError) {
+          logger.debug(TAG, `清理传输临时文件失败: ${String(cleanupError)}`);
+        }
+      }
+    }
   }
 
   private async recoverUserManualEBook(requestedBookId: string): Promise<EBook | null> {
@@ -304,6 +515,24 @@ struct EBookReaderAbilityPage {
       .ignoreLayoutSafeArea([LayoutSafeAreaType.SYSTEM], [LayoutSafeAreaEdge.TOP, LayoutSafeAreaEdge.BOTTOM])
 
       ReaderAbilityBackgroundBlurOverlay()
+
+      if (this.transferProgressVisible) {
+        Column() {
+          LoadingProgress()
+            .width(46)
+            .height(46)
+            .color(Color.White)
+          Text(this.transferProgressText)
+            .fontSize(14)
+            .fontColor(Color.White)
+            .opacity(0.85)
+            .margin({ top: 18 })
+        }
+        .width('100%')
+        .height('100%')
+        .justifyContent(FlexAlign.Center)
+        .backgroundColor(Color.Black)
+      }
     }
     .width('100%')
     .height('100%')

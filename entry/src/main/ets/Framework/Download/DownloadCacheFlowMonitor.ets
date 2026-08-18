@@ -10,6 +10,10 @@ import {
   DownloadCacheFlowStage,
   DownloadCacheFlowSummary
 } from './DownloadCacheFlowTypes';
+import {
+  getNetworkTransportFailureCoordinator,
+  NetworkTransportFailureCoordinator
+} from '../Network/NetworkTransportFailureCoordinator';
 
 const TAG = 'DownloadCacheFlowMonitor';
 
@@ -36,6 +40,8 @@ export class DownloadCacheFlowMonitor {
   private failedEvents: DownloadCacheFlowEvent[] = new Array<DownloadCacheFlowEvent>();
   private slowEvents: DownloadCacheFlowEvent[] = new Array<DownloadCacheFlowEvent>();
   private sequence: number = 0;
+  private transportFailureCoordinator: NetworkTransportFailureCoordinator =
+    getNetworkTransportFailureCoordinator();
 
   private constructor() {}
 
@@ -125,7 +131,6 @@ export class DownloadCacheFlowMonitor {
       }
       if (this.isFailureEvent(event)) {
         this.pushFailedEvent(event);
-        logger.error(TAG, `下载缓存失败事件: ${this.describeEvent(event)}, error=${event.errorMessage}`);
       }
       this.pushRecentEvent(event);
       this.logEvent(event);
@@ -370,7 +375,12 @@ export class DownloadCacheFlowMonitor {
     } else if (event.severity === DownloadCacheFlowSeverity.WARN) {
       logger.warn(TAG, text);
     } else if (event.severity === DownloadCacheFlowSeverity.ERROR) {
-      logger.error(TAG, text);
+      const errorText: string = event.errorMessage.length > 0 ? `${text}, error=${event.errorMessage}` : text;
+      if (this.transportFailureCoordinator.isRecognizedFailureMessage(event.errorMessage)) {
+        logger.warn(TAG, `下载缓存传输失败（已聚合）: ${errorText}`);
+      } else {
+        logger.error(TAG, errorText);
+      }
     } else {
       logger.info(TAG, text);
     }

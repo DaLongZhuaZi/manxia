@@ -16,8 +16,8 @@ import { FontAwareHelper, FontAwareState } from '../Framework/Components/FontAwa
 import { PageLifecycleManager, CancellationError } from '../Framework/Lifecycle';
 import { ThemeManager, ThemeType } from '../Framework/Managers/ThemeManager';
 import { LegadoBookSource, LegadoSearchBook, LegadoBook, LegadoChapter, LegadoBookSourceType } from '../Framework/Novel/LegadoSourceTypes';
-import { getNovelSourceManager } from '../Framework/Novel/NovelSourceManager';
-import { NovelSourceExecutor } from '../Framework/Novel/NovelSourceExecutor';
+import { getNovelSourceManager, NovelSourceManager } from '../Framework/Novel/NovelSourceManager';
+import { NovelSearchResult } from '../Models/NovelModels';
 import { LegadoMangaImageExtractor } from '../Framework/Novel/LegadoMangaImageExtractor';
 import { LegadoWebViewComponent } from '../Framework/Novel/LegadoWebViewComponent';
 import { getLegadoJsEngine } from '../Framework/Novel/LegadoJsEngine';
@@ -100,7 +100,7 @@ export struct NovelSourceDebugPage {
   // WebView控制器（用于网络请求）
   private webViewController: webview.WebviewController = new webview.WebviewController();
   
-  private executor: NovelSourceExecutor | null = null;
+  private sourceManager: NovelSourceManager = getNovelSourceManager();
   private logScroller: Scroller = new Scroller();
 
   aboutToAppear(): void {
@@ -130,12 +130,11 @@ export struct NovelSourceDebugPage {
    * 加载书源
    */
   loadSource(): void {
-    const sourceManager = getNovelSourceManager();
-    const source = sourceManager.getSource(this.sourceId);
+    const source = this.sourceManager.getSource(this.sourceId);
     if (source) {
       this.source = source;
-      this.executor = new NovelSourceExecutor(source);
       this.addLog('info', `已加载书源: ${source.bookSourceName}`);
+      this.addLog('debug', `当前统一策略: ${this.sourceManager.getV2ExecutionPolicy()}`);
       this.addLog('debug', `书源URL: ${source.bookSourceUrl}`);
       if (source.searchUrl) {
         this.addLog('debug', `搜索URL: ${source.searchUrl.substring(0, 100)}...`);
@@ -172,7 +171,7 @@ export struct NovelSourceDebugPage {
    * 执行搜索测试
    */
   async testSearch(): Promise<void> {
-    if (!this.executor || !this.source) {
+    if (!this.source) {
       this.addLog('error', '书源未加载');
       return;
     }
@@ -191,10 +190,10 @@ export struct NovelSourceDebugPage {
     
     try {
       const startTime = Date.now();
-      const results = await this.executor.search(this.searchKeyword, 1);
+      const results = await this.sourceManager.search(this.sourceId, this.searchKeyword, 1);
       const elapsed = Date.now() - startTime;
       
-      this.searchResults = results;
+      this.searchResults = this.toLegadoSearchBooks(results);
       
       if (results.length > 0) {
         this.addLog('success', `搜索完成，找到 ${results.length} 本书 (${elapsed}ms)`);
@@ -220,7 +219,7 @@ export struct NovelSourceDebugPage {
    * 测试书籍详情
    */
   async testBookInfo(book: LegadoSearchBook): Promise<void> {
-    if (!this.executor) {
+    if (!this.source) {
       this.addLog('error', '书源未加载');
       return;
     }
@@ -236,7 +235,7 @@ export struct NovelSourceDebugPage {
     
     try {
       const startTime = Date.now();
-      const info = await this.executor.getBookInfo(book.bookUrl);
+      const info = await this.sourceManager.getBookInfo(this.sourceId, book.bookUrl);
       const elapsed = Date.now() - startTime;
       
       if (info) {
@@ -260,7 +259,7 @@ export struct NovelSourceDebugPage {
    * 测试目录
    */
   async testToc(): Promise<void> {
-    if (!this.executor || !this.bookInfo) {
+    if (!this.source || !this.bookInfo) {
       this.addLog('error', '请先获取书籍详情');
       return;
     }
@@ -274,7 +273,7 @@ export struct NovelSourceDebugPage {
     
     try {
       const startTime = Date.now();
-      const chapters = await this.executor.getChapterList(this.bookInfo);
+      const chapters = await this.sourceManager.getChapterList(this.sourceId, this.bookInfo);
       const elapsed = Date.now() - startTime;
       
       this.chapters = chapters;
@@ -299,7 +298,7 @@ export struct NovelSourceDebugPage {
    * 测试正文
    */
   async testContent(chapter: LegadoChapter): Promise<void> {
-    if (!this.executor) {
+    if (!this.source) {
       this.addLog('error', '书源未加载');
       return;
     }
@@ -313,7 +312,7 @@ export struct NovelSourceDebugPage {
     
     try {
       const startTime = Date.now();
-      const content = await this.executor.getContent(chapter);
+      const content = await this.sourceManager.getContent(this.sourceId, chapter);
       const elapsed = Date.now() - startTime;
       
       if (content && content.length > 0) {
@@ -365,11 +364,37 @@ export struct NovelSourceDebugPage {
     return parts.join(', ');
   }
 
+  /** Maps the central manager result back to the debug page's display model. */
+  private toLegadoSearchBooks(results: NovelSearchResult[]): LegadoSearchBook[] {
+    const books: LegadoSearchBook[] = [];
+    const source = this.source;
+    if (source === null) {
+      return books;
+    }
+    for (let i = 0; i < results.length; i++) {
+      const result = results[i];
+      books.push({
+        origin: source.bookSourceUrl,
+        originName: source.bookSourceName,
+        bookUrl: result.bookUrl,
+        name: result.name,
+        author: result.author,
+        kind: result.kind || '',
+        intro: result.intro || '',
+        coverUrl: result.coverUrl || '',
+        latestChapterTitle: result.latestChapterTitle || '',
+        wordCount: result.wordCount || '',
+        type: source.bookSourceType
+      });
+    }
+    return books;
+  }
+
   /**
    * 一键测试所有功能
    */
   async testAll(): Promise<void> {
-    if (!this.executor || !this.source) {
+    if (!this.source) {
       this.addLog('error', '书源未加载');
       return;
     }

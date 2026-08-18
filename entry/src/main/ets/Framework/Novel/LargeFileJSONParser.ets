@@ -1,124 +1,130 @@
-﻿import { SafeFileUtils } from '../../Utils/SafeFileUtils';
-import { SafeUtils } from '../../Utils/SafeUtils';
 /**
- * 大文件流式JSON解析器
- * 用于安全导入大型书源JSON文件（50M~100M+）
- * 
- * 核心特性：
- * 1. 分块读取文件，避免一次性加载整个文件到内存
- * 2. 流式解析JSON数组，逐个提取JSON对象
- * 3. 分批处理，每批处理后让出主线程防止ANR
- * 4. 进度回调，实时反馈导入进度
- * 
- * 文件路径: entry/src/main/ets/Framework/Novel/LargeFileJSONParser.ets
+ * Streaming JSON document reader for large Legado source packages.
+ *
+ * The reader deliberately emits each top-level source object as its original
+ * JSON text.  It never materializes a dynamic ArkTS object, so the V2 import
+ * compiler remains the sole authority for parsing, hashing and persistence.
  */
 
-import { logger } from '../../Utils/Logger';
 import { fileIo as fs } from '@kit.CoreFileKit';
+import { util } from '@kit.ArkTS';
+import { logger } from '../../Utils/Logger';
+import { SafeFileUtils } from '../../Utils/SafeFileUtils';
 
 const TAG = 'LargeFileJSONParser';
 
-/**
- * 解析进度回调
- */
 export interface ParseProgressCallback {
-  /**
-   * 文件读取进度
-   * @param bytesRead 已读取字节数
-   * @param totalBytes 总字节数
-   */
   onFileProgress?: (bytesRead: number, totalBytes: number) => void;
-  
-  /**
-   * 对象解析进度
-   * @param parsedCount 已解析对象数
-   * @param currentObject 当前解析的对象
-   */
-  onObjectParsed?: (parsedCount: number, currentObject: object) => void;
-  
-  /**
-   * 批次处理完成
-   * @param batchIndex 批次索引
-   * @param batchSize 批次大小
-   * @param totalParsed 已解析总数
-   */
+  onDocumentParsed?: (parsedCount: number, rawDocument: string) => Promise<void>;
   onBatchComplete?: (batchIndex: number, batchSize: number, totalParsed: number) => void;
-  
-  /**
-   * 解析出错
-   * @param error 错误信息
-   * @param recoverable 是否可恢复继续
-   */
   onError?: (error: string, recoverable: boolean) => void;
 }
 
-/**
- * 解析配置
- */
 export interface ParseConfig {
-  /**
-   * 每次读取的块大小（字节），默认 512KB
-   */
   chunkSize?: number;
-  
-  /**
-   * 每批处理的对象数量，默认 50
-   */
   batchSize?: number;
-  
-  /**
-   * 批次间休眠时间（毫秒），默认 10ms，让出主线程
-   */
   batchDelayMs?: number;
-  
-  /**
-   * 单个JSON对象最大大小（字节），超过则跳过，默认 1MB
-   */
   maxObjectSize?: number;
 }
 
-/**
- * 解析结果
- */
-export interface ParseResult<T> {
+interface ResolvedParseConfig {
+  chunkSize: number;
+  batchSize: number;
+  batchDelayMs: number;
+  maxObjectSize: number;
+}
+
+export interface ParseResult {
   success: boolean;
-  objects: T[];
   totalParsed: number;
   errors: string[];
   elapsedMs: number;
 }
 
+enum JsonRootState {
+  INITIAL = 0,
+  ARRAY_EXPECT_FIRST_VALUE = 1,
+  ARRAY_EXPECT_VALUE = 2,
+  ARRAY_EXPECT_DELIMITER = 3,
+  ARRAY_COMPLETE = 4,
+  SINGLE_EXPECT_END = 5
+}
+
+class EmptyParseProgressCallback implements ParseProgressCallback {}
+
 /**
- * 解析器状态
+ * Keeps raw source text and an exact UTF-8 byte count while scanning one
+ * document.  Surrogate pairs are counted as one four-byte UTF-8 sequence.
  */
-enum ParserState {
-  INIT,           // 初始状态
-  ARRAY_START,    // 找到数组起始 [
-  OBJECT_START,   // 找到对象起始 {
-  IN_OBJECT,      // 在对象内部
-  IN_STRING,      // 在字符串内部
-  ESCAPE,         // 转义字符
-  OBJECT_END,     // 对象结束 }
-  ARRAY_END,      // 数组结束 ]
-  DONE,           // 完成
-  ERROR           // 错误
+class RawJsonDocumentBuffer {
+  private rawDocument: string = '';
+  private byteLength: number = 0;
+  private hasPendingHighSurrogate: boolean = false;
+
+  begin(): void {
+    this.rawDocument = '{';
+    this.byteLength = 1;
+    this.hasPendingHighSurrogate = false;
+  }
+
+  append(character: string): void {
+    this.rawDocument += character;
+    this.byteLength += this.getUtf8ByteIncrement(character);
+  }
+
+  getRawDocument(): string {
+    return this.rawDocument;
+  }
+
+  getByteLength(): number {
+    return this.byteLength;
+  }
+
+  clear(): void {
+    this.rawDocument = '';
+    this.byteLength = 0;
+    this.hasPendingHighSurrogate = false;
+  }
+
+  private getUtf8ByteIncrement(character: string): number {
+    const codeUnit = character.charCodeAt(0);
+    if (this.hasPendingHighSurrogate) {
+      this.hasPendingHighSurrogate = false;
+      if (codeUnit >= 0xDC00 && codeUnit <= 0xDFFF) {
+        // The preceding high surrogate was provisionally counted as three
+        // bytes; a complete pair is four bytes in UTF-8.
+        return 1;
+      }
+    }
+    if (codeUnit <= 0x7F) {
+      return 1;
+    }
+    if (codeUnit <= 0x7FF) {
+      return 2;
+    }
+    if (codeUnit >= 0xD800 && codeUnit <= 0xDBFF) {
+      this.hasPendingHighSurrogate = true;
+    }
+    return 3;
+  }
 }
 
 /**
- * 大文件流式JSON解析器
+ * Reads a JSON object or an array of JSON objects without decoding a chunk as
+ * Latin-1.  `TextDecoder` is kept in streaming mode so a UTF-8 sequence split
+ * between two file reads remains intact.
  */
-export class LargeFileJSONParser<T = object> {
-  private config: Required<ParseConfig>;
-  private callback: ParseProgressCallback;
-  
-  // 默认配置
-  private static readonly DEFAULT_CONFIG: Required<ParseConfig> = {
-    chunkSize: 512 * 1024,      // 512KB
-    batchSize: 50,              // 每批50个对象
-    batchDelayMs: 10,           // 10ms
-    maxObjectSize: 1024 * 1024  // 1MB
+export class LargeFileJSONParser {
+  private static readonly DEFAULT_CONFIG: ResolvedParseConfig = {
+    chunkSize: 512 * 1024,
+    batchSize: 50,
+    batchDelayMs: 10,
+    maxObjectSize: 1024 * 1024
   };
-  
+
+  private readonly config: ResolvedParseConfig;
+  private readonly callback: ParseProgressCallback;
+
   constructor(config?: ParseConfig, callback?: ParseProgressCallback) {
     this.config = {
       chunkSize: config?.chunkSize ?? LargeFileJSONParser.DEFAULT_CONFIG.chunkSize,
@@ -126,340 +132,438 @@ export class LargeFileJSONParser<T = object> {
       batchDelayMs: config?.batchDelayMs ?? LargeFileJSONParser.DEFAULT_CONFIG.batchDelayMs,
       maxObjectSize: config?.maxObjectSize ?? LargeFileJSONParser.DEFAULT_CONFIG.maxObjectSize
     };
-    this.callback = callback || {};
+    this.callback = callback ?? new EmptyParseProgressCallback();
   }
-  
-  /**
-   * 从文件路径解析JSON数组
-   * @param filePath 文件路径
-   * @returns 解析结果
-   */
-  async parseFromFile(filePath: string): Promise<ParseResult<T>> {
+
+  async parseFromFile(filePath: string): Promise<ParseResult> {
     const startTime = Date.now();
-    const result: ParseResult<T> = {
+    const result: ParseResult = {
       success: false,
-      objects: [],
       totalParsed: 0,
       errors: [],
       elapsedMs: 0
     };
-    
     let file: fs.File | null = null;
-    
+
     try {
-      // 获取文件大小
-      const stat = SafeFileUtils.statSync(filePath);
-      const totalSize = stat.size;
-      
-      logger.info(TAG, `开始解析大文件: ${filePath}, 大小: ${this.formatSize(totalSize)}`);
-      
-      // 打开文件
-      file = SafeFileUtils.openSync(filePath, fs.OpenMode.READ_ONLY);
-      
-      // 流式解析
-      await this.parseFileStream(file, totalSize, result);
-      
-      result.success = true;
-      
-    } catch (error) {
-      const errorMsg = `文件解析失败: ${String(error)}`;
-      logger.error(TAG, errorMsg);
-      result.errors.push(errorMsg);
-      this.callback.onError?.(errorMsg, false);
-    } finally {
-      if (file) {
-        try {
-          SafeFileUtils.closeSync(file);
-        } catch (e) {
-          logger.warn(TAG, `关闭文件失败: ${String(e)}`);
-        }
+      // A DocumentViewPicker or file-association Want can supply a temporary
+      // `file://docs` grant.  Such URIs must be opened exactly once and then
+      // streamed through that FD; converting them to a path, or stat'ing the
+      // URI before opening it, can consume or bypass the grant.
+      const isGrantedUri = filePath.includes('://');
+      if (isGrantedUri) {
+        file = SafeFileUtils.openSyncStrict(filePath, fs.OpenMode.READ_ONLY);
       }
+      const stat = isGrantedUri && file !== null
+        ? SafeFileUtils.statSyncStrict(file.fd)
+        : SafeFileUtils.statSyncStrict(filePath);
+      const totalSize = stat.size;
+      if (totalSize <= 0) {
+        throw new Error('书源文件为空或无法读取文件大小。');
+      }
+      logger.info(TAG, `开始流式读取书源文件: ${this.formatSize(totalSize)}`);
+      if (file === null) {
+        file = SafeFileUtils.openSync(filePath, fs.OpenMode.READ_ONLY);
+      }
+      await this.parseFileStream(file, totalSize, result);
+      result.success = true;
+    } catch (error) {
+      const errorMessage = `文件解析失败: ${String(error)}`;
+      result.errors.push(errorMessage);
+      this.callback.onError?.(errorMessage, false);
+      logger.error(TAG, errorMessage);
+    } finally {
+      if (file !== null) {
+        SafeFileUtils.closeSync(file);
+      }
+      result.elapsedMs = Date.now() - startTime;
     }
-    
-    result.elapsedMs = Date.now() - startTime;
-    logger.info(TAG, `解析完成: ${result.totalParsed}个对象, 耗时${result.elapsedMs}ms, ` +
-      `错误${result.errors.length}个`);
-    
+
+    logger.info(
+      TAG,
+      `流式读取完成: documents=${result.totalParsed}, elapsedMs=${result.elapsedMs}, errors=${result.errors.length}`
+    );
     return result;
   }
-  
-  /**
-   * 从文件描述符流式解析
-   */
-  private async parseFileStream(
-    file: fs.File,
-    totalSize: number,
-    result: ParseResult<T>
-  ): Promise<void> {
+
+  private async parseFileStream(file: fs.File, totalSize: number, result: ParseResult): Promise<void> {
     const buffer = new ArrayBuffer(this.config.chunkSize);
+    const decoder = util.TextDecoder.create('utf-8', {
+      ignoreBOM: true,
+      fatal: true
+    });
+    const documentBuffer = new RawJsonDocumentBuffer();
     let bytesRead = 0;
-    let offset = 0;
-    
-    // 解析状态
-    let state = ParserState.INIT;
-    let objectBuffer = '';
+    let rootState: JsonRootState = JsonRootState.INITIAL;
     let braceDepth = 0;
     let inString = false;
     let escapeNext = false;
-    let batchObjects: T[] = [];
+    let batchSize = 0;
     let batchIndex = 0;
-    
-    // 读取并处理文件
-    while (offset < totalSize) {
-      // 读取一块数据
-      const readLen = SafeFileUtils.readSync(file.fd, buffer, { offset: offset });
-      if (readLen <= 0) {
+
+    while (bytesRead < totalSize) {
+      // `readSync` advances the file pointer. Supplying the accumulated byte
+      // count as an offset would skip every subsequent chunk.
+      const readLength = SafeFileUtils.readSync(file.fd, buffer);
+      if (readLength <= 0) {
         break;
       }
-      
-      offset += readLen;
-      bytesRead += readLen;
-      
-      // 回调文件读取进度
+      bytesRead += readLength;
       this.callback.onFileProgress?.(bytesRead, totalSize);
-      
-      // 将缓冲区转换为字符串
-      const chunk = this.decodeChunk(buffer, readLen);
-      
-      // 逐字符解析
-      for (let i = 0; i < chunk.length; i++) {
-        const char = chunk[i];
-        
-        // 处理转义
+      const bytes = new Uint8Array(buffer, 0, readLength);
+      const decodedChunk: string = decoder.decodeToString(bytes, { stream: true });
+      const streamState: StreamParserState = await this.consumeChunk(
+        decodedChunk,
+        documentBuffer,
+        rootState,
+        braceDepth,
+        inString,
+        escapeNext,
+        batchSize,
+        batchIndex,
+        result
+      );
+      rootState = streamState.rootState;
+      braceDepth = streamState.braceDepth;
+      inString = streamState.inString;
+      escapeNext = streamState.escapeNext;
+      batchSize = streamState.batchSize;
+      batchIndex = streamState.batchIndex;
+    }
+
+    const trailingChunk: string = decoder.decodeToString(new Uint8Array(0), { stream: false });
+    if (trailingChunk.length > 0) {
+      const streamState: StreamParserState = await this.consumeChunk(
+        trailingChunk,
+        documentBuffer,
+        rootState,
+        braceDepth,
+        inString,
+        escapeNext,
+        batchSize,
+        batchIndex,
+        result
+      );
+      rootState = streamState.rootState;
+      braceDepth = streamState.braceDepth;
+      inString = streamState.inString;
+      escapeNext = streamState.escapeNext;
+      batchSize = streamState.batchSize;
+      batchIndex = streamState.batchIndex;
+    }
+
+    if (bytesRead !== totalSize) {
+      throw new Error(`文件读取不完整: expected=${totalSize}, actual=${bytesRead}`);
+    }
+    this.validateCompletedStream(rootState, braceDepth, inString, escapeNext);
+    if (batchSize > 0) {
+      this.callback.onBatchComplete?.(batchIndex, batchSize, result.totalParsed);
+    }
+  }
+
+  private async consumeChunk(
+    chunk: string,
+    documentBuffer: RawJsonDocumentBuffer,
+    initialRootState: JsonRootState,
+    initialBraceDepth: number,
+    initialInString: boolean,
+    initialEscapeNext: boolean,
+    initialBatchSize: number,
+    initialBatchIndex: number,
+    result: ParseResult
+  ): Promise<StreamParserState> {
+    let rootState = initialRootState;
+    let braceDepth = initialBraceDepth;
+    let inString = initialInString;
+    let escapeNext = initialEscapeNext;
+    let batchSize = initialBatchSize;
+    let batchIndex = initialBatchIndex;
+
+    for (let index = 0; index < chunk.length; index++) {
+      const character = chunk.charAt(index);
+      if (braceDepth === 0) {
+        const outsideState = this.consumeOutsideDocument(character, rootState, documentBuffer);
+        rootState = outsideState.rootState;
+        braceDepth = outsideState.braceDepth;
+        inString = outsideState.inString;
+        escapeNext = outsideState.escapeNext;
+        continue;
+      }
+
+      documentBuffer.append(character);
+      if (documentBuffer.getByteLength() > this.config.maxObjectSize) {
+        throw new Error(`单个书源原始 JSON 超过限制: ${this.formatSize(documentBuffer.getByteLength())}`);
+      }
+
+      if (inString) {
         if (escapeNext) {
-          if (state === ParserState.IN_OBJECT) {
-            objectBuffer += char;
-          }
           escapeNext = false;
-          continue;
-        }
-        
-        if (char === '\\' && inString) {
-          objectBuffer += char;
+        } else if (character === '\\') {
           escapeNext = true;
-          continue;
+        } else if (character === '"') {
+          inString = false;
         }
-        
-        // 处理字符串边界
-        if (char === '"' && !escapeNext) {
-          if (state === ParserState.IN_OBJECT) {
-            objectBuffer += char;
-            inString = !inString;
+        continue;
+      }
+
+      if (character === '"') {
+        inString = true;
+        continue;
+      }
+      if (character === '{') {
+        braceDepth++;
+        continue;
+      }
+      if (character === '}') {
+        braceDepth--;
+        if (braceDepth < 0) {
+          throw new Error('JSON 对象括号层级无效。');
+        }
+        if (braceDepth === 0) {
+          result.totalParsed++;
+          const rawDocument = documentBuffer.getRawDocument();
+          const documentCallback = this.callback.onDocumentParsed;
+          if (documentCallback !== undefined) {
+            await documentCallback(result.totalParsed, rawDocument);
           }
-          continue;
-        }
-        
-        // 在字符串内部，直接追加
-        if (inString) {
-          objectBuffer += char;
-          continue;
-        }
-        
-        // 根据状态处理字符
-        switch (state) {
-          case ParserState.INIT:
-            if (char === '[') {
-              state = ParserState.ARRAY_START;
-            } else if (char === '{') {
-              // 单个对象，不是数组
-              state = ParserState.IN_OBJECT;
-              objectBuffer = char;
-              braceDepth = 1;
-            }
-            break;
-            
-          case ParserState.ARRAY_START:
-            if (char === '{') {
-              state = ParserState.IN_OBJECT;
-              objectBuffer = char;
-              braceDepth = 1;
-            } else if (char === ']') {
-              state = ParserState.DONE;
-            }
-            break;
-            
-          case ParserState.IN_OBJECT:
-            objectBuffer += char;
-            
-            if (char === '{') {
-              braceDepth++;
-            } else if (char === '}') {
-              braceDepth--;
-              
-              if (braceDepth === 0) {
-                // 对象结束，尝试解析
-                const parsedObj = this.tryParseObject(objectBuffer, result);
-                if (parsedObj !== null) {
-                  batchObjects.push(parsedObj);
-                  result.totalParsed++;
-                  
-                  this.callback.onObjectParsed?.(result.totalParsed, parsedObj as object);
-                  
-                  // 检查是否需要处理批次
-                  if (batchObjects.length >= this.config.batchSize) {
-                    result.objects.push(...batchObjects);
-                    this.callback.onBatchComplete?.(batchIndex, batchObjects.length, result.totalParsed);
-                    batchObjects = [];
-                    batchIndex++;
-                    
-                    // 让出主线程
-                    await this.sleep(this.config.batchDelayMs);
-                  }
-                }
-                
-                objectBuffer = '';
-                state = ParserState.ARRAY_START;
-              }
-            }
-            
-            // 检查对象大小限制
-            if (objectBuffer.length > this.config.maxObjectSize) {
-              const errorMsg = `对象大小超过限制 (${this.formatSize(objectBuffer.length)})`;
-              result.errors.push(errorMsg);
-              this.callback.onError?.(errorMsg, true);
-              objectBuffer = '';
-              braceDepth = 0;
-              state = ParserState.ARRAY_START;
-            }
-            break;
-            
-          case ParserState.DONE:
-            // 已完成，忽略后续字符
-            break;
+          documentBuffer.clear();
+          batchSize++;
+          if (batchSize >= this.config.batchSize) {
+            this.callback.onBatchComplete?.(batchIndex, batchSize, result.totalParsed);
+            batchSize = 0;
+            batchIndex++;
+            await this.sleep(this.config.batchDelayMs);
+          }
         }
       }
     }
-    
-    // 处理最后一批
-    if (batchObjects.length > 0) {
-      result.objects.push(...batchObjects);
-      this.callback.onBatchComplete?.(batchIndex, batchObjects.length, result.totalParsed);
+
+    return new StreamParserState(rootState, braceDepth, inString, escapeNext, batchSize, batchIndex);
+  }
+
+  private consumeOutsideDocument(
+    character: string,
+    currentState: JsonRootState,
+    documentBuffer: RawJsonDocumentBuffer
+  ): OutsideDocumentState {
+    if (this.isTopLevelWhitespace(character)) {
+      return new OutsideDocumentState(currentState, 0, false, false);
     }
-    
-    // 处理可能的未完成对象
-    if (objectBuffer.length > 0 && braceDepth === 0) {
-      const parsedObj = this.tryParseObject(objectBuffer, result);
-      if (parsedObj !== null) {
-        result.objects.push(parsedObj);
-        result.totalParsed++;
-      }
+    switch (currentState) {
+      case JsonRootState.INITIAL:
+        if (character === '[') {
+          return new OutsideDocumentState(JsonRootState.ARRAY_EXPECT_FIRST_VALUE, 0, false, false);
+        }
+        if (character === '{') {
+          documentBuffer.begin();
+          return new OutsideDocumentState(JsonRootState.SINGLE_EXPECT_END, 1, false, false);
+        }
+        break;
+      case JsonRootState.ARRAY_EXPECT_FIRST_VALUE:
+        if (character === ']') {
+          return new OutsideDocumentState(JsonRootState.ARRAY_COMPLETE, 0, false, false);
+        }
+        if (character === '{') {
+          documentBuffer.begin();
+          return new OutsideDocumentState(JsonRootState.ARRAY_EXPECT_DELIMITER, 1, false, false);
+        }
+        break;
+      case JsonRootState.ARRAY_EXPECT_VALUE:
+        if (character === '{') {
+          documentBuffer.begin();
+          return new OutsideDocumentState(JsonRootState.ARRAY_EXPECT_DELIMITER, 1, false, false);
+        }
+        break;
+      case JsonRootState.ARRAY_EXPECT_DELIMITER:
+        if (character === ',') {
+          return new OutsideDocumentState(JsonRootState.ARRAY_EXPECT_VALUE, 0, false, false);
+        }
+        if (character === ']') {
+          return new OutsideDocumentState(JsonRootState.ARRAY_COMPLETE, 0, false, false);
+        }
+        break;
+      case JsonRootState.ARRAY_COMPLETE:
+      case JsonRootState.SINGLE_EXPECT_END:
+        break;
+    }
+    throw new Error(`书源 JSON 顶层结构无效: ${character}`);
+  }
+
+  /**
+   * `TextDecoder` normally consumes a leading UTF-8 BOM when ignoreBOM is
+   * enabled, but the scanner also accepts it explicitly.  This keeps the
+   * top-level grammar correct on implementations that surface U+FEFF.
+   */
+  private isTopLevelWhitespace(character: string): boolean {
+    return character <= ' ' || character === '\uFEFF';
+  }
+
+  private validateCompletedStream(
+    rootState: JsonRootState,
+    braceDepth: number,
+    inString: boolean,
+    escapeNext: boolean
+  ): void {
+    if (braceDepth !== 0 || inString || escapeNext) {
+      throw new Error('JSON 文档在文件结尾处不完整。');
+    }
+    if (rootState === JsonRootState.INITIAL ||
+      rootState === JsonRootState.ARRAY_EXPECT_FIRST_VALUE ||
+      rootState === JsonRootState.ARRAY_EXPECT_VALUE ||
+      rootState === JsonRootState.ARRAY_EXPECT_DELIMITER) {
+      throw new Error('书源 JSON 顶层数组未正确结束。');
     }
   }
-  
-  /**
-   * 解码数据块为字符串
-   */
-  private decodeChunk(buffer: ArrayBuffer, length: number): string {
-    try {
-      // 使用 TextDecoder 或手动解码
-      const uint8Array = new Uint8Array(buffer, 0, length);
-      let result = '';
-      
-      // 分批解码，避免栈溢出
-      const chunkSize = 8192;
-      for (let i = 0; i < uint8Array.length; i += chunkSize) {
-        const end = Math.min(i + chunkSize, uint8Array.length);
-        const slice = uint8Array.slice(i, end);
-        result += String.fromCharCode(...slice);
-      }
-      
-      return result;
-    } catch (error) {
-      logger.error(TAG, `解码数据块失败: ${String(error)}`);
-      return '';
-    }
+
+  private sleep(delayMs: number): Promise<void> {
+    return new Promise<void>((resolve: () => void): void => {
+      setTimeout(resolve, delayMs);
+    });
   }
-  
-  /**
-   * 尝试解析JSON对象
-   */
-  private tryParseObject(jsonStr: string, result: ParseResult<T>): T | null {
-    try {
-      const trimmed = jsonStr.trim();
-      if (!trimmed || !trimmed.startsWith('{') || !trimmed.endsWith('}')) {
-        return null;
-      }
-      
-      return SafeUtils.parseObj(trimmed) as T;
-    } catch (error) {
-      const errorMsg = `JSON解析失败: ${String(error).substring(0, 100)}`;
-      result.errors.push(errorMsg);
-      this.callback.onError?.(errorMsg, true);
-      return null;
-    }
-  }
-  
-  /**
-   * 休眠指定毫秒
-   */
-  private sleep(ms: number): Promise<void> {
-    return new Promise(resolve => setTimeout(resolve, ms));
-  }
-  
-  /**
-   * 格式化文件大小
-   */
+
   private formatSize(bytes: number): string {
     if (bytes < 1024) {
       return `${bytes}B`;
-    } else if (bytes < 1024 * 1024) {
-      return `${(bytes / 1024).toFixed(1)}KB`;
-    } else if (bytes < 1024 * 1024 * 1024) {
-      return `${(bytes / 1024 / 1024).toFixed(1)}MB`;
-    } else {
-      return `${(bytes / 1024 / 1024 / 1024).toFixed(2)}GB`;
     }
+    if (bytes < 1024 * 1024) {
+      return `${(bytes / 1024).toFixed(1)}KB`;
+    }
+    return `${(bytes / 1024 / 1024).toFixed(1)}MB`;
   }
-  
-  /**
-   * 静态方法：快速解析大文件
-   */
-  static async parseFile<T = object>(
+
+  static async parseFile(
     filePath: string,
     config?: ParseConfig,
     callback?: ParseProgressCallback
-  ): Promise<ParseResult<T>> {
-    const parser = new LargeFileJSONParser<T>(config, callback);
+  ): Promise<ParseResult> {
+    const parser = new LargeFileJSONParser(config, callback);
     return parser.parseFromFile(filePath);
   }
-  
+
   /**
-   * 估算文件中的JSON对象数量（快速扫描）
+   * Test-only streaming entrypoint. It drives the exact decoder and scanner
+   * used by parseFromFile while allowing a conformance test to place a UTF-8
+   * character on a deterministic chunk boundary without requiring a fixture
+   * file provider. Production imports must use parseFile.
    */
-  static async estimateObjectCount(filePath: string): Promise<number> {
-    try {
-      const stat = SafeFileUtils.statSync(filePath);
-      const totalSize = stat.size;
-      
-      // 采样前1MB来估算
-      const sampleSize = Math.min(1024 * 1024, totalSize);
-      const file = SafeFileUtils.openSync(filePath, fs.OpenMode.READ_ONLY);
-      const buffer = new ArrayBuffer(sampleSize);
-      const readLen = SafeFileUtils.readSync(file.fd, buffer);
-      SafeFileUtils.closeSync(file);
-      
-      // 计算采样中的 { 数量
-      const uint8Array = new Uint8Array(buffer, 0, readLen);
-      let braceCount = 0;
-      let depth = 0;
-      
-      for (let i = 0; i < uint8Array.length; i++) {
-        if (uint8Array[i] === 123) { // '{'
-          if (depth === 0) {
-            braceCount++;
-          }
-          depth++;
-        } else if (uint8Array[i] === 125) { // '}'
-          depth--;
-        }
-      }
-      
-      // 根据采样估算总数
-      const ratio = totalSize / sampleSize;
-      return Math.round(braceCount * ratio);
-    } catch (error) {
-      logger.warn(TAG, `估算对象数量失败: ${String(error)}`);
-      return 0;
+  static async parseUtf8ChunksForConformance(
+    bytes: Uint8Array,
+    chunkSize: number
+  ): Promise<string[]> {
+    if (chunkSize <= 0) {
+      throw new Error('Conformance chunk size must be greater than zero.');
     }
+    const documents: string[] = [];
+    const callback: ParseProgressCallback = {
+      onDocumentParsed: async (_parsedCount: number, rawDocument: string): Promise<void> => {
+        documents.push(rawDocument);
+      }
+    };
+    const parser = new LargeFileJSONParser({
+      chunkSize: chunkSize,
+      batchSize: Number.MAX_SAFE_INTEGER,
+      batchDelayMs: 0,
+      maxObjectSize: Math.max(bytes.length * 2, 1024)
+    }, callback);
+    const decoder = util.TextDecoder.create('utf-8', {
+      ignoreBOM: true,
+      fatal: true
+    });
+    const documentBuffer = new RawJsonDocumentBuffer();
+    const result: ParseResult = {
+      success: false,
+      totalParsed: 0,
+      errors: [],
+      elapsedMs: 0
+    };
+    let rootState: JsonRootState = JsonRootState.INITIAL;
+    let braceDepth = 0;
+    let inString = false;
+    let escapeNext = false;
+    let batchSize = 0;
+    let batchIndex = 0;
+
+    for (let offset = 0; offset < bytes.length; offset += chunkSize) {
+      const end = Math.min(offset + chunkSize, bytes.length);
+      const chunk = bytes.slice(offset, end);
+      const decodedChunk: string = decoder.decodeToString(chunk, { stream: true });
+      const streamState: StreamParserState = await parser.consumeChunk(
+        decodedChunk,
+        documentBuffer,
+        rootState,
+        braceDepth,
+        inString,
+        escapeNext,
+        batchSize,
+        batchIndex,
+        result
+      );
+      rootState = streamState.rootState;
+      braceDepth = streamState.braceDepth;
+      inString = streamState.inString;
+      escapeNext = streamState.escapeNext;
+      batchSize = streamState.batchSize;
+      batchIndex = streamState.batchIndex;
+    }
+
+    const trailingChunk: string = decoder.decodeToString(new Uint8Array(0), { stream: false });
+    if (trailingChunk.length > 0) {
+      const streamState: StreamParserState = await parser.consumeChunk(
+        trailingChunk,
+        documentBuffer,
+        rootState,
+        braceDepth,
+        inString,
+        escapeNext,
+        batchSize,
+        batchIndex,
+        result
+      );
+      rootState = streamState.rootState;
+      braceDepth = streamState.braceDepth;
+      inString = streamState.inString;
+      escapeNext = streamState.escapeNext;
+    }
+    parser.validateCompletedStream(rootState, braceDepth, inString, escapeNext);
+    return documents;
+  }
+}
+
+class OutsideDocumentState {
+  readonly rootState: JsonRootState;
+  readonly braceDepth: number;
+  readonly inString: boolean;
+  readonly escapeNext: boolean;
+
+  constructor(rootState: JsonRootState, braceDepth: number, inString: boolean, escapeNext: boolean) {
+    this.rootState = rootState;
+    this.braceDepth = braceDepth;
+    this.inString = inString;
+    this.escapeNext = escapeNext;
+  }
+}
+
+class StreamParserState {
+  readonly rootState: JsonRootState;
+  readonly braceDepth: number;
+  readonly inString: boolean;
+  readonly escapeNext: boolean;
+  readonly batchSize: number;
+  readonly batchIndex: number;
+
+  constructor(
+    rootState: JsonRootState,
+    braceDepth: number,
+    inString: boolean,
+    escapeNext: boolean,
+    batchSize: number,
+    batchIndex: number
+  ) {
+    this.rootState = rootState;
+    this.braceDepth = braceDepth;
+    this.inString = inString;
+    this.escapeNext = escapeNext;
+    this.batchSize = batchSize;
+    this.batchIndex = batchIndex;
   }
 }
