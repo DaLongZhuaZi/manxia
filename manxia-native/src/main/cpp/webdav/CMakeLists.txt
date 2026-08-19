@@ -22,23 +22,23 @@ include_directories(
 # 添加预编译的 mbedTLS 库
 add_library(mbedcrypto SHARED IMPORTED)
 set_target_properties(mbedcrypto PROPERTIES
-    IMPORTED_LOCATION ${CMAKE_SOURCE_DIR}/../../../libs/${OHOS_ARCH}/libmbedcrypto.so
+    IMPORTED_LOCATION ${MANXIA_ENTRY_LIBS_DIR}/libmbedcrypto.so
 )
 
 add_library(mbedx509 SHARED IMPORTED)
 set_target_properties(mbedx509 PROPERTIES
-    IMPORTED_LOCATION ${CMAKE_SOURCE_DIR}/../../../libs/${OHOS_ARCH}/libmbedx509.so
+    IMPORTED_LOCATION ${MANXIA_ENTRY_LIBS_DIR}/libmbedx509.so
 )
 
 add_library(mbedtls SHARED IMPORTED)
 set_target_properties(mbedtls PROPERTIES
-    IMPORTED_LOCATION ${CMAKE_SOURCE_DIR}/../../../libs/${OHOS_ARCH}/libmbedtls.so
+    IMPORTED_LOCATION ${MANXIA_ENTRY_LIBS_DIR}/libmbedtls.so
 )
 
 # 添加预编译的 libcurl 库 (HTTPS版，链接mbedTLS)
 add_library(curl SHARED IMPORTED)
 set_target_properties(curl PROPERTIES
-    IMPORTED_LOCATION ${CMAKE_SOURCE_DIR}/../../../libs/${OHOS_ARCH}/libcurl.so
+    IMPORTED_LOCATION ${MANXIA_ENTRY_LIBS_DIR}/libcurl.so
 )
 
 # 添加 WebDAV/FTP 原生模块

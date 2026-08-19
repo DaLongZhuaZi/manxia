@@ -7,11 +7,11 @@
   "license": "",
   "dependencies": {},
   "devDependencies": {
-    "libjsvm_engine.so": "file:./src/main/cpp/types/libjsvm_engine",
-    "libquickjs_engine.so": "file:./src/main/cpp/quickjs/types/libquickjs_engine",
-    "libwebdav_native.so": "file:./src/main/cpp/types/libwebdav_native",
-    "libavif_decoder.so": "file:./src/main/cpp/types/libavif_decoder",
-    "libtransfer_rtc_native.so": "file:./src/main/cpp/types/libtransfer_rtc_native"
+    "libjsvm_engine.so": "file:../manxia-native/src/main/cpp/types/libjsvm_engine",
+    "libquickjs_engine.so": "file:../manxia-native/src/main/cpp/quickjs/types/libquickjs_engine",
+    "libwebdav_native.so": "file:../manxia-native/src/main/cpp/types/libwebdav_native",
+    "libavif_decoder.so": "file:../manxia-native/src/main/cpp/types/libavif_decoder",
+    "libtransfer_rtc_native.so": "file:../manxia-native/src/main/cpp/types/libtransfer_rtc_native"
   }
 }
 

@@ -4,7 +4,8 @@
   "dependencies": {
     "@ohos/oh7zip": "1.0.3",
     "@ohos/minizip": "1.0.4",
-    "buffer": "^6.0.3"
+    "buffer": "^6.0.3",
+    "manxia_native": "file:./manxia-native"
   },
   "devDependencies": {
     "@ohos/hypium": "1.0.21",

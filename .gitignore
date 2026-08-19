@@ -186,3 +186,25 @@ extensions-source
 /tools/legado-compat/**/*.pyc
 /tmp_hypium/
 /logs/
+
+# ===== HAR modularization: native 迁入 manxia-native 后，路径无关的构建产物/第三方源码忽略 =====
+# AVIF build outputs (moved from entry/src/main/cpp/avif)
+**/avif/build_windows/
+# Transfer RTC third-party & build outputs (moved from entry/src/main/cpp/transfer_rtc)
+**/transfer_rtc/third_party/
+**/transfer_rtc/build-libdatachannel-arm64*/
+**/transfer_rtc/build-mbedtls-rtc-arm64/
+**/transfer_rtc/install-libdatachannel-arm64/
+**/transfer_rtc/install-mbedtls-rtc-arm64/
+# WebDAV third-party & build outputs (moved from entry/src/main/cpp/webdav)
+**/webdav/curl-8.5.0/
+**/webdav/libssh2-1.11.0/
+**/webdav/libssh2-1.11.0.tar.gz
+**/webdav/mbedtls-3.5.1/
+**/webdav/build-curl-https-arm64/
+**/webdav/build-libssh2-arm64/
+**/webdav/install-curl-arm64/
+**/webdav/install-libssh2-arm64/
+**/webdav/install-mbedtls-arm64/
+# DevEco/Hvigor generated module build profile (auto-generated, not source)
+**/BuildProfile.ets

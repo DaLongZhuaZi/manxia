@@ -15,7 +15,7 @@ include_directories(
 
 # 预编译库路径
 # CMAKE_SOURCE_DIR = entry/src/main/cpp (顶层CMakeLists.txt目录)
-set(AVIF_LIB_PATH ${CMAKE_SOURCE_DIR}/../../../libs/${OHOS_ARCH})
+set(AVIF_LIB_PATH ${MANXIA_ENTRY_LIBS_DIR})
 message(STATUS "AVIF_LIB_PATH: ${AVIF_LIB_PATH}")
 
 # 添加预编译的libavif库
