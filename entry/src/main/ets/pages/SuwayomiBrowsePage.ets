@@ -1,6 +1,6 @@
 ﻿import { common } from '@kit.AbilityKit';
 import { UIContext } from '@ohos.arkui.UIContext';
-import { SafeUtils } from '../Utils/SafeUtils';
+import { SafeUtils } from 'manxia_core/src/main/ets/Utils/SafeUtils';
 /**
  * Suwayomi 浏览页面
  * 浏览 Suwayomi 服务器上的漫画源和漫画列表
@@ -9,7 +9,7 @@ import { SafeUtils } from '../Utils/SafeUtils';
 import { HdsNavDestination, HdsNavDestinationAttribute, ScrollEffectType } from '@kit.UIDesignKit';
 import { LengthMetrics } from '@kit.ArkUI';
 import { preferences } from '@kit.ArkData';
-import { logger } from '../Utils/Logger';
+import { logger } from 'manxia_core/src/main/ets/Utils/Logger';
 import { ThemeAwareState, ThemeAwareHelper } from '../Framework/Components/ThemeAware';
 import { FontAwareState } from '../Framework/Components/FontAware';
 import { ThemeType, ThemeManager } from '../Framework/Managers/ThemeManager';
@@ -23,7 +23,7 @@ import { SuwayomiImage } from '../components/SuwayomiImage';
 import { AppGuideOverlay, GuideHighlightRect } from '../Framework/Components/AppGuideOverlay';
 import { resolveGuideHighlightRectInRoot } from '../Framework/Components/AppGuideSupport';
 import { AppGuideManager, AppGuidePageId, AppGuideStep } from '../Framework/Managers/AppGuideManager';
-import { BasicDataSource } from '../Utils/BasicDataSource';
+import { BasicDataSource } from 'manxia_core/src/main/ets/Utils/BasicDataSource';
 
 const TAG = 'SuwayomiBrowsePage';
 const TITLE_BAR_HEIGHT: number = 56;

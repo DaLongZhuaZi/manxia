@@ -8,7 +8,7 @@
 import { ThemeAwareHelper } from '../../Framework/Components/ThemeAware';
 import { ThemeType } from '../../Framework/Managers/ThemeManager';
 import { WebDAVSettings } from '../../Models/WebDAVModels';
-import { logger } from '../../Utils/Logger';
+import { logger } from 'manxia_core/src/main/ets/Utils/Logger';
 import { WebDAVTestResult } from '../../Framework/WebDAV/WebDAVClient';
 import { WebDAVErrorAnalyzer, WEBDAV_SERVER_GUIDES, WebDAVServerGuide } from '../../Framework/WebDAV/WebDAVErrorAnalyzer';
 import { getAutoBackupScheduler, formatNextBackupTime, AutoBackupStatus } from '../../Framework/WebDAV/WebDAVAutoBackupScheduler';

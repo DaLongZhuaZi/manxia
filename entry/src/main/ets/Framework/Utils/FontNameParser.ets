@@ -1,4 +1,4 @@
-﻿import { SafeFileUtils } from '../../Utils/SafeFileUtils';
+﻿import { SafeFileUtils } from 'manxia_core/src/main/ets/Utils/SafeFileUtils';
 // 文件路径: entry/src/main/ets/Framework/Utils/FontNameParser.ets
 /**
  * TTF/OTF 字体名称解析器
@@ -6,7 +6,7 @@
  */
 
 import { fileIo } from '@kit.CoreFileKit';
-import { logger } from '../../Utils/Logger';
+import { logger } from 'manxia_core/src/main/ets/Utils/Logger';
 
 const TAG = 'FontNameParser';
 

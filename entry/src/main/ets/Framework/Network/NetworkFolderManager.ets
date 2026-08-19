@@ -1,19 +1,19 @@
-﻿import { SafeFileUtils } from '../../Utils/SafeFileUtils';
-import { SafeUtils } from '../../Utils/SafeUtils';
+﻿import { SafeFileUtils } from 'manxia_core/src/main/ets/Utils/SafeFileUtils';
+import { SafeUtils } from 'manxia_core/src/main/ets/Utils/SafeUtils';
 import { common } from '@kit.AbilityKit';
 import { preferences } from '@kit.ArkData';
 import { cryptoFramework } from '@kit.CryptoArchitectureKit';
 import { fileUri } from '@kit.CoreFileKit';
 import fs from '@ohos.file.fs';
-import { logger } from '../../Utils/Logger';
-import { sanitizeFileName } from '../../Utils/FileNameUtils';
+import { logger } from 'manxia_core/src/main/ets/Utils/Logger';
+import { sanitizeFileName } from 'manxia_core/src/main/ets/Utils/FileNameUtils';
 import {
   aes256GcmEncrypt,
   aes256GcmDecrypt,
   generateAes256Key,
   exportSymKeyToBase64,
   importSymKeyFromBase64
-} from '../../Utils/CryptoUtils';
+} from 'manxia_core/src/main/ets/Utils/CryptoUtils';
 import { FTPConfig, FTPFileInfo, FTPListResult, FTPNativeClient } from '../FTP/FTPNativeClient';
 import {
   SMBClientAdapter,
@@ -28,7 +28,7 @@ import {
   WebDAVNativeListResult
 } from '../WebDAV/WebDAVNativeClient';
 import { WebDAVClient, WebDAVConfig, WebDAVFile } from '../WebDAV/WebDAVClient';
-import { SandboxManager } from '../Storage/SandboxManager';
+import { SandboxManager } from 'manxia_core/src/main/ets/Framework/Storage/SandboxManager';
 import DownloadDirManager from '../Storage/DownloadDirManager';
 import {
   NetworkFolderBrowseResult,

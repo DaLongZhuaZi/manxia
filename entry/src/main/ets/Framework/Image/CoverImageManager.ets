@@ -5,7 +5,7 @@
  */
 
 import { image } from '@kit.ImageKit';
-import { logger } from '../../Utils/Logger';
+import { logger } from 'manxia_core/src/main/ets/Utils/Logger';
 import { OnlineImageLoader, OnlineLoadOptions, RequestHeaders } from '../Cache/OnlineImageLoader';
 import { isAvifFormat } from './AvifDecoder';
 

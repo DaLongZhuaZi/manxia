@@ -1,7 +1,7 @@
 ﻿// 文件路径: src/main/ets/Framework/Components/BookSourceTabContent.ets
 // 职责: 书源标签页内容组件，从MainMenuPage提取的独立组件
 
-import { logger } from '../../Utils/Logger';
+import { logger } from 'manxia_core/src/main/ets/Utils/Logger';
 import { common } from '@kit.AbilityKit';
 import { promptAction, curves } from '@kit.ArkUI';
 import { ThemeAwareState, ThemeAwareHelper } from './ThemeAware';

@@ -4,7 +4,7 @@
  * 允许图源通过JSON配置声明和使用各种能力
  */
 
-import { logger } from '../../Utils/Logger';
+import { logger } from 'manxia_core/src/main/ets/Utils/Logger';
 import DynamicUrlResolver, { type UrlResolverConfig } from '../Utils/DynamicUrlResolver';
 import ChineseConverter, { type ChineseConversionConfig } from '../Utils/ChineseConverter';
 import PaginationHandler, { type PaginationConfig, type PaginationResult } from '../Utils/PaginationHandler';

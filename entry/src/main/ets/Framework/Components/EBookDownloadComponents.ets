@@ -6,7 +6,7 @@
 
 import { ThemeAwareState, ThemeAwareHelper } from './ThemeAware';
 import { ThemeType } from '../Managers/ThemeManager';
-import { logger } from '../../Utils/Logger';
+import { logger } from 'manxia_core/src/main/ets/Utils/Logger';
 import { AppColors } from '../Theme/AppColors';
 
 const TAG = 'EBookDownloadComponents';

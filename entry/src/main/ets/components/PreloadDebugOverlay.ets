@@ -1,7 +1,7 @@
 // 文件路径: entry/src/main/ets/components/PreloadDebugOverlay.ets
 // 职责: 显示漫画阅读器的预加载调试信息
 
-import { logger } from '../Utils/Logger';
+import { logger } from 'manxia_core/src/main/ets/Utils/Logger';
 import { FontAwareHelper, FontAwareState } from '../Framework/Components/FontAware';
 
 const TAG = 'PreloadDebugOverlay';

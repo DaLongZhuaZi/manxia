@@ -1,7 +1,7 @@
 import socket from '@ohos.net.socket';
 import { connection } from '@kit.NetworkKit';
 import { util } from '@kit.ArkTS';
-import { logger } from '../../Utils/Logger';
+import { logger } from 'manxia_core/src/main/ets/Utils/Logger';
 
 const TAG = 'LocalProxyBridge';
 

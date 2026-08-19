@@ -1,11 +1,11 @@
-﻿import { SafeUtils } from '../../Utils/SafeUtils';
+﻿import { SafeUtils } from 'manxia_core/src/main/ets/Utils/SafeUtils';
 /**
  * 统一操作接口
  * 提供WebView配置系统的统一操作入口
  * 支持配置解析、扩展模块注册等功能
  */
 
-import { logger } from '../../Utils/Logger';
+import { logger } from 'manxia_core/src/main/ets/Utils/Logger';
 import { WebViewConfigurationParser, SecurityPolicyConfigurationParser, WebViewConfiguration, SecurityPolicyConfiguration } from './ConfigurationParser';
 
 const TAG = 'UnifiedOperationInterface';

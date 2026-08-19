@@ -4,7 +4,7 @@
 import { display } from '@kit.ArkUI';
 import { window } from '@kit.ArkUI';
 import { deviceInfo } from '@kit.BasicServicesKit';
-import { logger } from '../../Utils/Logger';
+import { logger } from 'manxia_core/src/main/ets/Utils/Logger';
 
 const TAG = 'DeviceAdaptationManager';
 

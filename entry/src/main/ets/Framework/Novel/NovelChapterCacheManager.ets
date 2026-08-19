@@ -1,5 +1,5 @@
-import { SafeFileUtils } from '../../Utils/SafeFileUtils';
-import { SafeUtils } from '../../Utils/SafeUtils';
+import { SafeFileUtils } from 'manxia_core/src/main/ets/Utils/SafeFileUtils';
+import { SafeUtils } from 'manxia_core/src/main/ets/Utils/SafeUtils';
 /**
  * 小说章节缓存管理器
  * 负责章节内容的缓存、下载和离线阅读支持
@@ -16,14 +16,14 @@ import { SafeUtils } from '../../Utils/SafeUtils';
  * 文件路径: entry/src/main/ets/Framework/Novel/NovelChapterCacheManager.ets
  */
 
-import { logger } from '../../Utils/Logger';
+import { logger } from 'manxia_core/src/main/ets/Utils/Logger';
 import { getNovelDataManager } from './NovelDataManager';
 import { getNovelSourceManager } from './NovelSourceManager';
 import { LegadoChapter, LegadoBookSourceType } from './LegadoSourceTypes';
 import { NovelDownloadTask, NovelCacheInfo, BookMetadata } from '../../Models/NovelModels';
 import { ChapterOrderCacheRemapResult, ChapterOrderIndexRemap } from '../../Models/UnifiedContentModels';
 import { AppNotificationManager } from '../Managers/NotificationManager';
-import { SandboxManager } from '../Storage/SandboxManager';
+import { SandboxManager } from 'manxia_core/src/main/ets/Framework/Storage/SandboxManager';
 import { fileIo } from '@kit.CoreFileKit';
 import { http } from '@kit.NetworkKit';
 import { util } from '@kit.ArkTS';

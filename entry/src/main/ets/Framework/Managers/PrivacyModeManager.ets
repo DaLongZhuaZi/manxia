@@ -1,7 +1,7 @@
 import { userAuth } from '@kit.UserAuthenticationKit';
 import { BusinessError } from '@kit.BasicServicesKit';
 import { cryptoFramework } from '@kit.CryptoArchitectureKit';
-import { logger } from '../../Utils/Logger';
+import { logger } from 'manxia_core/src/main/ets/Utils/Logger';
 import { SettingsManager } from './SettingsManager';
 import { ThemeManager, ThemeType } from './ThemeManager';
 

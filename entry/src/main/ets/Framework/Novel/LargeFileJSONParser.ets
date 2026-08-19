@@ -8,8 +8,8 @@
 
 import { fileIo as fs } from '@kit.CoreFileKit';
 import { util } from '@kit.ArkTS';
-import { logger } from '../../Utils/Logger';
-import { SafeFileUtils } from '../../Utils/SafeFileUtils';
+import { logger } from 'manxia_core/src/main/ets/Utils/Logger';
+import { SafeFileUtils } from 'manxia_core/src/main/ets/Utils/SafeFileUtils';
 
 const TAG = 'LargeFileJSONParser';
 

@@ -1,5 +1,5 @@
-﻿import { SafeFileUtils } from '../../Utils/SafeFileUtils';
-import { SafeUtils } from '../../Utils/SafeUtils';
+﻿import { SafeFileUtils } from 'manxia_core/src/main/ets/Utils/SafeFileUtils';
+import { SafeUtils } from 'manxia_core/src/main/ets/Utils/SafeUtils';
 /**
  * WebDAV备份管理器
  * 管理WebDAV云端备份的上传、下载、同步等操作
@@ -12,8 +12,8 @@ import { SafeUtils } from '../../Utils/SafeUtils';
 import { WebDAVClient, WebDAVConfig, WebDAVFile } from './WebDAVClient';
 import { WebDAVNativeClient, WebDAVNativeConfig, isNativeModuleAvailable, getNativeModuleError } from './WebDAVNativeClient';
 import { BackupMetadata, BackupOptions, BackupItemCounts } from '../../Models/BackupModels';
-import { SandboxManager } from '../Storage/SandboxManager';
-import { logger } from '../../Utils/Logger';
+import { SandboxManager } from 'manxia_core/src/main/ets/Framework/Storage/SandboxManager';
+import { logger } from 'manxia_core/src/main/ets/Utils/Logger';
 import { fileIo } from '@kit.CoreFileKit';
 
 const TAG = 'WebDAVBackupManager';

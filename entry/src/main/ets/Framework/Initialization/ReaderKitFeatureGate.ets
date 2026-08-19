@@ -4,7 +4,7 @@
  * 模拟器上强制关闭，但不写入持久化设置，避免影响真机。
  */
 import { deviceInfo } from '@kit.BasicServicesKit';
-import { logger } from '../../Utils/Logger';
+import { logger } from 'manxia_core/src/main/ets/Utils/Logger';
 import { SettingKeys, SettingsManager } from '../Managers/SettingsManager';
 
 const TAG = 'ReaderKitFeatureGate';

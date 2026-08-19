@@ -1,4 +1,4 @@
-﻿import { SafeUtils } from '../../Utils/SafeUtils';
+﻿import { SafeUtils } from 'manxia_core/src/main/ets/Utils/SafeUtils';
 /**
  * Legado URL解析器
  * 处理URL模板变量替换、请求参数解析、JS规则执行
@@ -12,7 +12,7 @@
  * 3. URL参数编码
  */
 
-import { logger } from '../../Utils/Logger';
+import { logger } from 'manxia_core/src/main/ets/Utils/Logger';
 import { LegadoHeaderOption, LegadoUrlOption, LegadoUrlOptionBody } from './LegadoSourceTypes';
 import {
   getLegadoJsEngine,

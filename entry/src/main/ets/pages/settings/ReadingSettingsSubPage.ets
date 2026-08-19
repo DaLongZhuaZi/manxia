@@ -1,4 +1,4 @@
-import { SafeFileUtils } from '../../Utils/SafeFileUtils';
+import { SafeFileUtils } from 'manxia_core/src/main/ets/Utils/SafeFileUtils';
 // 文件: entry/src/main/ets/pages/settings/ReadingSettingsSubPage.ets
 /**
  * 阅读设置子页面
@@ -14,8 +14,8 @@ import { SettingsManager, SettingKeys } from '../../Framework/Managers/SettingsM
 import { photoAccessHelper } from '@kit.MediaLibraryKit';
 import fs from '@ohos.file.fs';
 import { common } from '@kit.AbilityKit';
-import { logger } from '../../Utils/Logger';
-import { PageLifecycleManager } from '../../Framework/Lifecycle';
+import { logger } from 'manxia_core/src/main/ets/Utils/Logger';
+import { PageLifecycleManager } from 'manxia_core/src/main/ets/Framework/Lifecycle/index';
 import {
   ReadingMode,
   ReadingDirection,

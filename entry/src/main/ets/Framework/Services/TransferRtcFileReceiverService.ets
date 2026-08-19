@@ -6,7 +6,7 @@
  */
 
 import { util } from '@kit.ArkTS';
-import { logger } from '../../Utils/Logger';
+import { logger } from 'manxia_core/src/main/ets/Utils/Logger';
 import { getTransferConfigManager, TransferConfigManager } from '../Managers/TransferConfigManager';
 import {
   getTransferUploadStoreService,

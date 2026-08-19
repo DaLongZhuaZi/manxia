@@ -7,7 +7,7 @@ import { LengthMetrics } from '@kit.ArkUI';
 import { ThemeManager, ThemeType } from '../Framework/Managers/ThemeManager';
 import { ThemeToggle } from '../Framework/Components/ThemeToggle';
 import { ThemeAwareState, ThemeAwareHelper } from '../Framework/Components/ThemeAware';
-import { logger } from '../Utils/Logger';
+import { logger } from 'manxia_core/src/main/ets/Utils/Logger';
 
 // 定义标题栏最小高度，用于内容占位
 const TITLE_BAR_HEIGHT_MINI: number = 56;

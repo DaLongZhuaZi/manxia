@@ -1,6 +1,6 @@
 import { window } from '@kit.ArkUI';
 import { BusinessError } from '@kit.BasicServicesKit';
-import { logger } from '../../Utils/Logger';
+import { logger } from 'manxia_core/src/main/ets/Utils/Logger';
 import { READER_ABILITY_WINDOW_BACKGROUND_KEY } from './MangaReaderAbilityConstants';
 
 export class ReaderAbilityWindowLifecycleController {

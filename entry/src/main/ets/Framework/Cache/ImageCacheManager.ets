@@ -1,4 +1,4 @@
-import { SafeFileUtils } from '../../Utils/SafeFileUtils';
+import { SafeFileUtils } from 'manxia_core/src/main/ets/Utils/SafeFileUtils';
 // 文件路径: src/main/ets/Framework/Cache/ImageCacheManager.ets
 /**
  * 图片缓存管理器
@@ -6,8 +6,8 @@ import { SafeFileUtils } from '../../Utils/SafeFileUtils';
  */
 
 import { image } from '@kit.ImageKit';
-import { logger } from '../../Utils/Logger';
-import { SandboxManager } from '../Storage/SandboxManager';
+import { logger } from 'manxia_core/src/main/ets/Utils/Logger';
+import { SandboxManager } from 'manxia_core/src/main/ets/Framework/Storage/SandboxManager';
 import { BusinessError } from '@kit.BasicServicesKit';
 import { http } from '@kit.NetworkKit';
 import { CacheStats, MemoryCacheStats, DiskCacheStats } from '../Data/DataManager';

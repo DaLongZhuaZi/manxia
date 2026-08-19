@@ -10,14 +10,14 @@
  */
 
 import { image } from '@kit.ImageKit';
-import { logger } from '../../Utils/Logger';
+import { logger } from 'manxia_core/src/main/ets/Utils/Logger';
 import { http } from '@kit.NetworkKit';
 import { webview } from '@kit.ArkWeb';
 import CookieManager from '../Managers/CookieManager';
 import { cryptoFramework } from '@kit.CryptoArchitectureKit';
 import { DiskCacheManager } from './DiskCacheManager';
 import { DataManager, PageCacheUpdate } from '../Data/DataManager';
-import { JinmantiantangDescrambler, JinmantiantangParameters } from '../ImageProcessing/JinmantiantangDescrambler';
+import { JinmantiantangDescrambler, JinmantiantangParameters } from 'manxia_core/src/main/ets/Framework/ImageProcessing/JinmantiantangDescrambler';
 import { UserAgentManager } from '../Managers/UserAgentManager';
 import { AvifDecoder, isAvifFormat } from '../Image/AvifDecoder';
 import { GlobalWebViewContainer, WebViewEventCallbacks } from '../WebView/WebViewContainerPage';

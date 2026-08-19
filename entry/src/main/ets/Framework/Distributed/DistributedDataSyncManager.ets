@@ -1,6 +1,6 @@
 import distributedDataObject from '@ohos.data.distributedDataObject';
 import common from '@ohos.app.ability.common';
-import { logger } from '../../Utils/Logger';
+import { logger } from 'manxia_core/src/main/ets/Utils/Logger';
 import {
   RemoteControlSocketChannel,
   RemoteControlSocketMessage

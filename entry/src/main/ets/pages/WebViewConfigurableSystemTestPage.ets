@@ -1,4 +1,4 @@
-﻿import { SafeUtils } from '../Utils/SafeUtils';
+﻿import { SafeUtils } from 'manxia_core/src/main/ets/Utils/SafeUtils';
 /**
  * WebView可配置系统测试页面
  * 
@@ -9,11 +9,11 @@
  * 4. 提供性能测试和错误处理演示
  */
 
-import { logger } from '../Utils/Logger';
+import { logger } from 'manxia_core/src/main/ets/Utils/Logger';
 import { UnifiedOperationInterface, OperationType, OperationParams, OperationParamsData, OperationResult, ConfigurationOperationData, SecurityOperationData, SecurityCheckOperationData, ExtensionOperationData } from '../Framework/WebView/UnifiedOperationInterface';
 import { WebViewConfigurationParser, SecurityPolicyConfigurationParser, WebViewConfiguration, SecurityPolicyConfiguration, WebViewExtensionConfig } from '../Framework/WebView/ConfigurationParser';
 import { curves, UIContext } from '@kit.ArkUI';
-import { colorMap } from '../Data/ResourceMap';
+import { colorMap } from 'manxia_core/src/main/ets/Data/ResourceMap';
 import { HdsNavDestination, HdsNavDestinationAttribute, ScrollEffectType } from '@kit.UIDesignKit';
 import { webview } from '@kit.ArkWeb';
 import { BusinessError } from '@kit.BasicServicesKit';

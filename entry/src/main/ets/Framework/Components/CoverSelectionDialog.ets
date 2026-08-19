@@ -6,7 +6,7 @@
 import { UIContext } from '@kit.ArkUI';
 import { UniversalDialogManager, ButtonStyle, DialogButton, UniversalDialogOptions, UniversalDialogCustomContentParam } from './UniversalDialog';
 import { ThemeAwareHelper, ThemeAwareState } from './ThemeAware';
-import { logger } from '../../Utils/Logger';
+import { logger } from 'manxia_core/src/main/ets/Utils/Logger';
 
 const TAG: string = 'CoverSelectionDialog';
 

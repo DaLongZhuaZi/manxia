@@ -6,7 +6,7 @@
  */
  
 import { AbilityStage, Want, Configuration } from '@kit.AbilityKit'; 
-import { logger } from './Utils/Logger';
+import { logger } from 'manxia_core/src/main/ets/Utils/Logger';
 import { startupController } from './Framework/Diagnostics/StartupController';
 import { themeManager, ThemeType } from './Framework/Managers/ThemeManager';
 

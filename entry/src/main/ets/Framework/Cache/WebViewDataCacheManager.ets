@@ -4,7 +4,7 @@
  * 用于缓存漫画详情、章节列表等数据，减少网络请求
  */
 
-import { logger } from '../../Utils/Logger';
+import { logger } from 'manxia_core/src/main/ets/Utils/Logger';
 import { MangaInfo, ChapterInfo } from '../WebView/MangaSourceTypes';
 
 const TAG = 'WebViewDataCacheManager';

@@ -5,8 +5,8 @@
  * 文件路径: entry/src/main/ets/Framework/Loaders/MangaDetailLoader.ets
  */
 
-import { logger } from '../../Utils/Logger';
-import { SafeUtils } from '../../Utils/SafeUtils';
+import { logger } from 'manxia_core/src/main/ets/Utils/Logger';
+import { SafeUtils } from 'manxia_core/src/main/ets/Utils/SafeUtils';
 import {
   Manga,
   MangaChapter,
@@ -17,7 +17,7 @@ import {
   MangaImageRequestHeader
 } from '../../Models/MangaModels';
 import { DEFAULT_READING_SETTINGS, ReadingSettings } from '../../Models/MangaModels';
-import { DownloadStatus, MangaStatus, ReadingStatus } from '../Types/StatusEnums';
+import { DownloadStatus, MangaStatus, ReadingStatus } from 'manxia_core/src/main/ets/Framework/Types/StatusEnums';
 import { ComicConverter } from '../Utils/ComicConverter';
 import { 
   DataManager, 

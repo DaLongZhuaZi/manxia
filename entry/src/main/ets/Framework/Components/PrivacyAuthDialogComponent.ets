@@ -1,7 +1,7 @@
 ﻿// 文件路径: entry/src/main/ets/Framework/Components/PrivacyAuthDialogComponent.ets
 // 职责: 隐私模式密码验证对话框组件，从MainMenuPage提取的独立组件
 
-import { logger } from '../../Utils/Logger';
+import { logger } from 'manxia_core/src/main/ets/Utils/Logger';
 import { ThemeAwareState, ThemeAwareHelper } from './ThemeAware';
 import { SourceDialogScaffold } from './SourceDialogScaffold';
 import { DialogSurfaceStyleHelper } from './DialogSurfaceStyleHelper';

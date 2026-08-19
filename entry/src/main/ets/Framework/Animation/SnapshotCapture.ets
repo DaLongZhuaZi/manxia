@@ -1,7 +1,7 @@
 // 文件路径: entry/src/main/ets/Framework/Animation/SnapshotCapture.ets
 // 职责: 条目快照捕获工具，用于生成Canvas绘制所需的PixelMap
 
-import { logger } from '../../Utils/Logger';
+import { logger } from 'manxia_core/src/main/ets/Utils/Logger';
 import { UIContext } from '@kit.ArkUI';
 
 const TAG = 'SnapshotCapture';

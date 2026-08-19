@@ -1,6 +1,6 @@
-﻿import { SafeUtils } from '../../Utils/SafeUtils';
-import { logger } from '../../Utils/Logger';
-import { DatabaseManager } from '../Database/DatabaseManager';
+﻿import { SafeUtils } from 'manxia_core/src/main/ets/Utils/SafeUtils';
+import { logger } from 'manxia_core/src/main/ets/Utils/Logger';
+import { DatabaseManager } from 'manxia_core/src/main/ets/Framework/Database/DatabaseManager';
 import { generateUUID } from '../Utils/UUIDGenerator';
 import { UnifiedContentType } from '../../Models/UnifiedContentModels';
 import {
@@ -12,7 +12,7 @@ import {
   AnnotationAnchor,
   HighlightStyle
 } from '../../Models/AnnotationModels';
-import { DatabaseRecord, DatabaseValue } from '../Database/DatabaseTypes';
+import { DatabaseRecord, DatabaseValue } from 'manxia_core/src/main/ets/Framework/Database/DatabaseTypes';
 
 const TAG = 'UnifiedAnnotationManager';
 

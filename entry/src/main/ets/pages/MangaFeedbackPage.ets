@@ -17,7 +17,7 @@ import { FontAwareHelper, FontAwareState } from '../Framework/Components/FontAwa
 import { DialogSurfaceStyleHelper } from '../Framework/Components/DialogSurfaceStyleHelper';
 import { ThemeType } from '../Framework/Managers/ThemeManager';
 import { AppInfoManager } from '../Framework/Managers/AppInfoManager';
-import { PageLifecycleManager } from '../Framework/Lifecycle';
+import { PageLifecycleManager } from 'manxia_core/src/main/ets/Framework/Lifecycle/index';
 import { GlobalBackgroundLayerMode } from '../Framework/Components/GlobalBackgroundLayer';
 import { SharedPageBackgroundLayer } from '../Framework/Components/SharedPageBackgroundLayer';
 import { SettingsImmersiveTitleBar } from './settings/SettingsImmersiveTitleBar';
@@ -50,7 +50,7 @@ import {
   FEEDBACK_MAX_ATTACHMENT_BYTES,
   FEEDBACK_PENDING_DIR_NAME
 } from '../Framework/Cache/FeedbackCenterCacheManager';
-import { logger } from '../Utils/Logger';
+import { logger } from 'manxia_core/src/main/ets/Utils/Logger';
 
 const TAG = 'MangaFeedbackPage';
 const DRAFT_FILE_NAME: string = FEEDBACK_DRAFT_FILE_NAME;

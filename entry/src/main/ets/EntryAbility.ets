@@ -1,4 +1,4 @@
-import { SafeUtils } from './Utils/SafeUtils';
+import { SafeUtils } from 'manxia_core/src/main/ets/Utils/SafeUtils';
 //文件路径：entry/src/main/ets/EntryAbility.ets
 /**
  * 应用入口Ability
@@ -10,10 +10,10 @@ import { window } from '@kit.ArkUI';
 import { setContext } from './GlobalContext';
 import { DeepLinkRouter } from './Framework/Utils/DeepLinkRouter';
 import { FeedbackTurnstileBridge } from './Framework/Services/FeedbackTurnstileBridge';
-import { logCollector } from './Framework/Debug/LogCollector';
-import { logger } from './Utils/Logger';
+import { logCollector } from 'manxia_core/src/main/ets/Framework/Debug/LogCollector';
+import { logger } from 'manxia_core/src/main/ets/Utils/Logger';
 import { WindowManager, DisplayMode } from './Utils/WindowManager';
-import { OrientationLockApplyResult, OrientationLockManager, OrientationLockStrategy } from './Utils/OrientationLockManager';
+import { OrientationLockApplyResult, OrientationLockManager, OrientationLockStrategy } from 'manxia_core/src/main/ets/Utils/OrientationLockManager';
 import { DataInitializer } from './Framework/Initialization/DataInitializer';
 import { ThemeManager } from './Framework/Managers/ThemeManager';
 import { DeviceAdaptationManager } from './Framework/Managers/DeviceAdaptationManager';

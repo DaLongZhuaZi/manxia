@@ -1,10 +1,10 @@
-import { SafeUtils } from '../../Utils/SafeUtils';
+import { SafeUtils } from 'manxia_core/src/main/ets/Utils/SafeUtils';
 /**
  * 网络代理管理器
  * 管理APP内的HTTP/HTTPS/SOCKS5代理配置
  */
 
-import { logger } from '../../Utils/Logger';
+import { logger } from 'manxia_core/src/main/ets/Utils/Logger';
 import { SettingsManager } from '../Managers/SettingsManager';
 import { http, connection } from '@kit.NetworkKit';
 import { webview } from '@kit.ArkWeb';

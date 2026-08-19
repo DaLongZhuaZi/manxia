@@ -1,6 +1,6 @@
 ﻿import { common } from '@kit.AbilityKit';
 import { promptAction } from '@kit.ArkUI';
-import { logger } from '../Utils/Logger';
+import { logger } from 'manxia_core/src/main/ets/Utils/Logger';
 import { Manga } from '../Models/MangaModels';
 import { ThemeAwareHelper, ThemeAwareState } from '../Framework/Components/ThemeAware';
 import { FontAwareHelper, FontAwareState } from '../Framework/Components/FontAware';

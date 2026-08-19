@@ -1,10 +1,10 @@
-﻿import { SafeFileUtils } from '../../Utils/SafeFileUtils';
+﻿import { SafeFileUtils } from 'manxia_core/src/main/ets/Utils/SafeFileUtils';
 // 文件路径: entry/src/main/ets/Framework/Parsers/GenericEBookParser.ets
 // 职责: 通用电子书解析器（用于MOBI、AZW、AZW3等格式的占位符实现）
 
 import { EBookParser } from './EBookParser';
 import { EBook, EBookFormat, EBookMetadata, EBookChapter, EBookStatus } from '../../Models/EBookModels';
-import { logger } from '../../Utils/Logger';
+import { logger } from 'manxia_core/src/main/ets/Utils/Logger';
 import { fileIo } from '@kit.CoreFileKit';
 
 const TAG = 'GenericEBookParser';

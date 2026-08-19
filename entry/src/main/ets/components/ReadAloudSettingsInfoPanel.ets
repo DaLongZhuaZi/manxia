@@ -27,7 +27,7 @@ import {
 } from '../Models/TextReaderModels';
 import { ReadAloudAvailability, ReadAloudEngineAvailabilityMap } from '../Framework/ReadAloud/ReadAloudAvailability';
 import { ReadAloudVoiceOption } from '../Framework/ReadAloud/ReadAloudTypes';
-import { logger } from '../Utils/Logger';
+import { logger } from 'manxia_core/src/main/ets/Utils/Logger';
 
 interface ReadAloudEngineOption {
   label: string;

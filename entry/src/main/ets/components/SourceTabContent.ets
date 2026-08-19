@@ -3,12 +3,12 @@
  * 从 MainMenuPage 提取的图源管理页逻辑
  */
 
-import { logger } from '../Utils/Logger';
+import { logger } from 'manxia_core/src/main/ets/Utils/Logger';
 import { ThemeAwareState, ThemeAwareHelper } from '../Framework/Components/ThemeAware';
 import { ThemeType } from '../Framework/Managers/ThemeManager';
-import { LoadingState } from '../Utils/LoadingState';
-import { ContextMenuState } from '../Utils/ContextMenuState';
-import { BasicDataSource } from '../Utils/BasicDataSource';
+import { LoadingState } from 'manxia_core/src/main/ets/Utils/LoadingState';
+import { ContextMenuState } from 'manxia_core/src/main/ets/Utils/ContextMenuState';
+import { BasicDataSource } from 'manxia_core/src/main/ets/Utils/BasicDataSource';
 import { LibraryViewMode } from '../Framework/Components/BookSourceTabContent';
 import { AppColors } from '../Framework/Theme/AppColors';
 import { SourceManager, SourceInfo } from '../Framework/Source/SourceManager';

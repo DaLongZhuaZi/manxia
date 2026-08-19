@@ -1,9 +1,9 @@
 import { common } from '@kit.AbilityKit';
 import fs from '@ohos.file.fs';
-import { logger } from '../../Utils/Logger';
-import { SafeFileUtils } from '../../Utils/SafeFileUtils';
-import { SafeUtils } from '../../Utils/SafeUtils';
-import { ComicSourceDatabaseRecord } from '../Database/DatabaseTypes';
+import { logger } from 'manxia_core/src/main/ets/Utils/Logger';
+import { SafeFileUtils } from 'manxia_core/src/main/ets/Utils/SafeFileUtils';
+import { SafeUtils } from 'manxia_core/src/main/ets/Utils/SafeUtils';
+import { ComicSourceDatabaseRecord } from 'manxia_core/src/main/ets/Framework/Database/DatabaseTypes';
 import { DataManager } from '../Data/DataManager';
 import { SourceManager, ImportResult } from '../Source/SourceManager';
 import { Action, MangaSourceSettings } from '../WebView/MangaSourceTypes';

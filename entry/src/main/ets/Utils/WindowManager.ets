@@ -5,9 +5,9 @@ import { window } from '@kit.ArkUI';
 import { BusinessError } from '@kit.BasicServicesKit';
 import { common } from '@kit.AbilityKit';
 import { display } from '@kit.ArkUI';
-import { logger } from './Logger';
+import { logger } from 'manxia_core/src/main/ets/Utils/Logger';
 import { ThemeManager, ThemeType } from '../Framework/Managers/ThemeManager';
-import { OrientationLockApplyResult, OrientationLockManager, OrientationLockStrategy } from './OrientationLockManager';
+import { OrientationLockApplyResult, OrientationLockManager, OrientationLockStrategy } from 'manxia_core/src/main/ets/Utils/OrientationLockManager';
 
 /**
  * 系统栏高度信息接口

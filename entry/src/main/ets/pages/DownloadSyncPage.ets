@@ -1,4 +1,4 @@
-import { SafeFileUtils } from '../Utils/SafeFileUtils';
+import { SafeFileUtils } from 'manxia_core/src/main/ets/Utils/SafeFileUtils';
 // 文件路径：entry/src/main/ets/pages/DownloadSyncPage.ets
 /**
  * Download同步页面
@@ -9,27 +9,27 @@ import { LengthMetrics, UIContext, promptAction } from '@kit.ArkUI';
 import { ThemeManager, ThemeType } from '../Framework/Managers/ThemeManager';
 import { ThemeAwareState, ThemeAwareHelper } from '../Framework/Components/ThemeAware';
 import { FontAwareHelper, FontAwareState } from '../Framework/Components/FontAware';
-import { logger } from '../Utils/Logger';
+import { logger } from 'manxia_core/src/main/ets/Utils/Logger';
 import { picker } from '@kit.CoreFileKit';
 import { common, abilityAccessCtrl, bundleManager, Permissions } from '@kit.AbilityKit';
 import { DataManager, ComicInfoInput, ChapterInfoInput, ChapterInfoCreationResult, PageInfoInput,
   PageInfo as PageRecord, ChapterInfo as ChapterRecord, ComicInfo } from '../Framework/Data/DataManager';
 import { DataService } from '../Framework/Services/DataService';
-import { MangaStatus } from '../Framework/Types/StatusEnums';
-import { CompressionUtils } from '../Utils/CompressionUtils';
-import { ComicInfoParser, ComicInfo as ParsedComicInfo } from '../Utils/ComicInfoParser';
-import { SandboxManager } from '../Framework/Storage/SandboxManager';
+import { MangaStatus } from 'manxia_core/src/main/ets/Framework/Types/StatusEnums';
+import { CompressionUtils } from 'manxia_core/src/main/ets/Utils/CompressionUtils';
+import { ComicInfoParser, ComicInfo as ParsedComicInfo } from 'manxia_core/src/main/ets/Utils/ComicInfoParser';
+import { SandboxManager } from 'manxia_core/src/main/ets/Framework/Storage/SandboxManager';
 import { eventBus, GameEvent, MangaImportCompletedPayload } from '../Framework/EventBus';
 import fs from '@ohos.file.fs';
 import { fileUri } from '@kit.CoreFileKit';
 import { EBookDataManager } from '../Framework/Data/EBookDataManager';
 import { generateUUID } from '../Framework/Utils/UUIDGenerator';
-import { createLocalMangaChapterExternalId } from '../Utils/LocalMangaImportIdentity';
+import { createLocalMangaChapterExternalId } from 'manxia_core/src/main/ets/Utils/LocalMangaImportIdentity';
 import { PdfImportDialog, PdfImportDialogResult } from '../Framework/Components/PdfImportDialog';
 import { MangaImportDialog, MangaImportDialogResult, MangaImportMode, ChapterInfo, ParsedArchiveStructure, ExistingMangaCandidate, PrefilledComicInfo } from '../Framework/Components/MangaImportDialog';
 import { BatchMangaImportDialog, BatchMangaImportDialogResult, MangaGroupResult, BatchChapterResult, MangaStatus as BatchMangaStatus } from '../Framework/Components/BatchMangaImportDialog';
 import { showArchivePasswordDialog } from '../Framework/Components/ArchivePasswordDialog';
-import { ParsedArchiveStructure as CompressionParsedStructure } from '../Utils/CompressionUtils';
+import { ParsedArchiveStructure as CompressionParsedStructure } from 'manxia_core/src/main/ets/Utils/CompressionUtils';
 import { DeviceAdaptationManager, DeviceChangeListener, DeviceInfo, Breakpoint } from '../Framework/Managers/DeviceAdaptationManager';
 import { ResponsiveLayoutHelper } from '../Framework/Utils/ResponsiveLayout';
 import { EBookParserFactory, EBookCoverExtractor } from '../Framework/Parsers/EBookParser';

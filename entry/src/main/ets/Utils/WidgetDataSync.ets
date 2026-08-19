@@ -1,4 +1,4 @@
-﻿import { SafeUtils } from '../Utils/SafeUtils';
+﻿import { SafeUtils } from 'manxia_core/src/main/ets/Utils/SafeUtils';
 /**
  * 卡片数据同步工具
  * 用于从应用主进程向桌面卡片同步阅读目标和最近阅读数据
@@ -12,7 +12,7 @@ import { EBookDataManager } from '../Framework/Data/EBookDataManager';
 import { EBook } from '../Models/EBookModels';
 import { getNovelDataManager } from '../Framework/Novel/NovelDataManager';
 import { NovelBook } from '../Models/NovelModels';
-import { logger } from './Logger';
+import { logger } from 'manxia_core/src/main/ets/Utils/Logger';
 import { DataManager } from '../Framework/Data/DataManager';
 import { DataInitializer } from '../Framework/Initialization/DataInitializer';
 

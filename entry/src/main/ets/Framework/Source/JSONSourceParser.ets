@@ -1,10 +1,10 @@
-import { SafeUtils } from '../../Utils/SafeUtils';
+import { SafeUtils } from 'manxia_core/src/main/ets/Utils/SafeUtils';
 /**
  * JSON图源解析器
  * 解析JSON格式的图源配置文件
  */
 
-import { logger } from '../../Utils/Logger';
+import { logger } from 'manxia_core/src/main/ets/Utils/Logger';
 import { JSONPathParser } from '../Utils/JSONPathParser';
 import { VariableReplacer, VariableContext } from '../Utils/VariableReplacer';
 

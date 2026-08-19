@@ -4,12 +4,12 @@
  * 为UI层提供统一的数据访问接口，封装复杂的数据操作逻辑
  */
 
-import { logger } from '../../Utils/Logger';
+import { logger } from 'manxia_core/src/main/ets/Utils/Logger';
 import { DataManager, ComicSource, ComicInfo, ChapterInfo, PageInfo, FavoriteInfo, ReadHistory, DownloadTask, ComicSourceInput, ComicInfoInput, FavoriteInfoInput, ReadHistoryInput, DownloadTaskInput, ComicSourceDatabaseInput, OnlineComicSourceSaveInput } from '../Data/DataManager';
-import { ComicSourceUpdateData, DownloadTaskUpdateData } from '../Database/DatabaseTypes';
+import { ComicSourceUpdateData, DownloadTaskUpdateData } from 'manxia_core/src/main/ets/Framework/Database/DatabaseTypes';
 import { BusinessError } from '@kit.BasicServicesKit';
 import { common } from '@kit.AbilityKit';
-import { DownloadStatus } from '../Types/StatusEnums';
+import { DownloadStatus } from 'manxia_core/src/main/ets/Framework/Types/StatusEnums';
 import { MangaIdentityResolver, MangaIdentityResolveResult } from '../Reader/MangaIdentityResolver';
 
 const TAG = 'DataService';

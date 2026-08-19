@@ -1,16 +1,16 @@
-import { SafeFileUtils } from '../../Utils/SafeFileUtils';
-import { SafeUtils } from '../../Utils/SafeUtils';
+import { SafeFileUtils } from 'manxia_core/src/main/ets/Utils/SafeFileUtils';
+import { SafeUtils } from 'manxia_core/src/main/ets/Utils/SafeUtils';
 // 文件路径: src/main/ets/Framework/Data/DataManager.ets
 /**
  * 数据管理核心类
  * 整合沙箱存储、数据库、文件操作、缓存管理等功能
  */
 
-import { logger } from '../../Utils/Logger';
-import { DatabaseManager } from '../Database/DatabaseManager';
+import { logger } from 'manxia_core/src/main/ets/Utils/Logger';
+import { DatabaseManager } from 'manxia_core/src/main/ets/Framework/Database/DatabaseManager';
 import { UUIDGenerator, generateUUID, generateDbId, convertLegacyId, isValidId } from '../Utils/UUIDGenerator';
 import { OnlineComicConverter } from '../Utils/OnlineComicConverter';
-import { MangaStatus, DownloadStatus } from '../Types/StatusEnums';
+import { MangaStatus, DownloadStatus } from 'manxia_core/src/main/ets/Framework/Types/StatusEnums';
 import { 
   DatabaseRecord, 
   ComicSourceDatabaseRecord,
@@ -31,12 +31,12 @@ import {
   GeneralUpdateData,
   UpdateRecordData,
   GenericQueryRecord
-} from '../Database/DatabaseTypes';
-import { SandboxManager } from '../Storage/SandboxManager';
-import { LibraryCoverManager } from '../Storage/LibraryCoverManager';
+} from 'manxia_core/src/main/ets/Framework/Database/DatabaseTypes';
+import { SandboxManager } from 'manxia_core/src/main/ets/Framework/Storage/SandboxManager';
+import { LibraryCoverManager } from 'manxia_core/src/main/ets/Framework/Storage/LibraryCoverManager';
 import { getUnifiedAnnotationManager } from '../Annotations/UnifiedAnnotationManager';
 import { ImageCacheManager, ImageCacheConfig, MemoryCacheConfig, DiskCacheConfig} from '../Cache/ImageCacheManager';
-import { ComicArchiveManager, ComicChapterInfo, ComicPageInfo } from '../Compress/ComicArchiveManager';
+import { ComicArchiveManager, ComicChapterInfo, ComicPageInfo } from 'manxia_core/src/main/ets/Framework/Compress/ComicArchiveManager';
 import { HSPPluginManager } from '../Plugin/HSPPluginManager';
 import {
   RemoteComicMetadata,
@@ -48,7 +48,7 @@ import { UnifiedContentType } from '../../Models/UnifiedContentModels';
 import { BusinessError } from '@kit.BasicServicesKit';
 import { common } from '@kit.AbilityKit';
 import { image } from '@kit.ImageKit';
-import { TimeUtils } from '../Utils/TimeUtils';
+import { TimeUtils } from 'manxia_core/src/main/ets/Framework/Utils/TimeUtils';
 import { SourceIdentity, SourceIdentityFactory } from '../Source/SourceIdentity';
 import fs from '@ohos.file.fs';
 

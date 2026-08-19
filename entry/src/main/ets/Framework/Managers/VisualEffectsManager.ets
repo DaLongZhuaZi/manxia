@@ -7,7 +7,7 @@
 
 import { hdsMaterial } from '@kit.UIDesignKit';
 import { BusinessError } from '@kit.BasicServicesKit';
-import { logger } from '../../Utils/Logger';
+import { logger } from 'manxia_core/src/main/ets/Utils/Logger';
 import { SettingKeys, SettingsManager } from './SettingsManager';
 
 const TAG = 'VisualEffectsManager';

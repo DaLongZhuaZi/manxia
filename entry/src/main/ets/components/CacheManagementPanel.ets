@@ -6,7 +6,7 @@
  */
 
 import { common } from '@kit.AbilityKit';
-import { logger } from '../Utils/Logger';
+import { logger } from 'manxia_core/src/main/ets/Utils/Logger';
 import { FeedbackCenterCacheManager, FeedbackCenterCacheStats } from '../Framework/Cache/FeedbackCenterCacheManager';
 import { CacheConfigManager, CacheConfig, MemoryCacheConfig, DiskCacheConfig, PreloadConfig } from '../Framework/Cache/CacheConfigManager';
 import { SmartPreloadStrategy, PreloadStats } from '../Framework/Cache/SmartPreloadStrategy';

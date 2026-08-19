@@ -5,7 +5,7 @@
 
 import { image } from '@kit.ImageKit';
 import { http } from '@kit.NetworkKit';
-import { logger } from '../Utils/Logger';
+import { logger } from 'manxia_core/src/main/ets/Utils/Logger';
 import { AvifDecoder, isAvifFormat } from '../Framework/Image/AvifDecoder';
 
 const TAG = 'AvifImage';

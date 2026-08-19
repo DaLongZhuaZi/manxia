@@ -5,7 +5,7 @@
  */
 
 import { ThemeManager, ThemeType, THEME_CONFIGS } from '../Managers/ThemeManager';
-import { logger } from '../../Utils/Logger';
+import { logger } from 'manxia_core/src/main/ets/Utils/Logger';
 
 
 // 主题切换组件状态

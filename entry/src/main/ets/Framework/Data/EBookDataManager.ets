@@ -1,13 +1,13 @@
-﻿import { SafeFileUtils } from '../../Utils/SafeFileUtils';
-import { SafeUtils } from '../../Utils/SafeUtils';
+﻿import { SafeFileUtils } from 'manxia_core/src/main/ets/Utils/SafeFileUtils';
+import { SafeUtils } from 'manxia_core/src/main/ets/Utils/SafeUtils';
 // 文件路径: entry/src/main/ets/Framework/Data/EBookDataManager.ets
 /**
  * 电子书数据管理器
  * 负责电子书的数据库操作
  */
 
-import { DatabaseManager } from '../Database/DatabaseManager';
-import { DatabaseRecord } from '../Database/DatabaseTypes';
+import { DatabaseManager } from 'manxia_core/src/main/ets/Framework/Database/DatabaseManager';
+import { DatabaseRecord } from 'manxia_core/src/main/ets/Framework/Database/DatabaseTypes';
 import {
   EBook,
   EBookChapter,
@@ -26,7 +26,7 @@ import {
   ReadingSettings as ImageReaderSettings,
   DEFAULT_READING_SETTINGS as DEFAULT_IMAGE_READING_SETTINGS
 } from '../../Models/MangaModels';
-import { logger } from '../../Utils/Logger';
+import { logger } from 'manxia_core/src/main/ets/Utils/Logger';
 import { SettingsManager, SettingKeys } from '../Managers/SettingsManager';
 import { getUnifiedAnnotationManager } from '../Annotations/UnifiedAnnotationManager';
 import { UnifiedContentType } from '../../Models/UnifiedContentModels';

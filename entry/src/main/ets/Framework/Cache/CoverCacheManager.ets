@@ -1,11 +1,11 @@
-﻿import { SafeFileUtils } from '../../Utils/SafeFileUtils';
+﻿import { SafeFileUtils } from 'manxia_core/src/main/ets/Utils/SafeFileUtils';
 /**
  * 封面缓存管理器
  * 负责管理漫画封面的本地缓存
  */
 
-import { logger } from '../../Utils/Logger';
-import { DatabaseManager } from '../Database/DatabaseManager';
+import { logger } from 'manxia_core/src/main/ets/Utils/Logger';
+import { DatabaseManager } from 'manxia_core/src/main/ets/Framework/Database/DatabaseManager';
 import { TempMangaInfo, TempMangaDatabaseRecord } from '../../Models/TempMangaModels';
 import { uiContextManager } from '../Managers/UIContextManager';
 import CookieManager from '../Managers/CookieManager';

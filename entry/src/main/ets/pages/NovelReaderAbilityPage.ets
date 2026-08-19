@@ -1,6 +1,6 @@
 import { common } from '@kit.AbilityKit';
 import { FrameCallback, UIContext } from '@kit.ArkUI';
-import { logger } from '../Utils/Logger';
+import { logger } from 'manxia_core/src/main/ets/Utils/Logger';
 import { NovelReaderPage } from './NovelReaderPage';
 import { NovelReaderPageParams } from './NovelBookshelfPage';
 import { READER_ABILITY_HOST_MULTITON } from '../Framework/Reader/MangaReaderAbilityConstants';

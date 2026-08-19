@@ -1,6 +1,6 @@
-﻿import { SafeFileUtils } from '../../Utils/SafeFileUtils';
-import { SafeUtils } from '../../Utils/SafeUtils';
-import { logger } from '../../Utils/Logger';
+﻿import { SafeFileUtils } from 'manxia_core/src/main/ets/Utils/SafeFileUtils';
+import { SafeUtils } from 'manxia_core/src/main/ets/Utils/SafeUtils';
+import { logger } from 'manxia_core/src/main/ets/Utils/Logger';
 import {
   buildXiaomiMimoStyledText,
   DEFAULT_READ_ALOUD_SETTINGS,

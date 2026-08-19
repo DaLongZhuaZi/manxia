@@ -1,4 +1,4 @@
-import { SafeUtils } from '../Utils/SafeUtils';
+import { SafeUtils } from 'manxia_core/src/main/ets/Utils/SafeUtils';
 /**
  * 小说听书页面（播放器样式）
  */
@@ -6,7 +6,7 @@ import { SafeUtils } from '../Utils/SafeUtils';
 import { promptAction } from '@kit.ArkUI';
 import { common } from '@kit.AbilityKit';
 import { media } from '@kit.MediaKit';
-import { logger } from '../Utils/Logger';
+import { logger } from 'manxia_core/src/main/ets/Utils/Logger';
 import { continuationStateHelper } from '../Framework/Distributed/ContinuationStateHelper';
 import { NovelReaderPageParams } from './NovelBookshelfPage';
 import { getNovelSourceManager } from '../Framework/Novel/NovelSourceManager';

@@ -3,8 +3,8 @@ import { util } from '@kit.ArkTS';
 import { webview } from '@kit.ArkWeb';
 import { cryptoFramework } from '@kit.CryptoArchitectureKit';
 import fileIo from '@ohos.file.fs';
-import { logger } from '../../Utils/Logger';
-import { SafeFileUtils } from '../../Utils/SafeFileUtils';
+import { logger } from 'manxia_core/src/main/ets/Utils/Logger';
+import { SafeFileUtils } from 'manxia_core/src/main/ets/Utils/SafeFileUtils';
 import { uiContextManager } from '../Managers/UIContextManager';
 import { getCookieStore } from './LegadoCookieStore';
 import type {

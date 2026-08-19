@@ -1,4 +1,4 @@
-﻿import { SafeUtils } from '../../Utils/SafeUtils';
+﻿import { SafeUtils } from 'manxia_core/src/main/ets/Utils/SafeUtils';
 /**
  * 小说源执行器
  * 负责执行书源的搜索、获取详情、目录、正文等操作
@@ -6,7 +6,7 @@
  * 文件路径: entry/src/main/ets/Framework/Novel/NovelSourceExecutor.ets
  */
 
-import { logger } from '../../Utils/Logger';
+import { logger } from 'manxia_core/src/main/ets/Utils/Logger';
 import { http } from '@kit.NetworkKit';
 import { util } from '@kit.ArkTS';
 import {

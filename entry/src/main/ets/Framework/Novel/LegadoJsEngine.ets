@@ -1,4 +1,4 @@
-import { SafeUtils } from '../../Utils/SafeUtils';
+import { SafeUtils } from 'manxia_core/src/main/ets/Utils/SafeUtils';
 /**
  * Legado JavaScript执行引擎
  * 优先使用Native JSVM引擎执行书源中的JavaScript代码
@@ -10,13 +10,13 @@ import { SafeUtils } from '../../Utils/SafeUtils';
 import { webview } from '@kit.ArkWeb';
 import { http } from '@kit.NetworkKit';
 import { util } from '@kit.ArkTS';
-import { logger } from '../../Utils/Logger';
+import { logger } from 'manxia_core/src/main/ets/Utils/Logger';
 import { NativeJsEngine, JsContext as NativeJsContext, JsResult } from './NativeJsEngine';
 import { getCookieStore } from './LegadoCookieStore';
 import { getLegadoRuntimeV2 } from './LegadoRuntimeV2';
 import type { LegadoBookSource } from './LegadoSourceTypes';
 import type { LegadoBridgeTrace } from './LegadoCompatibilityTypes';
-import { buildJsoupEntityCompatibilityScript } from '../../libs/htmlparser';
+import { buildJsoupEntityCompatibilityScript } from 'manxia_core/src/main/ets/libs/htmlparser/index';
 
 const TAG = 'LegadoJsEngine';
 

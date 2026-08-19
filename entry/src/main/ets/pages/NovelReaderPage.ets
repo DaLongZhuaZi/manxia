@@ -1,5 +1,5 @@
-import { SafeUtils } from '../Utils/SafeUtils';
-import { sha256Hash } from '../Utils/CryptoUtils';
+import { SafeUtils } from 'manxia_core/src/main/ets/Utils/SafeUtils';
+import { sha256Hash } from 'manxia_core/src/main/ets/Utils/CryptoUtils';
 /**
  * 小说阅读器页面
  * 使用 TextReaderComponent 实现专业的文本阅读体验
@@ -9,7 +9,7 @@ import { sha256Hash } from '../Utils/CryptoUtils';
  * 文件路径: entry/src/main/ets/pages/NovelReaderPage.ets
   */
 
-import { logger } from '../Utils/Logger';
+import { logger } from 'manxia_core/src/main/ets/Utils/Logger';
 import { ReaderSafeAreaUtils } from '../Utils/ReaderSafeAreaUtils';
 import { getNovelSourceManager } from '../Framework/Novel/NovelSourceManager';
 import { getNovelDataManager } from '../Framework/Novel/NovelDataManager';
@@ -65,9 +65,9 @@ import { getNovelSettingsManager, BrowseHistoryInput } from '../Framework/Novel/
 import { ThemeManager, ThemeType } from '../Framework/Managers/ThemeManager';
 import { ThemeAwareState, ThemeAwareHelper } from '../Framework/Components/ThemeAware';
 import { FontAwareHelper, FontAwareState } from '../Framework/Components/FontAware';
-import { PageLifecycleManager } from '../Framework/Lifecycle';
+import { PageLifecycleManager } from 'manxia_core/src/main/ets/Framework/Lifecycle/index';
 import { WindowManager, DisplayMode } from '../Utils/WindowManager';
-import { ReaderOrientationLockHelper } from '../Utils/ReaderOrientationLockHelper';
+import { ReaderOrientationLockHelper } from 'manxia_core/src/main/ets/Utils/ReaderOrientationLockHelper';
 import { PageWindowCoordinator } from '../Utils/PageWindowCoordinator';
 import { curves, promptAction } from '@kit.ArkUI';
 import { webview } from '@kit.ArkWeb';

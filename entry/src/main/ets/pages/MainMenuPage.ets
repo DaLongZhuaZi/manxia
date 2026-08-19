@@ -1,9 +1,9 @@
-import { SafeFileUtils } from '../Utils/SafeFileUtils';
-import { SafeUtils } from '../Utils/SafeUtils';
+import { SafeFileUtils } from 'manxia_core/src/main/ets/Utils/SafeFileUtils';
+import { SafeUtils } from 'manxia_core/src/main/ets/Utils/SafeUtils';
 // 文件路径: src/main/ets/pages/MainMenuPage.ets
 // 职责: 漫画阅读应用主入口页面，采用底部导航栏设计，参考Mihon、komikku等现代漫画阅读软件
 
-import { logger } from '../Utils/Logger';
+import { logger } from 'manxia_core/src/main/ets/Utils/Logger';
 import { widgetDataSync } from '../Utils/WidgetDataSync';
 import { common } from '@kit.AbilityKit';
 import { deviceInfo, BusinessError, pasteboard } from '@kit.BasicServicesKit';
@@ -13,11 +13,11 @@ import fs from '@ohos.file.fs';
 import { picker, fileUri as coreFileUri } from '@kit.CoreFileKit';
 import { hdsEffect } from '@kit.UIDesignKit';
 import { InteractionManager, VibrationScene } from '../Framework/Managers/InteractionManager';
-import { BasicDataSource, BasicDataSourceStableUpdateResult } from '../Utils/BasicDataSource';
-import { MultiSelectState } from '../Utils/MultiSelectState';
-import { SwipeGestureState } from '../Utils/SwipeGestureState';
-import { ContextMenuState } from '../Utils/ContextMenuState';
-import { LoadingState } from '../Utils/LoadingState';
+import { BasicDataSource, BasicDataSourceStableUpdateResult } from 'manxia_core/src/main/ets/Utils/BasicDataSource';
+import { MultiSelectState } from 'manxia_core/src/main/ets/Utils/MultiSelectState';
+import { SwipeGestureState } from 'manxia_core/src/main/ets/Utils/SwipeGestureState';
+import { ContextMenuState } from 'manxia_core/src/main/ets/Utils/ContextMenuState';
+import { LoadingState } from 'manxia_core/src/main/ets/Utils/LoadingState';
 import { MoveState } from '../Utils/MoveState';
 
 // 主题相关导入
@@ -205,7 +205,7 @@ import {
 import { getCoverImageManager } from '../Framework/Image/CoverImageManager';
 import { LocalImageCacheManager } from '../Framework/Cache/LocalImageCacheManager';
 import { CoverCacheManager } from '../Framework/Cache/CoverCacheManager';
-import { LibraryCoverManager, LibraryCoverType } from '../Framework/Storage/LibraryCoverManager';
+import { LibraryCoverManager, LibraryCoverType } from 'manxia_core/src/main/ets/Framework/Storage/LibraryCoverManager';
 import { AvifImage } from '../components/AvifImage';
 import { RemoteControlPage } from './RemoteControlPage';
 import { getHomeLoadFlowMonitor, HomeLoadFlowMonitor } from '../Framework/Home/HomeLoadFlowMonitor';
@@ -233,8 +233,8 @@ import { Manga, MangaChapter, MangaMetadata, ReadingProgress, ReadingSettings, F
   ReadingMode,
   ReadingDirection,
   DEFAULT_READING_SETTINGS} from '../Models/MangaModels';
-import { MangaStatus, ReadingStatus, StatusConverter, DownloadStatus } from '../Framework/Types/StatusEnums';
-import { isOnlineManga, isLocalManga, MangaSourceType } from '../Framework/Types/MangaTypes';
+import { MangaStatus, ReadingStatus, StatusConverter, DownloadStatus } from 'manxia_core/src/main/ets/Framework/Types/StatusEnums';
+import { isOnlineManga, isLocalManga, MangaSourceType } from 'manxia_core/src/main/ets/Framework/Types/MangaTypes';
 
 // 导入图源相关
 import { SourceManager, SourceInfo } from '../Framework/Source/SourceManager';
@@ -244,8 +244,8 @@ import { SourceRepositoryManager, SavedRepository, SourceRepositoryEntry, SyncRe
 // 导入数据管理器
 import { DataManager, ComicInfo, ReadHistory, ChapterInfo, DeleteComicsResult,
   OnlineComicInfo, OnlineChapterInfo, OnlinePageInfo } from '../Framework/Data/DataManager';
-import { ComicSourceDatabaseRecord } from '../Framework/Database/DatabaseTypes';
-import { DatabaseManager } from '../Framework/Database/DatabaseManager';
+import { ComicSourceDatabaseRecord } from 'manxia_core/src/main/ets/Framework/Database/DatabaseTypes';
+import { DatabaseManager } from 'manxia_core/src/main/ets/Framework/Database/DatabaseManager';
 
 import { ThemeManager, ThemeType, GlassEffectContext } from '../Framework/Managers/ThemeManager';
 import { AppColors, ColorRole } from '../Framework/Theme/AppColors';

@@ -1,4 +1,4 @@
-﻿import { SafeFileUtils } from '../../Utils/SafeFileUtils';
+﻿import { SafeFileUtils } from 'manxia_core/src/main/ets/Utils/SafeFileUtils';
 // 文件路径: src/main/ets/Framework/Components/ConsolePanel.ets
 /**
  * 控制台面板组件
@@ -6,8 +6,8 @@
  */
  
 import { consolePanel, ConsolePanelTab, ConsolePanelSettings } from '../Debug/ConsolePanel';
-import { logCollector, LogEntry, LogFilter } from '../Debug/LogCollector';
-import { logger, LogLevel } from '../../Utils/Logger';
+import { logCollector, LogEntry, LogFilter } from 'manxia_core/src/main/ets/Framework/Debug/LogCollector';
+import { logger, LogLevel } from 'manxia_core/src/main/ets/Utils/Logger';
 import { performanceAnalyzer, PerformanceMetrics, SystemMetrics } from '../Debug/PerformanceAnalyzer';
 import { HidebugPerformanceCollector, HidebugPerformanceData } from '../Debug/HidebugPerformanceCollector';
 import { PerformanceChart, ChartType, ChartConfig } from './PerformanceChart';
@@ -19,7 +19,7 @@ import { ThemeManager } from '../Managers/ThemeManager';
 import { ThemeType } from '../Managers/ThemeManager';
 import { ThemeAwareHelper, ThemeAwareState } from '../Components/ThemeAware';
 import { FontAwareHelper, FontAwareState } from '../Components/FontAware';
-import { TimeUtils } from '../Utils/TimeUtils';
+import { TimeUtils } from 'manxia_core/src/main/ets/Framework/Utils/TimeUtils';
 
 
 // 定义UI样式接口

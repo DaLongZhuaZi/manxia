@@ -1,4 +1,4 @@
-import { SafeUtils } from '../../Utils/SafeUtils';
+import { SafeUtils } from 'manxia_core/src/main/ets/Utils/SafeUtils';
 // 文件路径: src/main/ets/Framework/WebView/MangaSourceEngine.ets
 /**
  * 漫画图源引擎主控制器
@@ -6,7 +6,7 @@ import { SafeUtils } from '../../Utils/SafeUtils';
  */
 
 import { webview } from '@kit.ArkWeb';
-import { logger } from '../../Utils/Logger';
+import { logger } from 'manxia_core/src/main/ets/Utils/Logger';
 import { MangaSourceActionEngine, ActionContext } from './MangaSourceActionEngine';
 import { MangaSourceSelectorEngine, SelectorContext } from './MangaSourceSelectorEngine';
 import { MangaSourceConfigParser, ParseResult, WorkflowContext, ConfigSummaryResult, ConfigSummarySettings } from './MangaSourceConfigParser';

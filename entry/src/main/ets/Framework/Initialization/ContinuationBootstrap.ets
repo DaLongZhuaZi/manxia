@@ -10,9 +10,9 @@
  */
 
 import { common } from '@kit.AbilityKit';
-import { logger } from '../../Utils/Logger';
+import { logger } from 'manxia_core/src/main/ets/Utils/Logger';
 import { setContext, isInitialized as isGlobalContextInitialized } from '../../GlobalContext';
-import { DatabaseManager } from '../Database/DatabaseManager';
+import { DatabaseManager } from 'manxia_core/src/main/ets/Framework/Database/DatabaseManager';
 
 const TAG = 'ContinuationBootstrap';
 

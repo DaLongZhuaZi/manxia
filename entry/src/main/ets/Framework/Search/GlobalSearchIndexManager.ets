@@ -3,9 +3,9 @@
  * 索引不可用时调用方必须回退旧查询，不能影响现有搜索语义。
  */
 
-import { logger } from '../../Utils/Logger';
-import { DatabaseManager } from '../Database/DatabaseManager';
-import { CountQueryResult, DatabaseRecord, DatabaseValue, GenericQueryRecord } from '../Database/DatabaseTypes';
+import { logger } from 'manxia_core/src/main/ets/Utils/Logger';
+import { DatabaseManager } from 'manxia_core/src/main/ets/Framework/Database/DatabaseManager';
+import { CountQueryResult, DatabaseRecord, DatabaseValue, GenericQueryRecord } from 'manxia_core/src/main/ets/Framework/Database/DatabaseTypes';
 
 const TAG = 'GlobalSearchIndexManager';
 const INDEX_BATCH_SIZE: number = 80;

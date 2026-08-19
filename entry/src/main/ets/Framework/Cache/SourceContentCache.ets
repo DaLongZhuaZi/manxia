@@ -1,11 +1,11 @@
-﻿import { SafeUtils } from '../../Utils/SafeUtils';
+﻿import { SafeUtils } from 'manxia_core/src/main/ets/Utils/SafeUtils';
 /**
  * 图源内容缓存管理器
  * 缓存图源详情页的所有工作流数据（热门、最新、搜索、筛选等）
  * 支持缓存优先显示 + 后台自动更新
  */
 
-import { logger } from '../../Utils/Logger';
+import { logger } from 'manxia_core/src/main/ets/Utils/Logger';
 import { ComicInfo } from '../Source/SourceExecutor';
 import { preferences } from '@kit.ArkData';
 import { common } from '@kit.AbilityKit';

@@ -13,7 +13,7 @@
 
 import { pdfService, pdfViewManager, PdfView } from '@kit.PDFKit';
 import { BusinessError } from '@kit.BasicServicesKit';
-import { logger } from '../../Utils/Logger';
+import { logger } from 'manxia_core/src/main/ets/Utils/Logger';
 import { EBook, EBookReadingProgress, EBookReadingSettings } from '../../Models/EBookModels';
 
 const TAG = 'PdfKitViewerComponent';

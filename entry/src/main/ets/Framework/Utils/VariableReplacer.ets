@@ -3,7 +3,7 @@
  * 支持 {{variable}} 格式的变量替换
  */
 
-import { logger } from '../../Utils/Logger';
+import { logger } from 'manxia_core/src/main/ets/Utils/Logger';
 
 const TAG = 'VariableReplacer';
 

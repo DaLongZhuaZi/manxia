@@ -9,7 +9,7 @@
  * 5. 平滑的状态过渡和回调机制
  */
 
-import { logger } from '../Utils/Logger';
+import { logger } from 'manxia_core/src/main/ets/Utils/Logger';
 import { image } from '@kit.ImageKit';
 import { curves } from '@kit.ArkUI';
 import { ThemeManager } from '../Framework/Managers/ThemeManager';

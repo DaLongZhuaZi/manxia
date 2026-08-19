@@ -6,7 +6,7 @@
  */
 
 import { getFontManager, FontScene, FontType } from '../Managers/FontManager';
-import { logger } from '../../Utils/Logger';
+import { logger } from 'manxia_core/src/main/ets/Utils/Logger';
 
 const TAG = 'FontAware';
 

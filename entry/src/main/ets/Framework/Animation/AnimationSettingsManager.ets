@@ -4,7 +4,7 @@
  * 提供全局访问接口，确保动画设置在各页面间保持一致
  */
 
-import { logger } from '../../Utils/Logger';
+import { logger } from 'manxia_core/src/main/ets/Utils/Logger';
 import { SettingsManager, SettingKeys } from '../Managers/SettingsManager';
 
 const TAG = 'AnimationSettingsManager';

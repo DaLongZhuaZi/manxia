@@ -1,6 +1,6 @@
 // 职责: 预加载任务调度，不接触 UI 渲染和页面数据结构
 
-import { logger } from '../Utils/Logger';
+import { logger } from 'manxia_core/src/main/ets/Utils/Logger';
 import { ImageLoadStateManager } from './ImageLoadStateManager';
 import { PreloadManager, PreloadTaskItem } from './PreloadManager';
 

@@ -3,7 +3,7 @@
  * 定义所有跟踪服务的通用接口
  */
 
-import { logger } from '../../../Utils/Logger';
+import { logger } from 'manxia_core/src/main/ets/Utils/Logger';
 import {
   TrackRecord,
   TrackerId,

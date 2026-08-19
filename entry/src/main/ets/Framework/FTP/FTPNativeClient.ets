@@ -14,7 +14,7 @@
  * 文件路径: entry/src/main/ets/Framework/FTP/FTPNativeClient.ets
  */
 
-import { logger } from '../../Utils/Logger';
+import { logger } from 'manxia_core/src/main/ets/Utils/Logger';
 import webdavNativeModuleImport from 'libwebdav_native.so';
 
 const TAG = 'FTPNativeClient';

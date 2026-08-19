@@ -1,9 +1,9 @@
-﻿import { SafeUtils } from '../../Utils/SafeUtils';
+﻿import { SafeUtils } from 'manxia_core/src/main/ets/Utils/SafeUtils';
 /**
  * 分类书架管理器
  * 类似iOS App Library的分类视图功能
  */
-import { logger } from '../../Utils/Logger';
+import { logger } from 'manxia_core/src/main/ets/Utils/Logger';
 import { SettingsManager } from '../Managers/SettingsManager';
 
 const TAG = 'BookshelfCategoryManager';

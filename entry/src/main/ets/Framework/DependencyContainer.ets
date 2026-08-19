@@ -1,4 +1,4 @@
-import { logger } from '../Utils/Logger';
+import { logger } from 'manxia_core/src/main/ets/Utils/Logger';
 import { eventBus, GameEvent } from './EventBus';
 import { ErrorHandler, GameError, ErrorSeverity, ErrorCategory } from './Core/ErrorHandler';
 

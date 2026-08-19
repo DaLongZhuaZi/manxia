@@ -1,4 +1,4 @@
-﻿import { SafeUtils } from '../../Utils/SafeUtils';
+﻿import { SafeUtils } from 'manxia_core/src/main/ets/Utils/SafeUtils';
 /**
  * TXT目录规则管理器
  * 用于本地TXT文件的章节识别
@@ -7,7 +7,7 @@
  * 文件路径: entry/src/main/ets/Framework/Novel/NovelTxtTocRuleManager.ets
  */
 
-import { logger } from '../../Utils/Logger';
+import { logger } from 'manxia_core/src/main/ets/Utils/Logger';
 import { SettingsManager } from '../Managers/SettingsManager';
 import { getNovelDataManager } from './NovelDataManager';
 import { DEFAULT_TXT_TOC_RULES as SETTINGS_TXT_TOC_RULES, TxtTocRule as SettingsTxtTocRule } from './NovelSettingsManager';

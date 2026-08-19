@@ -3,8 +3,8 @@
  */
 
 import { common } from '@kit.AbilityKit';
-import { logger } from '../Utils/Logger';
-import { SafeUtils } from '../Utils/SafeUtils';
+import { logger } from 'manxia_core/src/main/ets/Utils/Logger';
+import { SafeUtils } from 'manxia_core/src/main/ets/Utils/SafeUtils';
 import { WindowManager } from '../Utils/WindowManager';
 import { interactiveSourceEditorService } from '../Framework/SourceEditor/InteractiveSourceEditorService';
 import {

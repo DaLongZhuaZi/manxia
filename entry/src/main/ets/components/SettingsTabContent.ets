@@ -3,7 +3,7 @@
  * 从 MainMenuPage 提取的设置页面逻辑
  */
 
-import { logger } from '../Utils/Logger';
+import { logger } from 'manxia_core/src/main/ets/Utils/Logger';
 import { ThemeAwareState, ThemeAwareHelper } from '../Framework/Components/ThemeAware';
 import { ThemeType } from '../Framework/Managers/ThemeManager';
 import { SettingsPageSurfaceManager, SettingsPageSurfaceStyle } from '../pages/settings/SettingsPageSurfaceManager';

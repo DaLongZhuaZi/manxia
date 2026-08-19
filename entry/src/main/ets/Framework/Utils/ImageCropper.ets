@@ -5,7 +5,7 @@
  */
 import { image } from '@kit.ImageKit';
 import { display } from '@kit.ArkUI';
-import { logger } from '../../Utils/Logger';
+import { logger } from 'manxia_core/src/main/ets/Utils/Logger';
 
 const TAG = 'ImageCropper';
 

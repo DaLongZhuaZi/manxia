@@ -1,4 +1,4 @@
-﻿import { SafeFileUtils } from '../../Utils/SafeFileUtils';
+﻿import { SafeFileUtils } from 'manxia_core/src/main/ets/Utils/SafeFileUtils';
 // 文件路径: entry/src/main/ets/Framework/Parsers/PdfToMangaImporter.ets
 /**
  * PDF转漫画导入器
@@ -9,9 +9,9 @@
 import { pdfService } from '@kit.PDFKit';
 import { fileIo } from '@kit.CoreFileKit';
 import { image } from '@kit.ImageKit';
-import { logger } from '../../Utils/Logger';
+import { logger } from 'manxia_core/src/main/ets/Utils/Logger';
 import { generateUUID } from '../Utils/UUIDGenerator';
-import { ComicInfoParser, ComicInfo } from '../../Utils/ComicInfoParser';
+import { ComicInfoParser, ComicInfo } from 'manxia_core/src/main/ets/Utils/ComicInfoParser';
 
 const TAG = 'PdfToMangaImporter';
 

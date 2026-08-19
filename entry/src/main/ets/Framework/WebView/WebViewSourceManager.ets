@@ -5,14 +5,14 @@
  */
 
 import { webview } from '@kit.ArkWeb';
-import { logger } from '../../Utils/Logger';
-import { DatabaseManager } from '../Database/DatabaseManager';
+import { logger } from 'manxia_core/src/main/ets/Utils/Logger';
+import { DatabaseManager } from 'manxia_core/src/main/ets/Framework/Database/DatabaseManager';
 import { 
   ComicSourceDatabaseRecord,
   DatabaseValue,
   UpdateRecordData,
   WebViewSourceConfigDatabaseRecord
-} from '../Database/DatabaseTypes';
+} from 'manxia_core/src/main/ets/Framework/Database/DatabaseTypes';
 import { 
   IWebViewSourceManager,
   WebViewSourceConfig,

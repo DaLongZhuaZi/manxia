@@ -3,7 +3,7 @@
  * 显示后台任务进度，支持拖拽移动
  */
 import { BackgroundTaskManager, BackgroundTask, TaskStatus, TaskProgress, TaskStatusListener } from '../Task/BackgroundTaskManager';
-import { logger } from '../../Utils/Logger';
+import { logger } from 'manxia_core/src/main/ets/Utils/Logger';
 import { display } from '@kit.ArkUI';
 import { AppColors, ColorRole } from '../Theme/AppColors';
 import { SourceInteractiveEditorPageParams } from '../SourceEditor/SourceEditorTypes';

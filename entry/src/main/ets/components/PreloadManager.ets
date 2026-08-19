@@ -1,7 +1,7 @@
 // 文件路径: entry/src/main/ets/components/PreloadManager.ets
 // 职责: 统一管理漫画阅读器的图片预加载逻辑
 
-import { logger } from '../Utils/Logger';
+import { logger } from 'manxia_core/src/main/ets/Utils/Logger';
 import { PreloadItemInfo, PreloadItemStatus, PreloadDebugInfo } from './PreloadDebugOverlay';
 import { MangaPage } from '../Models/MangaModels';
 

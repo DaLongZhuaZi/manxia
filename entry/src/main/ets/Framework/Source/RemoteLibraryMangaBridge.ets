@@ -1,8 +1,8 @@
-﻿import { SafeFileUtils } from '../../Utils/SafeFileUtils';
-import { SafeUtils } from '../../Utils/SafeUtils';
+﻿import { SafeFileUtils } from 'manxia_core/src/main/ets/Utils/SafeFileUtils';
+import { SafeUtils } from 'manxia_core/src/main/ets/Utils/SafeUtils';
 import { preferences } from '@kit.ArkData';
 import fs from '@ohos.file.fs';
-import { logger } from '../../Utils/Logger';
+import { logger } from 'manxia_core/src/main/ets/Utils/Logger';
 import { getContext } from '../../GlobalContext';
 import {
   DEFAULT_READING_SETTINGS,
@@ -17,7 +17,7 @@ import {
   ReadingSettings
 } from '../../Models/MangaModels';
 import { DataManager, FavoriteInfo } from '../Data/DataManager';
-import { DownloadStatus, ReadingStatus, StatusConverter } from '../Types/StatusEnums';
+import { DownloadStatus, ReadingStatus, StatusConverter } from 'manxia_core/src/main/ets/Framework/Types/StatusEnums';
 import { ComicInfo, ComicDetailInfo, ChapterInfo, PageInfo } from './SourceExecutor';
 import { getSuwayomiSourceExecutor, SuwayomiSourceExecutor } from './SuwayomiSourceExecutor';
 import { getKomgaSourceExecutor, KomgaSourceExecutor } from './KomgaSourceExecutor';

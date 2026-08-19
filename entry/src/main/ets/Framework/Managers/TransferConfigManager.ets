@@ -2,7 +2,7 @@
  * 局域网传书配置管理器
  */
 
-import { logger } from '../../Utils/Logger';
+import { logger } from 'manxia_core/src/main/ets/Utils/Logger';
 import { SettingKeys, SettingsManager } from './SettingsManager';
 import {
   TransferConfig,

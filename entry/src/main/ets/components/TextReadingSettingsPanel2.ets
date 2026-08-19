@@ -14,7 +14,7 @@ import {
   mergeRemoteReadAloudSettings,
   normalizeReadAloudSettings
 } from '../Models/TextReaderModels';
-import { logger } from '../Utils/Logger';
+import { logger } from 'manxia_core/src/main/ets/Utils/Logger';
 import { ThemeManager } from '../Framework/Managers/ThemeManager';
 import { ThemeAwareState, ThemeAwareHelper } from '../Framework/Components/ThemeAware';
 import { ThemeType } from '../Framework/Managers/ThemeManager';

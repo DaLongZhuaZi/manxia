@@ -1,5 +1,5 @@
-﻿import { SafeFileUtils } from '../../Utils/SafeFileUtils';
-import { SafeUtils } from '../../Utils/SafeUtils';
+﻿import { SafeFileUtils } from 'manxia_core/src/main/ets/Utils/SafeFileUtils';
+import { SafeUtils } from 'manxia_core/src/main/ets/Utils/SafeUtils';
 // 文件路径: entry/src/main/ets/Framework/Components/ReaderKitViewerComponent.ets
 /**
  * Reader Kit 阅读器组件
@@ -7,7 +7,7 @@ import { SafeUtils } from '../../Utils/SafeUtils';
  * 支持格式：TXT、EPUB、MOBI、AZW、AZW3
  */
 
-import { logger } from '../../Utils/Logger';
+import { logger } from 'manxia_core/src/main/ets/Utils/Logger';
 import { EBook, EBookChapter, EBookReadingSettings, EBookPageMode, DEFAULT_EBOOK_READING_SETTINGS } from '../../Models/EBookModels';
 import { fileIo } from '@kit.CoreFileKit';
 import { bookParser, readerCore, ReadPageComponent } from '@kit.ReaderKit';

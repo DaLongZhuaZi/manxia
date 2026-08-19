@@ -5,7 +5,7 @@
  */
 
 import { WelcomeGuideManager, GuideStep } from '../Framework/Managers/WelcomeGuideManager';
-import { logger } from './Logger';
+import { logger } from 'manxia_core/src/main/ets/Utils/Logger';
 
 const TAG = 'WelcomeGuideTestHelper';
 

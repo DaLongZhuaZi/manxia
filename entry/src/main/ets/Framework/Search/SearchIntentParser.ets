@@ -3,7 +3,7 @@
  * 将用户输入解析为结构化的搜索意图，支持ID直达、URL直达等增强功能
  */
 
-import { logger } from '../../Utils/Logger';
+import { logger } from 'manxia_core/src/main/ets/Utils/Logger';
 import {
   SearchIntent,
   SearchIntentType,

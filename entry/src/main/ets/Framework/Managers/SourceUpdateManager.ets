@@ -1,4 +1,4 @@
-﻿import { SafeUtils } from '../../Utils/SafeUtils';
+﻿import { SafeUtils } from 'manxia_core/src/main/ets/Utils/SafeUtils';
 /**
  * 图源更新管理器
  * 负责检查图源仓库更新、管理更新状态
@@ -6,7 +6,7 @@
 
 import { preferences } from '@kit.ArkData';
 import { http } from '@kit.NetworkKit';
-import { logger } from '../../Utils/Logger';
+import { logger } from 'manxia_core/src/main/ets/Utils/Logger';
 
 const TAG = 'SourceUpdateManager';
 const PREFERENCES_NAME = 'source_update_preferences';

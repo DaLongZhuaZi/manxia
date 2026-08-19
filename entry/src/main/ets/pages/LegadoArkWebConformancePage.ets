@@ -1,7 +1,7 @@
 import { common } from '@kit.AbilityKit';
 import { hilog } from '@kit.PerformanceAnalysisKit';
-import { logger } from '../Utils/Logger';
-import { SafeUtils } from '../Utils/SafeUtils';
+import { logger } from 'manxia_core/src/main/ets/Utils/Logger';
+import { SafeUtils } from 'manxia_core/src/main/ets/Utils/SafeUtils';
 import { LegadoCompatibilityCompiler } from '../Framework/Novel/LegadoCompatibilityCompiler';
 import { getCookieStore } from '../Framework/Novel/LegadoCookieStore';
 import { LegadoRequestPlanner, LegadoTransportRouter } from '../Framework/Novel/LegadoRequestPipeline';

@@ -1,6 +1,6 @@
 import { AbilityConstant, UIAbility, Want, common } from '@kit.AbilityKit';
 import { window } from '@kit.ArkUI';
-import { logger } from './Utils/Logger';
+import { logger } from 'manxia_core/src/main/ets/Utils/Logger';
 import { continuationStateHelper, ContinuationPackSource } from './Framework/Distributed/ContinuationStateHelper';
 import {
   READ_ALOUD_PLAYER_ABILITY_INSTANCE_ID_KEY,

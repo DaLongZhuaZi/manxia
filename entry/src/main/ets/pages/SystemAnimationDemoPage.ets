@@ -7,8 +7,8 @@ import { HdsNavDestination, HdsNavDestinationAttribute, ScrollEffectType } from 
 
 import { AnimatedComponent } from '../Framework/Animation/AnimatedComponent';
 import { AnimationType } from '../Framework/Animation/GlobalAnimationSystem';
-import { logger } from '../Utils/Logger';
-import { PageLifecycleManager } from '../Framework/Lifecycle';
+import { logger } from 'manxia_core/src/main/ets/Utils/Logger';
+import { PageLifecycleManager } from 'manxia_core/src/main/ets/Framework/Lifecycle/index';
 import { uiContextManager } from '../Framework/Managers/UIContextManager';
 import { LengthMetrics, window } from '@kit.ArkUI';
 import { common } from '@kit.AbilityKit';

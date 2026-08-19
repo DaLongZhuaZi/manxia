@@ -16,7 +16,7 @@ import { taskpool } from '@kit.ArkTS';
 import { http } from '@kit.NetworkKit';
 import { common } from '@kit.AbilityKit';
 import { BackgroundTaskHelper } from '../Task/BackgroundTaskHelper';
-import { logger } from '../../Utils/Logger';
+import { logger } from 'manxia_core/src/main/ets/Utils/Logger';
 
 const TAG = 'SourceVerifier';
 

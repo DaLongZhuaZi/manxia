@@ -1,6 +1,6 @@
-﻿import { SafeUtils } from '../../Utils/SafeUtils';
+﻿import { SafeUtils } from 'manxia_core/src/main/ets/Utils/SafeUtils';
 import { preferences } from '@kit.ArkData';
-import { logger } from '../../Utils/Logger';
+import { logger } from 'manxia_core/src/main/ets/Utils/Logger';
 import { getNovelContentProcessor, ContentProcessConfig } from '../Novel/NovelContentProcessor';
 import { uiContextManager } from '../Managers/UIContextManager';
 

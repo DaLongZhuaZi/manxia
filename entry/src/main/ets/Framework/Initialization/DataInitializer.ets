@@ -4,13 +4,13 @@
  * 负责应用启动时的数据管理组件初始化流程
  */
 
-import { logger } from '../../Utils/Logger';
+import { logger } from 'manxia_core/src/main/ets/Utils/Logger';
 import { DataService } from '../Services/DataService';
 import { BusinessError } from '@kit.BasicServicesKit';
 import { common } from '@kit.AbilityKit';
 import { initializeNovelModule } from '../Novel/NovelInitializer';
 import { DiskCacheManager } from '../Cache/DiskCacheManager';
-import { SandboxManager } from '../Storage/SandboxManager';
+import { SandboxManager } from 'manxia_core/src/main/ets/Framework/Storage/SandboxManager';
 import { DataManager } from '../Data/DataManager';
 import { getSubscriptionInitializer } from '../Subscription/SubscriptionInitializer';
 

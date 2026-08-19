@@ -3,7 +3,7 @@
  * 将 Suwayomi 图源集成到现有的图源管理系统中
  */
 
-import { logger } from '../../Utils/Logger';
+import { logger } from 'manxia_core/src/main/ets/Utils/Logger';
 import { ComicInfo, ChapterInfo, PageInfo, ComicDetailInfo } from './SourceExecutor';
 import { getSuwayomiSource, SuwayomiSource, SuwayomiSourceConfig, SuwayomiCategory, PaginatedResult, MangaSortType, SortDirection, MangaSortOption, MANGA_SORT_OPTIONS } from './SuwayomiSource';
 

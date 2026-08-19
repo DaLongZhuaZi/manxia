@@ -1,7 +1,7 @@
 import { common } from '@kit.AbilityKit';
 import { preferences } from '@kit.ArkData';
-import { logger } from '../../Utils/Logger';
-import { SafeUtils } from '../../Utils/SafeUtils';
+import { logger } from 'manxia_core/src/main/ets/Utils/Logger';
+import { SafeUtils } from 'manxia_core/src/main/ets/Utils/SafeUtils';
 
 const TAG = 'SourceAutoCheckHistoryService';
 const PREF_NAME = 'source_auto_check_history';

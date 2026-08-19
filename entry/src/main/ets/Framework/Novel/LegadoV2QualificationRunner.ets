@@ -6,7 +6,7 @@
  * required workflow succeeds.  It never switches a global policy itself.
  */
 
-import { logger } from '../../Utils/Logger';
+import { logger } from 'manxia_core/src/main/ets/Utils/Logger';
 import { LegadoBook, LegadoChapter, LegadoExploreKind, LegadoSearchBook } from './LegadoSourceTypes';
 import { LegadoContentSemantics } from './LegadoContentSemantics';
 import { LegadoV2SourceExecutor } from './LegadoWorkflowOrchestrator';

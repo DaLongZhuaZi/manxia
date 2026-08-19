@@ -4,7 +4,7 @@
  * 提供阅读模式、阅读方向、亮度调节、滤镜效果、页面间距等配置选项
  */
 
-import { logger } from '../../Utils/Logger';
+import { logger } from 'manxia_core/src/main/ets/Utils/Logger';
 import { 
   GlobalAnimationManager, 
   AnimationType, 

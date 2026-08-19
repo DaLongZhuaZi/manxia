@@ -7,10 +7,10 @@
 import { ThemeAwareState, ThemeAwareHelper } from './ThemeAware';
 import { FontAwareHelper, FontAwareState } from './FontAware';
 import { DialogSurfaceStyleHelper } from './DialogSurfaceStyleHelper';
-import { logger } from '../../Utils/Logger';
+import { logger } from 'manxia_core/src/main/ets/Utils/Logger';
 import { AppColors, ColorRole } from '../Theme/AppColors';
-import { ScraperManager } from '../Scraper/ScraperManager';
-import { ScraperSource, ScraperContentType, ScrapedMetadata } from '../Scraper/ScraperTypes';
+import { ScraperManager } from 'manxia_core/src/main/ets/Framework/Scraper/ScraperManager';
+import { ScraperSource, ScraperContentType, ScrapedMetadata } from 'manxia_core/src/main/ets/Framework/Scraper/ScraperTypes';
 import { LengthMetrics } from '@kit.ArkUI';
 
 const TAG = 'ScraperDialog';

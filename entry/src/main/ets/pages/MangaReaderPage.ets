@@ -1,16 +1,16 @@
-import { SafeFileUtils } from '../Utils/SafeFileUtils';
-import { SafeUtils } from '../Utils/SafeUtils';
+import { SafeFileUtils } from 'manxia_core/src/main/ets/Utils/SafeFileUtils';
+import { SafeUtils } from 'manxia_core/src/main/ets/Utils/SafeUtils';
 /**
  * 漫画阅读器页面
  * 实现沉浸式显示、Navigation架构、状态管理
  * 支持单页/双页/连续滚动模式、缩放、手势翻页等功能
   */
 
-import { logger } from '../Utils/Logger';
+import { logger } from 'manxia_core/src/main/ets/Utils/Logger';
 import { ReaderSafeAreaUtils } from '../Utils/ReaderSafeAreaUtils';
 import { common } from '@kit.AbilityKit';
 import { WindowManager, DisplayMode } from '../Utils/WindowManager';
-import { ReaderOrientationLockHelper } from '../Utils/ReaderOrientationLockHelper';
+import { ReaderOrientationLockHelper } from 'manxia_core/src/main/ets/Utils/ReaderOrientationLockHelper';
 import { PageWindowCoordinator } from '../Utils/PageWindowCoordinator';
 import { globalAnimationManager, AnimationType, AnimationState,
   AnimationEasing } from '../Framework/Animation/GlobalAnimationSystem';
@@ -22,8 +22,8 @@ import { UIContext, curves } from '@kit.ArkUI';
 import { display } from '@kit.ArkUI';
 import { BusinessError } from '@kit.BasicServicesKit';
 import { DataManager, PageInfo, PageInfoInput, ChapterInfo, OnlineChapterInfo, OnlinePageInfo, OnlinePageInfoInput, UserSettingsDatabaseRecord, OnlineComicSourceSaveInput } from '../Framework/Data/DataManager';
-import { ComicSourceDatabaseRecord } from '../Framework/Database/DatabaseTypes';
-import { DatabaseManager } from '../Framework/Database/DatabaseManager';
+import { ComicSourceDatabaseRecord } from 'manxia_core/src/main/ets/Framework/Database/DatabaseTypes';
+import { DatabaseManager } from 'manxia_core/src/main/ets/Framework/Database/DatabaseManager';
 import CookieManager from '../Framework/Managers/CookieManager';
 import { DataService } from '../Framework/Services/DataService';
 import { RemoteLibraryMangaBridge } from '../Framework/Source/RemoteLibraryMangaBridge';
@@ -63,7 +63,7 @@ import { MangaReaderChapterList } from '../components/MangaReaderChapterList';
 import { MangaInteractionOverlay, MangaInteractionOverlayParams } from '../components/MangaInteractionOverlay';
 import { setReaderReady, setReaderLoadingProgress, startBookCloseTransitionWithComponentId, CoverPosition, cancelTransition } from '../components/BookTransitionOverlay';
 import { MangaDetailPageParams } from './MangaDetailPage';
-import { DownloadStatus, ReadingStatus } from '../Framework/Types/StatusEnums';
+import { DownloadStatus, ReadingStatus } from 'manxia_core/src/main/ets/Framework/Types/StatusEnums';
 import { AutoPageTurnController, AutoPageTurnState, AutoPageTurnConfig } from '../Framework/Utils/AutoPageTurnController';
 import { PageTurnAnimationType } from '../Models/MangaModels';
 import { WebViewSourceManager } from '../Framework/WebView/WebViewSourceManager';
@@ -99,7 +99,7 @@ import { TrackingManager } from '../Framework/Tracking/TrackingManager';
 import { TrackContentType } from '../Framework/Tracking/TrackingModels';
 import { window } from '@kit.ArkUI';
 import { eventBus, GameEvent, BasePayload } from '../Framework/EventBus';
-import { PageLifecycleManager, CancellationError } from '../Framework/Lifecycle';
+import { PageLifecycleManager, CancellationError } from 'manxia_core/src/main/ets/Framework/Lifecycle/index';
 import { UnifiedContentType } from '../Models/UnifiedContentModels';
 import { getUnifiedAnnotationManager } from '../Framework/Annotations/UnifiedAnnotationManager';
 import { AnnotationAnchor, UnifiedAnnotationType } from '../Models/AnnotationModels';

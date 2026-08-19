@@ -8,7 +8,7 @@
  * 4. 支持与Navigation架构集成
  */
 
-import { logger } from '../Utils/Logger';
+import { logger } from 'manxia_core/src/main/ets/Utils/Logger';
 import { image } from '@kit.ImageKit';
 import { UIContext } from '@kit.ArkUI';
 import { fileIo } from '@kit.CoreFileKit';

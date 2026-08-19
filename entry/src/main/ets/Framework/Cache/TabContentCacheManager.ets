@@ -1,4 +1,4 @@
-﻿import { SafeUtils } from '../../Utils/SafeUtils';
+﻿import { SafeUtils } from 'manxia_core/src/main/ets/Utils/SafeUtils';
 /**
  * Tab内容缓存管理器
  * 持久化缓存书源(BOOK_SOURCE)、Suwayomi 和 Komga 三个 Tab 的完整内容数据
@@ -7,7 +7,7 @@
  * 文件路径: entry/src/main/ets/Framework/Cache/TabContentCacheManager.ets
  */
 
-import { logger } from '../../Utils/Logger';
+import { logger } from 'manxia_core/src/main/ets/Utils/Logger';
 import { preferences } from '@kit.ArkData';
 import { NovelSearchResult, NovelSourceInfo } from '../../Models/NovelModels';
 import { getContext } from '../../GlobalContext';

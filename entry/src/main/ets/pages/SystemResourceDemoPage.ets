@@ -4,8 +4,8 @@
  */
 import { HdsNavDestination, HdsNavDestinationAttribute, ScrollEffectType } from '@kit.UIDesignKit';
 import { LengthMetrics, curves } from '@kit.ArkUI';
-import { colorMap } from '../Data/ResourceMap';
-import { logger } from '../Utils/Logger';
+import { colorMap } from 'manxia_core/src/main/ets/Data/ResourceMap';
+import { logger } from 'manxia_core/src/main/ets/Utils/Logger';
 import { AnimatedComponent, AnimationType } from '../Framework/Animation/AnimatedComponent';
 import { ThemeManager, ThemeType } from '../Framework/Managers/ThemeManager';
 import { ThemeToggle } from '../Framework/Components/ThemeToggle';

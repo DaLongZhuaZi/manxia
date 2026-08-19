@@ -1,4 +1,4 @@
-﻿import { SafeFileUtils } from '../../Utils/SafeFileUtils';
+﻿import { SafeFileUtils } from 'manxia_core/src/main/ets/Utils/SafeFileUtils';
 /**
  * 缓存状态服务
  * 提供统一接口查询漫画/小说的缓存状态
@@ -7,14 +7,14 @@
  * 文件路径: entry/src/main/ets/Framework/Services/CacheStatusService.ets
  */
 
-import { logger } from '../../Utils/Logger';
+import { logger } from 'manxia_core/src/main/ets/Utils/Logger';
 import { common } from '@kit.AbilityKit';
 import fs from '@ohos.file.fs';
 import { PermanentImageCacheManager } from '../Cache/PermanentImageCacheManager';
 import { getNovelChapterCacheManager, NovelChapterCacheManager } from '../Novel/NovelChapterCacheManager';
 import { DataManager, OnlineChapterInfo, OnlinePageInfo } from '../Data/DataManager';
-import { DatabaseManager } from '../Database/DatabaseManager';
-import { DatabaseValue, GenericQueryRecord } from '../Database/DatabaseTypes';
+import { DatabaseManager } from 'manxia_core/src/main/ets/Framework/Database/DatabaseManager';
+import { DatabaseValue, GenericQueryRecord } from 'manxia_core/src/main/ets/Framework/Database/DatabaseTypes';
 import { eventBus, GameEvent, IEventPayload, MangaCacheUpdatedPayload } from '../EventBus';
 import {
   OnlineArchiveCacheState,

@@ -1,4 +1,4 @@
-import { sha256Hash } from '../../Utils/CryptoUtils';
+import { sha256Hash } from 'manxia_core/src/main/ets/Utils/CryptoUtils';
 import {
   LegadoExecutionTrace,
   LegadoBridgeTrace,

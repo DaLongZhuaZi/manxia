@@ -1,6 +1,6 @@
-import { logger } from '../../Utils/Logger';
-import { sha256Hash } from '../../Utils/CryptoUtils';
-import { SafeUtils } from '../../Utils/SafeUtils';
+import { logger } from 'manxia_core/src/main/ets/Utils/Logger';
+import { sha256Hash } from 'manxia_core/src/main/ets/Utils/CryptoUtils';
+import { SafeUtils } from 'manxia_core/src/main/ets/Utils/SafeUtils';
 import {
   LegadoRuleAnalyzer,
   LegadoRuleElementDiagnostic,

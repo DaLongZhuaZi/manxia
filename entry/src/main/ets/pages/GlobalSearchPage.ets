@@ -12,9 +12,9 @@ import { SettingsManager, SettingKeys } from '../Framework/Managers/SettingsMana
 import { FontAwareHelper, FontAwareState } from '../Framework/Components/FontAware';
 import { DeviceAdaptationManager, DeviceInfo, DeviceChangeListener, Breakpoint } from '../Framework/Managers/DeviceAdaptationManager';
 import { ResponsiveLayoutHelper } from '../Framework/Utils/ResponsiveLayout';
-import { logger } from '../Utils/Logger';
-import { SafeUtils } from '../Utils/SafeUtils';
-import { PageLifecycleManager } from '../Framework/Lifecycle';
+import { logger } from 'manxia_core/src/main/ets/Utils/Logger';
+import { SafeUtils } from 'manxia_core/src/main/ets/Utils/SafeUtils';
+import { PageLifecycleManager } from 'manxia_core/src/main/ets/Framework/Lifecycle/index';
 import { NovelDetailPageParams } from './NovelBookshelfPage';
 import {
   GlobalSearchService,

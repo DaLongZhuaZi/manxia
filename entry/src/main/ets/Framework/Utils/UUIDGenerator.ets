@@ -5,7 +5,7 @@
  * 用于生成唯一标识符，替代数字ID
  */
 
-import { logger } from '../../Utils/Logger';
+import { logger } from 'manxia_core/src/main/ets/Utils/Logger';
 
 const TAG = 'UUIDGenerator';
 

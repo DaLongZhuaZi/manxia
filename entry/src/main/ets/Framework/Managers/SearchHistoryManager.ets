@@ -2,7 +2,7 @@
 // 职责: 提供搜索历史在应用内数据库的读取、保存、添加与清空方法，避免使用系统级存储
 
 import { DataManager } from '../Data/DataManager';
-import { logger } from '../../Utils/Logger';
+import { logger } from 'manxia_core/src/main/ets/Utils/Logger';
 
 const TAG: string = 'SearchHistoryManager';
 

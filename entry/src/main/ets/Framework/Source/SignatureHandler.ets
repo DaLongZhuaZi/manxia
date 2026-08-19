@@ -3,8 +3,8 @@
  * 为API请求生成签名（支持HMAC-SHA256等）
  */
 
-import { hmacSHA256, generateRandomString } from '../../Utils/CryptoUtils';
-import { logger } from '../../Utils/Logger';
+import { hmacSHA256, generateRandomString } from 'manxia_core/src/main/ets/Utils/CryptoUtils';
+import { logger } from 'manxia_core/src/main/ets/Utils/Logger';
 
 const TAG = 'SignatureHandler';
 

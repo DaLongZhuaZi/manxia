@@ -2,7 +2,7 @@
 // 职责: 管理图片加载状态，确保UI与加载状态完全同步
 
 import image from '@ohos.multimedia.image';
-import { logger } from '../Utils/Logger';
+import { logger } from 'manxia_core/src/main/ets/Utils/Logger';
 
 const TAG = 'ImageLoadStateManager';
 

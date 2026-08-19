@@ -8,7 +8,7 @@
  */
 
 import { ThemeManager, ThemeType } from '../Managers/ThemeManager';
-import { logger } from '../../Utils/Logger';
+import { logger } from 'manxia_core/src/main/ets/Utils/Logger';
 import { AppColors, ColorRole } from '../Theme/AppColors';
 
 // 定义类型

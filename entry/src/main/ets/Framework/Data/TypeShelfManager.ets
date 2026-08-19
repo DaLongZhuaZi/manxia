@@ -1,10 +1,10 @@
-﻿import { SafeUtils } from '../../Utils/SafeUtils';
+﻿import { SafeUtils } from 'manxia_core/src/main/ets/Utils/SafeUtils';
 /**
  * 类型书架管理器
  * 管理自定义书架的创建、删除和持久化存储
  * 与BookshelfCategoryManager集成，复用内容-书架映射逻辑
  */
-import { logger } from '../../Utils/Logger';
+import { logger } from 'manxia_core/src/main/ets/Utils/Logger';
 import { SettingsManager } from '../Managers/SettingsManager';
 import { BookshelfCategoryManager, ContentType, CategoryItem } from './BookshelfCategoryManager';
 

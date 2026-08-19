@@ -1,4 +1,4 @@
-﻿import { SafeUtils } from '../../Utils/SafeUtils';
+﻿import { SafeUtils } from 'manxia_core/src/main/ets/Utils/SafeUtils';
 /**
  * Rhino沙箱WebView组件
  * 
@@ -9,7 +9,7 @@
  */
 
 import { webview } from '@kit.ArkWeb';
-import { logger } from '../../Utils/Logger';
+import { logger } from 'manxia_core/src/main/ets/Utils/Logger';
 import { getRhinoWasmExecutor, RhinoWasmExecutor } from './RhinoWasmExecutor';
 import { getLegadoRuntimeAssetManager } from './LegadoRuntimeAssetManager';
 

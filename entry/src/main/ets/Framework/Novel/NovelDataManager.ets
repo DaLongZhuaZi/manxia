@@ -1,4 +1,4 @@
-import { SafeUtils } from '../../Utils/SafeUtils';
+import { SafeUtils } from 'manxia_core/src/main/ets/Utils/SafeUtils';
 /**
  * 小说数据管理器
  * 独立管理小说相关数据，不影响现有数据库
@@ -8,7 +8,7 @@ import { SafeUtils } from '../../Utils/SafeUtils';
 
 import { relationalStore } from '@kit.ArkData';
 import { common } from '@kit.AbilityKit';
-import { logger } from '../../Utils/Logger';
+import { logger } from 'manxia_core/src/main/ets/Utils/Logger';
 import { NOVEL_CREATE_TABLE_SQL, NOVEL_CREATE_INDEX_SQL } from './NovelDatabaseSchema';
 import { LegadoBookSource } from './LegadoSourceTypes';
 import {
@@ -27,7 +27,7 @@ import {
 import { NovelBook, NovelChapter, NovelReadProgress, NovelReaderSettings, DEFAULT_NOVEL_READER_SETTINGS, NovelReadStatus } from '../../Models/NovelModels';
 import { getNovelLoginManager } from './NovelLoginManager';
 import { getNovelCoverGenerator } from './NovelCoverGenerator';
-import { LibraryCoverManager } from '../Storage/LibraryCoverManager';
+import { LibraryCoverManager } from 'manxia_core/src/main/ets/Framework/Storage/LibraryCoverManager';
 import { getUnifiedAnnotationManager } from '../Annotations/UnifiedAnnotationManager';
 import { UnifiedContentType } from '../../Models/UnifiedContentModels';
 

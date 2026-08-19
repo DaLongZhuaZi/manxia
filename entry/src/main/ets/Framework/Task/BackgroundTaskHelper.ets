@@ -11,7 +11,7 @@
 import { backgroundTaskManager } from '@kit.BackgroundTasksKit';
 import wantAgent, { WantAgent } from '@ohos.app.ability.wantAgent';
 import { common } from '@kit.AbilityKit';
-import { logger } from '../../Utils/Logger';
+import { logger } from 'manxia_core/src/main/ets/Utils/Logger';
 
 const TAG = 'BackgroundTaskHelper';
 const AUTO_REFRESH_INTERVAL_MS = 8 * 60 * 1000;

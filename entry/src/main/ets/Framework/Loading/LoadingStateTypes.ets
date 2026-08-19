@@ -4,7 +4,7 @@
  * 定义了加载阶段、加载状态、错误严重程度、恢复策略以及加载进度信息等类型
  */
 
-import { logger } from '../../Utils/Logger';
+import { logger } from 'manxia_core/src/main/ets/Utils/Logger';
 // 移除对Game目录的依赖，使用简单的类型定义
 export type PropertyValue = string | number | boolean;
 

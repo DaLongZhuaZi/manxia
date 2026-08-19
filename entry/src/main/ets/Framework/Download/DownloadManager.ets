@@ -1,11 +1,11 @@
-﻿import { SafeFileUtils } from '../../Utils/SafeFileUtils';
+﻿import { SafeFileUtils } from 'manxia_core/src/main/ets/Utils/SafeFileUtils';
 /**
  * 下载管理器
  * 负责漫画章节的下载任务管理、队列控制、断点续传
  */
 
 import request from '@ohos.request';
-import { logger } from '../../Utils/Logger';
+import { logger } from 'manxia_core/src/main/ets/Utils/Logger';
 import { common } from '@kit.AbilityKit';
 import fs from '@ohos.file.fs';
 import { DownloadDirManager } from '../Storage/DownloadDirManager';
@@ -13,9 +13,9 @@ import http from '@ohos.net.http';
 import { BusinessError } from '@kit.BasicServicesKit';
 import { AppNotificationManager, NotificationType } from '../Managers/NotificationManager';
 import { DataManager, DownloadTask, DownloadTaskInput, DownloadTaskUpdate, OnlineComicInfo, OnlineChapterInfo } from '../Data/DataManager';
-import { DatabaseManager } from '../Database/DatabaseManager';
-import { ComicSourceDatabaseRecord, GenericQueryRecord, UpdateRecordData } from '../Database/DatabaseTypes';
-import { DownloadStatus } from '../Types/StatusEnums';
+import { DatabaseManager } from 'manxia_core/src/main/ets/Framework/Database/DatabaseManager';
+import { ComicSourceDatabaseRecord, GenericQueryRecord, UpdateRecordData } from 'manxia_core/src/main/ets/Framework/Database/DatabaseTypes';
+import { DownloadStatus } from 'manxia_core/src/main/ets/Framework/Types/StatusEnums';
 import { BackgroundTaskHelper } from '../Task/BackgroundTaskHelper';
 import { OnlineArchiveCreateResult, OnlineArchiveMetadata, OnlineArchivePageFile, OnlineMangaArchiveService } from './OnlineMangaArchiveService';
 import { eventBus, GameEvent, MangaCacheUpdatedPayload } from '../EventBus';

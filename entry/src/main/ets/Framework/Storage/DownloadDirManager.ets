@@ -1,4 +1,4 @@
-﻿import { SafeFileUtils } from '../../Utils/SafeFileUtils';
+﻿import { SafeFileUtils } from 'manxia_core/src/main/ets/Utils/SafeFileUtils';
 /**
  * Download目录管理器
  * 管理应用在系统Download文件夹中的专属目录
@@ -8,7 +8,7 @@
 import { picker, fileUri } from '@kit.CoreFileKit';
 import { common } from '@kit.AbilityKit';
 import fs from '@ohos.file.fs';
-import { logger } from '../../Utils/Logger';
+import { logger } from 'manxia_core/src/main/ets/Utils/Logger';
 import { SettingsManager, SettingKeys } from '../Managers/SettingsManager';
 
 const TAG = 'DownloadDirManager';

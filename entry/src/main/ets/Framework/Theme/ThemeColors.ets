@@ -31,7 +31,7 @@
 
 import { ThemeManager, ThemeType, ThemeChangeCallback } from '../Managers/ThemeManager';
 import { AppColors, ColorRole, ThemePalette } from './AppColors';
-import { logger } from '../../Utils/Logger';
+import { logger } from 'manxia_core/src/main/ets/Utils/Logger';
 
 const TAG = 'ThemeColors';
 

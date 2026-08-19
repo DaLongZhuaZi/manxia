@@ -1,11 +1,11 @@
-﻿import { SafeFileUtils } from '../../Utils/SafeFileUtils';
-import { SafeUtils } from '../../Utils/SafeUtils';
+﻿import { SafeFileUtils } from 'manxia_core/src/main/ets/Utils/SafeFileUtils';
+import { SafeUtils } from 'manxia_core/src/main/ets/Utils/SafeUtils';
 /**
  * 图源管理器
  * 统一管理图源的导入、执行、测试等功能
  */
 
-import { logger } from '../../Utils/Logger';
+import { logger } from 'manxia_core/src/main/ets/Utils/Logger';
 import { DataManager } from '../Data/DataManager';
 import { SourceExecutor, ComicInfo, ComicDetailInfo, ChapterInfo, PageInfo } from './SourceExecutor';
 import { SourceTester, TestResult } from './SourceTester';

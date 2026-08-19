@@ -1,5 +1,5 @@
-﻿import { SafeFileUtils } from '../../Utils/SafeFileUtils';
-import { SafeUtils } from '../../Utils/SafeUtils';
+﻿import { SafeFileUtils } from 'manxia_core/src/main/ets/Utils/SafeFileUtils';
+import { SafeUtils } from 'manxia_core/src/main/ets/Utils/SafeUtils';
 /**
  * WebDAV客户端
  * 基于perry-mitchell/webdav-client设计，适配HarmonyOS ArkTS
@@ -20,7 +20,7 @@ import { SafeUtils } from '../../Utils/SafeUtils';
 
 import { http } from '@kit.NetworkKit';
 import { fileIo } from '@kit.CoreFileKit';
-import { logger } from '../../Utils/Logger';
+import { logger } from 'manxia_core/src/main/ets/Utils/Logger';
 import { util } from '@kit.ArkTS';
 
 const TAG = 'WebDAVClient';

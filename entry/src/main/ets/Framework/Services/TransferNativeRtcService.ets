@@ -5,7 +5,7 @@
  * TransferSignalClientService 和 Worker Durable Object 负责。
  */
 
-import { logger } from '../../Utils/Logger';
+import { logger } from 'manxia_core/src/main/ets/Utils/Logger';
 import transferRtcNativeModuleImport from 'libtransfer_rtc_native.so';
 import {
   TransferNativeRtcBackend,

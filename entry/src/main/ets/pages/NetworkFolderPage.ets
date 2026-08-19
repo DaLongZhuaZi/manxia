@@ -2,7 +2,7 @@ import { common, Want } from '@kit.AbilityKit';
 import { LengthMetrics } from '@kit.ArkUI';
 import { fileUri } from '@kit.CoreFileKit';
 import { HdsNavDestination } from '@kit.UIDesignKit';
-import { logger } from '../Utils/Logger';
+import { logger } from 'manxia_core/src/main/ets/Utils/Logger';
 import { ThemeAwareHelper, ThemeAwareState } from '../Framework/Components/ThemeAware';
 import { getNetworkFolderManager, NetworkFolderManager } from '../Framework/Network/NetworkFolderManager';
 import { BackgroundTaskManager, TaskType, TaskNotificationScene, TaskStatus } from '../Framework/Task/BackgroundTaskManager';

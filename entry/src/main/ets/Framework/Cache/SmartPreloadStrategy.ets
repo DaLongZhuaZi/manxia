@@ -9,7 +9,7 @@
  * 4. WiFi环境下增加预加载
  */
 
-import { logger } from '../../Utils/Logger';
+import { logger } from 'manxia_core/src/main/ets/Utils/Logger';
 import { connection } from '@kit.NetworkKit';
 import { CacheConfigManager } from './CacheConfigManager';
 

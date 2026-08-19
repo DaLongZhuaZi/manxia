@@ -1,5 +1,5 @@
 import { connection } from '@kit.NetworkKit';
-import { logger } from '../../Utils/Logger';
+import { logger } from 'manxia_core/src/main/ets/Utils/Logger';
 import {
   NetworkFolderConnection,
   normalizeConnectionBasePath,

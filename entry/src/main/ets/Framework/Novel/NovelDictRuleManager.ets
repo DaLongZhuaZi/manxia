@@ -1,4 +1,4 @@
-﻿import { SafeUtils } from '../../Utils/SafeUtils';
+﻿import { SafeUtils } from 'manxia_core/src/main/ets/Utils/SafeUtils';
 /**
  * 字典规则管理器
  * 用于在线词典查询功能
@@ -7,7 +7,7 @@
  * 文件路径: entry/src/main/ets/Framework/Novel/NovelDictRuleManager.ets
  */
 
-import { logger } from '../../Utils/Logger';
+import { logger } from 'manxia_core/src/main/ets/Utils/Logger';
 import { getNovelDataManager } from './NovelDataManager';
 import { http } from '@kit.NetworkKit';
 

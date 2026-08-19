@@ -1,4 +1,4 @@
-﻿import { SafeFileUtils } from '../../Utils/SafeFileUtils';
+﻿import { SafeFileUtils } from 'manxia_core/src/main/ets/Utils/SafeFileUtils';
 /**
  * 在线漫画归档服务
  * 负责将在线下载/缓存的散图打包为 CBZ，并在阅读前解压到运行缓存目录。
@@ -9,11 +9,11 @@ import { common } from '@kit.AbilityKit';
 import { util } from '@kit.ArkTS';
 import fs from '@ohos.file.fs';
 import { MinizipNative } from '@ohos/minizip';
-import { logger } from '../../Utils/Logger';
-import { MetadataXmlGenerator, MangaMetadata } from '../../Utils/MetadataXmlGenerator';
+import { logger } from 'manxia_core/src/main/ets/Utils/Logger';
+import { MetadataXmlGenerator, MangaMetadata } from 'manxia_core/src/main/ets/Utils/MetadataXmlGenerator';
 import { DataManager, OnlineChapterInfo, OnlineComicInfo, OnlinePageInfo } from '../Data/DataManager';
-import { DatabaseManager } from '../Database/DatabaseManager';
-import { DatabaseValue, GenericQueryRecord } from '../Database/DatabaseTypes';
+import { DatabaseManager } from 'manxia_core/src/main/ets/Framework/Database/DatabaseManager';
+import { DatabaseValue, GenericQueryRecord } from 'manxia_core/src/main/ets/Framework/Database/DatabaseTypes';
 import {
   DownloadDirManager,
   OnlineMangaArchiveLookupResult,

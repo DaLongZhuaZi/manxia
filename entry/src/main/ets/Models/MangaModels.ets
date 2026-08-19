@@ -4,8 +4,8 @@
  * 遵循ArkTS类型安全规范，避免使用any和unknown类型
  */
 
-import { MangaStatus, DownloadStatus, ReadingStatus } from '../Framework/Types/StatusEnums';
-import { TimeUtils } from '../Framework/Utils/TimeUtils';
+import { MangaStatus, DownloadStatus, ReadingStatus } from 'manxia_core/src/main/ets/Framework/Types/StatusEnums';
+import { TimeUtils } from 'manxia_core/src/main/ets/Framework/Utils/TimeUtils';
 
 /**
  * 图片源类型枚举

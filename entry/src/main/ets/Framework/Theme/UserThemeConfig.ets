@@ -1,4 +1,4 @@
-﻿import { SafeUtils } from '../../Utils/SafeUtils';
+﻿import { SafeUtils } from 'manxia_core/src/main/ets/Utils/SafeUtils';
 /**
  * 用户自定义主题配置系统（精简版）
  * 
@@ -10,7 +10,7 @@
  * 文件路径: entry/src/main/ets/Framework/Theme/UserThemeConfig.ets
  */
 
-import { logger } from '../../Utils/Logger';
+import { logger } from 'manxia_core/src/main/ets/Utils/Logger';
 import { preferences } from '@kit.ArkData';
 import { getContext } from '../../GlobalContext';
 

@@ -1,4 +1,4 @@
-import { SafeUtils } from '../../Utils/SafeUtils';
+import { SafeUtils } from 'manxia_core/src/main/ets/Utils/SafeUtils';
 // 文件路径: src/main/ets/Framework/WebView/MangaSourceActionEngine.ets
 /**
  * 漫画图源操作引擎
@@ -7,7 +7,7 @@ import { SafeUtils } from '../../Utils/SafeUtils';
 
 import { webview } from '@kit.ArkWeb';
 import { BusinessError } from '@kit.BasicServicesKit';
-import { logger } from '../../Utils/Logger';
+import { logger } from 'manxia_core/src/main/ets/Utils/Logger';
 import { 
   Action, 
   ActionType, 

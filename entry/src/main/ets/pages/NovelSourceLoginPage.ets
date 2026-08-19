@@ -11,7 +11,7 @@
 import { HdsNavDestination } from '@kit.UIDesignKit';
 import { promptAction } from '@kit.ArkUI';
 import { common } from '@kit.AbilityKit';
-import { logger } from '../Utils/Logger';
+import { logger } from 'manxia_core/src/main/ets/Utils/Logger';
 import { webview } from '@kit.ArkWeb';
 import { getNovelSourceManager } from '../Framework/Novel/NovelSourceManager';
 import { getNovelLoginManager, LoginUiItem } from '../Framework/Novel/NovelLoginManager';

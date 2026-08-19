@@ -1,5 +1,5 @@
 import { textToSpeech } from '@kit.CoreSpeechKit';
-import { logger } from '../../Utils/Logger';
+import { logger } from 'manxia_core/src/main/ets/Utils/Logger';
 import {
   ReadAloudEngineType,
   ReadAloudSettings,

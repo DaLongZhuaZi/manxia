@@ -1,4 +1,4 @@
-﻿import { SafeFileUtils } from '../../Utils/SafeFileUtils';
+﻿import { SafeFileUtils } from 'manxia_core/src/main/ets/Utils/SafeFileUtils';
 /**
  * 小说源管理器
  * 统一管理小说书源的导入、存储、执行
@@ -6,7 +6,7 @@
  * 文件路径: entry/src/main/ets/Framework/Novel/NovelSourceManager.ets
  */
 
-import { logger } from '../../Utils/Logger';
+import { logger } from 'manxia_core/src/main/ets/Utils/Logger';
 import { LegadoBookSource, LegadoSearchBook, LegadoBook, LegadoChapter, LegadoSourceImportResult, LegadoExploreKind, LegadoBookSourceType, LegadoRequestCarrier } from './LegadoSourceTypes';
 import { NovelSourceExecutor, SearchParseOptions } from './NovelSourceExecutor';
 import { LegadoCompatibilityCompiler } from './LegadoCompatibilityCompiler';

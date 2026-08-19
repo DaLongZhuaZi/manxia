@@ -4,8 +4,8 @@
  * 提供运行时类型检查功能，确保数据类型的安全性
  */
 
-import { logger } from '../../Utils/Logger';
-import { MangaStatus, DownloadStatus } from '../Types/StatusEnums';
+import { logger } from 'manxia_core/src/main/ets/Utils/Logger';
+import { MangaStatus, DownloadStatus } from 'manxia_core/src/main/ets/Framework/Types/StatusEnums';
 
 const TAG = 'TypeGuards';
 

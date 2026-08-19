@@ -3,7 +3,7 @@
  * 按任务类型分队列执行，统一处理并发、超时、取消检查和时间片让渡。
  */
 
-import { logger } from '../../Utils/Logger';
+import { logger } from 'manxia_core/src/main/ets/Utils/Logger';
 import {
   GlobalSearchCancelSignal,
   GlobalSearchTaskKind,

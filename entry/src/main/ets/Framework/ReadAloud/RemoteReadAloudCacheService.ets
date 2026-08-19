@@ -1,9 +1,9 @@
-﻿import { SafeFileUtils } from '../../Utils/SafeFileUtils';
-import { SafeUtils } from '../../Utils/SafeUtils';
+﻿import { SafeFileUtils } from 'manxia_core/src/main/ets/Utils/SafeFileUtils';
+import { SafeUtils } from 'manxia_core/src/main/ets/Utils/SafeUtils';
 import fs from '@ohos.file.fs';
 import { util } from '@kit.ArkTS';
 import { preferences } from '@kit.ArkData';
-import { logger } from '../../Utils/Logger';
+import { logger } from 'manxia_core/src/main/ets/Utils/Logger';
 import { uiContextManager } from '../Managers/UIContextManager';
 import {
   ChapterOrderCacheRemapResult,

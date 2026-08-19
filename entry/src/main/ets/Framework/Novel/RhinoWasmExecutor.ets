@@ -1,4 +1,4 @@
-import { SafeUtils } from '../../Utils/SafeUtils';
+import { SafeUtils } from 'manxia_core/src/main/ets/Utils/SafeUtils';
 /**
  * Rhino WASM执行器
  * 
@@ -14,8 +14,8 @@ import { SafeUtils } from '../../Utils/SafeUtils';
  */
 
 import { webview } from '@kit.ArkWeb';
-import { logger } from '../../Utils/Logger';
-import { buildJsoupEntityCompatibilityScript } from '../../libs/htmlparser';
+import { logger } from 'manxia_core/src/main/ets/Utils/Logger';
+import { buildJsoupEntityCompatibilityScript } from 'manxia_core/src/main/ets/libs/htmlparser/index';
 
 const TAG = 'RhinoWasmExecutor';
 

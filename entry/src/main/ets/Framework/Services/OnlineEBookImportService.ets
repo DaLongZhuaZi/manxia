@@ -1,7 +1,7 @@
-import { SafeFileUtils } from '../../Utils/SafeFileUtils';
+import { SafeFileUtils } from 'manxia_core/src/main/ets/Utils/SafeFileUtils';
 import { fileIo as fs } from '@kit.CoreFileKit';
 import { EBook } from '../../Models/EBookModels';
-import { logger } from '../../Utils/Logger';
+import { logger } from 'manxia_core/src/main/ets/Utils/Logger';
 import { EBookDataManager } from '../Data/EBookDataManager';
 import { EBookCoverExtractor, EBookParserFactory } from '../Parsers/EBookParser';
 import { getContext } from '../../GlobalContext';

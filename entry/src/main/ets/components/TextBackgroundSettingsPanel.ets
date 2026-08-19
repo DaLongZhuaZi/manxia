@@ -1,5 +1,5 @@
 import { common } from '@kit.AbilityKit';
-import { SafeFileUtils } from '../Utils/SafeFileUtils';
+import { SafeFileUtils } from 'manxia_core/src/main/ets/Utils/SafeFileUtils';
 /**
  * 小说阅读器背景设置面板
  * 独立对话框，提供预设主题、自定义背景图片、图片不透明度、文字颜色等设置
@@ -14,7 +14,7 @@ import {
   PresetBackground,
   SavedBackgroundImage
 } from '../Models/TextReaderModels';
-import { logger } from '../Utils/Logger';
+import { logger } from 'manxia_core/src/main/ets/Utils/Logger';
 import { ThemeManager } from '../Framework/Managers/ThemeManager';
 import { ThemeAwareState, ThemeAwareHelper } from '../Framework/Components/ThemeAware';
 import { ThemeType } from '../Framework/Managers/ThemeManager';

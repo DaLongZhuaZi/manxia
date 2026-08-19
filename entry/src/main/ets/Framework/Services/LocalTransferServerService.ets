@@ -1,4 +1,4 @@
-﻿import { SafeUtils } from '../../Utils/SafeUtils';
+﻿import { SafeUtils } from 'manxia_core/src/main/ets/Utils/SafeUtils';
 /**
  * 局域网传书本地服务
  *
@@ -14,7 +14,7 @@ import webSocket from '@ohos.net.webSocket';
 import { util } from '@kit.ArkTS';
 import { common } from '@kit.AbilityKit';
 import { connection } from '@kit.NetworkKit';
-import { logger } from '../../Utils/Logger';
+import { logger } from 'manxia_core/src/main/ets/Utils/Logger';
 import {
   TransferConfig,
   TransferInfoResponse,

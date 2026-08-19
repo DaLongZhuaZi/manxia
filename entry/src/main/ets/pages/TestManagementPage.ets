@@ -8,9 +8,9 @@ import { LengthMetrics } from '@kit.ArkUI';
 
 import { AnimatedComponent } from '../Framework/Animation/AnimatedComponent';
 import { AnimationType } from '../Framework/Animation/GlobalAnimationSystem';
-import { logger } from '../Utils/Logger';
-import { TestItem, TestCategory } from '../Data/TestData';
-import { testData } from '../Data/TestData';
+import { logger } from 'manxia_core/src/main/ets/Utils/Logger';
+import { TestItem, TestCategory } from 'manxia_core/src/main/ets/Data/TestData';
+import { testData } from 'manxia_core/src/main/ets/Data/TestData';
 import { window } from '@kit.ArkUI';
 import { common } from '@kit.AbilityKit';
 import { uiContextManager } from '../Framework/Managers/UIContextManager';

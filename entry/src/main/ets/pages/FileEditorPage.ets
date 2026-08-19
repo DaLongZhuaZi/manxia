@@ -1,4 +1,4 @@
-import { SafeUtils } from '../Utils/SafeUtils';
+import { SafeUtils } from 'manxia_core/src/main/ets/Utils/SafeUtils';
 /**
  * 文件编辑器页面
  * 支持多种编程语言和文件格式的编辑
@@ -10,7 +10,7 @@ import { SafeUtils } from '../Utils/SafeUtils';
 import { picker, fileIo } from '@kit.CoreFileKit';
 import { util } from '@kit.ArkTS';
 import { common } from '@kit.AbilityKit';
-import { logger } from '../Utils/Logger';
+import { logger } from 'manxia_core/src/main/ets/Utils/Logger';
 import { CodeEditorComponent, EditorTheme, CodeEditorController } from '../components/editor/CodeEditorComponent';
 import { MarkdownViewerComponent, MarkdownTheme, TocItem, MarkdownViewerController } from '../components/editor/MarkdownViewerComponent';
 import {

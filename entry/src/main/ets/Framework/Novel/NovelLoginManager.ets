@@ -1,5 +1,5 @@
 ﻿import { UIContext } from '@ohos.arkui.UIContext';
-import { SafeUtils } from '../../Utils/SafeUtils';
+import { SafeUtils } from 'manxia_core/src/main/ets/Utils/SafeUtils';
 /**
  * 小说书源登录管理器
  * 处理书源的登录逻辑、Cookie管理
@@ -7,7 +7,7 @@ import { SafeUtils } from '../../Utils/SafeUtils';
  * 文件路径: entry/src/main/ets/Framework/Novel/NovelLoginManager.ets
  */
 
-import { logger } from '../../Utils/Logger';
+import { logger } from 'manxia_core/src/main/ets/Utils/Logger';
 import { LegadoBookSource, LegadoLoginUiItem } from './LegadoSourceTypes';
 import { getLegadoRhinoEngine } from './LegadoRhinoEngine';
 import { ToastMessage, CookieChange, JsContext } from './LegadoJsEngine';

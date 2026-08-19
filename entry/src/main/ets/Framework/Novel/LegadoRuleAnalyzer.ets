@@ -1,4 +1,4 @@
-import { SafeUtils } from '../../Utils/SafeUtils';
+import { SafeUtils } from 'manxia_core/src/main/ets/Utils/SafeUtils';
 /**
  * Legado规则解析引擎
  * 支持多种解析模式：Default(CSS)、XPath、JSONPath、Regex、JS
@@ -7,7 +7,7 @@ import { SafeUtils } from '../../Utils/SafeUtils';
  * 职责: 解析Legado书源规则，从HTML/JSON内容中提取数据
  */
 
-import { logger } from '../../Utils/Logger';
+import { logger } from 'manxia_core/src/main/ets/Utils/Logger';
 import { LegadoBookSource, LegadoRuleMode, LegadoParsedRule } from './LegadoSourceTypes';
 import {
   getLegadoJsEngine,
@@ -23,7 +23,7 @@ import {
   HtmlEntities,
   LegadoTextAccumulator,
   LegadoTextNormalization
-} from '../../libs/htmlparser';
+} from 'manxia_core/src/main/ets/libs/htmlparser/index';
 import type { LegadoBridgeTrace } from './LegadoCompatibilityTypes';
 
 const TAG = 'LegadoRuleAnalyzer';

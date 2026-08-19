@@ -3,7 +3,7 @@
  * 实现"优先使用缓存，按需请求"的策略
  */
 
-import { logger } from '../../Utils/Logger';
+import { logger } from 'manxia_core/src/main/ets/Utils/Logger';
 import { DataManager } from '../Data/DataManager';
 import { 
   Manga, 
@@ -15,7 +15,7 @@ import {
   isOnlineChapter,
   hasLocalImage,
   OnlineChapterDownloadStatus
-} from '../Types/MangaTypes';
+} from 'manxia_core/src/main/ets/Framework/Types/MangaTypes';
 import { MangaTypeAdapter } from '../Adapters/MangaTypeAdapter';
 
 const TAG = 'MangaDataLoader';

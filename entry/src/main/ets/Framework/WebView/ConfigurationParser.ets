@@ -1,4 +1,4 @@
-﻿import { SafeUtils } from '../../Utils/SafeUtils';
+﻿import { SafeUtils } from 'manxia_core/src/main/ets/Utils/SafeUtils';
 // 文件路径: src/main/ets/Framework/WebView/ConfigurationParser.ets
 /**
  * WebView配置解析器
@@ -6,8 +6,8 @@
  * 符合HarmonyOS API 18和ArkTS类型安全要求
  */
 
-import { logger } from '../../Utils/Logger';
-import { TimeUtils } from '../Utils/TimeUtils';
+import { logger } from 'manxia_core/src/main/ets/Utils/Logger';
+import { TimeUtils } from 'manxia_core/src/main/ets/Framework/Utils/TimeUtils';
 
 const TAG = 'ConfigurationParser';
 

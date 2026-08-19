@@ -1,14 +1,14 @@
-﻿import { SafeUtils } from '../../Utils/SafeUtils';
+﻿import { SafeUtils } from 'manxia_core/src/main/ets/Utils/SafeUtils';
 // 文件路径: src/main/ets/Framework/Debug/PerformanceAnalyzer.ets
 /**
  * 性能分析器
  * 用于分析和监控游戏运行时的性能指标，提供警告和建议。
  */
  
-import { logger } from '../../Utils/Logger';
+import { logger } from 'manxia_core/src/main/ets/Utils/Logger';
 import { eventBus, GameEvent, IEventPayload } from '../EventBus';
 import { HidebugPerformanceCollector } from './HidebugPerformanceCollector';
-import { TimeUtils } from '../Utils/TimeUtils';
+import { TimeUtils } from 'manxia_core/src/main/ets/Framework/Utils/TimeUtils';
 
 const PERFORMANCE_ANALYZER_TAG = 'PerformanceAnalyzer';
 

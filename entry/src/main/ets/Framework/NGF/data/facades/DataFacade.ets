@@ -1,5 +1,5 @@
-﻿import { SafeUtils } from '../../../../Utils/SafeUtils';
-import { logger } from '../../../../Utils/Logger';
+﻿import { SafeUtils } from 'manxia_core/src/main/ets/Utils/SafeUtils';
+import { logger } from 'manxia_core/src/main/ets/Utils/Logger';
 import { SettingsManager } from '../../../Managers/SettingsManager';
 import { IDataFacade, NGFDataQueryResult } from '../contracts/IDataFacade';
 import { ngfSettingsStoreFacade } from './SettingsStoreFacade';

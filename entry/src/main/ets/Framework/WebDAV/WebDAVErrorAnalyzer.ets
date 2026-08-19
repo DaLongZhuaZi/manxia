@@ -5,7 +5,7 @@
  * 文件路径: entry/src/main/ets/Framework/WebDAV/WebDAVErrorAnalyzer.ets
  */
 
-import { logger } from '../../Utils/Logger';
+import { logger } from 'manxia_core/src/main/ets/Utils/Logger';
 
 const TAG = 'WebDAVErrorAnalyzer';
 

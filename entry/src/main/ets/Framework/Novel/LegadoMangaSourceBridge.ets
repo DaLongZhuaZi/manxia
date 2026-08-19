@@ -2,12 +2,12 @@
  * Bridges Legado IMAGE book sources into the existing online manga pipeline.
  */
 
-import { logger } from '../../Utils/Logger';
-import { md5Hash } from '../../Utils/CryptoUtils';
+import { logger } from 'manxia_core/src/main/ets/Utils/Logger';
+import { md5Hash } from 'manxia_core/src/main/ets/Utils/CryptoUtils';
 import { DataManager, OnlineComicSourceSaveInput, OnlineChapterInfoInput, OnlinePageInfoInput } from '../Data/DataManager';
-import { ComicSourceDatabaseRecord } from '../Database/DatabaseTypes';
+import { ComicSourceDatabaseRecord } from 'manxia_core/src/main/ets/Framework/Database/DatabaseTypes';
 import { ComicInfo } from '../Source/SourceExecutor';
-import { DownloadStatus, MangaStatus, ReadingStatus } from '../Types/StatusEnums';
+import { DownloadStatus, MangaStatus, ReadingStatus } from 'manxia_core/src/main/ets/Framework/Types/StatusEnums';
 import {
   ImageSourceType,
   Manga,
@@ -20,7 +20,7 @@ import {
 import { DEFAULT_READING_SETTINGS } from '../../Models/MangaModels';
 import { NovelSearchResult } from '../../Models/NovelModels';
 import { PageInfo as SourcePageInfo, PageRequestHeader } from '../WebView/MangaSourceTypes';
-import { SafeUtils } from '../../Utils/SafeUtils';
+import { SafeUtils } from 'manxia_core/src/main/ets/Utils/SafeUtils';
 import {
   LegadoBook,
   LegadoBookSource,

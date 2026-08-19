@@ -1,5 +1,5 @@
-import { SafeFileUtils } from '../Utils/SafeFileUtils';
-import { SafeUtils } from '../Utils/SafeUtils';
+import { SafeFileUtils } from 'manxia_core/src/main/ets/Utils/SafeFileUtils';
+import { SafeUtils } from 'manxia_core/src/main/ets/Utils/SafeUtils';
 // 文件路径: entry/src/main/ets/pages/UnifiedDetailPage.ets
 /**
  * 统一详情页
@@ -17,10 +17,10 @@ import { http } from '@kit.NetworkKit';
 import { systemShare } from '@kit.ShareKit';
 import { uniformTypeDescriptor as utd, preferences } from '@kit.ArkData';
 import { util } from '@kit.ArkTS';
-import { logger } from '../Utils/Logger';
+import { logger } from 'manxia_core/src/main/ets/Utils/Logger';
 import { WindowManager, DisplayMode } from '../Utils/WindowManager';
 import { PageWindowCoordinator } from '../Utils/PageWindowCoordinator';
-import { PageLifecycleManager } from '../Framework/Lifecycle';
+import { PageLifecycleManager } from 'manxia_core/src/main/ets/Framework/Lifecycle/index';
 import { ThemeAwareState, ThemeAwareHelper } from '../Framework/Components/ThemeAware';
 import { ThemeManager, ThemeType } from '../Framework/Managers/ThemeManager';
 import { FontAwareHelper, FontAwareState } from '../Framework/Components/FontAware';
@@ -76,7 +76,7 @@ import { OnlineEBookDetailPageParams } from './OnlineEBookDetailPage';
 
 // 数据管理器导入
 import { DataManager, ComicInfo, ChapterInfo, PageInfo, OnlineChapterInfo, OnlineComicInfo, OnlinePageInfo, OnlinePageInfoInput } from '../Framework/Data/DataManager';
-import { DatabaseRecord } from '../Framework/Database/DatabaseTypes';
+import { DatabaseRecord } from 'manxia_core/src/main/ets/Framework/Database/DatabaseTypes';
 import { DataService } from '../Framework/Services/DataService';
 import { MangaDetailLoader, MangaDetailLoadParams, MangaDetailLoadResult, MangaLoadProgressCallback, ChapterProgressInfo } from '../Framework/Loaders/MangaDetailLoader';
 import { MangaIdentityResolver, MangaIdentityResolveResult } from '../Framework/Reader/MangaIdentityResolver';
@@ -125,9 +125,9 @@ import {
 import { CoverCacheManager } from '../Framework/Cache/CoverCacheManager';
 import { getCoverImageManager, CoverImageManager } from '../Framework/Image/CoverImageManager';
 import { OnlineLoadOptions, RequestHeaders } from '../Framework/Cache/OnlineImageLoader';
-import { LibraryCoverManager, LibraryCoverType } from '../Framework/Storage/LibraryCoverManager';
+import { LibraryCoverManager, LibraryCoverType } from 'manxia_core/src/main/ets/Framework/Storage/LibraryCoverManager';
 import { image } from '@kit.ImageKit';
-import { LabelUtils } from '../Utils/LabelUtils';
+import { LabelUtils } from 'manxia_core/src/main/ets/Utils/LabelUtils';
 import { getNovelCoverGenerator, NovelCoverGenerator } from '../Framework/Novel/NovelCoverGenerator';
 import { ZLibraryReaderParams } from './ZLibraryReaderPage';
 import { AvifImage } from '../components/AvifImage';
@@ -180,7 +180,7 @@ import {
 
 // 模型导入
 import { Manga, MangaChapter, MangaPage, ReadingProgress, ReadingSettings, MangaBookmark, MangaMetadata, ImageSourceType, DEFAULT_READING_SETTINGS } from '../Models/MangaModels';
-import { DownloadStatus, MangaStatus, ReadingStatus } from '../Framework/Types/StatusEnums';
+import { DownloadStatus, MangaStatus, ReadingStatus } from 'manxia_core/src/main/ets/Framework/Types/StatusEnums';
 import { EBook, EBookChapter, EBookFormat, EBookStatus, EBookMetadata } from '../Models/EBookModels';
 import { LegadoBook, LegadoChapter, LegadoBookSource, LegadoBookSourceType } from '../Framework/Novel/LegadoSourceTypes';
 import { NovelBook, NovelReadStatus, NovelSearchResult } from '../Models/NovelModels';

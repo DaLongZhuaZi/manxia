@@ -6,7 +6,7 @@
  * 文件路径: entry/src/main/ets/Framework/Novel/NovelContentProcessor.ets
  */
 
-import { logger } from '../../Utils/Logger';
+import { logger } from 'manxia_core/src/main/ets/Utils/Logger';
 import { getNovelReplaceRuleManager, ReplaceRule, ReplaceScope } from './NovelReplaceRuleManager';
 
 const TAG = 'NovelContentProcessor';

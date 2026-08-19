@@ -4,8 +4,8 @@
  * 处理JWT令牌、Cookie等认证方式
  */
 
-import { validateJWT, isJWTExpired } from '../../Utils/JWTUtils';
-import { logger } from '../../Utils/Logger';
+import { validateJWT, isJWTExpired } from 'manxia_core/src/main/ets/Utils/JWTUtils';
+import { logger } from 'manxia_core/src/main/ets/Utils/Logger';
 import preferences from '@ohos.data.preferences';
 
 const TAG = 'AuthenticationHandler';

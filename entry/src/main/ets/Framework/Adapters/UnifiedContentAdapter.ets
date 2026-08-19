@@ -16,7 +16,7 @@ import {
 import { Manga, MangaChapter } from '../../Models/MangaModels';
 import { EBook, EBookChapter, EBookStatus } from '../../Models/EBookModels';
 import { LegadoBook, LegadoChapter } from '../Novel/LegadoSourceTypes';
-import { logger } from '../../Utils/Logger';
+import { logger } from 'manxia_core/src/main/ets/Utils/Logger';
 
 const TAG = 'UnifiedContentAdapter';
 const MAX_VALID_TIMESTAMP_MS = 8640000000000000;

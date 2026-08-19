@@ -1,4 +1,4 @@
-import { logger } from '../../Utils/Logger';
+import { logger } from 'manxia_core/src/main/ets/Utils/Logger';
 import { NovelSearchResult } from '../../Models/NovelModels';
 import { UnifiedContentType, UnifiedDetailPageParams } from '../../Models/UnifiedContentModels';
 import { MangaDetailPageParams } from '../../pages/MangaDetailPage';

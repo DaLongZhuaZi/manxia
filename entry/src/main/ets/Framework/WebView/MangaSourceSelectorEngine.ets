@@ -3,7 +3,7 @@
  * 支持CSS选择器、XPath、文本匹配等多种选择方式
  */
 
-import { logger } from '../../Utils/Logger';
+import { logger } from 'manxia_core/src/main/ets/Utils/Logger';
 import {
   Selector,
   SelectorType,

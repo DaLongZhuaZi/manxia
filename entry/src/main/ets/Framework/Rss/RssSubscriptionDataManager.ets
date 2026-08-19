@@ -1,6 +1,6 @@
 import { relationalStore } from '@kit.ArkData';
 import { common } from '@kit.AbilityKit';
-import { logger } from '../../Utils/Logger';
+import { logger } from 'manxia_core/src/main/ets/Utils/Logger';
 import { RssFeedItem, RssSubscriptionSource } from '../../Models/RssSubscriptionModels';
 import {
   RSS_CREATE_INDEX_SQL,

@@ -5,7 +5,7 @@
  */
 
 import { fileIo } from '@kit.CoreFileKit';
-import { logger } from '../../Utils/Logger';
+import { logger } from 'manxia_core/src/main/ets/Utils/Logger';
 // 导入util模块
 import { util } from '@kit.ArkTS';
 import { SourceManager } from '../Source/SourceManager';

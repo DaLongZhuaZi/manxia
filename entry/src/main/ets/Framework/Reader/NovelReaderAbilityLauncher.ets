@@ -1,6 +1,6 @@
 import { common, StartOptions, Want } from '@kit.AbilityKit';
 import { UIContext } from '@kit.ArkUI';
-import { logger } from '../../Utils/Logger';
+import { logger } from 'manxia_core/src/main/ets/Utils/Logger';
 import { NovelReaderPageParams } from '../../pages/NovelBookshelfPage';
 import { NOVEL_READER_ABILITY_NAME } from './MangaReaderAbilityConstants';
 import { NovelReaderAbilityParamStore } from './NovelReaderAbilityParamStore';

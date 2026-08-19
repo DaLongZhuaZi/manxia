@@ -8,7 +8,7 @@
  * 交给本单例，反馈页面再从这里取回 token 继续提交。
  */
 
-import { logger } from '../../Utils/Logger';
+import { logger } from 'manxia_core/src/main/ets/Utils/Logger';
 
 const TAG = 'FeedbackTurnstileBridge';
 const MIN_TOKEN_LENGTH: number = 20;

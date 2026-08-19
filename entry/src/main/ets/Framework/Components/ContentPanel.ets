@@ -6,7 +6,7 @@
  * 文件路径: entry/src/main/ets/Framework/Components/ContentPanel.ets
  */
 
-import { logger } from '../../Utils/Logger';
+import { logger } from 'manxia_core/src/main/ets/Utils/Logger';
 import { ThemeAwareHelper } from './ThemeAware';
 import { ThemeType } from '../Managers/ThemeManager';
 import { AppColors, ColorRole } from '../Theme/AppColors';

@@ -1,6 +1,6 @@
 import { common, StartOptions, Want } from '@kit.AbilityKit';
 import { UIContext } from '@kit.ArkUI';
-import { logger } from '../../Utils/Logger';
+import { logger } from 'manxia_core/src/main/ets/Utils/Logger';
 import { DisplayMode } from '../../Utils/WindowManager';
 import { NovelReaderPageParams } from '../../pages/NovelBookshelfPage';
 import {

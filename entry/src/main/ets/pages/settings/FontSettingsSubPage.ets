@@ -10,7 +10,7 @@ import { ThemeAwareState, ThemeAwareHelper } from '../../Framework/Components/Th
 import { FontAwareHelper, FontAwareState } from '../../Framework/Components/FontAware';
 import { ThemeManager, ThemeType } from '../../Framework/Managers/ThemeManager';
 import { FontManager, getFontManager, FontType, FontScene, SystemFont, CustomFont, FontSettings } from '../../Framework/Managers/FontManager';
-import { logger } from '../../Utils/Logger';
+import { logger } from 'manxia_core/src/main/ets/Utils/Logger';
 import { picker } from '@kit.CoreFileKit';
 import { common } from '@kit.AbilityKit';
 import { DeviceAdaptationManager, DeviceInfo, DeviceChangeListener, Breakpoint } from '../../Framework/Managers/DeviceAdaptationManager';

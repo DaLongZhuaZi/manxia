@@ -8,7 +8,7 @@ import { ThemeAwareState, ThemeAwareHelper } from '../../Framework/Components/Th
 import { ThemeManager, ThemeType } from '../../Framework/Managers/ThemeManager';
 import { FontAwareHelper, FontAwareState } from '../../Framework/Components/FontAware';
 import { SettingsManager, SettingKeys } from '../../Framework/Managers/SettingsManager';
-import { logger } from '../../Utils/Logger';
+import { logger } from 'manxia_core/src/main/ets/Utils/Logger';
 import { SettingsSearchSupport } from './SettingsSearchSupport';
 import { SettingsPanelSurfaceHelper } from './SettingsPanelSurfaceHelper';
 import { SharedPageBackgroundLayer } from '../../Framework/Components/SharedPageBackgroundLayer';

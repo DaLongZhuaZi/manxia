@@ -1,4 +1,4 @@
-import { logger } from '../../../../Utils/Logger';
+import { logger } from 'manxia_core/src/main/ets/Utils/Logger';
 import { ContainerLifecycle, DependencyContainer } from '../../../DependencyContainer';
 import { ngfServiceContainerFacade } from '../../core/facades/ServiceContainerFacade';
 import { ngfCacheStoreFacade } from './CacheStoreFacade';

@@ -8,7 +8,7 @@
  */
 
 import jsvmEngineModule from 'libjsvm_engine.so';
-import { logger } from '../../Utils/Logger';
+import { logger } from 'manxia_core/src/main/ets/Utils/Logger';
 
 const TAG = 'NativeJsEngine';
 

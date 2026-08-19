@@ -1,4 +1,4 @@
-import { SafeUtils } from '../../Utils/SafeUtils';
+import { SafeUtils } from 'manxia_core/src/main/ets/Utils/SafeUtils';
 /**
  * Markdown预览组件
  * 基于WebView + marked.js实现
@@ -6,7 +6,7 @@ import { SafeUtils } from '../../Utils/SafeUtils';
  */
 
 import { webview } from '@kit.ArkWeb';
-import { logger } from '../../Utils/Logger';
+import { logger } from 'manxia_core/src/main/ets/Utils/Logger';
 
 const TAG = 'MarkdownViewerComponent';
 

@@ -1,13 +1,13 @@
-﻿import { SafeUtils } from '../../Utils/SafeUtils';
+﻿import { SafeUtils } from 'manxia_core/src/main/ets/Utils/SafeUtils';
 // 文件路径: src/main/ets/Framework/Utils/DataConverter.ets
 /**
  * 数据转换工具类
  * 提供类型安全的数据转换功能，确保数据在不同格式间的正确转换
  */
 
-import { logger } from '../../Utils/Logger';
-import { TimeUtils } from './TimeUtils';
-import { MangaStatus, DownloadStatus } from '../Types/StatusEnums';
+import { logger } from 'manxia_core/src/main/ets/Utils/Logger';
+import { TimeUtils } from 'manxia_core/src/main/ets/Framework/Utils/TimeUtils';
+import { MangaStatus, DownloadStatus } from 'manxia_core/src/main/ets/Framework/Types/StatusEnums';
 
 const TAG = 'DataConverter';
 

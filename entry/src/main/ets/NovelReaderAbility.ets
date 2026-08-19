@@ -1,6 +1,6 @@
 import { AbilityConstant, UIAbility, Want, common } from '@kit.AbilityKit';
 import { window } from '@kit.ArkUI';
-import { logger } from './Utils/Logger';
+import { logger } from 'manxia_core/src/main/ets/Utils/Logger';
 import { continuationStateHelper } from './Framework/Distributed/ContinuationStateHelper';
 import { NovelReaderPageParams } from './pages/NovelBookshelfPage';
 import {

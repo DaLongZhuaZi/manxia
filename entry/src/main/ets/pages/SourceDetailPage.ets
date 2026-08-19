@@ -1,5 +1,5 @@
-import { SafeFileUtils } from '../Utils/SafeFileUtils';
-import { SafeUtils } from '../Utils/SafeUtils';
+import { SafeFileUtils } from 'manxia_core/src/main/ets/Utils/SafeFileUtils';
+import { SafeUtils } from 'manxia_core/src/main/ets/Utils/SafeUtils';
 /**
  * 图源详情页面
  * 显示图源的热门、最新、搜索等内容
@@ -11,8 +11,8 @@ import { webview } from '@kit.ArkWeb';
 import { picker } from '@kit.CoreFileKit';
 import { common, Want } from '@kit.AbilityKit';
 import { fileIo as fs } from '@kit.CoreFileKit';
-import { logger } from '../Utils/Logger';
-import { PageLifecycleManager } from '../Framework/Lifecycle';
+import { logger } from 'manxia_core/src/main/ets/Utils/Logger';
+import { PageLifecycleManager } from 'manxia_core/src/main/ets/Framework/Lifecycle/index';
 import { ThemeAwareHelper, ThemeAwareState } from '../Framework/Components/ThemeAware';
 import { ThemeManager, ThemeType } from '../Framework/Managers/ThemeManager';
 import { FontAwareHelper, FontAwareState } from '../Framework/Components/FontAware';
@@ -28,7 +28,7 @@ import { MangaDetailPageParams } from './MangaDetailPage';
 import { OnlineEBookDetailPageParams } from './OnlineEBookDetailPage';
 import { SourceSettingsPageParams } from './SourceSettingsPage';
 import CookieManager from '../Framework/Managers/CookieManager';
-import { ComicSourceDatabaseRecord } from '../Framework/Database/DatabaseTypes';
+import { ComicSourceDatabaseRecord } from 'manxia_core/src/main/ets/Framework/Database/DatabaseTypes';
 import { image } from '@kit.ImageKit';
 import { ImageCacheManager, LoadOptions, RequestHeaderEntry, RequestHeaders } from '../Framework/Cache/ImageCacheManager';
 import { CoverCacheManager } from '../Framework/Cache/CoverCacheManager';
@@ -45,7 +45,7 @@ import { SettingsImmersiveTitleActionItem, SettingsPageTitleBarManager } from '.
 import { SettingsPageSurfaceManager } from './settings/SettingsPageSurfaceManager';
 import { OnlineImageLoader } from '../Framework/Cache/OnlineImageLoader';
 import { sourceDebugLogManager } from '../Framework/Debug/SourceDebugLogManager';
-import { LabelUtils } from '../Utils/LabelUtils';
+import { LabelUtils } from 'manxia_core/src/main/ets/Utils/LabelUtils';
 import {
   SourceDetailSearchExecutor,
   SourceDetailSearchResult,

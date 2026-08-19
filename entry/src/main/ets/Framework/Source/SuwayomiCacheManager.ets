@@ -1,11 +1,11 @@
-﻿import { SafeFileUtils } from '../../Utils/SafeFileUtils';
+﻿import { SafeFileUtils } from 'manxia_core/src/main/ets/Utils/SafeFileUtils';
 /**
  * Suwayomi 图片缓存管理器
  * 将 Suwayomi 服务器上的漫画图片缓存到本地 Download/com.dlzz.manxia/suwayomi 目录
  * 支持：漫画封面、图源图标、章节页面
  */
 
-import { logger } from '../../Utils/Logger';
+import { logger } from 'manxia_core/src/main/ets/Utils/Logger';
 import DownloadDirManager from '../Storage/DownloadDirManager';
 import fs from '@ohos.file.fs';
 import { http } from '@kit.NetworkKit';

@@ -5,7 +5,7 @@
  * 文件路径: entry/src/main/ets/Framework/WebDAV/WebDAVAutoBackupScheduler.ets
  */
 
-import { logger } from '../../Utils/Logger';
+import { logger } from 'manxia_core/src/main/ets/Utils/Logger';
 import { preferences } from '@kit.ArkData';
 import { common } from '@kit.AbilityKit';
 import { getWebDAVBackupManager } from './WebDAVBackupManager';

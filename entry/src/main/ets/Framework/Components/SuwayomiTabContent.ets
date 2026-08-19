@@ -1,7 +1,7 @@
 // 文件路径: src/main/ets/Framework/Components/SuwayomiTabContent.ets
 // 职责: Suwayomi标签页内容组件，从MainMenuPage提取的独立组件
 
-import { logger } from '../../Utils/Logger';
+import { logger } from 'manxia_core/src/main/ets/Utils/Logger';
 import { ThemeAwareState, ThemeAwareHelper } from './ThemeAware';
 import { ThemeType } from '../Managers/ThemeManager';
 import { TabContentCacheManager } from '../Cache/TabContentCacheManager';
@@ -14,7 +14,7 @@ import { SettingsPageSurfaceManager } from '../../pages/settings/SettingsPageSur
 import { SuwayomiImage } from '../../components/SuwayomiImage';
 import { SuwayomiSourceBrowseParams } from '../../pages/SuwayomiSourceBrowsePage';
 import { eventBus, GameEvent, IEventPayload, RemoteLibraryConfigChangedPayload } from '../EventBus';
-import { BasicDataSource } from '../../Utils/BasicDataSource';
+import { BasicDataSource } from 'manxia_core/src/main/ets/Utils/BasicDataSource';
 
 const TAG = 'SuwayomiTabContent';
 

@@ -4,7 +4,7 @@
  * 用于绘制性能数据的实时图表，支持传统动画系统
  */
  
-import { logger } from '../../Utils/Logger';
+import { logger } from 'manxia_core/src/main/ets/Utils/Logger';
 import { PerformanceHistory } from '../Debug/HidebugPerformanceCollector';
 import { ThemeManager } from '../Managers/ThemeManager';
 import { ThemeType } from '../Managers/ThemeManager';

@@ -1,4 +1,4 @@
-﻿import { SafeUtils } from '../../Utils/SafeUtils';
+﻿import { SafeUtils } from 'manxia_core/src/main/ets/Utils/SafeUtils';
 // 文件路径: src/main/ets/Framework/Cache/CacheConfigManager.ets
 /**
  * 缓存配置管理器
@@ -6,7 +6,7 @@
  * 支持运行时动态调整和持久化存储
  */
 
-import { logger } from '../../Utils/Logger';
+import { logger } from 'manxia_core/src/main/ets/Utils/Logger';
 import { preferences } from '@kit.ArkData';
 import { ValidationResult } from '../Utils/DataValidator';
 

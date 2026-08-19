@@ -1,12 +1,12 @@
-﻿import { SafeUtils } from '../../Utils/SafeUtils';
+﻿import { SafeUtils } from 'manxia_core/src/main/ets/Utils/SafeUtils';
 /**
  * 备份管理器
  * 负责导出和导入所有应用数据
  */
 
-import { logger } from '../../Utils/Logger';
-import { SandboxManager } from '../Storage/SandboxManager';
-import { DatabaseManager } from '../Database/DatabaseManager';
+import { logger } from 'manxia_core/src/main/ets/Utils/Logger';
+import { SandboxManager } from 'manxia_core/src/main/ets/Framework/Storage/SandboxManager';
+import { DatabaseManager } from 'manxia_core/src/main/ets/Framework/Database/DatabaseManager';
 import { getNovelDataManager, NovelDataManager } from '../Novel/NovelDataManager';
 import { getNovelSourceManager, NovelSourceManager } from '../Novel/NovelSourceManager';
 import { getNovelSettingsManager, NovelSettingsManager } from '../Novel/NovelSettingsManager';
@@ -38,7 +38,7 @@ import { NovelBook, NovelSourceInfo, NovelReadStatus } from '../../Models/NovelM
 import { BrowseHistoryInput, BrowseHistoryItem } from '../Novel/NovelSettingsManager';
 import { fileIo as fs } from '@kit.CoreFileKit';
 import { deviceInfo } from '@kit.BasicServicesKit';
-import { DatabaseRecord } from '../Database/DatabaseTypes';
+import { DatabaseRecord } from 'manxia_core/src/main/ets/Framework/Database/DatabaseTypes';
 
 const TAG = 'BackupManager';
 const BACKUP_VERSION = '1.0.0';

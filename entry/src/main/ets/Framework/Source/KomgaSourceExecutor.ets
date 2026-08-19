@@ -1,5 +1,5 @@
-import { logger } from '../../Utils/Logger';
-import { SafeUtils } from '../../Utils/SafeUtils';
+import { logger } from 'manxia_core/src/main/ets/Utils/Logger';
+import { SafeUtils } from 'manxia_core/src/main/ets/Utils/SafeUtils';
 import { getContext } from '../../GlobalContext';
 import { preferences } from '@kit.ArkData';
 import { ChapterInfo, ComicDetailInfo, ComicInfo, PageInfo } from './SourceExecutor';

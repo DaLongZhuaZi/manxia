@@ -4,8 +4,8 @@
  * 一个独立的、集成的调试工具，提供日志查看、性能监控、实体信息和命令执行功能。
  */
 
-import { logger, LogLevel } from '../../Utils/Logger';
-import { logCollector, LogEntry, LogFilter } from './LogCollector';
+import { logger, LogLevel } from 'manxia_core/src/main/ets/Utils/Logger';
+import { logCollector, LogEntry, LogFilter } from 'manxia_core/src/main/ets/Framework/Debug/LogCollector';
 import { performanceAnalyzer, PerformanceMetrics, SystemMetrics } from './PerformanceAnalyzer';
 import { HidebugPerformanceCollector, HidebugPerformanceData } from './HidebugPerformanceCollector';
 import { PerformanceChart, ChartType, ChartConfig } from '../Components/PerformanceChart';

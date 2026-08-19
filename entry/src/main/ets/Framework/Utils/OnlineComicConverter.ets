@@ -1,8 +1,8 @@
 // 文件路径: entry/src/main/ets/Framework/Utils/OnlineComicConverter.ets
 // 职责: 专门用于在线漫画数据的转换工具类，独立于本地漫画的转换逻辑
 
-import { logger } from '../../Utils/Logger';
-import { DatabaseRecord } from '../Database/DatabaseTypes';
+import { logger } from 'manxia_core/src/main/ets/Utils/Logger';
+import { DatabaseRecord } from 'manxia_core/src/main/ets/Framework/Database/DatabaseTypes';
 import { OnlineComicInfo, OnlineChapterInfo, OnlinePageInfo } from '../Data/DataManager';
 
 const TAG = 'OnlineComicConverter';

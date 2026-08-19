@@ -1,7 +1,7 @@
-import { logger } from '../../Utils/Logger';
+import { logger } from 'manxia_core/src/main/ets/Utils/Logger';
 import { ImageSourceType, Manga } from '../../Models/MangaModels';
 import { DataService } from '../Services/DataService';
-import { LibraryCoverManager, LibraryCoverType } from '../Storage/LibraryCoverManager';
+import { LibraryCoverManager, LibraryCoverType } from 'manxia_core/src/main/ets/Framework/Storage/LibraryCoverManager';
 import { RemoteLibraryMangaBridge } from './RemoteLibraryMangaBridge';
 
 const TAG = 'RemoteLibraryShelfManager';

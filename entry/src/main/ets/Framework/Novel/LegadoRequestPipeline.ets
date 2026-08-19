@@ -1,4 +1,4 @@
-import { logger } from '../../Utils/Logger';
+import { logger } from 'manxia_core/src/main/ets/Utils/Logger';
 import { taskpool, util } from '@kit.ArkTS';
 import { http } from '@kit.NetworkKit';
 import { SettingKeys, SettingsManager } from '../Managers/SettingsManager';

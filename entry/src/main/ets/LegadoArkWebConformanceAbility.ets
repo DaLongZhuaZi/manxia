@@ -1,6 +1,6 @@
 import { AbilityConstant, UIAbility, Want } from '@kit.AbilityKit';
 import { window } from '@kit.ArkUI';
-import { logger } from './Utils/Logger';
+import { logger } from 'manxia_core/src/main/ets/Utils/Logger';
 
 const TAG: string = 'LegadoArkWebConformanceAbility';
 const CONFORMANCE_PAGE: string = 'pages/LegadoArkWebConformancePage';

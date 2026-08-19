@@ -1,4 +1,4 @@
-import { logger } from '../../Utils/Logger';
+import { logger } from 'manxia_core/src/main/ets/Utils/Logger';
 import {
   ChapterInfo,
   ComicInfo,
@@ -6,9 +6,9 @@ import {
   OnlineChapterInfo,
   OnlineComicInfo
 } from '../Data/DataManager';
-import { DatabaseManager } from '../Database/DatabaseManager';
-import { DatabaseValue, GenericQueryRecord } from '../Database/DatabaseTypes';
-import { MangaStatus } from '../Types/StatusEnums';
+import { DatabaseManager } from 'manxia_core/src/main/ets/Framework/Database/DatabaseManager';
+import { DatabaseValue, GenericQueryRecord } from 'manxia_core/src/main/ets/Framework/Database/DatabaseTypes';
+import { MangaStatus } from 'manxia_core/src/main/ets/Framework/Types/StatusEnums';
 
 const TAG = 'MangaIdentityResolver';
 

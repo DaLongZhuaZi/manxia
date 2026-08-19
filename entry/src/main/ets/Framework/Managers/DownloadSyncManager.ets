@@ -1,4 +1,4 @@
-﻿import { SafeFileUtils } from '../../Utils/SafeFileUtils';
+﻿import { SafeFileUtils } from 'manxia_core/src/main/ets/Utils/SafeFileUtils';
 /**
  * Download同步管理器
  * 负责在APP启动时初始化Download同步目录和保留文件夹
@@ -6,7 +6,7 @@
  * 文件路径: entry/src/main/ets/Framework/Managers/DownloadSyncManager.ets
  */
 
-import { logger } from '../../Utils/Logger';
+import { logger } from 'manxia_core/src/main/ets/Utils/Logger';
 import { fileIo as fs, fileUri } from '@kit.CoreFileKit';
 import { DownloadDirManager } from '../Storage/DownloadDirManager';
 

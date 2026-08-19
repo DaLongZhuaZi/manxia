@@ -4,7 +4,7 @@
  * 支持横屏/竖屏自适应布局
  */
 
-import { logger } from '../Utils/Logger';
+import { logger } from 'manxia_core/src/main/ets/Utils/Logger';
 import { ThemeManager } from '../Framework/Managers/ThemeManager';
 import { 
   DoublePageVerticalDirection,

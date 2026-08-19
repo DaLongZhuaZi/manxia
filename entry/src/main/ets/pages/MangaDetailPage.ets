@@ -1,5 +1,5 @@
-﻿import { SafeFileUtils } from '../Utils/SafeFileUtils';
-import { SafeUtils } from '../Utils/SafeUtils';
+﻿import { SafeFileUtils } from 'manxia_core/src/main/ets/Utils/SafeFileUtils';
+import { SafeUtils } from 'manxia_core/src/main/ets/Utils/SafeUtils';
 // 文件路径: entry/src/main/ets/pages/MangaDetailPage.ets
 // 职责: 漫画详情页面，展示漫画的详细信息、章节列表等内容（含收藏持久化）
 
@@ -7,11 +7,11 @@ import { HdsNavDestination, HdsNavDestinationAttribute, ScrollEffectType } from 
 import { Popup } from '@kit.ArkUI';
 import { ThemeAwareState, ThemeAwareHelper } from '../Framework/Components/ThemeAware';
 import { FontAwareHelper, FontAwareState } from '../Framework/Components/FontAware';
-import { PageLifecycleManager, CancellationError } from '../Framework/Lifecycle';
+import { PageLifecycleManager, CancellationError } from 'manxia_core/src/main/ets/Framework/Lifecycle/index';
 import { AnimatedComponent } from '../Framework/Animation/AnimatedComponent';
 import { AnimationType } from '../Framework/Animation/GlobalAnimationSystem';
-import { logger } from '../Utils/Logger';
-import { TimeUtils } from '../Framework/Utils/TimeUtils';
+import { logger } from 'manxia_core/src/main/ets/Utils/Logger';
+import { TimeUtils } from 'manxia_core/src/main/ets/Framework/Utils/TimeUtils';
 import {
   Manga,
   MangaChapter,
@@ -24,11 +24,11 @@ import {
   MangaImageRequestHeader
 } from '../Models/MangaModels';
 import { DEFAULT_READING_SETTINGS, ReadingSettings } from '../Models/MangaModels';
-import { DownloadStatus, MangaStatus, ReadingStatus, StatusConverter } from '../Framework/Types/StatusEnums';
+import { DownloadStatus, MangaStatus, ReadingStatus, StatusConverter } from 'manxia_core/src/main/ets/Framework/Types/StatusEnums';
 import { ComicConverter } from '../Framework/Utils/ComicConverter';
 import { DataManager, ComicInfo, ComicInfoInput, ChapterInfo as DataChapterInfo, ChapterInfoInput, PageInfo, PageInfoInput, ReadHistory, OnlineChapterInfoInput, OnlinePageInfoInput, OnlineComicInfo, OnlineComicSourceSaveInput } from '../Framework/Data/DataManager';
 import { ThemeManager, ThemeType } from '../Framework/Managers/ThemeManager';
-import { colorMap } from '../Data/ResourceMap';
+import { colorMap } from 'manxia_core/src/main/ets/Data/ResourceMap';
 import { MangaReaderPageParams, MangaReaderContentType } from './MangaReaderPage';
 import { openMangaReaderInIsolatedAbility } from '../Framework/Reader/MangaReaderAbilityLauncher';
 import { DataService } from '../Framework/Services/DataService';
@@ -48,13 +48,13 @@ import { DownloadPageItem } from '../Framework/Download/DownloadManager';
 
 import { LengthMetrics, curves, UIContext } from '@kit.ArkUI';
 import { image } from '@kit.ImageKit';
-import { LabelUtils } from '../Utils/LabelUtils';
+import { LabelUtils } from 'manxia_core/src/main/ets/Utils/LabelUtils';
 import fs from '@ohos.file.fs';
 import http from '@ohos.net.http';
 import { common } from '@kit.AbilityKit';
 import webview from '@ohos.web.webview';
-import { DatabaseRecord, ComicSourceDatabaseRecord } from '../Framework/Database/DatabaseTypes';
-import { DatabaseManager } from '../Framework/Database/DatabaseManager';
+import { DatabaseRecord, ComicSourceDatabaseRecord } from 'manxia_core/src/main/ets/Framework/Database/DatabaseTypes';
+import { DatabaseManager } from 'manxia_core/src/main/ets/Framework/Database/DatabaseManager';
 import { OnlineImageLoader, RequestHeaderEntry as OnlineRequestHeaderEntry, RequestHeaders as OnlineRequestHeaders } from '../Framework/Cache/OnlineImageLoader';
 import { promptAction } from '@kit.ArkUI';
 import { ContentFilterManager } from '../Framework/Managers/ContentFilterManager';

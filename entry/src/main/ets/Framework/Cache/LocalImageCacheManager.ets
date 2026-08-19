@@ -3,7 +3,7 @@
 
 import { image } from '@kit.ImageKit';
 import fs from '@ohos.file.fs';
-import { logger } from '../../Utils/Logger';
+import { logger } from 'manxia_core/src/main/ets/Utils/Logger';
 
 const TAG = 'LocalImageCacheManager';
 

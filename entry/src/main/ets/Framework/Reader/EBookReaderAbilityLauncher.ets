@@ -1,6 +1,6 @@
 import { common, StartOptions, Want } from '@kit.AbilityKit';
 import { UIContext } from '@kit.ArkUI';
-import { logger } from '../../Utils/Logger';
+import { logger } from 'manxia_core/src/main/ets/Utils/Logger';
 import { EBookReaderParams } from '../../pages/EBookReaderRouteTypes';
 import { EBOOK_READER_ABILITY_NAME } from './MangaReaderAbilityConstants';
 import { EBookReaderAbilityParamStore } from './EBookReaderAbilityParamStore';

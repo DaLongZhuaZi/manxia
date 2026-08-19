@@ -4,7 +4,7 @@
  * 负责显示应用启动和初始化过程中的详细加载进度和状态信息
  */
 
-import { logger } from '../../Utils/Logger';
+import { logger } from 'manxia_core/src/main/ets/Utils/Logger';
 import { LoadingStateManager } from './LoadingStateManager';
 import {
   LoadingPhase,

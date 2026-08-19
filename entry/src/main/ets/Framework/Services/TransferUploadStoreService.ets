@@ -1,4 +1,4 @@
-﻿import { SafeUtils } from '../../Utils/SafeUtils';
+﻿import { SafeUtils } from 'manxia_core/src/main/ets/Utils/SafeUtils';
 /**
  * 局域网传书上传收件箱服务
  *
@@ -11,7 +11,7 @@
 import { fileIo, fileUri, statfs } from '@kit.CoreFileKit';
 import type { WriteOptions } from '@kit.CoreFileKit';
 import { util } from '@kit.ArkTS';
-import { logger } from '../../Utils/Logger';
+import { logger } from 'manxia_core/src/main/ets/Utils/Logger';
 import { getContext } from '../../GlobalContext';
 import {
   TransferUploadRecord,

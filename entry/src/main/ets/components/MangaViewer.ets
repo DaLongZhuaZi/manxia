@@ -4,7 +4,7 @@
  * 支持单页/双页/连续滚动模式、缩放、手势翻页、图片预加载等功能
  */
 
-import { logger } from '../Utils/Logger';
+import { logger } from 'manxia_core/src/main/ets/Utils/Logger';
 import {
   getHoldingAwarenessManager,
   HoldingAwarenessFeature,

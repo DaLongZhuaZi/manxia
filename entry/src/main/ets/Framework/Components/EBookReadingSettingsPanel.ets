@@ -4,7 +4,7 @@
  * 提供字体大小、行高、主题等阅读设置
  */
 
-import { logger } from '../../Utils/Logger';
+import { logger } from 'manxia_core/src/main/ets/Utils/Logger';
 import { ThemeAwareHelper } from './ThemeAware';
 import { ThemeType } from '../Managers/ThemeManager';
 import { AppColors } from '../Theme/AppColors';

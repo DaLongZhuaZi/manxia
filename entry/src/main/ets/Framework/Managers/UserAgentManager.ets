@@ -3,7 +3,7 @@
  * 统一管理全局和图源级别的User-Agent设置
  */
 
-import { logger } from '../../Utils/Logger';
+import { logger } from 'manxia_core/src/main/ets/Utils/Logger';
 import { SettingsManager, SettingKeys } from './SettingsManager';
 import { DataManager, UserSettingsDatabaseRecord } from '../Data/DataManager';
 

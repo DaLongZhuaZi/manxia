@@ -1,10 +1,10 @@
-﻿import { SafeUtils } from '../../Utils/SafeUtils';
+﻿import { SafeUtils } from 'manxia_core/src/main/ets/Utils/SafeUtils';
 /**
  * 漫画类型适配器
  * 将旧的数据库类型转换为新的类型系统
  */
 
-import { logger } from '../../Utils/Logger';
+import { logger } from 'manxia_core/src/main/ets/Utils/Logger';
 import {
   Manga,
   LocalManga,
@@ -15,7 +15,7 @@ import {
   PageInfo,
   MangaSourceType,
   OnlineChapterDownloadStatus
-} from '../Types/MangaTypes';
+} from 'manxia_core/src/main/ets/Framework/Types/MangaTypes';
 
 const TAG = 'MangaTypeAdapter';
 

@@ -4,7 +4,7 @@
  * 整合诊断、健康检查和恢复功能，提供统一的启动流程管理
  */
 
-import { logger } from '../../Utils/Logger';
+import { logger } from 'manxia_core/src/main/ets/Utils/Logger';
 import { startupDiagnostics, StartupPhase } from './StartupDiagnostics';
 import { startupRecovery, RecoveryStrategy, StartupFailureType } from './StartupRecovery';
 

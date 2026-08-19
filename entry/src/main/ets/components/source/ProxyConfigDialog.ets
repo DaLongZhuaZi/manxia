@@ -4,7 +4,7 @@
  */
 
 import { promptAction } from '@kit.ArkUI';
-import { logger } from '../../Utils/Logger';
+import { logger } from 'manxia_core/src/main/ets/Utils/Logger';
 import { ThemeAwareHelper } from '../../Framework/Components/ThemeAware';
 import { ThemeType } from '../../Framework/Managers/ThemeManager';
 import { ProxyConfig, DEFAULT_PROXY_CONFIG, ProxyManager, ProxyProtocol } from '../../Framework/Network/ProxyManager';

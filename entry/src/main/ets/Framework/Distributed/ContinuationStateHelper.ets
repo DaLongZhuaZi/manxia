@@ -1,6 +1,6 @@
 import { AbilityConstant, Want } from '@kit.AbilityKit';
 import common from '@ohos.app.ability.common';
-import { logger } from '../../Utils/Logger';
+import { logger } from 'manxia_core/src/main/ets/Utils/Logger';
 import { distributedReadingService } from './DistributedReadingService';
 import { distributedDataSyncManager } from './DistributedDataSyncManager';
 import { distributedPermissionManager } from './DistributedPermissionManager';

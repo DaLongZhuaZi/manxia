@@ -1,8 +1,8 @@
 ﻿import { ThemeAwareHelper, ThemeAwareState } from '../Framework/Components/ThemeAware';
 import { ThemeManager, ThemeType } from '../Framework/Managers/ThemeManager';
-import { logCollector, LogEntry, LogFilter } from '../Framework/Debug/LogCollector';
-import { logger, LogLevel } from './Logger';
-import { TimeUtils } from '../Framework/Utils/TimeUtils';
+import { logCollector, LogEntry, LogFilter } from 'manxia_core/src/main/ets/Framework/Debug/LogCollector';
+import { logger, LogLevel } from 'manxia_core/src/main/ets/Utils/Logger';
+import { TimeUtils } from 'manxia_core/src/main/ets/Framework/Utils/TimeUtils';
 import { UIContext, display } from '@kit.ArkUI';
 
 interface ShadowStyle {

@@ -1,6 +1,6 @@
 import { abilityAccessCtrl, bundleManager, common, Permissions } from '@kit.AbilityKit';
 import motion from '@ohos.multimodalAwareness.motion';
-import { logger } from '../../Utils/Logger';
+import { logger } from 'manxia_core/src/main/ets/Utils/Logger';
 import { getContext, isInitialized as isGlobalContextInitialized } from '../../GlobalContext';
 import { SettingsManager, SettingKeys } from './SettingsManager';
 

@@ -1,4 +1,4 @@
-﻿import { SafeUtils } from '../../Utils/SafeUtils';
+﻿import { SafeUtils } from 'manxia_core/src/main/ets/Utils/SafeUtils';
 // 文件路径: entry/src/main/ets/pages/settings/SettingsSearchSupport.ets
 /**
  * 设置搜索支持
@@ -7,7 +7,7 @@
  */
 
 import { ThemeType } from '../../Framework/Managers/ThemeManager';
-import { logger } from '../../Utils/Logger';
+import { logger } from 'manxia_core/src/main/ets/Utils/Logger';
 
 const TAG = 'SettingsSearchSupport';
 

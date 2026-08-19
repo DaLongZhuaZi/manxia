@@ -7,8 +7,8 @@ import { ThemeAwareState, ThemeAwareHelper } from '../Framework/Components/Theme
 import { ThemeManager, ThemeType } from '../Framework/Managers/ThemeManager';
 import { FontAwareHelper, FontAwareState } from '../Framework/Components/FontAware';
 import { SearchHistoryManager } from '../Framework/Managers/SearchHistoryManager';
-import { logger } from '../Utils/Logger';
-import { PageLifecycleManager } from '../Framework/Lifecycle';
+import { logger } from 'manxia_core/src/main/ets/Utils/Logger';
+import { PageLifecycleManager } from 'manxia_core/src/main/ets/Framework/Lifecycle/index';
 import { DataManager, ComicInfo, ChapterInfo } from '../Framework/Data/DataManager';
 import { ComicConverter } from '../Framework/Utils/ComicConverter';
 import { MangaDetailPageParams } from './MangaDetailPage';

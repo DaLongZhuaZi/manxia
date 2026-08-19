@@ -6,7 +6,7 @@
 import { ThemeAwareState, ThemeAwareHelper } from './ThemeAware';
 import { DeepLinkRouter, DeepLinkResult } from '../Utils/DeepLinkRouter';
 import { DialogSurfaceStyleHelper } from './DialogSurfaceStyleHelper';
-import { logger } from '../../Utils/Logger';
+import { logger } from 'manxia_core/src/main/ets/Utils/Logger';
 import { promptAction } from '@kit.ArkUI';
 
 const TAG = 'DeepLinkDialog';

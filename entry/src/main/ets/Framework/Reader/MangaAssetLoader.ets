@@ -1,5 +1,5 @@
 import { image } from '@kit.ImageKit';
-import { logger } from '../../Utils/Logger';
+import { logger } from 'manxia_core/src/main/ets/Utils/Logger';
 import { ImageSourceType } from '../../Models/MangaModels';
 import {
   ImageCacheManager,

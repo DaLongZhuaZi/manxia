@@ -1,12 +1,12 @@
-import { SafeUtils } from '../../Utils/SafeUtils';
+import { SafeUtils } from 'manxia_core/src/main/ets/Utils/SafeUtils';
 /**
  * 设置管理器
  * 负责管理应用的所有设置，使用数据库持久化存储
  */
 
-import { logger } from '../../Utils/Logger';
+import { logger } from 'manxia_core/src/main/ets/Utils/Logger';
 import { DataManager } from '../Data/DataManager';
-import { UserSettingsDatabaseRecord } from '../Database/DatabaseTypes';
+import { UserSettingsDatabaseRecord } from 'manxia_core/src/main/ets/Framework/Database/DatabaseTypes';
 
 const TAG = 'SettingsManager';
 

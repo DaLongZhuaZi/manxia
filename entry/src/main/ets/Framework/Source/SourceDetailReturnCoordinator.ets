@@ -1,5 +1,5 @@
 import { common, StartOptions, Want } from '@kit.AbilityKit';
-import { logger } from '../../Utils/Logger';
+import { logger } from 'manxia_core/src/main/ets/Utils/Logger';
 import { SOURCE_DETAIL_ABILITY_NAME } from './SourceDetailAbilityConstants';
 import { SourceDetailAbilityParamStore } from './SourceDetailAbilityParamStore';
 

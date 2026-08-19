@@ -1,4 +1,4 @@
-﻿import { SafeUtils } from '../../Utils/SafeUtils';
+﻿import { SafeUtils } from 'manxia_core/src/main/ets/Utils/SafeUtils';
 // 文件路径: src/main/ets/Framework/WebView/WebViewNetworkTester.ets
 /**
  * WebView网络连接测试工具
@@ -7,7 +7,7 @@
 
 import { webview } from '@kit.ArkWeb';
 import { http } from '@kit.NetworkKit';
-import { logger } from '../../Utils/Logger';
+import { logger } from 'manxia_core/src/main/ets/Utils/Logger';
 
 const TAG = 'WebViewNetworkTester';
 

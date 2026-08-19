@@ -1,10 +1,10 @@
-﻿import { SafeUtils } from '../../Utils/SafeUtils';
+﻿import { SafeUtils } from 'manxia_core/src/main/ets/Utils/SafeUtils';
 // 文件路径: entry/src/main/ets/Framework/Components/NovelSettingsDialogComponent.ets
 // 职责: 小说/电子书设置对话框组件，从UnifiedDetailPage提取的独立组件
 
 
 import { promptAction, curves } from '@kit.ArkUI';
-import { logger } from '../../Utils/Logger';
+import { logger } from 'manxia_core/src/main/ets/Utils/Logger';
 import { common } from '@kit.AbilityKit';
 import preferences from '@ohos.data.preferences';
 import { ThemeAwareState, ThemeAwareHelper } from './ThemeAware';
@@ -27,7 +27,7 @@ import { EBook, EBookMetadata, EBookFormat } from '../../Models/EBookModels';
 import { EBookDataManager } from '../Data/EBookDataManager';
 import { getNovelDataManager } from '../Novel/NovelDataManager';
 import { ScraperDialog, ScraperDialogConfig, ScraperDialogResult } from './ScraperDialog';
-import { ScraperContentType } from '../Scraper/ScraperTypes';
+import { ScraperContentType } from 'manxia_core/src/main/ets/Framework/Scraper/ScraperTypes';
 import { TrackingSettingsDialogComponent } from './TrackingSettingsDialogComponent';
 import { ContentTrackingCardState, ContentTrackingCardCallbacks } from '../../components/ContentTrackingStatusCard';
 

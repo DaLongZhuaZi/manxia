@@ -4,7 +4,7 @@ import { fileIo } from '@kit.CoreFileKit';
 import { http } from '@kit.NetworkKit';
 import { util } from '@kit.ArkTS';
 import { FeedbackCenterCacheManager, FeedbackCenterCacheStats } from '../Cache/FeedbackCenterCacheManager';
-import { logger } from '../../Utils/Logger';
+import { logger } from 'manxia_core/src/main/ets/Utils/Logger';
 
 const TAG = 'FeedbackCenterService';
 const FEEDBACK_ORIGIN = 'https://feedback.manxia.top';

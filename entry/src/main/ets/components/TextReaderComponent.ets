@@ -3,7 +3,7 @@
  * 支持多种阅读模式、翻页动画、自定义背景和文字样式
   */
 
-import { logger } from '../Utils/Logger';
+import { logger } from 'manxia_core/src/main/ets/Utils/Logger';
 import { curves, promptAction, SymbolGlyphModifier } from '@kit.ArkUI';
 import { image } from '@kit.ImageKit';
 import { display } from '@kit.ArkUI';

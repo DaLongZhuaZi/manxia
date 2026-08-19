@@ -1,6 +1,6 @@
 import { bundleManager } from '@kit.AbilityKit';
 import { deviceInfo, BusinessError } from '@kit.BasicServicesKit';
-import { logger } from '../../Utils/Logger';
+import { logger } from 'manxia_core/src/main/ets/Utils/Logger';
 
 interface AppBaseInfo {
   bundleName: string;

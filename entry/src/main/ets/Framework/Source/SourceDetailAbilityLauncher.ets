@@ -1,6 +1,6 @@
 import { common, StartOptions, Want } from '@kit.AbilityKit';
 import { UIContext } from '@kit.ArkUI';
-import { logger } from '../../Utils/Logger';
+import { logger } from 'manxia_core/src/main/ets/Utils/Logger';
 import type { SourceDetailParams } from '../../pages/SourceDetailPage';
 import { SOURCE_DETAIL_ABILITY_NAME } from './SourceDetailAbilityConstants';
 import { SourceDetailAbilityParamStore } from './SourceDetailAbilityParamStore';

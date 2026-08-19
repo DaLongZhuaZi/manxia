@@ -4,7 +4,7 @@
  * 统一执行工作流并自动应用声明的能力
  */
 
-import { logger } from '../../Utils/Logger';
+import { logger } from 'manxia_core/src/main/ets/Utils/Logger';
 import WorkflowCapabilities, { type WorkflowContext, type CapabilityType } from './WorkflowCapabilities';
 import { MangaSourceAPIEngine, type JSONExtractConfig } from '../WebView/MangaSourceAPIEngine';
 import { type UserAgentRotationConfig } from '../Network/UserAgentManager';

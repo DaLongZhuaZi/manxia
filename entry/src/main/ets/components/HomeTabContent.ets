@@ -3,7 +3,7 @@
  * 从 MainMenuPage 提取的首页逻辑
  */
 
-import { logger } from '../Utils/Logger';
+import { logger } from 'manxia_core/src/main/ets/Utils/Logger';
 import { ThemeAwareState, ThemeAwareHelper } from '../Framework/Components/ThemeAware';
 import { ThemeType } from '../Framework/Managers/ThemeManager';
 import { Manga } from '../Models/MangaModels';

@@ -3,7 +3,7 @@
 
 
 import { promptAction } from '@kit.ArkUI';
-import { logger } from '../../Utils/Logger';
+import { logger } from 'manxia_core/src/main/ets/Utils/Logger';
 import { ThemeAwareState, ThemeAwareHelper } from './ThemeAware';
 import { SourceDialogScaffold } from './SourceDialogScaffold';
 import { SettingsPageSurfaceManager, SettingsPageSurfaceStyle } from '../../pages/settings/SettingsPageSurfaceManager';

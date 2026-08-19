@@ -5,7 +5,7 @@
  */
 
 import { webview } from '@kit.ArkWeb';
-import { logger } from '../../Utils/Logger';
+import { logger } from 'manxia_core/src/main/ets/Utils/Logger';
 import { InvisibleWebView, InvisibleWebViewManager, WebViewEventCallbacks, WebViewInstanceData } from './InvisibleWebViewComponent';
 import { WebViewSourceConfig } from './WebViewImageLoader';
 

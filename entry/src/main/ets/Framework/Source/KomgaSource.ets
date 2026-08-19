@@ -1,7 +1,7 @@
-﻿import { SafeUtils } from '../../Utils/SafeUtils';
+﻿import { SafeUtils } from 'manxia_core/src/main/ets/Utils/SafeUtils';
 import { http } from '@kit.NetworkKit';
-import { logger } from '../../Utils/Logger';
-import { base64Encode } from '../../Utils/CryptoUtils';
+import { logger } from 'manxia_core/src/main/ets/Utils/Logger';
+import { base64Encode } from 'manxia_core/src/main/ets/Utils/CryptoUtils';
 import { ChapterInfo, ComicDetailInfo, ComicInfo, PageInfo } from './SourceExecutor';
 import {
   KomgaAuthorOption,

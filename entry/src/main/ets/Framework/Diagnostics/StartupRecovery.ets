@@ -4,7 +4,7 @@
  * 用于在应用启动失败时进行恢复和降级处理，确保应用能够在有限资源下正常运行。
  */
 
-import { logger } from '../../Utils/Logger';
+import { logger } from 'manxia_core/src/main/ets/Utils/Logger';
 import { setContext, isInitialized as isGlobalContextInitialized } from '../../GlobalContext';
 import { eventBus, IEventPayload } from '../EventBus';
 

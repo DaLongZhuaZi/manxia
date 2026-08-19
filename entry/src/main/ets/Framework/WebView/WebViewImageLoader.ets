@@ -6,12 +6,12 @@
 
 import { webview } from '@kit.ArkWeb';
 import { http } from '@kit.NetworkKit';
-import { logger } from '../../Utils/Logger';
+import { logger } from 'manxia_core/src/main/ets/Utils/Logger';
 import {
   ComicSourceDatabaseRecord,
   PageInfoDatabaseRecord,
   ChapterInfoDatabaseRecord
-} from '../Database/DatabaseTypes';
+} from 'manxia_core/src/main/ets/Framework/Database/DatabaseTypes';
 
 const TAG = 'WebViewImageLoader';
 

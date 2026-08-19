@@ -1,4 +1,4 @@
-import { SafeFileUtils } from '../../Utils/SafeFileUtils';
+import { SafeFileUtils } from 'manxia_core/src/main/ets/Utils/SafeFileUtils';
 // 文件路径: entry/src/main/ets/Framework/Parsers/EBookParser.ets
 /**
  * 电子书解析器基类
@@ -16,7 +16,7 @@ import {
   EBookContentMode,
   EBookReaderEngine
 } from '../../Models/EBookModels';
-import { logger } from '../../Utils/Logger';
+import { logger } from 'manxia_core/src/main/ets/Utils/Logger';
 import { fileIo } from '@kit.CoreFileKit';
 import { util } from '@kit.ArkTS';
 import { image } from '@kit.ImageKit';

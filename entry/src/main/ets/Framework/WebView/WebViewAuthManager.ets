@@ -1,11 +1,11 @@
-﻿import { SafeUtils } from '../../Utils/SafeUtils';
+﻿import { SafeUtils } from 'manxia_core/src/main/ets/Utils/SafeUtils';
 // 文件路径：entry/src/main/ets/Framework/WebView/WebViewAuthManager.ets
 /**
  * WebView登录与Cookie管理器（全局单例）
  */
  
 import { webview } from '@kit.ArkWeb';
-import { logger } from '../../Utils/Logger';
+import { logger } from 'manxia_core/src/main/ets/Utils/Logger';
 import { DataManager } from '../Data/DataManager';
 
 const TAG: string = 'WebViewAuthManager';

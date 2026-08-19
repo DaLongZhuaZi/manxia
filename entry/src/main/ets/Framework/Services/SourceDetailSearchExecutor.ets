@@ -1,13 +1,13 @@
-﻿import { SafeUtils } from '../../Utils/SafeUtils';
+﻿import { SafeUtils } from 'manxia_core/src/main/ets/Utils/SafeUtils';
 /**
  * 图源详情搜索执行器
  * 将 SourceDetailPage 的完整搜索分支抽离为后台可调用能力，供图源详情页和全局搜索共用。
  */
 import { BusinessError } from '@kit.BasicServicesKit';
 import { webview } from '@kit.ArkWeb';
-import { logger } from '../../Utils/Logger';
+import { logger } from 'manxia_core/src/main/ets/Utils/Logger';
 import { DataManager } from '../Data/DataManager';
-import { ComicSourceDatabaseRecord } from '../Database/DatabaseTypes';
+import { ComicSourceDatabaseRecord } from 'manxia_core/src/main/ets/Framework/Database/DatabaseTypes';
 import { ComicInfo } from '../Source/SourceExecutor';
 import { SourceManager } from '../Source/SourceManager';
 import { SearchIntentParser } from '../Search/SearchIntentParser';

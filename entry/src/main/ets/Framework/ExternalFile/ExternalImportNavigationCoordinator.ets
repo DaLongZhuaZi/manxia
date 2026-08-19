@@ -1,6 +1,6 @@
 import { common, Want } from '@kit.AbilityKit';
-import { logger } from '../../Utils/Logger';
-import { SafeUtils } from '../../Utils/SafeUtils';
+import { logger } from 'manxia_core/src/main/ets/Utils/Logger';
+import { SafeUtils } from 'manxia_core/src/main/ets/Utils/SafeUtils';
 
 const TAG: string = 'ExternalImportNavigationCoordinator';
 const APP_BUNDLE_NAME: string = 'com.dlzz.manxia';

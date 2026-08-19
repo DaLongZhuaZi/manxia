@@ -1,4 +1,4 @@
-import { ParsedArchiveStructure as CompressionParsedArchiveStructure } from '../../Utils/CompressionUtils';
+import { ParsedArchiveStructure as CompressionParsedArchiveStructure } from 'manxia_core/src/main/ets/Utils/CompressionUtils';
 
 class ImportArchiveParseCacheEntry {
   public key: string = '';

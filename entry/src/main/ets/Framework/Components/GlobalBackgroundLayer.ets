@@ -2,7 +2,7 @@
  * 全局背景层组件
  * 用于显示自定义主题背景，并在其上叠加统一的氛围层和可读性遮罩
  */
-import { logger } from '../../Utils/Logger';
+import { logger } from 'manxia_core/src/main/ets/Utils/Logger';
 import { CUSTOM_THEME_KEYS, GlassLevel, ThemeManager, ThemeType } from '../Managers/ThemeManager';
 import { BuiltInThemeResources } from '../Theme/BuiltInThemeResources';
 

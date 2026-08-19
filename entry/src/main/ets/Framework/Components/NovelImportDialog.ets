@@ -1,4 +1,4 @@
-import { SafeFileUtils } from '../../Utils/SafeFileUtils';
+import { SafeFileUtils } from 'manxia_core/src/main/ets/Utils/SafeFileUtils';
 // 文件路径: entry/src/main/ets/Framework/Components/NovelImportDialog.ets
 /**
  * 小说(TXT)导入对话框
@@ -7,7 +7,7 @@ import { SafeFileUtils } from '../../Utils/SafeFileUtils';
 
 import { ThemeAwareState, ThemeAwareHelper } from './ThemeAware';
 import { DialogSurfaceStyleHelper } from './DialogSurfaceStyleHelper';
-import { logger } from '../../Utils/Logger';
+import { logger } from 'manxia_core/src/main/ets/Utils/Logger';
 import { AppColors, ColorRole } from '../Theme/AppColors';
 import { getNovelTxtTocRuleManager, TxtTocRule, TxtChapter } from '../Novel/NovelTxtTocRuleManager';
 import { NovelReplaceRuleManager, ReplaceRule, ReplaceScope } from '../Novel/NovelReplaceRuleManager';
@@ -15,7 +15,7 @@ import { fileIo } from '@kit.CoreFileKit';
 import { photoAccessHelper } from '@kit.MediaLibraryKit';
 import { util } from '@kit.ArkTS';
 import { ScraperDialog, ScraperDialogConfig, ScraperDialogResult } from './ScraperDialog';
-import { ScraperContentType } from '../Scraper/ScraperTypes';
+import { ScraperContentType } from 'manxia_core/src/main/ets/Framework/Scraper/ScraperTypes';
 import { image } from '@kit.ImageKit';
 import { ImportFlowContentType, ImportFlowEvent, ImportFlowEventType, ImportFlowSeverity } from '../Import/ImportFlowTypes';
 

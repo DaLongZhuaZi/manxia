@@ -6,7 +6,7 @@
 
 import { common } from '@kit.AbilityKit';
 import { AppNotificationManager } from '../Managers/NotificationManager';
-import { logger } from '../../Utils/Logger';
+import { logger } from 'manxia_core/src/main/ets/Utils/Logger';
 import { generateUUID } from '../Utils/UUIDGenerator';
 import { BackgroundTaskHelper } from './BackgroundTaskHelper';
 import { TaskNavigationTarget } from './TaskNavigationTypes';

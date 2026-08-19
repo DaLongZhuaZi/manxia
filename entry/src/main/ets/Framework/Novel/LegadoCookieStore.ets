@@ -1,4 +1,4 @@
-﻿import { SafeUtils } from '../../Utils/SafeUtils';
+﻿import { SafeUtils } from 'manxia_core/src/main/ets/Utils/SafeUtils';
 /**
  * Legado Cookie存储管理
  * 提供Cookie的持久化存储和管理功能
@@ -7,7 +7,7 @@
  */
 
 import { preferences } from '@kit.ArkData';
-import { logger } from '../../Utils/Logger';
+import { logger } from 'manxia_core/src/main/ets/Utils/Logger';
 
 const TAG = 'LegadoCookieStore';
 const PREFERENCES_NAME = 'legado_cookies';

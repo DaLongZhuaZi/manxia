@@ -1,11 +1,11 @@
-import { SafeUtils } from '../../Utils/SafeUtils';
+import { SafeUtils } from 'manxia_core/src/main/ets/Utils/SafeUtils';
 /**
  * 漫画图源API请求引擎
  * 处理HTTP/GraphQL API请求，支持JSON数据提取
  */
 
 import { http } from '@kit.NetworkKit';
-import { logger } from '../../Utils/Logger';
+import { logger } from 'manxia_core/src/main/ets/Utils/Logger';
 import { lang } from '@kit.ArkTS';
 import { ProxyManager } from '../Network/ProxyManager';
 

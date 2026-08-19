@@ -3,7 +3,7 @@
  * 登录管理器 - 支持WebView登录和表单登录
  */
 
-import { logger } from '../../Utils/Logger';
+import { logger } from 'manxia_core/src/main/ets/Utils/Logger';
 import { webview } from '@kit.ArkWeb';
 import CookieManager from '../Managers/CookieManager';
 import http from '@ohos.net.http';

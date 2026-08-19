@@ -6,7 +6,7 @@
  * 文件路径: entry/src/main/ets/Framework/Download/UnifiedDownloadManager.ets
  */
 
-import { logger } from '../../Utils/Logger';
+import { logger } from 'manxia_core/src/main/ets/Utils/Logger';
 import { MangaDownloadManager, DownloadTaskInfo, TaskStatus, PageListFetcher, DownloadPageItem } from './DownloadManager';
 import { getNovelChapterCacheManager, NovelChapterCacheManager, DownloadProgressCallback as NovelDownloadCallback } from '../Novel/NovelChapterCacheManager';
 import { LegadoChapter } from '../Novel/LegadoSourceTypes';

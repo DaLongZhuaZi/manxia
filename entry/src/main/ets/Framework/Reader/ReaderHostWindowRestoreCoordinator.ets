@@ -1,4 +1,4 @@
-import { logger } from '../../Utils/Logger';
+import { logger } from 'manxia_core/src/main/ets/Utils/Logger';
 import { DisplayMode, WindowManager } from '../../Utils/WindowManager';
 import { PageWindowCoordinator } from '../../Utils/PageWindowCoordinator';
 

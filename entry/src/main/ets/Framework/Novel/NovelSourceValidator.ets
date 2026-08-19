@@ -1,4 +1,4 @@
-﻿import { SafeUtils } from '../../Utils/SafeUtils';
+﻿import { SafeUtils } from 'manxia_core/src/main/ets/Utils/SafeUtils';
 /**
  * 小说书源校验器
  * 批量校验书源可用性
@@ -8,7 +8,7 @@
  * 文件路径: entry/src/main/ets/Framework/Novel/NovelSourceValidator.ets
  */
 
-import { logger } from '../../Utils/Logger';
+import { logger } from 'manxia_core/src/main/ets/Utils/Logger';
 import { LegadoBookSource, LegadoBook, LegadoChapter, LegadoBookSourceType } from './LegadoSourceTypes';
 import { getNovelSourceManager, NovelSourceManager } from './NovelSourceManager';
 import { LegadoExecutionErrorCode, LegadoV2ExecutionPolicy } from './LegadoCompatibilityTypes';

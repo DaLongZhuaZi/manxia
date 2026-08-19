@@ -2,7 +2,7 @@
 // 职责: 换源对话框组件，从UnifiedDetailPage提取的独立组件
 
 import { promptAction } from '@kit.ArkUI';
-import { logger } from '../../Utils/Logger';
+import { logger } from 'manxia_core/src/main/ets/Utils/Logger';
 import { ThemeAwareState, ThemeAwareHelper } from './ThemeAware';
 import { SourceDialogScaffold } from './SourceDialogScaffold';
 import { UnifiedContent, UnifiedContentType } from '../../Models/UnifiedContentModels';

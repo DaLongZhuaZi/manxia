@@ -1,6 +1,6 @@
 import { AbilityConstant, UIAbility, Want } from '@kit.AbilityKit';
 import { window } from '@kit.ArkUI';
-import { logger } from './Utils/Logger';
+import { logger } from 'manxia_core/src/main/ets/Utils/Logger';
 import { ContinuationTriggeredPayload } from './Framework/EventBus';
 import {
   REMOTE_CONTROL_ABILITY_INSTANCE_ID_KEY,

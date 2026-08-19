@@ -14,8 +14,8 @@ import { ContentFilterManager } from '../../Framework/Managers/ContentFilterMana
 import { WelcomeGuideManager } from '../../Framework/Managers/WelcomeGuideManager';
 import { AppGuideManager } from '../../Framework/Managers/AppGuideManager';
 import { common, Want } from '@kit.AbilityKit';
-import { logger, LOG_LEVEL_NAMES, LOG_LEVEL_VALUES, LogLevel } from '../../Utils/Logger';
-import { PageLifecycleManager } from '../../Framework/Lifecycle';
+import { logger, LOG_LEVEL_NAMES, LOG_LEVEL_VALUES, LogLevel } from 'manxia_core/src/main/ets/Utils/Logger';
+import { PageLifecycleManager } from 'manxia_core/src/main/ets/Framework/Lifecycle/index';
 import { DeviceAdaptationManager, DeviceInfo, DeviceChangeListener, Breakpoint } from '../../Framework/Managers/DeviceAdaptationManager';
 import { ResponsiveLayoutHelper } from '../../Framework/Utils/ResponsiveLayout';
 import { SettingsSearchSupport } from './SettingsSearchSupport';

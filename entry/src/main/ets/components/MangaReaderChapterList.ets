@@ -3,7 +3,7 @@
  * 用于在阅读器内快速切换章节
  */
 
-import { logger } from '../Utils/Logger';
+import { logger } from 'manxia_core/src/main/ets/Utils/Logger';
 import { ThemeManager } from '../Framework/Managers/ThemeManager';
 import { MangaChapter } from '../Models/MangaModels';
 import { curves, UIContext, display } from '@kit.ArkUI';

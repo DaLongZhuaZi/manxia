@@ -1,13 +1,13 @@
-﻿import { SafeUtils } from '../../Utils/SafeUtils';
+﻿import { SafeUtils } from 'manxia_core/src/main/ets/Utils/SafeUtils';
 /**
  * 章节预加载管理器
  * 负责在漫画详情页后台预加载章节的页面列表和首图
  */
-import { logger } from '../../Utils/Logger';
+import { logger } from 'manxia_core/src/main/ets/Utils/Logger';
 import { MangaSourceEngine } from '../WebView/MangaSourceEngine';
 import { WebViewSourceManager } from '../WebView/WebViewSourceManager';
 import { DataManager } from '../Data/DataManager';
-import { ComicSourceDatabaseRecord } from '../Database/DatabaseTypes';
+import { ComicSourceDatabaseRecord } from 'manxia_core/src/main/ets/Framework/Database/DatabaseTypes';
 import { ImageCacheManager, LoadOptions, RequestHeaders } from '../Cache/ImageCacheManager';
 import { MangaRequestHeaderContract } from '../Reader/MangaRequestHeaderContract';
 import { PageInfo } from '../WebView/MangaSourceTypes';

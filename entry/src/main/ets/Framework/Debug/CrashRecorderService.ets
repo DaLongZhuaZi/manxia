@@ -1,5 +1,5 @@
-﻿import { SafeFileUtils } from '../../Utils/SafeFileUtils';
-import { SafeUtils } from '../../Utils/SafeUtils';
+﻿import { SafeFileUtils } from 'manxia_core/src/main/ets/Utils/SafeFileUtils';
+import { SafeUtils } from 'manxia_core/src/main/ets/Utils/SafeUtils';
 // 文件路径: entry/src/main/ets/Framework/Debug/CrashRecorderService.ets
 /**
  * 闪退记录服务
@@ -12,8 +12,8 @@ import { errorManager } from '@kit.AbilityKit';
 import { common } from '@kit.AbilityKit';
 import { fileIo as fs } from '@kit.CoreFileKit';
 import { util } from '@kit.ArkTS';
-import { LogLevel } from '../../Utils/Logger';
-import { LogCollector, LogEntry } from './LogCollector';
+import { LogLevel } from 'manxia_core/src/main/ets/Utils/Logger';
+import { LogCollector, LogEntry } from 'manxia_core/src/main/ets/Framework/Debug/LogCollector';
 import { DownloadDirManager } from '../Storage/DownloadDirManager';
 import { ErrorRecordManager } from './ErrorRecordManager';
 import { deviceInfo } from '@kit.BasicServicesKit';

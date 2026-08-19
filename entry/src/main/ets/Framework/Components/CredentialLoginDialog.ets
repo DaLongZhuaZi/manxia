@@ -3,7 +3,7 @@
  * 用于需要账号密码登录的图源
  */
 
-import { logger } from '../../Utils/Logger';
+import { logger } from 'manxia_core/src/main/ets/Utils/Logger';
 import { ThemeAwareHelper, ThemeAwareState } from './ThemeAware';
 import { ThemeType } from '../Managers/ThemeManager';
 

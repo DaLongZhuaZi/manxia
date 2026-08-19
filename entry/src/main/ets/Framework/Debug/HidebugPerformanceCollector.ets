@@ -5,7 +5,7 @@
  */
  
 import { hidebug } from '@kit.PerformanceAnalysisKit';
-import { logger } from '../../Utils/Logger';
+import { logger } from 'manxia_core/src/main/ets/Utils/Logger';
 
 const HIDEBUG_COLLECTOR_TAG = 'HidebugPerformanceCollector';
 

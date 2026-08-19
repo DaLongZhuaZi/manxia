@@ -3,7 +3,7 @@
  * 简化版JSONPath实现，支持基本的路径表达式
  */
 
-import { logger } from '../../Utils/Logger';
+import { logger } from 'manxia_core/src/main/ets/Utils/Logger';
 
 const TAG = 'JSONPathParser';
 

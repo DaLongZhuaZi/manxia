@@ -1,5 +1,5 @@
-import { logger } from '../../Utils/Logger';
-import { sha256Hash } from '../../Utils/CryptoUtils';
+import { logger } from 'manxia_core/src/main/ets/Utils/Logger';
+import { sha256Hash } from 'manxia_core/src/main/ets/Utils/CryptoUtils';
 
 const TAG: string = 'LegadoImageTransportTrace';
 const TRACE_PREFIX: string = 'MANXIA_LEGADO_IMAGE_TRACE:';

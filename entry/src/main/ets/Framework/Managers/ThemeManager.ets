@@ -5,12 +5,12 @@
  * 采用单例模式，支持主题变化监听
  */
 
-import { logger } from '../../Utils/Logger';
+import { logger } from 'manxia_core/src/main/ets/Utils/Logger';
 import { preferences } from '@kit.ArkData';
 import { ConfigurationConstant } from '@kit.AbilityKit';
 import { getContext } from '../../GlobalContext';
 import { CommonModifier } from '@kit.ArkUI';
-import { colorMap } from '../../Data/ResourceMap';
+import { colorMap } from 'manxia_core/src/main/ets/Data/ResourceMap';
 import { AppColors, ColorRole } from '../Theme/AppColors';
 import { UserThemeConfigManager, UserThemeProfile } from '../Theme/UserThemeConfig';
 

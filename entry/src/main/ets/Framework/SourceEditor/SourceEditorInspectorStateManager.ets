@@ -2,8 +2,8 @@
  * 交互式图源编辑器小窗状态与工作流向导
  */
 
-import { SafeUtils } from '../../Utils/SafeUtils';
-import { logger } from '../../Utils/Logger';
+import { SafeUtils } from 'manxia_core/src/main/ets/Utils/SafeUtils';
+import { logger } from 'manxia_core/src/main/ets/Utils/Logger';
 import {
   Action,
   ActionType,

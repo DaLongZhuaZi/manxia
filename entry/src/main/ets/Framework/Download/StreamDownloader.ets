@@ -1,4 +1,4 @@
-﻿import { SafeFileUtils } from '../../Utils/SafeFileUtils';
+﻿import { SafeFileUtils } from 'manxia_core/src/main/ets/Utils/SafeFileUtils';
 /**
  * 流式下载器（场景 B-2：下载 + 处理）
  *
@@ -17,7 +17,7 @@ import http from '@ohos.net.http';
 import fs from '@ohos.file.fs';
 import { common } from '@kit.AbilityKit';
 import { BackgroundTaskHelper } from '../Task/BackgroundTaskHelper';
-import { logger } from '../../Utils/Logger';
+import { logger } from 'manxia_core/src/main/ets/Utils/Logger';
 
 const TAG = 'StreamDownloader';
 

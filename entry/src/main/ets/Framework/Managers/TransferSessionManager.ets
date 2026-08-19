@@ -2,7 +2,7 @@
  * 局域网传书会话管理器
  */
 
-import { logger } from '../../Utils/Logger';
+import { logger } from 'manxia_core/src/main/ets/Utils/Logger';
 import {
   TransferSessionInfo,
   cloneTransferSessionInfo

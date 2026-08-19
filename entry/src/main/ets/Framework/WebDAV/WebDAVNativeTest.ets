@@ -6,7 +6,7 @@
  */
 
 import { WebDAVNativeClient, WebDAVNativeConfig, createWebDAVNativeClient } from './WebDAVNativeClient';
-import { logger } from '../../Utils/Logger';
+import { logger } from 'manxia_core/src/main/ets/Utils/Logger';
 
 const TAG = 'WebDAVNativeTest';
 
