@@ -13,7 +13,7 @@ import { http } from '@kit.NetworkKit';
 import { webview } from '@kit.ArkWeb';
 import { logger } from 'manxia_core/src/main/ets/Utils/Logger';
 import { DataManager } from '../Data/DataManager';
-import { RequestHeaderEntry, RequestHeaders } from '../Cache/ImageCacheManager';
+import { RequestHeaderEntry, RequestHeaders } from 'manxia_core/src/main/ets/Framework/Contracts/ImageRequestHeaders';
 
 const TAG: string = 'CookieManager';
 

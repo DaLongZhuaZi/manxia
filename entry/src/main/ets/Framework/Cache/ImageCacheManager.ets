@@ -1,3 +1,4 @@
+import { RequestHeaderEntry, RequestHeaders } from 'manxia_core/src/main/ets/Framework/Contracts/ImageRequestHeaders';
 import { SafeFileUtils } from 'manxia_core/src/main/ets/Utils/SafeFileUtils';
 // 文件路径: src/main/ets/Framework/Cache/ImageCacheManager.ets
 /**
@@ -18,6 +19,7 @@ import { SuwayomiCacheManager } from '../Source/SuwayomiCacheManager';
 import { KomgaCacheManager } from '../Source/KomgaCacheManager';
 import fs from '@ohos.file.fs';
 
+export { RequestHeaderEntry, RequestHeaders };
 const TAG = 'ImageCacheManager';
 
 // 内存缓存配置接口
@@ -103,28 +105,6 @@ export interface LoadOptions {
   contentType?: string;
 }
 
-export interface RequestHeaderEntry {
-  name: string;
-  value: string;
-}
-
-export interface RequestHeaders {
-  userAgent?: string;
-  accept?: string;
-  referer?: string;
-  origin?: string;
-  cookie?: string;
-  authorization?: string;
-  acceptLanguage?: string;
-  cacheControl?: string;
-  pragma?: string;
-  secFetchDest?: string;
-  secFetchMode?: string;
-  secFetchSite?: string;
-  cachePartition?: string;
-  extraHeaders?: RequestHeaderEntry[];
-}
-
 interface HttpHeadersObject {
   'User-Agent'?: string;
   'Origin'?: string;
@@ -141,7 +121,6 @@ interface HttpHeadersObject {
 }
 
 type RemoteProviderCacheType = 'suwayomi' | 'komga' | '';
-
 
 export class ImageCacheManager {
   private static instance: ImageCacheManager | null = null;
