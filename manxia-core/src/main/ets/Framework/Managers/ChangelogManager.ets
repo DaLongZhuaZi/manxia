@@ -9,7 +9,7 @@ import { logger } from 'manxia_core/src/main/ets/Utils/Logger';
 import { preferences } from '@kit.ArkData';
 import { common } from '@kit.AbilityKit';
 import { bundleManager } from '@kit.AbilityKit';
-import { getContentPanelManager, ContentSource, ContentPanelType } from '../Components/ContentPanel';
+import { getContentPanelManager, ContentSource, ContentPanelType } from 'manxia_core/src/main/ets/Framework/Components/ContentPanel';
 
 const TAG = 'ChangelogManager';
 const PREFS_NAME = 'changelog_prefs';

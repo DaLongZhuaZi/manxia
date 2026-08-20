@@ -27,7 +27,7 @@ import { uiContextManager } from 'manxia_theme/src/main/ets/Framework/Managers/U
 import { ProxyManager } from './Framework/Network/ProxyManager';
 import { getFontManager } from 'manxia_theme/src/main/ets/Framework/Managers/FontManager';
 import { getDownloadSyncManager } from 'manxia_core/src/main/ets/Framework/Managers/DownloadSyncManager';
-import { getChangelogManager } from './Framework/Managers/ChangelogManager';
+import { getChangelogManager } from 'manxia_core/src/main/ets/Framework/Managers/ChangelogManager';
 import { getAutoBackupScheduler } from './Framework/WebDAV/WebDAVAutoBackupScheduler';
 import { widgetDataSync } from './Utils/WidgetDataSync';
 import { getUnifiedDetailPageEnforcer } from './Framework/Enforcement/UnifiedDetailPageEnforcer';

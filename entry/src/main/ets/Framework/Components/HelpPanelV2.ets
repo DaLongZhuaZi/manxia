@@ -27,7 +27,7 @@ export {
   
   // 组件
   ContentPanelOverlay as HelpPanelOverlayV2
-} from './ContentPanel';
+} from 'manxia_core/src/main/ets/Framework/Components/ContentPanel';
 
 // 为了兼容性，也导出 ContentPanel 的原始名称
 export {
@@ -37,4 +37,4 @@ export {
   ContentPanelManager,
   getContentPanelManager,
   ContentPanelOverlay
-} from './ContentPanel';
+} from 'manxia_core/src/main/ets/Framework/Components/ContentPanel';

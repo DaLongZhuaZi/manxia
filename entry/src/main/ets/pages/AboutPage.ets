@@ -17,7 +17,7 @@ import { AppInfoManager } from 'manxia_core/src/main/ets/Framework/Managers/AppI
 import { pasteboard } from '@kit.BasicServicesKit';
 import { promptAction } from '@kit.ArkUI';
 import { common } from '@kit.AbilityKit';
-import { getChangelogManager } from '../Framework/Managers/ChangelogManager';
+import { getChangelogManager } from 'manxia_core/src/main/ets/Framework/Managers/ChangelogManager';
 import { SettingsImmersiveTitleBar } from './settings/SettingsImmersiveTitleBar';
 import { SettingsPageTitleBarManager } from 'manxia_features_ui/src/main/ets/pages/settings/SettingsPageTitleBarManager';
 import { GlobalBackgroundLayerMode } from 'manxia_theme/src/main/ets/Framework/Components/GlobalBackgroundLayer';
