@@ -8,7 +8,7 @@ import { logger } from 'manxia_core/src/main/ets/Utils/Logger';
 import DynamicUrlResolver, { type UrlResolverConfig } from 'manxia_core/src/main/ets/Framework/Utils/DynamicUrlResolver';
 import ChineseConverter, { type ChineseConversionConfig } from 'manxia_core/src/main/ets/Framework/Utils/ChineseConverter';
 import PaginationHandler, { type PaginationConfig, type PaginationResult } from 'manxia_core/src/main/ets/Framework/Utils/PaginationHandler';
-import UserAgentManager, { type UserAgentRotationConfig } from '../Network/UserAgentManager';
+import UserAgentManager, { type UserAgentRotationConfig } from 'manxia_core/src/main/ets/Framework/Managers/UserAgentManager';
 import ErrorHandler, { type RetryConfig } from '../Network/ErrorHandler';
 import SessionManager, { type SessionRefreshConfig } from '../Managers/SessionManager';
 

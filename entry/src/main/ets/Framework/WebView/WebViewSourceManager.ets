@@ -24,7 +24,7 @@ import { AntiCrawlerConfig } from 'manxia_source_engine/src/main/ets/Framework/W
 import { DataManager } from '../Data/DataManager';
 import { WebViewDataCacheManager } from 'manxia_network/src/main/ets/Framework/Cache/WebViewDataCacheManager';
 import { WebViewAuthManager } from './WebViewAuthManager';
-import { UserAgentManager } from '../Managers/UserAgentManager';
+import { UserAgentManager } from 'manxia_core/src/main/ets/Framework/Managers/UserAgentManager';
 import { LegadoMangaSourceBridge } from '../Novel/LegadoMangaSourceBridge';
 import { SourceIdentity } from 'manxia_source_engine/src/main/ets/Framework/Source/SourceIdentity';
 

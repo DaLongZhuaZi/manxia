@@ -9,7 +9,7 @@ import { DataManager } from '../Data/DataManager';
 import { JSONSourceParser, JSONSourceConfig } from './JSONSourceParser';
 import { http } from '@kit.NetworkKit';
 import { ProxyManager } from '../Network/ProxyManager';
-import { UserAgentManager } from '../Managers/UserAgentManager';
+import { UserAgentManager } from 'manxia_core/src/main/ets/Framework/Managers/UserAgentManager';
 
 const TAG = 'SourceExecutor';
 

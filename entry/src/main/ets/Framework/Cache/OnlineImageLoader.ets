@@ -18,7 +18,7 @@ import { cryptoFramework } from '@kit.CryptoArchitectureKit';
 import { DiskCacheManager } from 'manxia_network/src/main/ets/Framework/Cache/DiskCacheManager';
 import { DataManager, PageCacheUpdate } from '../Data/DataManager';
 import { JinmantiantangDescrambler, JinmantiantangParameters } from 'manxia_core/src/main/ets/Framework/ImageProcessing/JinmantiantangDescrambler';
-import { UserAgentManager } from '../Managers/UserAgentManager';
+import { UserAgentManager } from 'manxia_core/src/main/ets/Framework/Managers/UserAgentManager';
 import { AvifDecoder, isAvifFormat } from '../Image/AvifDecoder';
 import { GlobalWebViewContainer, WebViewEventCallbacks } from 'manxia_source_engine/src/main/ets/Framework/WebView/WebViewContainerPage';
 import { WebViewSourceConfig } from 'manxia_source_engine/src/main/ets/Framework/WebView/WebViewImageLoader';
