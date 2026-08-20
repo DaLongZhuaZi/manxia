@@ -15,7 +15,7 @@ import { util } from '@kit.ArkTS';
 import { LogLevel } from 'manxia_core/src/main/ets/Utils/Logger';
 import { LogCollector, LogEntry } from 'manxia_core/src/main/ets/Framework/Debug/LogCollector';
 import { DownloadDirManager } from 'manxia_core/src/main/ets/Framework/Storage/DownloadDirManager';
-import { ErrorRecordManager } from './ErrorRecordManager';
+import { ErrorRecordManager } from 'manxia_network/src/main/ets/Framework/Debug/ErrorRecordManager';
 import { deviceInfo } from '@kit.BasicServicesKit';
 
 const TAG = 'CrashRecorderService';

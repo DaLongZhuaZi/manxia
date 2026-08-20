@@ -47,7 +47,7 @@ import { DeviceAdaptationManager, DeviceInfo, DeviceChangeListener, Breakpoint,
 import { ResponsiveLayoutHelper } from 'manxia_theme/src/main/ets/Framework/Utils/ResponsiveLayout';
 import { image } from '@kit.ImageKit';
 import { AvifTranscoder, AvifTranscodeResult } from 'manxia_core/src/main/ets/Utils/AvifTranscoder';
-import { BackgroundTaskManager, TaskType, TaskStatus, TaskNotificationScene, BackgroundTask, TaskCancelSignal } from '../Framework/Task/BackgroundTaskManager';
+import { BackgroundTaskManager, TaskType, TaskStatus, TaskNotificationScene, BackgroundTask, TaskCancelSignal } from 'manxia_network/src/main/ets/Framework/Task/BackgroundTaskManager';
 import { TaskFloatingBall } from '../Framework/Components/TaskFloatingBall';
 import { PdfImportDialog, PdfImportDialogResult } from '../Framework/Components/PdfImportDialog';
 import { MangaImportDialog, MangaImportDialogResult, MangaImportMode, ChapterInfo, ParsedArchiveStructure, ExistingMangaCandidate, PrefilledComicInfo } from '../Framework/Components/MangaImportDialog';

@@ -8,7 +8,7 @@
 import { logger } from 'manxia_core/src/main/ets/Utils/Logger';
 import { preferences } from '@kit.ArkData';
 import { common } from '@kit.AbilityKit';
-import { getWebDAVBackupManager } from './WebDAVBackupManager';
+import { getWebDAVBackupManager } from 'manxia_network/src/main/ets/Framework/WebDAV/WebDAVBackupManager';
 import { getEnhancedBackupManager } from '../Managers/EnhancedBackupManager';
 import { WebDAVSettings } from 'manxia_core/src/main/ets/Models/WebDAVModels';
 

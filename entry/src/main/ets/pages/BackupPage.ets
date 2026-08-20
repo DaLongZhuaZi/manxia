@@ -25,7 +25,7 @@ import { WebDAVConfigDialog } from '../components/backup/WebDAVConfigDialog';
 import { util } from '@kit.ArkTS';
 import { common } from '@kit.AbilityKit';
 import { Want } from '@kit.AbilityKit';
-import { getWebDAVBackupManager, RemoteBackupInfo, WebDAVSyncStatus } from '../Framework/WebDAV/WebDAVBackupManager';
+import { getWebDAVBackupManager, RemoteBackupInfo, WebDAVSyncStatus } from 'manxia_network/src/main/ets/Framework/WebDAV/WebDAVBackupManager';
 import { WebDAVSettings, DEFAULT_WEBDAV_SETTINGS } from 'manxia_core/src/main/ets/Models/WebDAVModels';
 import { WebDAVClient, WebDAVConfig, WebDAVTestResult } from 'manxia_network/src/main/ets/Framework/WebDAV/WebDAVClient';
 import { quickTestWebDAVNative } from 'manxia_network/src/main/ets/Framework/WebDAV/WebDAVNativeTest';

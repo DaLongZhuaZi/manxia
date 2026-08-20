@@ -32,7 +32,7 @@ import {
 } from 'manxia_source_engine/src/main/ets/Framework/WebView/MangaSourceTypes';
 import { MangaSourceSelectorEngine } from 'manxia_source_engine/src/main/ets/Framework/WebView/MangaSourceSelectorEngine';
 import { MangaSourceAntiCrawler } from 'manxia_source_engine/src/main/ets/Framework/WebView/MangaSourceAntiCrawler';
-import { MangaSourceAPIEngine, JSONExtractConfig } from './MangaSourceAPIEngine';
+import { MangaSourceAPIEngine, JSONExtractConfig } from 'manxia_network/src/main/ets/Framework/WebView/MangaSourceAPIEngine';
 import { DataManager } from '../Data/DataManager';
 import CookieManager from 'manxia_core/src/main/ets/Framework/Managers/CookieManager';
 import { generatePicaSignature } from 'manxia_source_engine/src/main/ets/Framework/Source/SignatureHandler';

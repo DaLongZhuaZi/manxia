@@ -25,7 +25,7 @@ import {
   TaskNotificationScene,
   TaskStatus,
   TaskType
-} from '../Framework/Task/BackgroundTaskManager';
+} from 'manxia_network/src/main/ets/Framework/Task/BackgroundTaskManager';
 import { TaskNavigationTarget } from 'manxia_core/src/main/ets/Framework/Task/TaskNavigationTypes';
 import {
   sourceAutoCheckHistoryService,

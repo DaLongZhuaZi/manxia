@@ -11,7 +11,7 @@ import { fileIo as fs } from '@kit.CoreFileKit';
 import { LogLevel } from 'manxia_core/src/main/ets/Utils/Logger';
 import { LogCollector, LogEntry } from 'manxia_core/src/main/ets/Framework/Debug/LogCollector';
 import { DownloadDirManager } from 'manxia_core/src/main/ets/Framework/Storage/DownloadDirManager';
-import { ErrorCategory, ErrorRecordManager } from './ErrorRecordManager';
+import { ErrorCategory, ErrorRecordManager } from 'manxia_network/src/main/ets/Framework/Debug/ErrorRecordManager';
 import { deviceInfo } from '@kit.BasicServicesKit';
 import { ngfEventBusFacade, NGFEventPayload, NGFInitializationEventName } from '../NGF';
 import {

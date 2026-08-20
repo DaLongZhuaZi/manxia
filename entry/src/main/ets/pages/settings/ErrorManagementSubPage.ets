@@ -18,7 +18,7 @@ import { logger } from 'manxia_core/src/main/ets/Utils/Logger';
 import { PageLifecycleManager } from 'manxia_core/src/main/ets/Framework/Lifecycle/index';
 import { DeviceAdaptationManager, DeviceInfo, DeviceChangeListener, Breakpoint } from 'manxia_theme/src/main/ets/Framework/Managers/DeviceAdaptationManager';
 import { ResponsiveLayoutHelper } from 'manxia_theme/src/main/ets/Framework/Utils/ResponsiveLayout';
-import { ErrorRecordManager, ErrorRecord, ErrorSource, ErrorSummary, TagCount, CategoryCount } from '../../Framework/Debug/ErrorRecordManager';
+import { ErrorRecordManager, ErrorRecord, ErrorSource, ErrorSummary, TagCount, CategoryCount } from 'manxia_network/src/main/ets/Framework/Debug/ErrorRecordManager';
 import { getErrorMonitorService } from '../../Framework/Debug/ErrorMonitorService';
 import { getCrashRecorderService } from '../../Framework/Debug/CrashRecorderService';
 import { DownloadDirManager } from 'manxia_core/src/main/ets/Framework/Storage/DownloadDirManager';

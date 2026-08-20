@@ -80,7 +80,7 @@ import {
 import { PageInfo as SourcePageInfo, PageRequestHeader as SourcePageRequestHeader } from 'manxia_source_engine/src/main/ets/Framework/WebView/MangaSourceTypes';
 import { getLegadoMangaSourceBridge, LegadoMangaPageResult } from '../Framework/Novel/LegadoMangaSourceBridge';
 import { MangaRequestHeaderContract } from '../Framework/Reader/MangaRequestHeaderContract';
-import { MangaSourceAPIEngine } from '../Framework/WebView/MangaSourceAPIEngine';
+import { MangaSourceAPIEngine } from 'manxia_network/src/main/ets/Framework/WebView/MangaSourceAPIEngine';
 import { ChapterPreloadManager } from '../Framework/Preload/ChapterPreloadManager';
 import {
   OnlineArchiveCacheState,

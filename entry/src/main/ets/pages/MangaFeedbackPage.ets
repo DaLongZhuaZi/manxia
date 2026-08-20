@@ -38,7 +38,7 @@ import {
   FeedbackUploadCategory,
   FeedbackUploadProgress,
   FeedbackUploadCancelledError
-} from '../Framework/Services/FeedbackCenterService';
+} from 'manxia_network/src/main/ets/Framework/Services/FeedbackCenterService';
 import { FeedbackTurnstileBridge } from '../Framework/Services/FeedbackTurnstileBridge';
 import {
   FeedbackLogExportResult,

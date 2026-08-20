@@ -6,7 +6,7 @@
 
 import { logger } from 'manxia_core/src/main/ets/Utils/Logger';
 import WorkflowCapabilities, { type WorkflowContext, type CapabilityType } from './WorkflowCapabilities';
-import { MangaSourceAPIEngine, type JSONExtractConfig } from '../WebView/MangaSourceAPIEngine';
+import { MangaSourceAPIEngine, type JSONExtractConfig } from 'manxia_network/src/main/ets/Framework/WebView/MangaSourceAPIEngine';
 import { type UserAgentRotationConfig } from 'manxia_core/src/main/ets/Framework/Managers/UserAgentManager';
 import { ngfWorkflowEngineFacade } from '../NGF';
 

@@ -20,7 +20,7 @@ import {
   PdfImportDialogResult,
   PdfImportMode as DialogImportMode
 } from '../Components/PdfImportDialog';
-import { TaskCancelSignal } from '../Task/BackgroundTaskManager';
+import { TaskCancelSignal } from 'manxia_network/src/main/ets/Framework/Task/BackgroundTaskManager';
 import { ImportFilenameIntelligenceService } from 'manxia_core/src/main/ets/Framework/Services/ImportFilenameIntelligenceService';
 import { MangaReadFlowImportReport, MangaReadFlowImportReporter } from 'manxia_reader_ui/src/main/ets/Framework/Reader/MangaReadFlowImportReporter';
 import { ImportFlowMonitor, getImportFlowMonitor } from '../Import/ImportFlowMonitor';
