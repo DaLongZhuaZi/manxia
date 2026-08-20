@@ -91,6 +91,19 @@ export class TransferSessionManager {
     return this.validateTokenForClient(token, '');
   }
 
+  /**
+   * 判断某客户端 IP 是否已针对当前会话完成配对。
+   * 用于上传链路：web 端在 /api/pair/verify 配对后，上传请求不再携带 token/配对码，
+   * 只要同 IP 且会话已配对即视为已授权（修复长久以来的上传鉴权失败）。
+   */
+  public isClientPaired(clientIp: string): boolean {
+    const session = this.getValidSessionForValidation();
+    if (session === null) {
+      return false;
+    }
+    const ip = clientIp.trim();
+    return session.status === 'paired' && session.clientIp.length > 0 && session.clientIp === ip;
+  }
   public validateTokenForClient(token: string, clientIp: string): boolean {
     const session = this.getValidSessionForValidation();
     if (session === null) {

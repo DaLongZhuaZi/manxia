@@ -75,7 +75,7 @@ import { openExternalFileTaskInIsolatedAbility } from 'manxia_network/src/main/e
 import { MangaReadFlowImportReport, MangaReadFlowImportReporter } from 'manxia_reader_ui/src/main/ets/Framework/Reader/MangaReadFlowImportReporter';
 import { ImportArchiveParseCache, getImportArchiveParseCache } from '../Framework/Import/ImportArchiveParseCache';
 import { ImportDuplicateDetectionCache, getImportDuplicateDetectionCache } from '../Framework/Import/ImportDuplicateDetectionCache';
-import { ImportFlowMonitor, getImportFlowMonitor } from '../Framework/Import/ImportFlowMonitor';
+import { ImportFlowMonitor, getImportFlowMonitor } from 'manxia_core/src/main/ets/Framework/Import/ImportFlowMonitor';
 import {
   ImportFlowContentType,
   ImportFlowEntrySource,
@@ -83,7 +83,7 @@ import {
   ImportFlowEventType,
   ImportFlowSessionInfo,
   ImportFlowSeverity
-} from '../Framework/Import/ImportFlowTypes';
+} from 'manxia_core/src/main/ets/Framework/Import/ImportFlowTypes';
 
 const TAG = 'DataManagementPage';
 const APP_STORAGE_TRANSFER_RECORD_ID = 'pendingTransferRecordId';

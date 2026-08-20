@@ -23,7 +23,7 @@ import {
 import { TaskCancelSignal } from 'manxia_network/src/main/ets/Framework/Task/BackgroundTaskManager';
 import { ImportFilenameIntelligenceService } from 'manxia_core/src/main/ets/Framework/Services/ImportFilenameIntelligenceService';
 import { MangaReadFlowImportReport, MangaReadFlowImportReporter } from 'manxia_reader_ui/src/main/ets/Framework/Reader/MangaReadFlowImportReporter';
-import { ImportFlowMonitor, getImportFlowMonitor } from '../Import/ImportFlowMonitor';
+import { ImportFlowMonitor, getImportFlowMonitor } from 'manxia_core/src/main/ets/Framework/Import/ImportFlowMonitor';
 import {
   ImportFlowContentType,
   ImportFlowEntrySource,
@@ -31,7 +31,7 @@ import {
   ImportFlowEventType,
   ImportFlowSessionInfo,
   ImportFlowSeverity
-} from '../Import/ImportFlowTypes';
+} from 'manxia_core/src/main/ets/Framework/Import/ImportFlowTypes';
 
 const TAG = 'PdfImportService';
 const PDF_IMPORT_DIR_NAME = 'pdf_import';

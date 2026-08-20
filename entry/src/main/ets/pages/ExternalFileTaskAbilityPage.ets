@@ -37,13 +37,13 @@ import {
   ExternalImportNavigationSource,
   ExternalImportNavigationTarget
 } from 'manxia_network/src/main/ets/Framework/ExternalFile/ExternalImportNavigationCoordinator';
-import { ImportFlowMonitor, getImportFlowMonitor } from '../Framework/Import/ImportFlowMonitor';
+import { ImportFlowMonitor, getImportFlowMonitor } from 'manxia_core/src/main/ets/Framework/Import/ImportFlowMonitor';
 import {
   ImportFlowEntrySource,
   ImportFlowEvent,
   ImportFlowEventType,
   ImportFlowSeverity
-} from '../Framework/Import/ImportFlowTypes';
+} from 'manxia_core/src/main/ets/Framework/Import/ImportFlowTypes';
 
 const TAG: string = 'ExternalFileTaskAbilityPage';
 const APP_STORAGE_TRANSFER_RECORD_ID: string = 'pendingTransferRecordId';

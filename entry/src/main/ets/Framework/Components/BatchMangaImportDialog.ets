@@ -14,7 +14,7 @@ import { fileIo } from '@kit.CoreFileKit';
 import { MangaImportMode, ChapterInfo, ParsedArchiveStructure, PrefilledComicInfo, ExistingMangaCandidate } from './MangaImportDialog';
 import { ScraperDialog, ScraperDialogConfig, ScraperDialogResult } from './ScraperDialog';
 import { ScraperContentType } from 'manxia_core/src/main/ets/Framework/Scraper/ScraperTypes';
-import { ImportFlowContentType, ImportFlowEvent, ImportFlowEventType, ImportFlowSeverity } from '../Import/ImportFlowTypes';
+import { ImportFlowContentType, ImportFlowEvent, ImportFlowEventType, ImportFlowSeverity } from 'manxia_core/src/main/ets/Framework/Import/ImportFlowTypes';
 
 const TAG = 'BatchMangaImportDialog';
 

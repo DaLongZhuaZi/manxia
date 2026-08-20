@@ -45,14 +45,14 @@ import {
   ExternalFileTaskParams,
   ExternalFileTaskSource
 } from 'manxia_network/src/main/ets/Framework/ExternalFile/ExternalFileTaskTypes';
-import { ImportFlowMonitor, getImportFlowMonitor } from '../Framework/Import/ImportFlowMonitor';
+import { ImportFlowMonitor, getImportFlowMonitor } from 'manxia_core/src/main/ets/Framework/Import/ImportFlowMonitor';
 import {
   ImportFlowContentType,
   ImportFlowEntrySource,
   ImportFlowEvent,
   ImportFlowEventType,
   ImportFlowSessionInfo
-} from '../Framework/Import/ImportFlowTypes';
+} from 'manxia_core/src/main/ets/Framework/Import/ImportFlowTypes';
 
 const TAG = 'NetworkFolderPage';
 const TITLE_BAR_HEIGHT_MINI: number = 56;

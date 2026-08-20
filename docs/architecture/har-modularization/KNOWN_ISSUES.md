@@ -26,6 +26,7 @@
 - 根因：MobiParser.ensureDirectory 在“目标路径存在但为文件”时直接抛错（不恢复），旧失败产物（同名文件）阻塞目录创建 → 转换失败（懒转换也读不了）。
 - 修复（M48）：存在且非目录时，warn + unlink 残留文件 + mkdir 重建。
 - 状态：修复待 M48 门禁确认。
+,## #4 传书上传鉴权失败（长驻；已修复待验）,- 现象：web 端传书上传报“配对码或会话令牌无效，请先重新配对”；日志 POST /api/upload → 上传鉴权失败。,- 根因（诊断实证）：web 在 /api/pair/verify 配对（服务端已 markPaired 绑定 IP）后，/api/upload **不带 x-transfer-token 也不带 x-pair-code**（tokenLen=0,pairCodeLen=0）；而服务端 validateRequestAuthorization 每次都强制要求其一 → 403。,- 修复（服务端，最小对症）：TransferSessionManager.isClientPaired 判“同 IP 且会话已 paired”；validateRequestAuthorization 开头先放行该情况。,- 状态：2026-08-21 修复，待编译+重传验证；诊断日志验证后清理。
 
 
 

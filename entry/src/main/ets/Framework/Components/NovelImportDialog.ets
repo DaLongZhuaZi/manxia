@@ -17,7 +17,7 @@ import { util } from '@kit.ArkTS';
 import { ScraperDialog, ScraperDialogConfig, ScraperDialogResult } from './ScraperDialog';
 import { ScraperContentType } from 'manxia_core/src/main/ets/Framework/Scraper/ScraperTypes';
 import { image } from '@kit.ImageKit';
-import { ImportFlowContentType, ImportFlowEvent, ImportFlowEventType, ImportFlowSeverity } from '../Import/ImportFlowTypes';
+import { ImportFlowContentType, ImportFlowEvent, ImportFlowEventType, ImportFlowSeverity } from 'manxia_core/src/main/ets/Framework/Import/ImportFlowTypes';
 
 const TAG = 'NovelImportDialog';
 

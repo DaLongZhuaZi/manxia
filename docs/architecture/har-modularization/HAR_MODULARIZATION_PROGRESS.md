@@ -1,6 +1,6 @@
 # 漫匣项目 HAR 模块化拆分 — 实时进度台账（PROGRESS / 唯一真相源）
 
-> 最后更新：2026-08-21 18:35（W2-C✅ 提交 40cddddf；W2-D：UnifiedContentAdapter/RssSubscriptionDataManager 迁 novel（7 改写、residual0）→ W2 主体完成；⏸ 待 D 门禁；延后子项目：MangaAssetLoader(缓存簇)、LocalTransferServerService(TransferStore)、NGF barrel 深项der.get() 禁用于 static/模块级急切初始化，须惰性访问；⏸ 待复检启动）
+> 最后更新：2026-08-21 19:40（传书鉴权修复：isClientPaired(同IP已配对放行)；已知问题#4 修复待验；⏸ 待重编+重传验证der.get() 禁用于 static/模块级急切初始化，须惰性访问；⏸ 待复检启动）
 > 规则（对齐 PLAN P6）：每完成/中断/失败一个工作包，**立即**在本文件追加时间戳条目；
 > 阶段门禁等待用户验收时，对应阶段状态置 ⏸ 待验证，并把"建议验证命令+用例"写全；
 > 用户回填验收结果后，由执行方核验并推进到下一阶段。

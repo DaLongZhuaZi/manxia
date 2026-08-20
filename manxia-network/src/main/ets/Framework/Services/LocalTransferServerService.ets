@@ -38,7 +38,7 @@ import {
   getTransferUploadStoreService,
   TransferStagedUploadSession,
   TransferUploadStoreService
-} from './TransferUploadStoreService';
+} from 'manxia_network/src/main/ets/Framework/Services/TransferUploadStoreService';
 
 const TAG = 'LocalTransferServer';
 const BACKGROUND_OWNER = 'local_transfer_server';
@@ -653,7 +653,9 @@ export class LocalTransferServerService {
 
     const pairCheckPassed = this.validateRequestAuthorization(request, state.remoteAddress);
     if (!pairCheckPassed) {
-      logger.info(TAG, `上传鉴权失败: client=${state.remoteAddress}, file=${this.resolveUploadFileName(request)}`);
+      logger.debug(
+  TAG,
+logger.info(TAG, `上传鉴权失败: client=${state.remoteAddress}, file=${this.resolveUploadFileName(request)}`);
       await this.rejectUploadRequest(clientConnection, state, 403, '配对码或会话令牌无效，请先重新配对');
       return;
     }
@@ -3112,6 +3114,7 @@ export class LocalTransferServerService {
   }
 
   private validateRequestAuthorization(request: TransferParsedHttpRequest, remoteAddress: string): boolean {
+    if (this.sessionManager.isClientPaired(remoteAddress)) { return true; }
     const token = this.getHeaderValue(request.headers, 'x-transfer-token').trim();
     if (token.length > 0 && this.sessionManager.validateTokenForClient(token, remoteAddress)) {
       return true;

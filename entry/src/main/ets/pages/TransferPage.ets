@@ -12,7 +12,7 @@ import { GlobalBackgroundLayerMode } from 'manxia_theme/src/main/ets/Framework/C
 import { SharedPageBackgroundLayer } from 'manxia_theme/src/main/ets/Framework/Components/SharedPageBackgroundLayer';
 import { AppFloatingWindowConfig, WindowManager } from 'manxia_theme/src/main/ets/Utils/WindowManager';
 import { getTransferConfigManager, TransferConfigManager } from 'manxia_core/src/main/ets/Framework/Managers/TransferConfigManager';
-import { getLocalTransferServerService, LocalTransferServerService } from '../Framework/Services/LocalTransferServerService';
+import { getLocalTransferServerService, LocalTransferServerService } from 'manxia_network/src/main/ets/Framework/Services/LocalTransferServerService';
 import {
   getTransferSignalClientService,
   TransferSignalClientService,
@@ -26,7 +26,7 @@ import {
   getTransferUploadStoreService,
   TransferExternalFileTaskPrepareResult,
   TransferUploadStoreService
-} from '../Framework/Services/TransferUploadStoreService';
+} from 'manxia_network/src/main/ets/Framework/Services/TransferUploadStoreService';
 import {
   getTransferRtcFileReceiverService,
   TransferRtcFileReceiverResult,

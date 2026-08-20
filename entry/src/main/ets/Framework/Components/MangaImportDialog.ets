@@ -17,7 +17,7 @@ import { AppColors } from 'manxia_theme/src/main/ets/Framework/Theme/AppColors';
 import { ScraperDialog, ScraperDialogConfig, ScraperDialogResult } from './ScraperDialog';
 import { ScraperContentType } from 'manxia_core/src/main/ets/Framework/Scraper/ScraperTypes';
 import { fileIo } from '@kit.CoreFileKit';
-import { ImportFlowContentType, ImportFlowEvent, ImportFlowEventType } from '../Import/ImportFlowTypes';
+import { ImportFlowContentType, ImportFlowEvent, ImportFlowEventType } from 'manxia_core/src/main/ets/Framework/Import/ImportFlowTypes';
 
 const TAG = 'MangaImportDialog';
 

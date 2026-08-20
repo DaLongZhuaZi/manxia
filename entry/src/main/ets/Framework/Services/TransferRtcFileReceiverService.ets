@@ -12,7 +12,7 @@ import {
   getTransferUploadStoreService,
   TransferStagedUploadSession,
   TransferUploadStoreService
-} from './TransferUploadStoreService';
+} from 'manxia_network/src/main/ets/Framework/Services/TransferUploadStoreService';
 import {
   TransferDataChannelFileMessage,
   TransferRtcFileReceiverRuntime,

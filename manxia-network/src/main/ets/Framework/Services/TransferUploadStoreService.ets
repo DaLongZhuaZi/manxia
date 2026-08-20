@@ -30,14 +30,14 @@ import {
   ExternalFileTaskParams,
   ExternalFileTaskSource
 } from 'manxia_network/src/main/ets/Framework/ExternalFile/ExternalFileTaskTypes';
-import { ImportFlowMonitor, getImportFlowMonitor } from '../Import/ImportFlowMonitor';
+import { ImportFlowMonitor, getImportFlowMonitor } from 'manxia_core/src/main/ets/Framework/Import/ImportFlowMonitor';
 import {
   ImportFlowContentType,
   ImportFlowEntrySource,
   ImportFlowEvent,
   ImportFlowEventType,
   ImportFlowSessionInfo
-} from '../Import/ImportFlowTypes';
+} from 'manxia_core/src/main/ets/Framework/Import/ImportFlowTypes';
 
 const TAG = 'TransferUploadStore';
 const INDEX_VERSION = 1;
