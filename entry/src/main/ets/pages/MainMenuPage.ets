@@ -287,7 +287,7 @@ import { HdsTabsController } from '@kit.UIDesignKit';
 import { eventBus, GameEvent, IEventPayload, ContinuationTriggeredPayload, MangaImportCompletedPayload, FileImportRequestedPayload, MangaDeletedPayload, BasePayload, FileEditorDocumentPayload } from '../Framework/EventBus';
 import { WelcomeGuideManager } from '../Framework/Managers/WelcomeGuideManager';
 import { getChangelogManager } from '../Framework/Managers/ChangelogManager';
-import { SourceUpdateManager } from '../Framework/Managers/SourceUpdateManager';
+import { SourceUpdateManager } from 'manxia_core/src/main/ets/Framework/Managers/SourceUpdateManager';
 import { getVersionHistoryManager, VersionRepositoryUpdateCheckResult, MANXIA_EXTENSIONS_REPOSITORY_KEY } from '../Framework/Managers/VersionHistoryManager';
 import { ContentFilterManager } from '../Framework/Managers/ContentFilterManager';
 import { PrivacyModeManager } from '../Framework/Managers/PrivacyModeManager';
