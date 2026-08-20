@@ -12,7 +12,7 @@
 
 import { logger } from 'manxia_core/src/main/ets/Utils/Logger';
 import { preferences } from '@kit.ArkData';
-import { getContext } from '../../GlobalContext';
+import { getContext } from 'manxia_core/src/main/ets/GlobalContext';
 
 const TAG = 'UserThemeConfig';
 

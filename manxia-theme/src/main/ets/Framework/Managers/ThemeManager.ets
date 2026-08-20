@@ -8,7 +8,7 @@
 import { logger } from 'manxia_core/src/main/ets/Utils/Logger';
 import { preferences } from '@kit.ArkData';
 import { ConfigurationConstant } from '@kit.AbilityKit';
-import { getContext } from '../../GlobalContext';
+import { getContext } from 'manxia_core/src/main/ets/GlobalContext';
 import { CommonModifier } from '@kit.ArkUI';
 import { colorMap } from 'manxia_core/src/main/ets/Data/ResourceMap';
 import { AppColors, ColorRole } from '../Theme/AppColors';

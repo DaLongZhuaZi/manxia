@@ -2,7 +2,7 @@
 // 职责: 响应式布局工具类，提供基于断点的布局参数
 
 import { DeviceAdaptationManager, Breakpoint, DeviceInfo } from 'manxia_theme/src/main/ets/Framework/Managers/DeviceAdaptationManager';
-import { logger } from '../../Utils/Logger';
+import { logger } from 'manxia_core/src/main/ets/Utils/Logger';
 
 const TAG = 'ResponsiveLayout';
 

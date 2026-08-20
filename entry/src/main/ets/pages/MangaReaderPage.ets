@@ -32,7 +32,7 @@ import { RemoteLibraryMangaBridge } from '../Framework/Source/RemoteLibraryManga
 import { getSuwayomiSourceExecutor, SuwayomiSourceExecutor } from '../Framework/Source/SuwayomiSourceExecutor';
 import { ComicConverter } from '../Framework/Utils/ComicConverter';
 import { DeviceAdaptationManager, DeviceInfo, DeviceChangeListener } from 'manxia_theme/src/main/ets/Framework/Managers/DeviceAdaptationManager';
-import { ResponsiveLayoutHelper } from 'manxia_core/src/main/ets/Framework/Utils/ResponsiveLayout';
+import { ResponsiveLayoutHelper } from 'manxia_theme/src/main/ets/Framework/Utils/ResponsiveLayout';
 import { 
   Manga, 
   MangaChapter, 

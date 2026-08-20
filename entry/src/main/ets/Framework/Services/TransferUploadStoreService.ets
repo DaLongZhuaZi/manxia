@@ -12,7 +12,7 @@ import { fileIo, fileUri, statfs } from '@kit.CoreFileKit';
 import type { WriteOptions } from '@kit.CoreFileKit';
 import { util } from '@kit.ArkTS';
 import { logger } from 'manxia_core/src/main/ets/Utils/Logger';
-import { getContext } from 'manxia_theme/src/main/ets/GlobalContext';
+import { getContext } from 'manxia_core/src/main/ets/GlobalContext';
 import {
   TransferUploadRecord,
   cloneTransferUploadRecord,

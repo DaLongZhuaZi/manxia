@@ -5,7 +5,7 @@
  */
 
 import { logger } from 'manxia_core/src/main/ets/Utils/Logger';
-import { isInitialized as isGlobalContextInitialized } from 'manxia_theme/src/main/ets/GlobalContext';
+import { isInitialized as isGlobalContextInitialized } from 'manxia_core/src/main/ets/GlobalContext';
 
 /**
  * 启动阶段枚举

@@ -8,7 +8,7 @@ import { promptAction } from '@kit.ArkUI';
 import { logger } from 'manxia_core/src/main/ets/Utils/Logger';
 import { ThemeAwareHelper } from 'manxia_theme/src/main/ets/Framework/Components/ThemeAware';
 import { ThemeType } from 'manxia_theme/src/main/ets/Framework/Managers/ThemeManager';
-import { ProxyConfig, DEFAULT_PROXY_CONFIG, ProxyManager, ProxyProtocol } from 'manxia_core/src/main/ets/Framework/Network/ProxyManager';
+import { ProxyConfig, DEFAULT_PROXY_CONFIG, ProxyManager, ProxyProtocol } from 'manxia_network/src/main/ets/Framework/Network/ProxyManager';
 import { SettingsPageSurfaceManager } from 'manxia_features_ui/src/main/ets/pages/settings/SettingsPageSurfaceManager';
 
 const TAG = 'ProxyConfigDialog';

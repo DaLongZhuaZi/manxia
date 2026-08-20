@@ -6,7 +6,7 @@ import { SafeFileUtils } from 'manxia_core/src/main/ets/Utils/SafeFileUtils';
 import { SafeUtils } from 'manxia_core/src/main/ets/Utils/SafeUtils';
 import { ComicSourceDatabaseRecord } from 'manxia_core/src/main/ets/Framework/Database/DatabaseTypes';
 import { DataManager } from '../Data/DataManager';
-import { ProxyManager } from 'manxia_core/src/main/ets/Framework/Network/ProxyManager';
+import { ProxyManager } from 'manxia_network/src/main/ets/Framework/Network/ProxyManager';
 import { SourceManager, ImportResult } from './SourceManager';
 import { SourceRepositoryEntry, SourceRepositoryManager } from './SourceRepositoryManager';
 

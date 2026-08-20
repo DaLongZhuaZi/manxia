@@ -44,7 +44,7 @@ import { PdfImportResult, PdfContentType, PdfImportMode } from '../Framework/Par
 import { PdfImportService } from '../Framework/Services/PdfImportService';
 import { DeviceAdaptationManager, DeviceInfo, DeviceChangeListener, Breakpoint,
   DeviceType } from 'manxia_theme/src/main/ets/Framework/Managers/DeviceAdaptationManager';
-import { ResponsiveLayoutHelper } from 'manxia_core/src/main/ets/Framework/Utils/ResponsiveLayout';
+import { ResponsiveLayoutHelper } from 'manxia_theme/src/main/ets/Framework/Utils/ResponsiveLayout';
 import { image } from '@kit.ImageKit';
 import { AvifTranscoder, AvifTranscodeResult } from 'manxia_core/src/main/ets/Utils/AvifTranscoder';
 import { BackgroundTaskManager, TaskType, TaskStatus, TaskNotificationScene, BackgroundTask, TaskCancelSignal } from '../Framework/Task/BackgroundTaskManager';

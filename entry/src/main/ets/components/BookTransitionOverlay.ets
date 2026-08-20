@@ -22,7 +22,7 @@ import {
   CoverPosition,
   BookTransitionConfig
 } from './BookOpenTransition';
-import { AnimationSettingsManager } from '../Framework/Animation/AnimationSettingsManager';
+import { AnimationSettingsManager } from 'manxia_core/src/main/ets/Framework/Animation/AnimationSettingsManager';
 
 const TAG = 'BookTransitionOverlay';
 const BOOK_TRANSITION_OVERLAY_ROOT_ID = 'book_transition_overlay_root';

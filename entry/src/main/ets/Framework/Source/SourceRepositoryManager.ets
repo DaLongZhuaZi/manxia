@@ -10,7 +10,7 @@ import { fileIo } from '@kit.CoreFileKit';
 import { Context } from '@kit.AbilityKit';
 import { SourceManager, ImportResult } from './SourceManager';
 import { http } from '@kit.NetworkKit';
-import { ProxyManager } from 'manxia_core/src/main/ets/Framework/Network/ProxyManager';
+import { ProxyManager } from 'manxia_network/src/main/ets/Framework/Network/ProxyManager';
 import { DataManager } from '../Data/DataManager';
 import { ngfSourceLoaderFacade, ngfSourceRepositoryFacade } from '../NGF';
 

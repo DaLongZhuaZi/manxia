@@ -36,7 +36,7 @@ import { DeviceAdaptationManager, DeviceInfo, DeviceChangeListener, Breakpoint }
 import { AppNotificationManager } from 'manxia_core/src/main/ets/Framework/Managers/NotificationManager';
 import { CredentialLoginDialog } from '../Framework/Components/CredentialLoginDialog';
 import { SourceCredentials } from '../Framework/Data/DataManager';
-import { ProxyManager } from 'manxia_core/src/main/ets/Framework/Network/ProxyManager';
+import { ProxyManager } from 'manxia_network/src/main/ets/Framework/Network/ProxyManager';
 import { PageSettingsHelper, DetailPageType } from './settings/PageSettingsSubPage';
 import { UnifiedDetailPageParams, UnifiedContentType } from 'manxia_core/src/main/ets/Models/UnifiedContentModels';
 import { SourceContentCache, SourceContentCacheFreshness, SourceContentCacheSnapshot } from '../Framework/Cache/SourceContentCache';

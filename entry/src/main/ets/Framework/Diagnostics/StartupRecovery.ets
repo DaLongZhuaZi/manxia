@@ -5,7 +5,7 @@
  */
 
 import { logger } from 'manxia_core/src/main/ets/Utils/Logger';
-import { setContext, isInitialized as isGlobalContextInitialized } from 'manxia_theme/src/main/ets/GlobalContext';
+import { setContext, isInitialized as isGlobalContextInitialized } from 'manxia_core/src/main/ets/GlobalContext';
 import { eventBus, IEventPayload } from '../EventBus';
 
 /**

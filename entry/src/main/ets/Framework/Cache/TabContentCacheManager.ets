@@ -10,7 +10,7 @@
 import { logger } from 'manxia_core/src/main/ets/Utils/Logger';
 import { preferences } from '@kit.ArkData';
 import { NovelSearchResult, NovelSourceInfo } from 'manxia_core/src/main/ets/Models/NovelModels';
-import { getContext } from 'manxia_theme/src/main/ets/GlobalContext';
+import { getContext } from 'manxia_core/src/main/ets/GlobalContext';
 import { ComicInfo } from '../Source/SourceExecutor';
 import {
   KomgaBrowseFilters,

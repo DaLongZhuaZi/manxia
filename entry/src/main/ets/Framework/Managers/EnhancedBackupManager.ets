@@ -17,7 +17,7 @@ import { SettingsManager, SettingKeys } from 'manxia_core/src/main/ets/Framework
 import { AppInfoManager } from 'manxia_core/src/main/ets/Framework/Managers/AppInfoManager';
 import { getTarPackager, TarPackager } from 'manxia_core/src/main/ets/Framework/Utils/TarPackager';
 import { preferences } from '@kit.ArkData';
-import { getContext as getGlobalContext } from 'manxia_theme/src/main/ets/GlobalContext';
+import { getContext as getGlobalContext } from 'manxia_core/src/main/ets/GlobalContext';
 import {
   BackupData,
   BackupOptions,

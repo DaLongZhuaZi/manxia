@@ -8,7 +8,7 @@ import { SafeUtils } from 'manxia_core/src/main/ets/Utils/SafeUtils';
 import { vibrator } from '@kit.SensorServiceKit';
 import { logger } from 'manxia_core/src/main/ets/Utils/Logger';
 import { preferences } from '@kit.ArkData';
-import { getContext } from 'manxia_theme/src/main/ets/GlobalContext';
+import { getContext } from 'manxia_core/src/main/ets/GlobalContext';
 
 const TAG = 'InteractionManager';
 

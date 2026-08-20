@@ -9,7 +9,7 @@ import { common } from '@kit.AbilityKit';
 import wantAgent, { WantAgent } from '@ohos.app.ability.wantAgent';
 import { BusinessError } from '@kit.BasicServicesKit';
 import { Want } from '@kit.AbilityKit';
-import { TaskNavigationTarget } from 'manxia_network/src/main/ets/Framework/Task/TaskNavigationTypes';
+import { TaskNavigationTarget } from 'manxia_core/src/main/ets/Framework/Task/TaskNavigationTypes';
 
 const TAG = 'NotificationManager';
 const TASK_NOTIFICATION_ID_BASE = 100000;

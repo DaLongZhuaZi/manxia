@@ -1,6 +1,6 @@
 # 漫匣项目 HAR 模块化拆分 — 实时进度台账（PROGRESS / 唯一真相源）
 
-> 最后更新：2026-08-21 09:20（M45 待门禁；已知问题#2 取证定位：ArkTS count=4 但 JS payload count=0 → @Prop→payload 断链（既有，非回归）→ 按方案1改 @Link+$绑定（EpubWebViewReaderComponent/Page）；⏸ 待 M46 门禁（含 M45 一并编译验证）der.get() 禁用于 static/模块级急切初始化，须惰性访问；⏸ 待复检启动）
+> 最后更新：2026-08-21 15:35（0.5 首编：ResponsiveLayout 迁 theme 后相对导入 ../../Utils/Logger 失效 → 已改 core 深路径；全仓断裂相对导入 QA：另 8 处为既有遗留（ImageDescramblerRegistry/LoadingPage/WorkflowCapabilities），登记待清理；⏸ 待复检der.get() 禁用于 static/模块级急切初始化，须惰性访问；⏸ 待复检启动）
 > 规则（对齐 PLAN P6）：每完成/中断/失败一个工作包，**立即**在本文件追加时间戳条目；
 > 阶段门禁等待用户验收时，对应阶段状态置 ⏸ 待验证，并把"建议验证命令+用例"写全；
 > 用户回填验收结果后，由执行方核验并推进到下一阶段。

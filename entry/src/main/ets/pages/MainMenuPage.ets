@@ -77,7 +77,7 @@ import {
   AnimationSettingsListener,
   getAnimationSettingsManager,
   isMainPageBottomBarAnimationEnabled
-} from '../Framework/Animation/AnimationSettingsManager';
+} from 'manxia_core/src/main/ets/Framework/Animation/AnimationSettingsManager';
 import { TrackingSettingsSubPage } from './settings/TrackingSettingsSubPage';
 import { AniListLoginPage } from './settings/AniListLoginPage';
 import { SuwayomiSettingsPage } from './settings/SuwayomiSettingsPage';
@@ -287,14 +287,14 @@ import { HdsTabsController } from '@kit.UIDesignKit';
 // 导入事件总线
 import { eventBus, GameEvent, IEventPayload, ContinuationTriggeredPayload, MangaImportCompletedPayload, FileImportRequestedPayload, MangaDeletedPayload, BasePayload, FileEditorDocumentPayload } from '../Framework/EventBus';
 import { WelcomeGuideManager } from 'manxia_core/src/main/ets/Framework/Managers/WelcomeGuideManager';
-import { getChangelogManager } from 'manxia_core/src/main/ets/Framework/Managers/ChangelogManager';
+import { getChangelogManager } from 'manxia_features_ui/src/main/ets/Framework/Managers/ChangelogManager';
 import { SourceUpdateManager } from 'manxia_core/src/main/ets/Framework/Managers/SourceUpdateManager';
 import { getVersionHistoryManager, VersionRepositoryUpdateCheckResult, MANXIA_EXTENSIONS_REPOSITORY_KEY } from 'manxia_core/src/main/ets/Framework/Managers/VersionHistoryManager';
 import { ContentFilterManager } from 'manxia_core/src/main/ets/Framework/Managers/ContentFilterManager';
-import { PrivacyModeManager } from 'manxia_core/src/main/ets/Framework/Managers/PrivacyModeManager';
+import { PrivacyModeManager } from 'manxia_theme/src/main/ets/Framework/Managers/PrivacyModeManager';
 import { PrivacyAuthDialogComponent, PrivacyAuthDialogMode } from '../Framework/Components/PrivacyAuthDialogComponent';
 import { SourceDialogScaffold } from '../Framework/Components/SourceDialogScaffold';
-import { ProxyManager, ProxyConfig, DEFAULT_PROXY_CONFIG, ProxyProtocol } from 'manxia_core/src/main/ets/Framework/Network/ProxyManager';
+import { ProxyManager, ProxyConfig, DEFAULT_PROXY_CONFIG, ProxyProtocol } from 'manxia_network/src/main/ets/Framework/Network/ProxyManager';
 import { ProxyConfigDialog } from '../components/source/ProxyConfigDialog';
 import { BookshelfCategoryManager, BookshelfCategory, ContentType, CategoryItem } from '../Framework/Data/BookshelfCategoryManager';
 import { SettingKeys } from 'manxia_core/src/main/ets/Framework/Contracts/SettingKeys';
@@ -303,7 +303,7 @@ import { TypeShelfManager, TypeShelf, ShelfType, ShelfContentType, CreateShelfPa
 // 导入响应式布局
 import { DeviceAdaptationManager, DeviceInfo, DeviceChangeListener,
   Breakpoint, FoldStatus } from 'manxia_theme/src/main/ets/Framework/Managers/DeviceAdaptationManager';
-import { ResponsiveLayoutHelper } from 'manxia_core/src/main/ets/Framework/Utils/ResponsiveLayout';
+import { ResponsiveLayoutHelper } from 'manxia_theme/src/main/ets/Framework/Utils/ResponsiveLayout';
 import { util } from '@kit.ArkTS';
 
 

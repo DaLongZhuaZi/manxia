@@ -1,7 +1,7 @@
 ﻿import { SafeFileUtils } from 'manxia_core/src/main/ets/Utils/SafeFileUtils';
 import { fileIo as fs } from '@kit.CoreFileKit';
 import { util } from '@kit.ArkTS';
-import { getContext, isInitialized as isGlobalContextInitialized } from 'manxia_theme/src/main/ets/GlobalContext';
+import { getContext, isInitialized as isGlobalContextInitialized } from 'manxia_core/src/main/ets/GlobalContext';
 import { logger } from 'manxia_core/src/main/ets/Utils/Logger';
 import { uiContextManager } from 'manxia_theme/src/main/ets/Framework/Managers/UIContextManager';
 import { ISourceLoader } from '../contracts/ISourceLoader';
