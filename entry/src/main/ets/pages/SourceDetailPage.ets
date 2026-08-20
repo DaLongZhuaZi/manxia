@@ -34,7 +34,7 @@ import { ImageCacheManager, LoadOptions, RequestHeaderEntry, RequestHeaders } fr
 import { CoverCacheManager } from '../Framework/Cache/CoverCacheManager';
 import { DeviceAdaptationManager, DeviceInfo, DeviceChangeListener, Breakpoint } from 'manxia_theme/src/main/ets/Framework/Managers/DeviceAdaptationManager';
 import { AppNotificationManager } from 'manxia_core/src/main/ets/Framework/Managers/NotificationManager';
-import { CredentialLoginDialog } from '../Framework/Components/CredentialLoginDialog';
+import { CredentialLoginDialog } from 'manxia_theme/src/main/ets/Framework/Components/CredentialLoginDialog';
 import { SourceCredentials } from '../Framework/Data/DataManager';
 import { ProxyManager } from 'manxia_network/src/main/ets/Framework/Network/ProxyManager';
 import { PageSettingsHelper, DetailPageType } from './settings/PageSettingsSubPage';

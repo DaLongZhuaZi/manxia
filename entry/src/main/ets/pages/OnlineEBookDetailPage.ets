@@ -33,7 +33,7 @@ import {
   DownloadButtonState,
   DownloadSourceSelector,
   FileFormatSelector
-} from '../Framework/Components/EBookDownloadComponents';
+} from 'manxia_theme/src/main/ets/Framework/Components/EBookDownloadComponents';
 import {
   MangaDownloadManager,
   TaskStatus,

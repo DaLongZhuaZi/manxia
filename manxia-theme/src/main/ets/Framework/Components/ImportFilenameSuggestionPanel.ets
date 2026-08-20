@@ -2,7 +2,7 @@
 import {
   ImportFilenameParseResult,
   ImportFilenameMetadataCandidate
-} from '../Services/ImportFilenameIntelligenceService';
+} from 'manxia_core/src/main/ets/Framework/Services/ImportFilenameIntelligenceService';
 
 @Component
 export struct ImportFilenameSuggestionPanel {

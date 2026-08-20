@@ -183,7 +183,7 @@ import {
   FileEditorSaveTargetType
 } from '../Framework/Editor/FileEditorService';
 import { openFileEditorInIsolatedAbility } from '../Framework/Editor/FileEditorAbilityLauncher';
-import { BackgroundBlurOverlay } from '../Framework/Components/BackgroundBlurOverlay';
+import { BackgroundBlurOverlay } from 'manxia_theme/src/main/ets/Framework/Components/BackgroundBlurOverlay';
 import { WindowModeTransitionOverlay } from '../Framework/Components/WindowModeTransitionOverlay';
 import { SystemResourcePreviewPage } from './SystemResourcePreviewPage';
 import { HelpCenterPage } from './HelpCenterPage';
@@ -281,7 +281,7 @@ import { RemoteLibraryMangaBridge } from '../Framework/Source/RemoteLibraryManga
 import { getRemoteLibraryShelfManager, RemoteLibraryShelfManager } from '../Framework/Source/RemoteLibraryShelfManager';
 import { getKomgaSourceExecutor } from '../Framework/Source/KomgaSourceExecutor';
 import { TabContentCacheManager } from '../Framework/Cache/TabContentCacheManager';
-import { HdsStyleBottomBar, HdsBottomBarTabConfig } from '../Framework/Components/HdsStyleBottomBar';
+import { HdsStyleBottomBar, HdsBottomBarTabConfig } from 'manxia_theme/src/main/ets/Framework/Components/HdsStyleBottomBar';
 import { HdsTabsController } from '@kit.UIDesignKit';
 
 // 导入事件总线

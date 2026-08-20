@@ -9,7 +9,7 @@ import { EBookMetadata, EBookChapter } from 'manxia_core/src/main/ets/Models/EBo
 import { ThemeAwareState, ThemeAwareHelper } from 'manxia_theme/src/main/ets/Framework/Components/ThemeAware';
 import { FontAwareHelper, FontAwareState } from 'manxia_theme/src/main/ets/Framework/Components/FontAware';
 import { DialogSurfaceStyleHelper } from './DialogSurfaceStyleHelper';
-import { ImportFilenameSuggestionPanel } from './ImportFilenameSuggestionPanel';
+import { ImportFilenameSuggestionPanel } from 'manxia_theme/src/main/ets/Framework/Components/ImportFilenameSuggestionPanel';
 import { logger } from 'manxia_core/src/main/ets/Utils/Logger';
 import { promptAction } from '@kit.ArkUI';
 import { ScraperDialog, ScraperDialogConfig, ScraperDialogResult } from './ScraperDialog';
@@ -21,7 +21,7 @@ import {
   ImportFilenameIntelligenceService,
   ImportFilenameParseResult,
   ImportFilenameMetadataCandidate
-} from '../Services/ImportFilenameIntelligenceService';
+} from 'manxia_core/src/main/ets/Framework/Services/ImportFilenameIntelligenceService';
 
 const TAG = 'EBookMetadataDialog';
 

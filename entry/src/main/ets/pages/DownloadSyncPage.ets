@@ -28,7 +28,7 @@ import { createLocalMangaChapterExternalId } from 'manxia_core/src/main/ets/Util
 import { PdfImportDialog, PdfImportDialogResult } from '../Framework/Components/PdfImportDialog';
 import { MangaImportDialog, MangaImportDialogResult, MangaImportMode, ChapterInfo, ParsedArchiveStructure, ExistingMangaCandidate, PrefilledComicInfo } from '../Framework/Components/MangaImportDialog';
 import { BatchMangaImportDialog, BatchMangaImportDialogResult, MangaGroupResult, BatchChapterResult, MangaStatus as BatchMangaStatus } from '../Framework/Components/BatchMangaImportDialog';
-import { showArchivePasswordDialog } from '../Framework/Components/ArchivePasswordDialog';
+import { showArchivePasswordDialog } from 'manxia_theme/src/main/ets/Framework/Components/ArchivePasswordDialog';
 import { ParsedArchiveStructure as CompressionParsedStructure } from 'manxia_core/src/main/ets/Utils/CompressionUtils';
 import { DeviceAdaptationManager, DeviceChangeListener, DeviceInfo, Breakpoint } from 'manxia_theme/src/main/ets/Framework/Managers/DeviceAdaptationManager';
 import { ResponsiveLayoutHelper } from 'manxia_theme/src/main/ets/Framework/Utils/ResponsiveLayout';

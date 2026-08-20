@@ -12,12 +12,12 @@ import { AppColors, ColorRole } from 'manxia_theme/src/main/ets/Framework/Theme/
 import { PdfContentType } from '../Parsers/PdfToMangaImporter';
 import { ScraperDialog, ScraperDialogConfig, ScraperDialogResult } from './ScraperDialog';
 import { ScraperContentType } from 'manxia_core/src/main/ets/Framework/Scraper/ScraperTypes';
-import { ImportFilenameSuggestionPanel } from './ImportFilenameSuggestionPanel';
+import { ImportFilenameSuggestionPanel } from 'manxia_theme/src/main/ets/Framework/Components/ImportFilenameSuggestionPanel';
 import {
   ImportFilenameIntelligenceService,
   ImportFilenameParseResult,
   ImportFilenameMetadataCandidate
-} from '../Services/ImportFilenameIntelligenceService';
+} from 'manxia_core/src/main/ets/Framework/Services/ImportFilenameIntelligenceService';
 
 const TAG = 'PdfImportDialog';
 
