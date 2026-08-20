@@ -4,15 +4,11 @@
 import { DataManager } from '../Data/DataManager';
 import { logger } from 'manxia_core/src/main/ets/Utils/Logger';
 
-const TAG: string = 'SearchHistoryManager';
-
 // 明确的管理器接口，确保类型安全
-export interface ISearchHistoryManager {
-  load(userId: string): Promise<string[]>;
-  save(userId: string, history: string[]): Promise<void>;
-  add(userId: string, keyword: string, currentHistory: string[]): Promise<string[]>;
-  clear(userId: string): Promise<void>;
-}
+import { ISearchHistoryManager } from 'manxia_core/src/main/ets/Framework/Contracts/SearchHistoryManager';
+export { ISearchHistoryManager };
+
+const TAG: string = 'SearchHistoryManager';
 
 // 具体实现，使用应用内数据库的 user_settings 表进行持久化
 export class SearchHistoryManager implements ISearchHistoryManager {

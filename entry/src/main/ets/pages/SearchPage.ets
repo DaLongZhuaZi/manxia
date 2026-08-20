@@ -7,6 +7,7 @@ import { ThemeAwareState, ThemeAwareHelper } from 'manxia_theme/src/main/ets/Fra
 import { ThemeManager, ThemeType } from 'manxia_theme/src/main/ets/Framework/Managers/ThemeManager';
 import { FontAwareHelper, FontAwareState } from 'manxia_theme/src/main/ets/Framework/Components/FontAware';
 import { SearchHistoryManager } from '../Framework/Managers/SearchHistoryManager';
+import { ISearchHistoryManager } from 'manxia_core/src/main/ets/Framework/Contracts/SearchHistoryManager';
 import { logger } from 'manxia_core/src/main/ets/Utils/Logger';
 import { PageLifecycleManager } from 'manxia_core/src/main/ets/Framework/Lifecycle/index';
 import { DataManager, ComicInfo, ChapterInfo } from '../Framework/Data/DataManager';
@@ -128,7 +129,7 @@ struct SearchPage {
 
   // 数据管理器
   private dataManager: DataManager = DataManager.getInstance();
-  private searchHistoryManager: SearchHistoryManager = new SearchHistoryManager(this.dataManager);
+  private searchHistoryManager: ISearchHistoryManager = new SearchHistoryManager(this.dataManager);
 
   // 响应式布局
   private deviceManager: DeviceAdaptationManager = DeviceAdaptationManager.getInstance();
