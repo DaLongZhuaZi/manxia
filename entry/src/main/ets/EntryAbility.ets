@@ -31,7 +31,7 @@ import { getChangelogManager } from './Framework/Managers/ChangelogManager';
 import { getAutoBackupScheduler } from './Framework/WebDAV/WebDAVAutoBackupScheduler';
 import { widgetDataSync } from './Utils/WidgetDataSync';
 import { getUnifiedDetailPageEnforcer } from './Framework/Enforcement/UnifiedDetailPageEnforcer';
-import { InitPhase } from './Framework/Managers/AppInitializationManager';
+import { InitPhase } from 'manxia_core/src/main/ets/Framework/Managers/AppInitializationManager';
 import { getCrashRecorderService } from './Framework/Debug/CrashRecorderService';
 import { getErrorMonitorService } from './Framework/Debug/ErrorMonitorService';
 import { getErrorRecordManager } from './Framework/Debug/ErrorRecordManager';

@@ -9,7 +9,7 @@ import { GlobalBackgroundLayerMode } from 'manxia_theme/src/main/ets/Framework/C
 import { SettingsImmersiveTitleBar } from './SettingsImmersiveTitleBar';
 import { SettingsPageTitleBarManager } from 'manxia_features_ui/src/main/ets/pages/settings/SettingsPageTitleBarManager';
 import { SettingsPanelSurfaceHelper } from 'manxia_features_ui/src/main/ets/pages/settings/SettingsPanelSurfaceHelper';
-import { getAppInitializationManager, InitPhase, InitializationState } from '../../Framework/Managers/AppInitializationManager';
+import { getAppInitializationManager, InitPhase, InitializationState } from 'manxia_core/src/main/ets/Framework/Managers/AppInitializationManager';
 import {
   NGFDisplayMode,
   NGFEventPayload,

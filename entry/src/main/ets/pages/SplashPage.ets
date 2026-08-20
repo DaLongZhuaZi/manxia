@@ -10,7 +10,7 @@ import { WindowManager, DisplayMode } from 'manxia_theme/src/main/ets/Utils/Wind
 import { common } from '@kit.AbilityKit';
 import { colorMap } from 'manxia_core/src/main/ets/Data/ResourceMap';
 import { BuiltInThemeResources } from 'manxia_theme/src/main/ets/Framework/Theme/BuiltInThemeResources';
-import { getAppInitializationManager, InitializationState, InitPhase, InitProgressCallback } from '../Framework/Managers/AppInitializationManager';
+import { getAppInitializationManager, InitializationState, InitPhase, InitProgressCallback } from 'manxia_core/src/main/ets/Framework/Managers/AppInitializationManager';
 import { ngfEventBusFacade, NGFEventPayload, NGFInitializationEventName } from '../Framework/NGF';
 import { ngfPlatformWindowControllerFacade, NGFDisplayMode } from '../Framework/NGF/platformOhos/index';
 
