@@ -6,7 +6,7 @@
 import { preferences } from '@kit.ArkData';
 import { common } from '@kit.AbilityKit';
 import { formProvider, formBindingData } from '@kit.FormKit';
-import { ReadingAnalyticsManager, ReadingGoalsSettings } from '../Framework/Managers/ReadingAnalyticsManager';
+import { ReadingAnalyticsManager, ReadingGoalsSettings } from 'manxia_core/src/main/ets/Framework/Managers/ReadingAnalyticsManager';
 import { DataService } from '../Framework/Services/DataService';
 import { EBookDataManager } from '../Framework/Data/EBookDataManager';
 import { EBook } from 'manxia_core/src/main/ets/Models/EBookModels';

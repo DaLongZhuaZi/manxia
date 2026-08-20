@@ -14,7 +14,7 @@ import { logger } from 'manxia_core/src/main/ets/Utils/Logger';
 import { PageLifecycleManager } from 'manxia_core/src/main/ets/Framework/Lifecycle/index';
 import { DataService } from '../Framework/Services/DataService';
 import { ReadHistory, DataManager, ComicInfo } from '../Framework/Data/DataManager';
-import { ReadingAnalyticsManager, RETENTION_DAYS_OPTIONS, ReadingGoalsSettings } from '../Framework/Managers/ReadingAnalyticsManager';
+import { ReadingAnalyticsManager, RETENTION_DAYS_OPTIONS, ReadingGoalsSettings } from 'manxia_core/src/main/ets/Framework/Managers/ReadingAnalyticsManager';
 import { EBookDataManager } from '../Framework/Data/EBookDataManager';
 import { EBook } from 'manxia_core/src/main/ets/Models/EBookModels';
 import { getNovelDataManager } from '../Framework/Novel/NovelDataManager';
