@@ -34,7 +34,7 @@ import { sourceDebugLogManager } from '../Framework/Debug/SourceDebugLogManager'
 import {
   SourceDiagnosticPageParams,
   SourceInteractiveEditorPageParams
-} from '../Framework/SourceEditor/SourceEditorTypes';
+} from 'manxia_source_engine/src/main/ets/Framework/SourceEditor/SourceEditorTypes';
 import { LegadoMangaSourceBridge } from '../Framework/Novel/LegadoMangaSourceBridge';
 
 const TAG = 'SourceManagementPage';

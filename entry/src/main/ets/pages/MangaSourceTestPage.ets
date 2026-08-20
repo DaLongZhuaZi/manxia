@@ -13,7 +13,7 @@ import { ThemeManager, ThemeType } from '../Framework/Managers/ThemeManager';
 import { ThemeAwareState, ThemeAwareHelper } from '../Framework/Components/ThemeAware';
 // 已弃用自定义 AnimatedButton，改用原生 ArkUI Button
 import { MangaSourceEngine, SearchResult, EngineResult, EngineConfig } from '../Framework/WebView/MangaSourceEngine';
-import { MangaSourceConfig, MangaInfo, ChapterInfo, AntiCrawlerConfig } from '../Framework/WebView/MangaSourceTypes';
+import { MangaSourceConfig, MangaInfo, ChapterInfo, AntiCrawlerConfig } from 'manxia_source_engine/src/main/ets/Framework/WebView/MangaSourceTypes';
 
 const TAG = 'MangaSourceTestPage';
 

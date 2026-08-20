@@ -8,7 +8,7 @@ import { SourceLoginPage } from './SourceLoginPage';
 import {
   SOURCE_DETAIL_ABILITY_HOST_MULTITON,
   SOURCE_DETAIL_ABILITY_INSTANCE_ID_KEY
-} from '../Framework/Source/SourceDetailAbilityConstants';
+} from 'manxia_source_engine/src/main/ets/Framework/Source/SourceDetailAbilityConstants';
 import {
   SourceDetailAbilityParamStore,
   SourceDetailAbilityWindowPayload

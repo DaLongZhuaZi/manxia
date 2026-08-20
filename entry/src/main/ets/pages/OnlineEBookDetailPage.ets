@@ -14,7 +14,7 @@ import { DeviceAdaptationManager, DeviceChangeListener, DeviceInfo } from '../Fr
 import { SourceManager, SourceInfo } from '../Framework/Source/SourceManager';
 import { MangaSourceEngine, EngineConfig } from '../Framework/WebView/MangaSourceEngine';
 import { WebViewAuthManager } from '../Framework/WebView/WebViewAuthManager';
-import { AntiCrawlerConfig, TaskResult } from '../Framework/WebView/MangaSourceTypes';
+import { AntiCrawlerConfig, TaskResult } from 'manxia_source_engine/src/main/ets/Framework/WebView/MangaSourceTypes';
 import { ImageCacheManager } from '../Framework/Cache/ImageCacheManager';
 import { DataManager } from '../Framework/Data/DataManager';
 import { EBookDataManager } from '../Framework/Data/EBookDataManager';
@@ -41,7 +41,7 @@ import {
   DownloadTaskType
 } from '../Framework/Download/DownloadManager';
 import { EBookReaderParams } from './EBookReaderRouteTypes';
-import { ChapterInfo as SourceChapterInfo, PageInfo as SourcePageInfo } from '../Framework/WebView/MangaSourceTypes';
+import { ChapterInfo as SourceChapterInfo, PageInfo as SourcePageInfo } from 'manxia_source_engine/src/main/ets/Framework/WebView/MangaSourceTypes';
 import { promptAction } from '@kit.ArkUI';
 import { AppColors } from '../Framework/Theme/AppColors';
 import { SettingsImmersiveTitleBar } from './settings/SettingsImmersiveTitleBar';

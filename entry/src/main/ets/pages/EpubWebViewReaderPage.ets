@@ -17,7 +17,7 @@ import { distributedReadingService } from '../Framework/Distributed/DistributedR
 import { distributedDataSyncManager, SyncReadingState } from '../Framework/Distributed/DistributedDataSyncManager';
 import { EBookDataManager } from '../Framework/Data/EBookDataManager';
 import { EBookParserFactory, resolveEpubPackageDocumentPathFromRoot } from '../Framework/Parsers/EBookParser';
-import { convertMobiToExtractedDir } from '../Framework/Parsers/MobiParser';
+import { convertMobiToExtractedDir } from 'manxia_source_engine/src/main/ets/Framework/Parsers/MobiParser';
 import { KeyCode, inputConsumer } from '@kit.InputKit';
 import {
   EBook,

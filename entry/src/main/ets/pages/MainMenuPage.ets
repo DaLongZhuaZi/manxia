@@ -116,7 +116,7 @@ import { PrivacyPolicyPage } from './PrivacyPolicyPage';
 import { SourceGuidePage } from './SourceGuidePage';
 import { SourceDetailPage } from './SourceDetailPage';
 import type { SourceDetailParams as SourceDetailPageParams } from './SourceDetailPage';
-import { WebViewContainer, GlobalWebViewContainer } from '../Framework/WebView/WebViewContainerPage';
+import { WebViewContainer, GlobalWebViewContainer } from 'manxia_source_engine/src/main/ets/Framework/WebView/WebViewContainerPage';
 import { BookTransitionOverlay, startBookOpenTransition, startBookOpenTransitionWithComponentId, CoverPosition, EBookBackgroundSettings } from '../components/BookTransitionOverlay';
 import { EBookReaderParams } from './EBookReaderRouteTypes';
 import { EBookReaderRoutePageContent } from './EBookReaderRoutePage';
@@ -147,7 +147,7 @@ import { SourceManagementPage } from './SourceManagementPage';
 import { SourceDiagnosticPage } from './SourceDiagnosticPage';
 import { SourceInteractiveEditorPage } from './SourceInteractiveEditorPage';
 import { SourceMaintenancePage } from './SourceMaintenancePage';
-import { SourceInteractiveEditorPageParams } from '../Framework/SourceEditor/SourceEditorTypes';
+import { SourceInteractiveEditorPageParams } from 'manxia_source_engine/src/main/ets/Framework/SourceEditor/SourceEditorTypes';
 import { BackupPage } from './BackupPage';
 
 // 小说页面导入
@@ -238,7 +238,7 @@ import { isOnlineManga, isLocalManga, MangaSourceType } from 'manxia_core/src/ma
 
 // 导入图源相关
 import { SourceManager, SourceInfo } from '../Framework/Source/SourceManager';
-import { SearchTypeOption, SearchConfig } from '../Framework/WebView/MangaSourceTypes';
+import { SearchTypeOption, SearchConfig } from 'manxia_source_engine/src/main/ets/Framework/WebView/MangaSourceTypes';
 import { SourceRepositoryManager, SavedRepository, SourceRepositoryEntry, SyncResult, SyncProgressCallback, SyncSourceChangeDetail } from '../Framework/Source/SourceRepositoryManager';
 
 // 导入数据管理器

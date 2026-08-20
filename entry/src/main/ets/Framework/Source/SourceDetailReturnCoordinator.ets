@@ -1,6 +1,6 @@
 import { common, StartOptions, Want } from '@kit.AbilityKit';
 import { logger } from 'manxia_core/src/main/ets/Utils/Logger';
-import { SOURCE_DETAIL_ABILITY_NAME } from './SourceDetailAbilityConstants';
+import { SOURCE_DETAIL_ABILITY_NAME } from 'manxia_source_engine/src/main/ets/Framework/Source/SourceDetailAbilityConstants';
 import { SourceDetailAbilityParamStore } from './SourceDetailAbilityParamStore';
 
 const TAG: string = 'SourceDetailReturnCoordinator';

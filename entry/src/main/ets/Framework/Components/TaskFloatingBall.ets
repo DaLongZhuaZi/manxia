@@ -6,7 +6,7 @@ import { BackgroundTaskManager, BackgroundTask, TaskStatus, TaskProgress, TaskSt
 import { logger } from 'manxia_core/src/main/ets/Utils/Logger';
 import { display } from '@kit.ArkUI';
 import { AppColors, ColorRole } from '../Theme/AppColors';
-import { SourceInteractiveEditorPageParams } from '../SourceEditor/SourceEditorTypes';
+import { SourceInteractiveEditorPageParams } from 'manxia_source_engine/src/main/ets/Framework/SourceEditor/SourceEditorTypes';
 import { TaskNavigationTarget } from '../Task/TaskNavigationTypes';
 import {
   getHoldingAwarenessManager,

@@ -89,7 +89,7 @@ import { getRemoteLibraryShelfManager, RemoteLibraryShelfManager } from '../Fram
 import { MangaSourceEngine, EngineConfig, EngineResult } from '../Framework/WebView/MangaSourceEngine';
 import { WebViewSourceManager } from '../Framework/WebView/WebViewSourceManager';
 import { WebViewAuthManager } from '../Framework/WebView/WebViewAuthManager';
-import { AntiCrawlerConfig, PageRequestHeader, PageInfo as SourcePageInfo } from '../Framework/WebView/MangaSourceTypes';
+import { AntiCrawlerConfig, PageRequestHeader, PageInfo as SourcePageInfo } from 'manxia_source_engine/src/main/ets/Framework/WebView/MangaSourceTypes';
 import { getNovelSourceManager } from '../Framework/Novel/NovelSourceManager';
 import { getNovelDataManager } from '../Framework/Novel/NovelDataManager';
 import { getNovelChapterCacheManager } from '../Framework/Novel/NovelChapterCacheManager';

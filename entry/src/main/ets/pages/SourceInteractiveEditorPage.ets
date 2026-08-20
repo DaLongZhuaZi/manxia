@@ -31,14 +31,14 @@ import {
   sourceAutoCheckHistoryService,
   SourceAutoCheckRecord,
   SourceAutoCheckRecordStatus
-} from '../Framework/SourceEditor/SourceAutoCheckHistoryService';
+} from 'manxia_source_engine/src/main/ets/Framework/SourceEditor/SourceAutoCheckHistoryService';
 import { interactiveSourceEditorService } from '../Framework/SourceEditor/InteractiveSourceEditorService';
 import {
   createEmptySourceEditorSelectionAssessment,
   createEmptySourceEditorWorkflowPreview,
   SourceEditorInspectorSnapshot,
   sourceEditorInspectorStateManager
-} from '../Framework/SourceEditor/SourceEditorInspectorStateManager';
+} from 'manxia_source_engine/src/main/ets/Framework/SourceEditor/SourceEditorInspectorStateManager';
 import {
   DomSelectionSnapshot,
   GeneratedSelectorCandidate,
@@ -52,7 +52,7 @@ import {
   SourceEditorWorkflowPreviewStatus,
   SourceInteractiveEditorPageParams,
   SourceSaveMode
-} from '../Framework/SourceEditor/SourceEditorTypes';
+} from 'manxia_source_engine/src/main/ets/Framework/SourceEditor/SourceEditorTypes';
 
 const TAG = 'SourceInteractiveEditorPage';
 const SOURCE_EDITOR_FLOATING_INSPECTOR_CONFIG: AppFloatingWindowConfig = {

@@ -3,7 +3,7 @@ import { DatabaseManager } from 'manxia_core/src/main/ets/Framework/Database/Dat
 import { DatabaseValue, GenericQueryRecord } from 'manxia_core/src/main/ets/Framework/Database/DatabaseTypes';
 import { ChapterPreloadManager } from '../Preload/ChapterPreloadManager';
 import { WebViewSourceManager } from '../WebView/WebViewSourceManager';
-import { SourceIdentity } from './SourceIdentity';
+import { SourceIdentity } from 'manxia_source_engine/src/main/ets/Framework/Source/SourceIdentity';
 
 const TAG = 'SourceCompatibilityService';
 

@@ -14,9 +14,9 @@ import {
   TaskExecutionMode,
   TaskError,
   Action
-} from './MangaSourceTypes';
+} from 'manxia_source_engine/src/main/ets/Framework/WebView/MangaSourceTypes';
 import { MangaSourceActionEngine, ActionContext } from './MangaSourceActionEngine';
-import { AntiCrawlerConfig } from './MangaSourceTypes';
+import { AntiCrawlerConfig } from 'manxia_source_engine/src/main/ets/Framework/WebView/MangaSourceTypes';
 import { logger } from 'manxia_core/src/main/ets/Utils/Logger';
 
 const TAG = 'TaskExecutor';

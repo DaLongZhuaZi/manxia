@@ -52,7 +52,7 @@ import { EBookDataManager } from '../Data/EBookDataManager';
 import { EBook } from '../../Models/EBookModels';
 import { WebViewSourceManager } from '../WebView/WebViewSourceManager';
 import { MangaSourceEngine } from '../WebView/MangaSourceEngine';
-import { ChapterInfo as WebViewChapterInfo, PageInfo as WebViewPageInfo } from '../WebView/MangaSourceTypes';
+import { ChapterInfo as WebViewChapterInfo, PageInfo as WebViewPageInfo } from 'manxia_source_engine/src/main/ets/Framework/WebView/MangaSourceTypes';
 import { eventBus, GameEvent, IEventPayload } from '../EventBus';
 
 const TAG = 'SubscriptionManager';

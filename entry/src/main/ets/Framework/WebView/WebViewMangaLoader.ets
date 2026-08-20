@@ -22,7 +22,7 @@ import {
   WebViewImageInterceptor,
   WebViewImageCache,
   WebViewSourceConfig
-} from './WebViewImageLoader';
+} from 'manxia_source_engine/src/main/ets/Framework/WebView/WebViewImageLoader';
 import { WebViewSourceManager } from './WebViewSourceManager';
 
 const TAG = 'WebViewMangaLoader';

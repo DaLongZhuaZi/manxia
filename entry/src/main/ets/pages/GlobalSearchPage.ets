@@ -48,21 +48,21 @@ import { SourceDetailSearchExecutor, getSourceDetailSearchExecutor } from '../Fr
 import { openSourceDetailInIsolatedAbility } from '../Framework/Source/SourceDetailAbilityLauncher';
 import { MangaDetailPageParams } from './MangaDetailPage';
 import type { SourceDetailParams } from './SourceDetailPage';
-import { GlobalSearchSessionHandle } from '../Framework/Search/GlobalSearchSessionTypes';
-import { SearchResultDataSource } from '../Framework/Search/SearchResultDataSource';
-import { GlobalSearchFlowMonitor, getGlobalSearchFlowMonitor } from '../Framework/Search/GlobalSearchFlowMonitor';
+import { GlobalSearchSessionHandle } from 'manxia_source_engine/src/main/ets/Framework/Search/GlobalSearchSessionTypes';
+import { SearchResultDataSource } from 'manxia_source_engine/src/main/ets/Framework/Search/SearchResultDataSource';
+import { GlobalSearchFlowMonitor, getGlobalSearchFlowMonitor } from 'manxia_source_engine/src/main/ets/Framework/Search/GlobalSearchFlowMonitor';
 import {
   GlobalSearchFlowEvent,
   GlobalSearchFlowEventType,
   GlobalSearchFlowSessionInfo,
   GlobalSearchFlowSeverity
-} from '../Framework/Search/GlobalSearchFlowTypes';
+} from 'manxia_source_engine/src/main/ets/Framework/Search/GlobalSearchFlowTypes';
 import {
   buildGlobalSearchCacheKey,
   createGlobalSearchCacheData,
   GlobalSearchCacheData,
   GlobalSearchCachedComicInfo
-} from '../Framework/Search/GlobalSearchCacheBridge';
+} from 'manxia_source_engine/src/main/ets/Framework/Search/GlobalSearchCacheBridge';
 
 const TAG = 'GlobalSearchPage';
 const TITLE_BAR_HEIGHT_MINI: number = 56;

@@ -10,8 +10,8 @@
  */
 
 import { logger } from 'manxia_core/src/main/ets/Utils/Logger';
-import { UnifiedOperationInterface, OperationType, OperationParams, OperationParamsData, OperationResult, ConfigurationOperationData, SecurityOperationData, SecurityCheckOperationData, ExtensionOperationData } from '../Framework/WebView/UnifiedOperationInterface';
-import { WebViewConfigurationParser, SecurityPolicyConfigurationParser, WebViewConfiguration, SecurityPolicyConfiguration, WebViewExtensionConfig } from '../Framework/WebView/ConfigurationParser';
+import { UnifiedOperationInterface, OperationType, OperationParams, OperationParamsData, OperationResult, ConfigurationOperationData, SecurityOperationData, SecurityCheckOperationData, ExtensionOperationData } from 'manxia_source_engine/src/main/ets/Framework/WebView/UnifiedOperationInterface';
+import { WebViewConfigurationParser, SecurityPolicyConfigurationParser, WebViewConfiguration, SecurityPolicyConfiguration, WebViewExtensionConfig } from 'manxia_source_engine/src/main/ets/Framework/WebView/ConfigurationParser';
 import { curves, UIContext } from '@kit.ArkUI';
 import { colorMap } from 'manxia_core/src/main/ets/Data/ResourceMap';
 import { HdsNavDestination, HdsNavDestinationAttribute, ScrollEffectType } from '@kit.UIDesignKit';

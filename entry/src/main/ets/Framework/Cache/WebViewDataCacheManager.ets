@@ -5,7 +5,7 @@
  */
 
 import { logger } from 'manxia_core/src/main/ets/Utils/Logger';
-import { MangaInfo, ChapterInfo } from '../WebView/MangaSourceTypes';
+import { MangaInfo, ChapterInfo } from 'manxia_source_engine/src/main/ets/Framework/WebView/MangaSourceTypes';
 
 const TAG = 'WebViewDataCacheManager';
 

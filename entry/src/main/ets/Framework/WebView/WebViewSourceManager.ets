@@ -17,16 +17,16 @@ import {
   IWebViewSourceManager,
   WebViewSourceConfig,
   WebViewConfigFactory
-} from './WebViewImageLoader';
-import { GlobalWebViewContainer, WebViewEventCallbacks } from './WebViewContainerPage';
+} from 'manxia_source_engine/src/main/ets/Framework/WebView/WebViewImageLoader';
+import { GlobalWebViewContainer, WebViewEventCallbacks } from 'manxia_source_engine/src/main/ets/Framework/WebView/WebViewContainerPage';
 import { MangaSourceEngine, EngineConfig } from './MangaSourceEngine';
-import { AntiCrawlerConfig } from './MangaSourceTypes';
+import { AntiCrawlerConfig } from 'manxia_source_engine/src/main/ets/Framework/WebView/MangaSourceTypes';
 import { DataManager } from '../Data/DataManager';
 import { WebViewDataCacheManager } from '../Cache/WebViewDataCacheManager';
 import { WebViewAuthManager } from './WebViewAuthManager';
 import { UserAgentManager } from '../Managers/UserAgentManager';
 import { LegadoMangaSourceBridge } from '../Novel/LegadoMangaSourceBridge';
-import { SourceIdentity } from '../Source/SourceIdentity';
+import { SourceIdentity } from 'manxia_source_engine/src/main/ets/Framework/Source/SourceIdentity';
 
 const TAG = 'WebViewSourceManager';
 

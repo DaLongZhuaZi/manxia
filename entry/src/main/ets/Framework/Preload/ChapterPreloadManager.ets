@@ -10,7 +10,7 @@ import { DataManager } from '../Data/DataManager';
 import { ComicSourceDatabaseRecord } from 'manxia_core/src/main/ets/Framework/Database/DatabaseTypes';
 import { ImageCacheManager, LoadOptions, RequestHeaders } from '../Cache/ImageCacheManager';
 import { MangaRequestHeaderContract } from '../Reader/MangaRequestHeaderContract';
-import { PageInfo } from '../WebView/MangaSourceTypes';
+import { PageInfo } from 'manxia_source_engine/src/main/ets/Framework/WebView/MangaSourceTypes';
 
 const TAG = 'ChapterPreloadManager';
 

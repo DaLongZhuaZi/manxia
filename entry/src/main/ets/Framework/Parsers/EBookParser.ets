@@ -25,7 +25,7 @@ import { bookParser } from '@kit.ReaderKit';
 import { zlib } from '@kit.BasicServicesKit';
 import { TxtMetadataExtractor } from './TxtMetadataExtractor';
 import { isReaderKitEnabled } from '../Initialization/ReaderKitFeatureGate';
-import { convertMobiToExtractedDir } from './MobiParser';
+import { convertMobiToExtractedDir } from 'manxia_source_engine/src/main/ets/Framework/Parsers/MobiParser';
 
 const TAG = 'EBookParser';
 const EPUB_IMAGE_RESOURCE_PATTERN = /<(?:img|image)\b[^>]+(?:src|href|xlink:href)\s*=\s*["']([^"']+)["']/ig;

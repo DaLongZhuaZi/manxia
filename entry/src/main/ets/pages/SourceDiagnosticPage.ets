@@ -12,14 +12,14 @@ import { GlobalBackgroundLayerMode } from '../Framework/Components/GlobalBackgro
 import { SettingsImmersiveTitleBar } from './settings/SettingsImmersiveTitleBar';
 import { SettingsImmersiveTitleActionItem, SettingsPageTitleBarManager } from './settings/SettingsPageTitleBarManager';
 import { SettingsPanelSurfaceHelper } from './settings/SettingsPanelSurfaceHelper';
-import { sourceDiagnosticManager } from '../Framework/SourceEditor/SourceDiagnosticManager';
+import { sourceDiagnosticManager } from 'manxia_source_engine/src/main/ets/Framework/SourceEditor/SourceDiagnosticManager';
 import {
   ActionExecutionTrace,
   SourceDiagnosticEvent,
   SourceExecutionTrace,
   WorkflowExecutionTrace
-} from '../Framework/SourceEditor/SourceDiagnosticTypes';
-import { SourceDiagnosticPageParams } from '../Framework/SourceEditor/SourceEditorTypes';
+} from 'manxia_source_engine/src/main/ets/Framework/SourceEditor/SourceDiagnosticTypes';
+import { SourceDiagnosticPageParams } from 'manxia_source_engine/src/main/ets/Framework/SourceEditor/SourceEditorTypes';
 
 const TAG = 'SourceDiagnosticPage';
 

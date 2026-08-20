@@ -24,7 +24,7 @@ import { SourceLoginPageParams } from './SourceLoginPage';
 import { ReadingMode, ReadingDirection, PageTurnAnimationType, DEFAULT_READING_SETTINGS } from '../Models/MangaModels';
 import { EBookPageMode, EBOOK_THEME_PRESETS, EBookThemePreset, DEFAULT_EBOOK_READING_SETTINGS } from '../Models/EBookModels';
 import { MangaSourceEngine, EngineConfig } from '../Framework/WebView/MangaSourceEngine';
-import { AntiCrawlerConfig, CloudflareConfig, CaptchaConfig, IpBlockConfig } from '../Framework/WebView/MangaSourceTypes';
+import { AntiCrawlerConfig, CloudflareConfig, CaptchaConfig, IpBlockConfig } from 'manxia_source_engine/src/main/ets/Framework/WebView/MangaSourceTypes';
 import { getHelpPanelManagerV2 } from '../Framework/Components/HelpPanelV2';
 import { SettingsImmersiveTitleBar } from './settings/SettingsImmersiveTitleBar';
 import { SettingsImmersiveTitleActionItem, SettingsPageTitleBarManager } from './settings/SettingsPageTitleBarManager';

@@ -29,16 +29,16 @@ import {
   MangaSourceError,
   MangaSourceErrorCode,
   AntiCrawlerConfig
-} from './MangaSourceTypes';
-import { MangaSourceSelectorEngine } from './MangaSourceSelectorEngine';
-import { MangaSourceAntiCrawler } from './MangaSourceAntiCrawler';
+} from 'manxia_source_engine/src/main/ets/Framework/WebView/MangaSourceTypes';
+import { MangaSourceSelectorEngine } from 'manxia_source_engine/src/main/ets/Framework/WebView/MangaSourceSelectorEngine';
+import { MangaSourceAntiCrawler } from 'manxia_source_engine/src/main/ets/Framework/WebView/MangaSourceAntiCrawler';
 import { MangaSourceAPIEngine, JSONExtractConfig } from './MangaSourceAPIEngine';
 import { DataManager } from '../Data/DataManager';
 import CookieManager from '../Managers/CookieManager';
-import { generatePicaSignature } from '../Source/SignatureHandler';
+import { generatePicaSignature } from 'manxia_source_engine/src/main/ets/Framework/Source/SignatureHandler';
 import { UserAgentManager } from '../Managers/UserAgentManager';
-import { sourceDiagnosticManager } from '../SourceEditor/SourceDiagnosticManager';
-import { SourceDiagnosticEvent, SourceDiagnosticEventKind, SourceDiagnosticLevel } from '../SourceEditor/SourceDiagnosticTypes';
+import { sourceDiagnosticManager } from 'manxia_source_engine/src/main/ets/Framework/SourceEditor/SourceDiagnosticManager';
+import { SourceDiagnosticEvent, SourceDiagnosticEventKind, SourceDiagnosticLevel } from 'manxia_source_engine/src/main/ets/Framework/SourceEditor/SourceDiagnosticTypes';
 
 /**
  * 字段选择器解析结果

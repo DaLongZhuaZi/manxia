@@ -21,14 +21,14 @@ import { WebViewSourceManager } from '../WebView/WebViewSourceManager';
 import { SourceDetailSearchExecutor, SourceDetailSearchResult, getSourceDetailSearchExecutor } from './SourceDetailSearchExecutor';
 import { LegadoBookSourceType } from '../Novel/LegadoSourceTypes';
 import { SettingsManager } from '../Managers/SettingsManager';
-import { GlobalSearchScheduler, GlobalSearchQueuedTask } from '../Search/GlobalSearchScheduler';
-import { GlobalSearchFlowMonitor, getGlobalSearchFlowMonitor } from '../Search/GlobalSearchFlowMonitor';
+import { GlobalSearchScheduler, GlobalSearchQueuedTask } from 'manxia_source_engine/src/main/ets/Framework/Search/GlobalSearchScheduler';
+import { GlobalSearchFlowMonitor, getGlobalSearchFlowMonitor } from 'manxia_source_engine/src/main/ets/Framework/Search/GlobalSearchFlowMonitor';
 import {
   GlobalSearchFlowEvent,
   GlobalSearchFlowEventType,
   GlobalSearchFlowSessionInfo,
   GlobalSearchFlowSeverity
-} from '../Search/GlobalSearchFlowTypes';
+} from 'manxia_source_engine/src/main/ets/Framework/Search/GlobalSearchFlowTypes';
 import {
   GlobalSearchCancelSignal,
   GlobalSearchMetrics,
@@ -38,13 +38,13 @@ import {
   GlobalSearchSessionHandle,
   GlobalSearchTaskKind,
   GlobalSearchTimeoutResult
-} from '../Search/GlobalSearchSessionTypes';
+} from 'manxia_source_engine/src/main/ets/Framework/Search/GlobalSearchSessionTypes';
 import {
   getGlobalSearchIndexManager,
   GlobalSearchIndexManager,
   GlobalSearchIndexSummary,
   GlobalSearchLocalIndexContentType
-} from '../Search/GlobalSearchIndexManager';
+} from 'manxia_source_engine/src/main/ets/Framework/Search/GlobalSearchIndexManager';
 
 const TAG = 'GlobalSearchService';
 const DEFAULT_LOCAL_TIMEOUT_MS: number = 2500;

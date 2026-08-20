@@ -13,14 +13,14 @@ import {
   SourceEditorWorkflowPreviewStatus,
   SourceInteractiveEditorPageParams,
   SourceSaveMode
-} from '../Framework/SourceEditor/SourceEditorTypes';
+} from 'manxia_source_engine/src/main/ets/Framework/SourceEditor/SourceEditorTypes';
 import {
   createEmptySourceEditorInspectorSnapshot,
   SOURCE_EDITOR_INSPECTOR_SNAPSHOT_JSON_KEY,
   SOURCE_EDITOR_INSPECTOR_SNAPSHOT_SIGNAL_KEY,
   SourceEditorInspectorSnapshot,
   sourceEditorInspectorStateManager
-} from '../Framework/SourceEditor/SourceEditorInspectorStateManager';
+} from 'manxia_source_engine/src/main/ets/Framework/SourceEditor/SourceEditorInspectorStateManager';
 
 const TAG: string = 'SourceEditorFloatingInspectorPage';
 const REFRESH_INTERVAL_MS: number = 250;

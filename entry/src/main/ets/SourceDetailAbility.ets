@@ -6,7 +6,7 @@ import {
   SOURCE_DETAIL_ABILITY_INSTANCE_ID_KEY,
   SOURCE_DETAIL_ABILITY_PAGE,
   SOURCE_DETAIL_ABILITY_PARAMS_KEY
-} from './Framework/Source/SourceDetailAbilityConstants';
+} from 'manxia_source_engine/src/main/ets/Framework/Source/SourceDetailAbilityConstants';
 import { SourceDetailAbilityParamStore } from './Framework/Source/SourceDetailAbilityParamStore';
 
 const TAG: string = 'SourceDetailAbility';

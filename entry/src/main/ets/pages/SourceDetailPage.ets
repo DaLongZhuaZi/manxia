@@ -20,10 +20,10 @@ import { SourceManager, SourceInfo } from '../Framework/Source/SourceManager';
 import { ComicInfo } from '../Framework/Source/SourceExecutor';
 import { DataManager } from '../Framework/Data/DataManager';
 import { MangaSourceEngine, SearchResult, EngineResult, EngineConfig } from '../Framework/WebView/MangaSourceEngine';
-import { MangaSourceConfig, MangaInfo, AntiCrawlerConfig, SearchTypeOption, SearchConfig } from '../Framework/WebView/MangaSourceTypes';
+import { MangaSourceConfig, MangaInfo, AntiCrawlerConfig, SearchTypeOption, SearchConfig } from 'manxia_source_engine/src/main/ets/Framework/WebView/MangaSourceTypes';
 import { WebViewSourceManager } from '../Framework/WebView/WebViewSourceManager';
 import { WebViewAuthManager } from '../Framework/WebView/WebViewAuthManager';
-import { TabConfig, TabType, SourceTabsConfig, getDefaultTabsConfig, filterTabsByLoginStatus, sortTabs, parseTabsFromSourceConfig, FilterConfig, FilterGroup, FilterOption } from '../Framework/WebView/TabConfig';
+import { TabConfig, TabType, SourceTabsConfig, getDefaultTabsConfig, filterTabsByLoginStatus, sortTabs, parseTabsFromSourceConfig, FilterConfig, FilterGroup, FilterOption } from 'manxia_source_engine/src/main/ets/Framework/WebView/TabConfig';
 import { MangaDetailPageParams } from './MangaDetailPage';
 import { OnlineEBookDetailPageParams } from './OnlineEBookDetailPage';
 import { SourceSettingsPageParams } from './SourceSettingsPage';
@@ -54,23 +54,23 @@ import {
 } from '../Framework/Services/SourceDetailSearchExecutor';
 import { getLegadoMangaSourceBridge } from '../Framework/Novel/LegadoMangaSourceBridge';
 import { eventBus, GameEvent, IEventPayload, MangaFavoriteChangedPayload } from '../Framework/EventBus';
-import { GlobalSearchFlowMonitor, getGlobalSearchFlowMonitor } from '../Framework/Search/GlobalSearchFlowMonitor';
+import { GlobalSearchFlowMonitor, getGlobalSearchFlowMonitor } from 'manxia_source_engine/src/main/ets/Framework/Search/GlobalSearchFlowMonitor';
 import {
   GlobalSearchFlowEvent,
   GlobalSearchFlowEventType,
   GlobalSearchFlowSeverity
-} from '../Framework/Search/GlobalSearchFlowTypes';
+} from 'manxia_source_engine/src/main/ets/Framework/Search/GlobalSearchFlowTypes';
 import {
   buildGlobalSearchCacheKey,
   buildLegacyGlobalSearchCacheKey,
   GlobalSearchCacheData,
   GlobalSearchCachedComicInfo
-} from '../Framework/Search/GlobalSearchCacheBridge';
-import { SOURCE_DETAIL_ABILITY_HOST_MULTITON } from '../Framework/Source/SourceDetailAbilityConstants';
+} from 'manxia_source_engine/src/main/ets/Framework/Search/GlobalSearchCacheBridge';
+import { SOURCE_DETAIL_ABILITY_HOST_MULTITON } from 'manxia_source_engine/src/main/ets/Framework/Source/SourceDetailAbilityConstants';
 import {
   SourceDiagnosticPageParams,
   SourceInteractiveEditorPageParams
-} from '../Framework/SourceEditor/SourceEditorTypes';
+} from 'manxia_source_engine/src/main/ets/Framework/SourceEditor/SourceEditorTypes';
 
 
 const TAG = 'SourceDetailPage';

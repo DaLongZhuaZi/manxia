@@ -49,7 +49,7 @@ import { BusinessError } from '@kit.BasicServicesKit';
 import { common } from '@kit.AbilityKit';
 import { image } from '@kit.ImageKit';
 import { TimeUtils } from 'manxia_core/src/main/ets/Framework/Utils/TimeUtils';
-import { SourceIdentity, SourceIdentityFactory } from '../Source/SourceIdentity';
+import { SourceIdentity, SourceIdentityFactory } from 'manxia_source_engine/src/main/ets/Framework/Source/SourceIdentity';
 import fs from '@ohos.file.fs';
 
 const TAG = 'DataManager';

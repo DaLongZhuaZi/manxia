@@ -16,7 +16,7 @@ import { WebViewSourceManager } from '../WebView/WebViewSourceManager';
 import { CoverCacheManager } from '../Cache/CoverCacheManager';
 import { ngfSourceRegistryFacade } from '../NGF';
 import { SourceCompatibilityService } from './SourceCompatibilityService';
-import { SourceIdentity } from './SourceIdentity';
+import { SourceIdentity } from 'manxia_source_engine/src/main/ets/Framework/Source/SourceIdentity';
 
 const TAG = 'SourceManager';
 
