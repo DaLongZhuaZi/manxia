@@ -1,5 +1,0 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24">
-  <!-- 用户头像：外圈填充，内部镂空头部与肩部，适配统一填充主题色 -->
-  <path fill="currentColor" fill-rule="evenodd"
-        d="M12 4a8 8 0 1 1 0 16a8 8 0 0 1 0-16Zm0 4a3 3 0 1 1 0 6a3 3 0 0 1 0-6Zm-5.5 8.5c0-2.2 3.6-3.5 5.5-3.5s5.5 1.3 5.5 3.5v1.5H6.5V16.5Z"/>
-</svg>

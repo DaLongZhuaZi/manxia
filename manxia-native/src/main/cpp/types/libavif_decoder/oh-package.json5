@@ -1,6 +1,0 @@
-{
-  "name": "libavif_decoder.so",
-  "types": "./index.d.ts",
-  "version": "1.0.0",
-  "description": "AVIF图片解码器Native模块"
-}

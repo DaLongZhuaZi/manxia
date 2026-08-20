@@ -1,4 +1,0 @@
-<svg width="24" height="24" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
-  <!-- Cancel / Close in a circle, solid currentColor style -->
-  <path d="M12 2c5.523 0 10 4.477 10 10s-4.477 10-10 10S2 17.523 2 12 6.477 2 12 2zm-4.707 5.293L12 11.586l4.707-4.293 1.414 1.414L13.414 13l4.707 4.707-1.414 1.414L12 14.414l-4.707 4.707-1.414-1.414L10.586 13 5.879 8.707l1.414-1.414z" fill="currentColor"/>
-</svg>

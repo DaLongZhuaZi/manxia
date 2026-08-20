@@ -1,5 +1,0 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24">
-  <!-- 参照ic_settings：填充型放大镜，外圈采用evenodd镂空内圈，手柄为斜置矩形 -->
-  <path fill="currentColor" fill-rule="evenodd"
-        d="M12 4a8 8 0 1 1 0 16a8 8 0 1 1 0-16Zm0 5a3 3 0 1 0 0 6a3 3 0 1 0 0-6Zm2.2 6.8l1.4-1.4l5 5l-1.4 1.4l-5-5Z"/>
-</svg>

@@ -1,6 +1,0 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24">
-  <!-- 填充型柱状图：基线与三根柱，形状分离避免统一填充后糊团 -->
-  <path fill="currentColor"
-        d="M5 20h14v1H5v-1Zm1-6h3v6H6v-6Zm5-3h3v9h-3v-9Zm5-4h3v13h-3V7Z"/>
-</svg>
-

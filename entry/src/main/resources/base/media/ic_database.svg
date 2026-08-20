@@ -1,6 +1,0 @@
-<?xml version="1.0" encoding="UTF-8"?>
-<svg width="24" height="24" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
-  <path d="M12 2C16.97 2 21 4.24 21 7V17C21 19.76 16.97 22 12 22C7.03 22 3 19.76 3 17V7C3 4.24 7.03 2 12 2Z" stroke="currentColor" stroke-width="2" fill="none"/>
-  <ellipse cx="12" cy="7" rx="9" ry="3" stroke="currentColor" stroke-width="2" fill="none"/>
-  <path d="M21 12C21 14.76 16.97 17 12 17C7.03 17 3 14.76 3 12" stroke="currentColor" stroke-width="2" fill="none"/>
-  <path d="

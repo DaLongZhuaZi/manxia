@@ -1,6 +1,0 @@
-{
-  "name": "libjsvm_engine.so",
-  "types": "./index.d.ts",
-  "version": "1.0.0",
-  "description": "JSVM Engine - Native JavaScript execution module for HarmonyOS"
-}

@@ -1,9 +1,0 @@
-<?xml version="1.0" encoding="UTF-8"?>
-<svg width="24" height="24" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
-  <!-- 错误图标 - 圆形背景 + 感叹号 -->
-  <circle cx="12" cy="12" r="10" fill="#FF4444" stroke="#CC0000" stroke-width="1"/>
-  <!-- 感叹号主体 -->
-  <rect x="11" y="7" width="2" height="6" rx="1" fill="white"/>
-  <!-- 感叹号底部圆点 -->
-  <circle cx="12" cy="16" r="1" fill="white"/>
-</svg>
