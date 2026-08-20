@@ -1,7 +1,8 @@
+import { ISettingsManagerFacade, SettingsManagerHolder } from 'manxia_core/src/main/ets/Framework/Contracts/ISettingsManagerFacade';
 import { HdsNavDestination } from '@kit.UIDesignKit';
 import { ThemeAwareState, ThemeAwareHelper } from 'manxia_theme/src/main/ets/Framework/Components/ThemeAware';
 import { SettingsImmersiveTitleBar } from './settings/SettingsImmersiveTitleBar';
-import { SettingsManager } from '../Framework/Managers/SettingsManager';
+
 import { common } from '@kit.AbilityKit';
 import { photoAccessHelper } from '@kit.MediaLibraryKit';
 import { fileIo as fs, fileUri } from '@kit.CoreFileKit';
@@ -60,7 +61,7 @@ struct SupporterPlanPage {
   @StorageProp('statusBarHeight') statusBarHeight: number = 0;
   @StorageProp('navigationBarHeight') navigationBarHeight: number = 0;
   @StorageLink('appFontFamily') appFontFamily: string = 'HarmonyOS Sans';
-  private settingsManager: SettingsManager = SettingsManager.getInstance();
+  private settingsManager: ISettingsManagerFacade = SettingsManagerHolder.get();
 
   aboutToAppear(): void {
     ThemeAwareHelper.initializeThemeAware('SupporterPlanPage', this.themeState, () => {});

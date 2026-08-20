@@ -1,9 +1,11 @@
+import { ISettingsManagerFacade, SettingsManagerHolder } from 'manxia_core/src/main/ets/Framework/Contracts/ISettingsManagerFacade';
 import { HdsNavDestination } from '@kit.UIDesignKit';
 import { LengthMetrics } from '@kit.ArkUI';
 import { ThemeAwareHelper, ThemeAwareState } from 'manxia_theme/src/main/ets/Framework/Components/ThemeAware';
 import { ThemeManager, ThemeType } from 'manxia_theme/src/main/ets/Framework/Managers/ThemeManager';
 import { FontAwareHelper, FontAwareState } from 'manxia_theme/src/main/ets/Framework/Components/FontAware';
-import { SettingsManager, SettingKeys } from '../../Framework/Managers/SettingsManager';
+import { SettingKeys } from 'manxia_core/src/main/ets/Framework/Contracts/SettingKeys';
+// (removed direct SettingsManager import)
 import { GuideStep, WelcomeGuideManager } from '../../Framework/Managers/WelcomeGuideManager';
 import { logger } from 'manxia_core/src/main/ets/Utils/Logger';
 import { GlobalBackgroundLayerMode } from 'manxia_theme/src/main/ets/Framework/Components/GlobalBackgroundLayer';
@@ -31,7 +33,7 @@ export struct SourceFeatureSettingsSubPage {
   @StorageLink('source_detail_multi_window_enabled') sourceDetailMultiWindowEnabled: boolean = false;
 
   private readonly componentId: string = 'SourceFeatureSettingsSubPage';
-  private readonly settingsManager: SettingsManager = SettingsManager.getInstance();
+  private readonly settingsManager: ISettingsManagerFacade = SettingsManagerHolder.get();
   private readonly welcomeGuideManager: WelcomeGuideManager = WelcomeGuideManager.getInstance();
 
   aboutToAppear(): void {

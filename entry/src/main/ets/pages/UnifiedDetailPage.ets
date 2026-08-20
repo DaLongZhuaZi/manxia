@@ -1,3 +1,4 @@
+import { ISettingsManagerFacade, SettingsManagerHolder } from 'manxia_core/src/main/ets/Framework/Contracts/ISettingsManagerFacade';
 import { SafeFileUtils } from 'manxia_core/src/main/ets/Utils/SafeFileUtils';
 import { SafeUtils } from 'manxia_core/src/main/ets/Utils/SafeUtils';
 // 文件路径: entry/src/main/ets/pages/UnifiedDetailPage.ets
@@ -27,7 +28,8 @@ import { FontAwareHelper, FontAwareState } from 'manxia_theme/src/main/ets/Frame
 import { DeviceAdaptationManager, DeviceInfo, DeviceChangeListener, Breakpoint } from 'manxia_theme/src/main/ets/Framework/Managers/DeviceAdaptationManager';
 import { ResponsiveLayoutHelper } from 'manxia_core/src/main/ets/Framework/Utils/ResponsiveLayout';
 import { ContentFilterManager } from '../Framework/Managers/ContentFilterManager';
-import { SettingsManager, SettingKeys } from '../Framework/Managers/SettingsManager';
+import { SettingKeys } from 'manxia_core/src/main/ets/Framework/Contracts/SettingKeys';
+// ../Framework/Managers/SettingsManager';
 import CookieManager from '../Framework/Managers/CookieManager';
 import {
   ContentTrackingCardCallbacks,
@@ -2384,7 +2386,7 @@ export struct UnifiedDetailPage {
   private onlineEBookRecoveryTimer: number = -1;
   
   // 设置管理器
-  private settingsManager: SettingsManager = SettingsManager.getInstance();
+  private settingsManager: ISettingsManagerFacade = SettingsManagerHolder.get();
   
   // 智能推荐状态
   @State recommendedItems: RecommendationItem[] = [];
