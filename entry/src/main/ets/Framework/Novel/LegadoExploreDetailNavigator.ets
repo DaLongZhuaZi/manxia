@@ -11,8 +11,8 @@ import {
   LegadoExploreDetailRouteKind,
   LegadoExploreDetailRouteReason,
   LegadoExploreDetailRouteResolver
-} from './LegadoExploreDetailRouteResolver';
-import { LegadoBookSource } from './LegadoSourceTypes';
+} from 'manxia_novel/src/main/ets/Framework/Novel/LegadoExploreDetailRouteResolver';
+import { LegadoBookSource } from 'manxia_novel/src/main/ets/Framework/Novel/LegadoSourceTypes';
 import { getNovelSourceManager } from './NovelSourceManager';
 
 const TAG: string = 'LegadoExploreDetailNavigator';

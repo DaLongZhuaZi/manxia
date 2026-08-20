@@ -19,7 +19,7 @@ import { getNovelInitializer } from '../Framework/Novel/NovelInitializer';
 import { getNovelDataManager } from '../Framework/Novel/NovelDataManager';
 import { getNovelSourceValidator, ValidationConfig, NovelSourceValidator, SourceValidationResult, SPECIAL_GROUP_NAMES } from '../Framework/Novel/NovelSourceValidator';
 import { NovelSourceInfo } from '../Models/NovelModels';
-import { LegadoSourceImportResult, LegadoBookSource, LegadoBookSourceType } from '../Framework/Novel/LegadoSourceTypes';
+import { LegadoSourceImportResult, LegadoBookSource, LegadoBookSourceType } from 'manxia_novel/src/main/ets/Framework/Novel/LegadoSourceTypes';
 import { ThemeAwareState, ThemeAwareHelper } from '../Framework/Components/ThemeAware';
 import { ThemeManager, ThemeType } from '../Framework/Managers/ThemeManager';
 import { SettingKeys, SettingsManager } from '../Framework/Managers/SettingsManager';
@@ -28,8 +28,8 @@ import { SourceDialogScaffold } from '../Framework/Components/SourceDialogScaffo
 import { NovelSearchPageParams } from './NovelBookshelfPage';
 import { ValidationProgressDialog, ValidationProgressController, ValidationProgressInfo } from '../Framework/Components/ValidationProgressDialog';
 import { GroupManagementDialog, GroupInfo, SplitCondition } from '../Framework/Components/GroupManagementDialog';
-import { LegadoCompatibilityStatus, LegadoV2ExecutionPolicy } from '../Framework/Novel/LegadoCompatibilityTypes';
-import { getLegadoSourceAutomationToken } from '../Framework/Novel/LegadoSourceAutomationIdentity';
+import { LegadoCompatibilityStatus, LegadoV2ExecutionPolicy } from 'manxia_novel/src/main/ets/Framework/Novel/LegadoCompatibilityTypes';
+import { getLegadoSourceAutomationToken } from 'manxia_novel/src/main/ets/Framework/Novel/LegadoSourceAutomationIdentity';
 import { LegadoV2QualificationResult, LegadoV2QualificationRunner } from '../Framework/Novel/LegadoV2QualificationRunner';
 import {
   DEFAULT_NOVEL_SOURCE_REPOSITORY_URL,

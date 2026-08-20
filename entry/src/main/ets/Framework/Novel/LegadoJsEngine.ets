@@ -12,10 +12,10 @@ import { http } from '@kit.NetworkKit';
 import { util } from '@kit.ArkTS';
 import { logger } from 'manxia_core/src/main/ets/Utils/Logger';
 import { NativeJsEngine, JsContext as NativeJsContext, JsResult } from './NativeJsEngine';
-import { getCookieStore } from './LegadoCookieStore';
+import { getCookieStore } from 'manxia_novel/src/main/ets/Framework/Novel/LegadoCookieStore';
 import { getLegadoRuntimeV2 } from './LegadoRuntimeV2';
-import type { LegadoBookSource } from './LegadoSourceTypes';
-import type { LegadoBridgeTrace } from './LegadoCompatibilityTypes';
+import type { LegadoBookSource } from 'manxia_novel/src/main/ets/Framework/Novel/LegadoSourceTypes';
+import type { LegadoBridgeTrace } from 'manxia_novel/src/main/ets/Framework/Novel/LegadoCompatibilityTypes';
 import { buildJsoupEntityCompatibilityScript } from 'manxia_core/src/main/ets/libs/htmlparser/index';
 
 const TAG = 'LegadoJsEngine';

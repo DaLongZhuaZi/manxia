@@ -2,14 +2,14 @@ import { logger } from 'manxia_core/src/main/ets/Utils/Logger';
 import { taskpool, util } from '@kit.ArkTS';
 import { http } from '@kit.NetworkKit';
 import { SettingKeys, SettingsManager } from '../Managers/SettingsManager';
-import { getCookieStore } from './LegadoCookieStore';
-import { LegadoSourceParser } from './LegadoSourceParser';
+import { getCookieStore } from 'manxia_novel/src/main/ets/Framework/Novel/LegadoCookieStore';
+import { LegadoSourceParser } from 'manxia_novel/src/main/ets/Framework/Novel/LegadoSourceParser';
 import { LegadoUrlAnalyzer, ParsedUrlRequest } from './LegadoUrlAnalyzer';
-import { getWebViewExecutor } from './LegadoWebViewExecutor';
+import { getWebViewExecutor } from 'manxia_novel/src/main/ets/Framework/Novel/LegadoWebViewExecutor';
 import {
   LegadoExecutionCancellationToken,
   createLegadoExecutionCancelledError
-} from './LegadoExecutionCancellation';
+} from 'manxia_novel/src/main/ets/Framework/Novel/LegadoExecutionCancellation';
 import {
   CompiledBookSource,
   LegadoExecutionErrorCode,
@@ -22,7 +22,7 @@ import {
   LegadoWorkflowKind,
   RequestSpec,
   ResponseEnvelope
-} from './LegadoCompatibilityTypes';
+} from 'manxia_novel/src/main/ets/Framework/Novel/LegadoCompatibilityTypes';
 
 const TAG = 'LegadoRequestPipeline';
 const DEFAULT_TIMEOUT_MS = 30000;

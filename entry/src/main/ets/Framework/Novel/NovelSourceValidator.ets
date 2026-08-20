@@ -9,11 +9,11 @@
  */
 
 import { logger } from 'manxia_core/src/main/ets/Utils/Logger';
-import { LegadoBookSource, LegadoBook, LegadoChapter, LegadoBookSourceType } from './LegadoSourceTypes';
+import { LegadoBookSource, LegadoBook, LegadoChapter, LegadoBookSourceType } from 'manxia_novel/src/main/ets/Framework/Novel/LegadoSourceTypes';
 import { getNovelSourceManager, NovelSourceManager } from './NovelSourceManager';
-import { LegadoExecutionErrorCode, LegadoV2ExecutionPolicy } from './LegadoCompatibilityTypes';
-import { LegadoExecutionCancellationToken } from './LegadoExecutionCancellation';
-import { awaitNovelSourceValidationTask } from './NovelSourceValidationDeadline';
+import { LegadoExecutionErrorCode, LegadoV2ExecutionPolicy } from 'manxia_novel/src/main/ets/Framework/Novel/LegadoCompatibilityTypes';
+import { LegadoExecutionCancellationToken } from 'manxia_novel/src/main/ets/Framework/Novel/LegadoExecutionCancellation';
+import { awaitNovelSourceValidationTask } from 'manxia_novel/src/main/ets/Framework/Novel/NovelSourceValidationDeadline';
 import { NovelSearchResult } from '../../Models/NovelModels';
 import { AppNotificationManager } from '../Managers/NotificationManager';
 import { SettingKeys, SettingsManager } from '../Managers/SettingsManager';

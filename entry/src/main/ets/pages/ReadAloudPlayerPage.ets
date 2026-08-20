@@ -19,7 +19,7 @@ import {
 } from '../Framework/ReadAloud/NovelAudioReadAloudSessionManager';
 import { NovelReaderPageParams } from './NovelBookshelfPage';
 import { ReadAloudPlayerAbilityParams } from '../Framework/ReadAloud/ReadAloudPlayerAbilityParamStore';
-import { READ_ALOUD_PLAYER_ABILITY_HOST_SINGLETON } from '../Framework/ReadAloud/ReadAloudPlayerAbilityConstants';
+import { READ_ALOUD_PLAYER_ABILITY_HOST_SINGLETON } from 'manxia_novel/src/main/ets/Framework/ReadAloud/ReadAloudPlayerAbilityConstants';
 
 const TAG = 'ReadAloudPlayerPage';
 const PLAYER_SKIP_CHARS: number = 420;

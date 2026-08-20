@@ -2,15 +2,15 @@ import { common } from '@kit.AbilityKit';
 import { hilog } from '@kit.PerformanceAnalysisKit';
 import { logger } from 'manxia_core/src/main/ets/Utils/Logger';
 import { SafeUtils } from 'manxia_core/src/main/ets/Utils/SafeUtils';
-import { LegadoCompatibilityCompiler } from '../Framework/Novel/LegadoCompatibilityCompiler';
-import { getCookieStore } from '../Framework/Novel/LegadoCookieStore';
+import { LegadoCompatibilityCompiler } from 'manxia_novel/src/main/ets/Framework/Novel/LegadoCompatibilityCompiler';
+import { getCookieStore } from 'manxia_novel/src/main/ets/Framework/Novel/LegadoCookieStore';
 import { LegadoRequestPlanner, LegadoTransportRouter } from '../Framework/Novel/LegadoRequestPipeline';
-import { LegadoTraceSerializer } from '../Framework/Novel/LegadoTraceSerializer';
+import { LegadoTraceSerializer } from 'manxia_novel/src/main/ets/Framework/Novel/LegadoTraceSerializer';
 import { LegadoWebViewComponent } from '../Framework/Novel/LegadoWebViewComponent';
-import { getWebViewExecutor } from '../Framework/Novel/LegadoWebViewExecutor';
+import { getWebViewExecutor } from 'manxia_novel/src/main/ets/Framework/Novel/LegadoWebViewExecutor';
 import { getLegadoRuntimeV2 } from '../Framework/Novel/LegadoRuntimeV2';
 import type { JsContext, JsExecuteResult } from '../Framework/Novel/LegadoJsEngine';
-import type { LegadoBookSource } from '../Framework/Novel/LegadoSourceTypes';
+import type { LegadoBookSource } from 'manxia_novel/src/main/ets/Framework/Novel/LegadoSourceTypes';
 import { LegadoRuleAnalyzer, LegadoRuleJsExecutionBinding } from '../Framework/Novel/LegadoRuleAnalyzer';
 import { LegadoUrlAnalyzer } from '../Framework/Novel/LegadoUrlAnalyzer';
 import { LegadoWorkflowOrchestrator } from '../Framework/Novel/LegadoWorkflowOrchestrator';
@@ -22,7 +22,7 @@ import {
   LegadoWorkflowKind,
   RequestSpec,
   ResponseEnvelope
-} from '../Framework/Novel/LegadoCompatibilityTypes';
+} from 'manxia_novel/src/main/ets/Framework/Novel/LegadoCompatibilityTypes';
 
 const TAG: string = 'LegadoArkWebFixture';
 const LOG_DOMAIN: number = 0xD001;

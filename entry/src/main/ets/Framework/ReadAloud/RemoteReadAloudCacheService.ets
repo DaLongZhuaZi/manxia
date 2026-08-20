@@ -30,7 +30,7 @@ import { ReadAloudSessionContext } from './ReadAloudTypes';
 import { getNovelSourceManager } from '../Novel/NovelSourceManager';
 import { getNovelChapterCacheManager } from '../Novel/NovelChapterCacheManager';
 import { getNovelContentProcessor, ContentProcessConfig } from '../Novel/NovelContentProcessor';
-import { LegadoChapter } from '../Novel/LegadoSourceTypes';
+import { LegadoChapter } from 'manxia_novel/src/main/ets/Framework/Novel/LegadoSourceTypes';
 import { EBook, EBookFormat } from '../../Models/EBookModels';
 import { EBookDataManager } from '../Data/EBookDataManager';
 import { EBookAdapter, NovelAdapter } from '../Adapters/UnifiedContentAdapter';

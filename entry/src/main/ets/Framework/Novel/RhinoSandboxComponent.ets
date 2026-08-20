@@ -10,7 +10,7 @@
 
 import { webview } from '@kit.ArkWeb';
 import { logger } from 'manxia_core/src/main/ets/Utils/Logger';
-import { getRhinoWasmExecutor, RhinoWasmExecutor } from './RhinoWasmExecutor';
+import { getRhinoWasmExecutor, RhinoWasmExecutor } from 'manxia_novel/src/main/ets/Framework/Novel/RhinoWasmExecutor';
 import { getLegadoRuntimeAssetManager } from './LegadoRuntimeAssetManager';
 
 const TAG = 'RhinoSandboxComponent';

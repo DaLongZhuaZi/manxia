@@ -6,7 +6,7 @@ import { NovelReaderPageParams } from '../../pages/NovelBookshelfPage';
 import {
   READ_ALOUD_PLAYER_ABILITY_NAME,
   READ_ALOUD_PLAYER_ABILITY_REFRESH_TRIGGER_KEY
-} from './ReadAloudPlayerAbilityConstants';
+} from 'manxia_novel/src/main/ets/Framework/ReadAloud/ReadAloudPlayerAbilityConstants';
 import {
   ReadAloudPlayerAbilityParams,
   ReadAloudPlayerAbilityParamStore

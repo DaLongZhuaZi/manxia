@@ -7,15 +7,15 @@
  */
 
 import { logger } from 'manxia_core/src/main/ets/Utils/Logger';
-import { LegadoBook, LegadoChapter, LegadoExploreKind, LegadoSearchBook } from './LegadoSourceTypes';
-import { LegadoContentSemantics } from './LegadoContentSemantics';
+import { LegadoBook, LegadoChapter, LegadoExploreKind, LegadoSearchBook } from 'manxia_novel/src/main/ets/Framework/Novel/LegadoSourceTypes';
+import { LegadoContentSemantics } from 'manxia_novel/src/main/ets/Framework/Novel/LegadoContentSemantics';
 import { LegadoV2SourceExecutor } from './LegadoWorkflowOrchestrator';
 import { getNovelSourceManager, NovelSourceManager } from './NovelSourceManager';
 import {
   LegadoExecutionErrorCode,
   LegadoExecutionTrace,
   LegadoWorkflowKind
-} from './LegadoCompatibilityTypes';
+} from 'manxia_novel/src/main/ets/Framework/Novel/LegadoCompatibilityTypes';
 
 const TAG = 'LegadoV2QualificationRunner';
 

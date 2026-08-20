@@ -13,7 +13,7 @@
  */
 
 import { logger } from 'manxia_core/src/main/ets/Utils/Logger';
-import { LegadoHeaderOption, LegadoUrlOption, LegadoUrlOptionBody } from './LegadoSourceTypes';
+import { LegadoHeaderOption, LegadoUrlOption, LegadoUrlOptionBody } from 'manxia_novel/src/main/ets/Framework/Novel/LegadoSourceTypes';
 import {
   getLegadoJsEngine,
   JsContext,

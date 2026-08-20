@@ -15,7 +15,7 @@ import {
 } from '../../Models/UnifiedContentModels';
 import { Manga, MangaChapter } from '../../Models/MangaModels';
 import { EBook, EBookChapter, EBookStatus } from '../../Models/EBookModels';
-import { LegadoBook, LegadoChapter } from '../Novel/LegadoSourceTypes';
+import { LegadoBook, LegadoChapter } from 'manxia_novel/src/main/ets/Framework/Novel/LegadoSourceTypes';
 import { logger } from 'manxia_core/src/main/ets/Utils/Logger';
 
 const TAG = 'UnifiedContentAdapter';

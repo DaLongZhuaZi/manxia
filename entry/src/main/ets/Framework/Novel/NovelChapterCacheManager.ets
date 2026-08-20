@@ -19,7 +19,7 @@ import { SafeUtils } from 'manxia_core/src/main/ets/Utils/SafeUtils';
 import { logger } from 'manxia_core/src/main/ets/Utils/Logger';
 import { getNovelDataManager } from './NovelDataManager';
 import { getNovelSourceManager } from './NovelSourceManager';
-import { LegadoChapter, LegadoBookSourceType } from './LegadoSourceTypes';
+import { LegadoChapter, LegadoBookSourceType } from 'manxia_novel/src/main/ets/Framework/Novel/LegadoSourceTypes';
 import { NovelDownloadTask, NovelCacheInfo, BookMetadata } from '../../Models/NovelModels';
 import { ChapterOrderCacheRemapResult, ChapterOrderIndexRemap } from '../../Models/UnifiedContentModels';
 import { AppNotificationManager } from '../Managers/NotificationManager';

@@ -16,16 +16,16 @@ import {
   LegadoChapter,
   LegadoExploreKind,
   LegadoBookSourceType
-} from './LegadoSourceTypes';
-import { LegadoSourceParser } from './LegadoSourceParser';
+} from 'manxia_novel/src/main/ets/Framework/Novel/LegadoSourceTypes';
+import { LegadoSourceParser } from 'manxia_novel/src/main/ets/Framework/Novel/LegadoSourceParser';
 import { LegadoRuleAnalyzer } from './LegadoRuleAnalyzer';
 import { LegadoUrlAnalyzer, ParsedUrlRequest, RequestMethod } from './LegadoUrlAnalyzer';
 import { getLegadoJsEngine, JsContext, LegadoJsSourceEffects } from './LegadoJsEngine';
 import { getNovelReplaceRuleManager, ReplaceScope } from './NovelReplaceRuleManager';
 import { getNovelLoginManager } from './NovelLoginManager';
-import { HtmlFormatter } from './HtmlFormatter';
+import { HtmlFormatter } from 'manxia_novel/src/main/ets/Framework/Novel/HtmlFormatter';
 import { ProxyManager } from '../Network/ProxyManager';
-import { LegadoMangaExtractedImage, LegadoMangaImageExtractor } from './LegadoMangaImageExtractor';
+import { LegadoMangaExtractedImage, LegadoMangaImageExtractor } from 'manxia_novel/src/main/ets/Framework/Novel/LegadoMangaImageExtractor';
 
 const TAG = 'NovelSourceExecutor';
 const REQUEST_TIMEOUT_MS = 15000;

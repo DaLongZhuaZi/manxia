@@ -11,7 +11,7 @@ import { continuationStateHelper } from '../Framework/Distributed/ContinuationSt
 import { NovelReaderPageParams } from './NovelBookshelfPage';
 import { getNovelSourceManager } from '../Framework/Novel/NovelSourceManager';
 import { getNovelChapterCacheManager } from '../Framework/Novel/NovelChapterCacheManager';
-import { LegadoBook, LegadoBookSourceType, LegadoChapter } from '../Framework/Novel/LegadoSourceTypes';
+import { LegadoBook, LegadoBookSourceType, LegadoChapter } from 'manxia_novel/src/main/ets/Framework/Novel/LegadoSourceTypes';
 import {
   DEFAULT_READ_ALOUD_SETTINGS,
   ReadAloudSettings
@@ -23,7 +23,7 @@ import { eventBus, GameEvent, IEventPayload, ReadAloudStatePayload } from '../Fr
 import { loadGlobalReadAloudSettings as loadStoredGlobalReadAloudSettings } from '../Framework/ReadAloud/ReadAloudSettingsStore';
 import { processReadAloudNovelContentByBook } from '../Framework/ReadAloud/ReadAloudTextProcessing';
 import { openNovelReaderInIsolatedAbility } from '../Framework/Reader/NovelReaderAbilityLauncher';
-import { LegadoWorkflowOutputKind } from '../Framework/Novel/LegadoCompatibilityTypes';
+import { LegadoWorkflowOutputKind } from 'manxia_novel/src/main/ets/Framework/Novel/LegadoCompatibilityTypes';
 
 const TAG = 'NovelReadAloudPage';
 type AudioJsonValue = string | number | boolean | Object | Array<Object> | null;

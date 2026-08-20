@@ -105,7 +105,7 @@ import {
   LegadoExecutionTraceSummary,
   LegadoV2ExecutionPolicy,
   LegadoWorkflowKind
-} from '../Framework/Novel/LegadoCompatibilityTypes';
+} from 'manxia_novel/src/main/ets/Framework/Novel/LegadoCompatibilityTypes';
 
 import { getCacheStatusService, CacheStatusService, ContentCacheStats, CacheContentType } from '../Framework/Services/CacheStatusService';
 import { getChapterOrderService, ChapterOrderService } from '../Framework/Services/ChapterOrderService';
@@ -128,7 +128,7 @@ import { OnlineLoadOptions, RequestHeaders } from '../Framework/Cache/OnlineImag
 import { LibraryCoverManager, LibraryCoverType } from 'manxia_core/src/main/ets/Framework/Storage/LibraryCoverManager';
 import { image } from '@kit.ImageKit';
 import { LabelUtils } from 'manxia_core/src/main/ets/Utils/LabelUtils';
-import { getNovelCoverGenerator, NovelCoverGenerator } from '../Framework/Novel/NovelCoverGenerator';
+import { getNovelCoverGenerator, NovelCoverGenerator } from 'manxia_novel/src/main/ets/Framework/Novel/NovelCoverGenerator';
 import { ZLibraryReaderParams } from './ZLibraryReaderPage';
 import { AvifImage } from '../components/AvifImage';
 import {
@@ -182,7 +182,7 @@ import {
 import { Manga, MangaChapter, MangaPage, ReadingProgress, ReadingSettings, MangaBookmark, MangaMetadata, ImageSourceType, DEFAULT_READING_SETTINGS } from '../Models/MangaModels';
 import { DownloadStatus, MangaStatus, ReadingStatus } from 'manxia_core/src/main/ets/Framework/Types/StatusEnums';
 import { EBook, EBookChapter, EBookFormat, EBookStatus, EBookMetadata } from '../Models/EBookModels';
-import { LegadoBook, LegadoChapter, LegadoBookSource, LegadoBookSourceType } from '../Framework/Novel/LegadoSourceTypes';
+import { LegadoBook, LegadoChapter, LegadoBookSource, LegadoBookSourceType } from 'manxia_novel/src/main/ets/Framework/Novel/LegadoSourceTypes';
 import { NovelBook, NovelReadStatus, NovelSearchResult } from '../Models/NovelModels';
 
 // 阅读器参数导入

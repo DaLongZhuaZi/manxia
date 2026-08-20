@@ -22,7 +22,7 @@ export {
   LegadoExploreKind,
   LegadoSourceImportResult,
   LegadoSourceTestResult
-} from './LegadoSourceTypes';
+} from 'manxia_novel/src/main/ets/Framework/Novel/LegadoSourceTypes';
 
 // 规则解析器
 export { LegadoRuleAnalyzer } from './LegadoRuleAnalyzer';
@@ -31,7 +31,7 @@ export { LegadoRuleAnalyzer } from './LegadoRuleAnalyzer';
 export { LegadoUrlAnalyzer, ParsedUrlRequest, RequestMethod } from './LegadoUrlAnalyzer';
 
 // 书源解析器
-export { LegadoSourceParser } from './LegadoSourceParser';
+export { LegadoSourceParser } from 'manxia_novel/src/main/ets/Framework/Novel/LegadoSourceParser';
 
 // 执行器
 export { NovelSourceExecutor } from './NovelSourceExecutor';
@@ -60,7 +60,7 @@ export {
 } from './LegadoRuntimeAssetManager';
 
 // 数据库
-export { NOVEL_CREATE_TABLE_SQL, NOVEL_CREATE_INDEX_SQL } from './NovelDatabaseSchema';
+export { NOVEL_CREATE_TABLE_SQL, NOVEL_CREATE_INDEX_SQL } from 'manxia_novel/src/main/ets/Framework/Novel/NovelDatabaseSchema';
 export { NovelDataManager, getNovelDataManager } from './NovelDataManager';
 
 // 初始化器
@@ -88,4 +88,4 @@ export {
   LegadoMangaPageResult,
   LegadoImageRequestContext
 } from './LegadoMangaSourceBridge';
-export { LegadoMangaImageExtractor } from './LegadoMangaImageExtractor';
+export { LegadoMangaImageExtractor } from 'manxia_novel/src/main/ets/Framework/Novel/LegadoMangaImageExtractor';

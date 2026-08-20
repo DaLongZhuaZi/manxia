@@ -18,7 +18,7 @@ import {
   LegadoRequestCarrier,
   LegadoSearchRule,
   LegadoSearchBook
-} from './LegadoSourceTypes';
+} from 'manxia_novel/src/main/ets/Framework/Novel/LegadoSourceTypes';
 import {
   CompiledBookSource,
   LegadoBridgeTrace,
@@ -44,21 +44,21 @@ import {
   LegadoTransportKind,
   RequestSpec,
   ResponseEnvelope
-} from './LegadoCompatibilityTypes';
+} from 'manxia_novel/src/main/ets/Framework/Novel/LegadoCompatibilityTypes';
 import { LegadoRequestPlanner, LegadoTransportRouter } from './LegadoRequestPipeline';
-import { getLegadoJsApiContractRegistry, LegadoJsApiAssessment } from './LegadoJsApiContractRegistry';
+import { getLegadoJsApiContractRegistry, LegadoJsApiAssessment } from 'manxia_novel/src/main/ets/Framework/Novel/LegadoJsApiContractRegistry';
 import {
   LegadoContentPresentationStatus,
   LegadoContentSemantics
-} from './LegadoContentSemantics';
-import { LegadoSourceParser } from './LegadoSourceParser';
+} from 'manxia_novel/src/main/ets/Framework/Novel/LegadoContentSemantics';
+import { LegadoSourceParser } from 'manxia_novel/src/main/ets/Framework/Novel/LegadoSourceParser';
 import { getLegadoJsEngine, JsContext } from './LegadoJsEngine';
 import {
   LegadoSourceScriptResult,
   LegadoSourceScriptRuntime,
   LegadoSourceScriptRuntimeBase
 } from './LegadoSourceScriptRuntime';
-import { LegadoExecutionCancellationToken } from './LegadoExecutionCancellation';
+import { LegadoExecutionCancellationToken } from 'manxia_novel/src/main/ets/Framework/Novel/LegadoExecutionCancellation';
 
 const TAG = 'LegadoWorkflowOrchestrator';
 const MAX_PAGINATION_DEPTH = 8;

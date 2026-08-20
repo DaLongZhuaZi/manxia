@@ -10,7 +10,7 @@ import { logger } from 'manxia_core/src/main/ets/Utils/Logger';
 import { util } from '@kit.ArkTS';
 import { SourceManager } from '../Source/SourceManager';
 import { getNovelSourceManager } from '../Novel/NovelSourceManager';
-import { LegadoSourceImportResult } from '../Novel/LegadoSourceTypes';
+import { LegadoSourceImportResult } from 'manxia_novel/src/main/ets/Framework/Novel/LegadoSourceTypes';
 
 const TAG = 'FileEditorService';
 

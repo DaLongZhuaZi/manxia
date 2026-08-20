@@ -11,7 +11,7 @@ import {
 } from '../../Models/UnifiedContentModels';
 import { MangaChapter } from '../../Models/MangaModels';
 import { EBookChapter, EBookFormat } from '../../Models/EBookModels';
-import { LegadoChapter } from '../Novel/LegadoSourceTypes';
+import { LegadoChapter } from 'manxia_novel/src/main/ets/Framework/Novel/LegadoSourceTypes';
 import { MangaAdapter, EBookAdapter, NovelAdapter } from '../Adapters/UnifiedContentAdapter';
 import { buildLocalTextNovelBookId } from '../Adapters/LocalTextNovelAdapter';
 import { DatabaseManager } from 'manxia_core/src/main/ets/Framework/Database/DatabaseManager';

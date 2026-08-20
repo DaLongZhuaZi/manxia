@@ -8,10 +8,10 @@ import { SafeUtils } from 'manxia_core/src/main/ets/Utils/SafeUtils';
  */
 
 import { logger } from 'manxia_core/src/main/ets/Utils/Logger';
-import { LegadoBookSource, LegadoLoginUiItem } from './LegadoSourceTypes';
+import { LegadoBookSource, LegadoLoginUiItem } from 'manxia_novel/src/main/ets/Framework/Novel/LegadoSourceTypes';
 import { getLegadoRhinoEngine } from './LegadoRhinoEngine';
 import { ToastMessage, CookieChange, JsContext } from './LegadoJsEngine';
-import { getCookieStore } from './LegadoCookieStore';
+import { getCookieStore } from 'manxia_novel/src/main/ets/Framework/Novel/LegadoCookieStore';
 import { preferences } from '@kit.ArkData';
 import { promptAction } from '@kit.ArkUI';
 

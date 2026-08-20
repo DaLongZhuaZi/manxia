@@ -8,7 +8,7 @@ import { SafeUtils } from 'manxia_core/src/main/ets/Utils/SafeUtils';
  */
 
 import { logger } from 'manxia_core/src/main/ets/Utils/Logger';
-import { LegadoBookSource, LegadoRuleMode, LegadoParsedRule } from './LegadoSourceTypes';
+import { LegadoBookSource, LegadoRuleMode, LegadoParsedRule } from 'manxia_novel/src/main/ets/Framework/Novel/LegadoSourceTypes';
 import {
   getLegadoJsEngine,
   JsContext,
@@ -24,7 +24,7 @@ import {
   LegadoTextAccumulator,
   LegadoTextNormalization
 } from 'manxia_core/src/main/ets/libs/htmlparser/index';
-import type { LegadoBridgeTrace } from './LegadoCompatibilityTypes';
+import type { LegadoBridgeTrace } from 'manxia_novel/src/main/ets/Framework/Novel/LegadoCompatibilityTypes';
 
 const TAG = 'LegadoRuleAnalyzer';
 const REGEX_GROUP_PAYLOAD_KEY = '__legadoRegexGroups';

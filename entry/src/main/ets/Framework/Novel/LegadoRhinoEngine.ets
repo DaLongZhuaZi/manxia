@@ -11,7 +11,7 @@
  */
 
 import { logger } from 'manxia_core/src/main/ets/Utils/Logger';
-import { getRhinoWasmExecutor, RhinoWasmExecutor, RhinoContext, RhinoExecuteResult } from './RhinoWasmExecutor';
+import { getRhinoWasmExecutor, RhinoWasmExecutor, RhinoContext, RhinoExecuteResult } from 'manxia_novel/src/main/ets/Framework/Novel/RhinoWasmExecutor';
 import { LegadoJsEngine, JsContext, JsExecuteResult } from './LegadoJsEngine';
 import { webview } from '@kit.ArkWeb';
 

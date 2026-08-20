@@ -8,7 +8,8 @@
     "manxia_native": "file:./manxia-native",
     "manxia_core": "file:./manxia-core",
     "manxia_source_engine": "file:./manxia-source-engine",
-    "manxia_network": "file:./manxia-network"
+    "manxia_network": "file:./manxia-network",
+    "manxia_novel": "file:./manxia-novel"
   },
   "devDependencies": {
     "@ohos/hypium": "1.0.21",

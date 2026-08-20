@@ -7,11 +7,11 @@
  */
 
 import { logger } from 'manxia_core/src/main/ets/Utils/Logger';
-import { LegadoBookSource, LegadoSearchBook, LegadoBook, LegadoChapter, LegadoSourceImportResult, LegadoExploreKind, LegadoBookSourceType, LegadoRequestCarrier } from './LegadoSourceTypes';
+import { LegadoBookSource, LegadoSearchBook, LegadoBook, LegadoChapter, LegadoSourceImportResult, LegadoExploreKind, LegadoBookSourceType, LegadoRequestCarrier } from 'manxia_novel/src/main/ets/Framework/Novel/LegadoSourceTypes';
 import { NovelSourceExecutor, SearchParseOptions } from './NovelSourceExecutor';
-import { LegadoCompatibilityCompiler } from './LegadoCompatibilityCompiler';
+import { LegadoCompatibilityCompiler } from 'manxia_novel/src/main/ets/Framework/Novel/LegadoCompatibilityCompiler';
 import { LegadoV2SourceExecutor } from './LegadoWorkflowOrchestrator';
-import { getLegadoExecutionTraceStore, LegadoTraceSerializer } from './LegadoTraceSerializer';
+import { getLegadoExecutionTraceStore, LegadoTraceSerializer } from 'manxia_novel/src/main/ets/Framework/Novel/LegadoTraceSerializer';
 import {
   CompiledBookSource,
   LEGADO_COMPATIBILITY_SCHEMA_VERSION,
@@ -34,14 +34,14 @@ import {
   LegadoWorkflowKind,
   LegadoWorkflowOutputKind,
   LegadoWorkflowTocResult
-} from './LegadoCompatibilityTypes';
+} from 'manxia_novel/src/main/ets/Framework/Novel/LegadoCompatibilityTypes';
 import { NovelSourceInfo, NovelSearchResult } from '../../Models/NovelModels';
 import { getNovelDataManager } from './NovelDataManager';
 import { getLegadoMangaSourceBridge } from './LegadoMangaSourceBridge';
-import { LargeFileJSONParser, ParseProgressCallback, ParseConfig } from './LargeFileJSONParser';
+import { LargeFileJSONParser, ParseProgressCallback, ParseConfig } from 'manxia_novel/src/main/ets/Framework/Novel/LargeFileJSONParser';
 import { fileIo as fs } from '@kit.CoreFileKit';
 import { SettingsManager } from '../Managers/SettingsManager';
-import { LegadoExecutionCancellationToken, createLegadoCancellationToken } from './LegadoExecutionCancellation';
+import { LegadoExecutionCancellationToken, createLegadoCancellationToken } from 'manxia_novel/src/main/ets/Framework/Novel/LegadoExecutionCancellation';
 
 const TAG = 'NovelSourceManager';
 const V2_INTERACTIVE_WORKFLOW_TIMEOUT_MS: number = 60000;

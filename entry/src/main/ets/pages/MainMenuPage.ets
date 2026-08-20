@@ -265,7 +265,7 @@ import { NovelBook, NovelReadStatus, NovelSearchResult, NovelSourceInfo } from '
 import { getNovelDataManager, NovelDataManager } from '../Framework/Novel/NovelDataManager';
 import { RemoteControlSocketChannel } from '../Framework/Distributed/RemoteControlSocketChannel';
 import { getNovelSourceManager, NovelSourceManager } from '../Framework/Novel/NovelSourceManager';
-import { LegadoBook, LegadoBookSource, LegadoBookSourceType } from '../Framework/Novel/LegadoSourceTypes';
+import { LegadoBook, LegadoBookSource, LegadoBookSourceType } from 'manxia_novel/src/main/ets/Framework/Novel/LegadoSourceTypes';
 import { LegadoMangaSourceBridge } from '../Framework/Novel/LegadoMangaSourceBridge';
 import { getNovelInitializer } from '../Framework/Novel/NovelInitializer';
 import { FontManager } from '../Framework/Managers/FontManager';

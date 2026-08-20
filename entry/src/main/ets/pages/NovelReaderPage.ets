@@ -16,12 +16,12 @@ import { getNovelDataManager } from '../Framework/Novel/NovelDataManager';
 import { getNovelChapterCacheManager } from '../Framework/Novel/NovelChapterCacheManager';
 import { getNovelContentProcessor, ContentProcessConfig } from '../Framework/Novel/NovelContentProcessor';
 import { ReplaceScope, NovelReplaceRuleManager, AddRuleParams } from '../Framework/Novel/NovelReplaceRuleManager';
-import { LegadoChapter, LegadoBook, LegadoBookSourceType } from '../Framework/Novel/LegadoSourceTypes';
+import { LegadoChapter, LegadoBook, LegadoBookSourceType } from 'manxia_novel/src/main/ets/Framework/Novel/LegadoSourceTypes';
 import {
   LegadoCompatibilityEngineMode,
   LegadoWorkflowKind,
   LegadoWorkflowOutputKind
-} from '../Framework/Novel/LegadoCompatibilityTypes';
+} from 'manxia_novel/src/main/ets/Framework/Novel/LegadoCompatibilityTypes';
 import { NovelReaderPageParams } from './NovelBookshelfPage';
 import { NovelBook, NovelReadStatus } from '../Models/NovelModels';
 import {

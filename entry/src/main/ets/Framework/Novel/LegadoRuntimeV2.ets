@@ -6,7 +6,7 @@ import fileIo from '@ohos.file.fs';
 import { logger } from 'manxia_core/src/main/ets/Utils/Logger';
 import { SafeFileUtils } from 'manxia_core/src/main/ets/Utils/SafeFileUtils';
 import { uiContextManager } from '../Managers/UIContextManager';
-import { getCookieStore } from './LegadoCookieStore';
+import { getCookieStore } from 'manxia_novel/src/main/ets/Framework/Novel/LegadoCookieStore';
 import type {
   CookieChange,
   JsContext,
@@ -14,8 +14,8 @@ import type {
   LegadoJsSourceEffects,
   ToastMessage
 } from './LegadoJsEngine';
-import { LegadoBridgeTrace } from './LegadoCompatibilityTypes';
-import type { LegadoBookSource } from './LegadoSourceTypes';
+import { LegadoBridgeTrace } from 'manxia_novel/src/main/ets/Framework/Novel/LegadoCompatibilityTypes';
+import type { LegadoBookSource } from 'manxia_novel/src/main/ets/Framework/Novel/LegadoSourceTypes';
 
 const TAG = 'LegadoRuntimeV2';
 const RUNTIME_MARKER = 'manxia-legado-runtime-v2';

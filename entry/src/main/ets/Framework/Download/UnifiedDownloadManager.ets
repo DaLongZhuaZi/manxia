@@ -9,7 +9,7 @@
 import { logger } from 'manxia_core/src/main/ets/Utils/Logger';
 import { MangaDownloadManager, DownloadTaskInfo, TaskStatus, PageListFetcher, DownloadPageItem } from './DownloadManager';
 import { getNovelChapterCacheManager, NovelChapterCacheManager, DownloadProgressCallback as NovelDownloadCallback } from '../Novel/NovelChapterCacheManager';
-import { LegadoChapter } from '../Novel/LegadoSourceTypes';
+import { LegadoChapter } from 'manxia_novel/src/main/ets/Framework/Novel/LegadoSourceTypes';
 import { AppNotificationManager } from '../Managers/NotificationManager';
 import { common } from '@kit.AbilityKit';
 import { DownloadCacheFlowMonitor, getDownloadCacheFlowMonitor } from 'manxia_network/src/main/ets/Framework/Download/DownloadCacheFlowMonitor';

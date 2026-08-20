@@ -17,13 +17,13 @@ import {
 import { IReadAloudBackend, ReadAloudBackendFactory, ReadAloudPlaybackEvent, ReadAloudVoiceCatalog } from './ReadAloudBackends';
 import { ReadAloudAvailability } from './ReadAloudAvailability';
 import { ReadAloudMediaCommandListener, ReadAloudMediaSession } from './ReadAloudMediaSession';
-import { ReadAloudFlowMonitor } from './ReadAloudFlowMonitor';
+import { ReadAloudFlowMonitor } from 'manxia_novel/src/main/ets/Framework/ReadAloud/ReadAloudFlowMonitor';
 import {
   ReadAloudFlowEventType,
   ReadAloudFlowMode,
   ReadAloudFlowSessionInfo,
   ReadAloudFlowSeverity
-} from './ReadAloudFlowTypes';
+} from 'manxia_novel/src/main/ets/Framework/ReadAloud/ReadAloudFlowTypes';
 
 const TAG = 'ReadAloudController';
 const MEDIA_SKIP_CHARS: number = 420;

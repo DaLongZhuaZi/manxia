@@ -34,7 +34,7 @@ import { getSubscriptionDataManager, SubscriptionDataManager } from './Subscript
 import { getNovelInitializer } from '../Novel/NovelInitializer';
 import { getNovelDataManager, NovelBook } from '../Novel/NovelDataManager';
 import { getNovelSourceManager, NovelSourceManager } from '../Novel/NovelSourceManager';
-import { LegadoBook, LegadoBookSource, LegadoBookSourceType, LegadoChapter } from '../Novel/LegadoSourceTypes';
+import { LegadoBook, LegadoBookSource, LegadoBookSourceType, LegadoChapter } from 'manxia_novel/src/main/ets/Framework/Novel/LegadoSourceTypes';
 import {
   getUnifiedDownloadManager,
   UnifiedDownloadManager,

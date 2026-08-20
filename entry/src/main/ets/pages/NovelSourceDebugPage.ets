@@ -15,10 +15,10 @@ import { ThemeAwareState, ThemeAwareHelper } from '../Framework/Components/Theme
 import { FontAwareHelper, FontAwareState } from '../Framework/Components/FontAware';
 import { PageLifecycleManager, CancellationError } from 'manxia_core/src/main/ets/Framework/Lifecycle/index';
 import { ThemeManager, ThemeType } from '../Framework/Managers/ThemeManager';
-import { LegadoBookSource, LegadoSearchBook, LegadoBook, LegadoChapter, LegadoBookSourceType } from '../Framework/Novel/LegadoSourceTypes';
+import { LegadoBookSource, LegadoSearchBook, LegadoBook, LegadoChapter, LegadoBookSourceType } from 'manxia_novel/src/main/ets/Framework/Novel/LegadoSourceTypes';
 import { getNovelSourceManager, NovelSourceManager } from '../Framework/Novel/NovelSourceManager';
 import { NovelSearchResult } from '../Models/NovelModels';
-import { LegadoMangaImageExtractor } from '../Framework/Novel/LegadoMangaImageExtractor';
+import { LegadoMangaImageExtractor } from 'manxia_novel/src/main/ets/Framework/Novel/LegadoMangaImageExtractor';
 import { LegadoWebViewComponent } from '../Framework/Novel/LegadoWebViewComponent';
 import { getLegadoJsEngine } from '../Framework/Novel/LegadoJsEngine';
 import { SettingsImmersiveTitleBar } from './settings/SettingsImmersiveTitleBar';

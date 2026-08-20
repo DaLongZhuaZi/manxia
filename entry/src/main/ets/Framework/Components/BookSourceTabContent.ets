@@ -9,13 +9,13 @@ import { ThemeType } from '../Managers/ThemeManager';
 import { TabContentCacheManager, BookSourceCacheData } from '../Cache/TabContentCacheManager';
 import { ContentFilterManager } from '../Managers/ContentFilterManager';
 import { getNovelSourceManager, NovelSourceManager } from '../Novel/NovelSourceManager';
-import { LegadoBookSourceType } from '../Novel/LegadoSourceTypes';
+import { LegadoBookSourceType } from 'manxia_novel/src/main/ets/Framework/Novel/LegadoSourceTypes';
 import {
   LegadoCompatibilityEngineMode,
   LegadoCompatibilityStatus,
   LegadoExecutionTraceSummary,
   LegadoWorkflowKind
-} from '../Novel/LegadoCompatibilityTypes';
+} from 'manxia_novel/src/main/ets/Framework/Novel/LegadoCompatibilityTypes';
 import { getNovelInitializer } from '../Novel/NovelInitializer';
 import { NovelBook, NovelReadStatus, NovelSearchResult, NovelSourceInfo } from '../../Models/NovelModels';
 import { NovelSearchPageParams } from '../../pages/NovelBookshelfPage';

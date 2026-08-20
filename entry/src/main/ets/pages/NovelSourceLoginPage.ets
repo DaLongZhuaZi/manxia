@@ -16,7 +16,7 @@ import { webview } from '@kit.ArkWeb';
 import { getNovelSourceManager } from '../Framework/Novel/NovelSourceManager';
 import { getNovelLoginManager, LoginUiItem } from '../Framework/Novel/NovelLoginManager';
 import { getLegadoRhinoEngine } from '../Framework/Novel/LegadoRhinoEngine';
-import { LegadoBookSource } from '../Framework/Novel/LegadoSourceTypes';
+import { LegadoBookSource } from 'manxia_novel/src/main/ets/Framework/Novel/LegadoSourceTypes';
 import { ThemeAwareState, ThemeAwareHelper } from '../Framework/Components/ThemeAware';
 import { ThemeManager, ThemeType } from '../Framework/Managers/ThemeManager';
 import { FontAwareHelper, FontAwareState } from '../Framework/Components/FontAware';

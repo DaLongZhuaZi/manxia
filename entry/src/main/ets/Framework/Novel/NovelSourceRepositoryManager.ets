@@ -11,7 +11,7 @@ import {
   VersionRepositoryVersionMarker
 } from '../Managers/VersionHistoryManager';
 import { AppInfoManager } from '../Managers/AppInfoManager';
-import { LegadoSourceImportResult } from './LegadoSourceTypes';
+import { LegadoSourceImportResult } from 'manxia_novel/src/main/ets/Framework/Novel/LegadoSourceTypes';
 import { getNovelSourceManager, NovelSourceManager } from './NovelSourceManager';
 import {
   LegadoCloudLogLevel,

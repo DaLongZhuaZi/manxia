@@ -19,7 +19,7 @@ import { EBook } from '../../Models/EBookModels';
 import { NovelBook, NovelSearchResult, NovelSourceInfo } from '../../Models/NovelModels';
 import { WebViewSourceManager } from '../WebView/WebViewSourceManager';
 import { SourceDetailSearchExecutor, SourceDetailSearchResult, getSourceDetailSearchExecutor } from './SourceDetailSearchExecutor';
-import { LegadoBookSourceType } from '../Novel/LegadoSourceTypes';
+import { LegadoBookSourceType } from 'manxia_novel/src/main/ets/Framework/Novel/LegadoSourceTypes';
 import { SettingsManager } from '../Managers/SettingsManager';
 import { GlobalSearchScheduler, GlobalSearchQueuedTask } from 'manxia_source_engine/src/main/ets/Framework/Search/GlobalSearchScheduler';
 import { GlobalSearchFlowMonitor, getGlobalSearchFlowMonitor } from 'manxia_source_engine/src/main/ets/Framework/Search/GlobalSearchFlowMonitor';

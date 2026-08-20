@@ -5,7 +5,7 @@ import { continuationStateHelper, ContinuationPackSource } from './Framework/Dis
 import {
   READ_ALOUD_PLAYER_ABILITY_INSTANCE_ID_KEY,
   READ_ALOUD_PLAYER_ABILITY_PAGE
-} from './Framework/ReadAloud/ReadAloudPlayerAbilityConstants';
+} from 'manxia_novel/src/main/ets/Framework/ReadAloud/ReadAloudPlayerAbilityConstants';
 import {
   ReadAloudPlayerAbilityParams,
   ReadAloudPlayerAbilityParamStore

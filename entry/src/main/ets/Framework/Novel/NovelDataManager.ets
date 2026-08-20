@@ -9,8 +9,8 @@ import { SafeUtils } from 'manxia_core/src/main/ets/Utils/SafeUtils';
 import { relationalStore } from '@kit.ArkData';
 import { common } from '@kit.AbilityKit';
 import { logger } from 'manxia_core/src/main/ets/Utils/Logger';
-import { NOVEL_CREATE_TABLE_SQL, NOVEL_CREATE_INDEX_SQL } from './NovelDatabaseSchema';
-import { LegadoBookSource } from './LegadoSourceTypes';
+import { NOVEL_CREATE_TABLE_SQL, NOVEL_CREATE_INDEX_SQL } from 'manxia_novel/src/main/ets/Framework/Novel/NovelDatabaseSchema';
+import { LegadoBookSource } from 'manxia_novel/src/main/ets/Framework/Novel/LegadoSourceTypes';
 import {
   LegadoCompatibilityEngineMode,
   LegadoCompatibilityStatus,
@@ -23,10 +23,10 @@ import {
   LegadoSourceVerificationRecord,
   LegadoTransportKind,
   LegadoWorkflowKind
-} from './LegadoCompatibilityTypes';
+} from 'manxia_novel/src/main/ets/Framework/Novel/LegadoCompatibilityTypes';
 import { NovelBook, NovelChapter, NovelReadProgress, NovelReaderSettings, DEFAULT_NOVEL_READER_SETTINGS, NovelReadStatus } from '../../Models/NovelModels';
 import { getNovelLoginManager } from './NovelLoginManager';
-import { getNovelCoverGenerator } from './NovelCoverGenerator';
+import { getNovelCoverGenerator } from 'manxia_novel/src/main/ets/Framework/Novel/NovelCoverGenerator';
 import { LibraryCoverManager } from 'manxia_core/src/main/ets/Framework/Storage/LibraryCoverManager';
 import { getUnifiedAnnotationManager } from '../Annotations/UnifiedAnnotationManager';
 import { UnifiedContentType } from '../../Models/UnifiedContentModels';

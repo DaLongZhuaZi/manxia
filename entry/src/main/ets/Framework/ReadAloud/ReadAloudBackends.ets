@@ -13,7 +13,7 @@ import {
   normalizeRemoteReadAloudSettings
 } from '../../Models/TextReaderModels';
 import { ReadAloudProgressSnapshot, ReadAloudSessionContext, ReadAloudVoiceOption } from './ReadAloudTypes';
-import { ReadAloudRequestIdGenerator } from './ReadAloudRequestIdGenerator';
+import { ReadAloudRequestIdGenerator } from 'manxia_novel/src/main/ets/Framework/ReadAloud/ReadAloudRequestIdGenerator';
 import { textToSpeech } from '@kit.CoreSpeechKit';
 import { http } from '@kit.NetworkKit';
 import fs from '@ohos.file.fs';

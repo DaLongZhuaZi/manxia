@@ -81,7 +81,7 @@ import { KomgaAuthMode, KomgaConfig, KomgaInstanceConfig } from '../Source/Komga
 import { loadKomgaConfig, saveKomgaConfig } from '../Source/KomgaConfigStore';
 
 import { NovelBook, NovelSourceInfo, NovelReadStatus } from '../../Models/NovelModels';
-import { LegadoBookSource, LegadoSourceImportResult } from '../Novel/LegadoSourceTypes';
+import { LegadoBookSource, LegadoSourceImportResult } from 'manxia_novel/src/main/ets/Framework/Novel/LegadoSourceTypes';
 import { BrowseHistoryInput, BrowseHistoryItem } from '../Novel/NovelSettingsManager';
 import { fileIo as fs } from '@kit.CoreFileKit';
 import { deviceInfo } from '@kit.BasicServicesKit';

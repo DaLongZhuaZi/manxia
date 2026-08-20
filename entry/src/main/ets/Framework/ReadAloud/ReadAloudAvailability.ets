@@ -6,7 +6,7 @@ import {
   RemoteReadAloudSettings,
   normalizeReadAloudSettings
 } from '../../Models/TextReaderModels';
-import { ReadAloudRequestIdGenerator } from './ReadAloudRequestIdGenerator';
+import { ReadAloudRequestIdGenerator } from 'manxia_novel/src/main/ets/Framework/ReadAloud/ReadAloudRequestIdGenerator';
 import { SettingsManager } from '../Managers/SettingsManager';
 import { loadGlobalReadAloudSettings } from './ReadAloudSettingsStore';
 

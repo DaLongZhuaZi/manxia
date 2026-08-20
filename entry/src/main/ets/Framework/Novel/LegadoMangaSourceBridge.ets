@@ -26,7 +26,7 @@ import {
   LegadoBookSource,
   LegadoBookSourceType,
   LegadoChapter
-} from './LegadoSourceTypes';
+} from 'manxia_novel/src/main/ets/Framework/Novel/LegadoSourceTypes';
 import { LegadoUrlAnalyzer, ParsedUrlRequest } from './LegadoUrlAnalyzer';
 import { LegadoJsSourceEffects } from './LegadoJsEngine';
 import { getNovelDataManager } from './NovelDataManager';
@@ -34,11 +34,11 @@ import { getNovelSourceManager, NovelSourceManager } from './NovelSourceManager'
 import {
   LegadoWorkflowContentResult,
   LegadoWorkflowOutputKind
-} from './LegadoCompatibilityTypes';
+} from 'manxia_novel/src/main/ets/Framework/Novel/LegadoCompatibilityTypes';
 import { getNovelLoginManager } from './NovelLoginManager';
-import { getCookieStore } from './LegadoCookieStore';
-import { LegadoMangaExtractedImage, LegadoMangaImageExtractor } from './LegadoMangaImageExtractor';
-import { HtmlFormatter } from './HtmlFormatter';
+import { getCookieStore } from 'manxia_novel/src/main/ets/Framework/Novel/LegadoCookieStore';
+import { LegadoMangaExtractedImage, LegadoMangaImageExtractor } from 'manxia_novel/src/main/ets/Framework/Novel/LegadoMangaImageExtractor';
+import { HtmlFormatter } from 'manxia_novel/src/main/ets/Framework/Novel/HtmlFormatter';
 
 const TAG = 'LegadoMangaSourceBridge';
 const LEGADO_MANGA_PKG_PREFIX = 'legado.image.';
