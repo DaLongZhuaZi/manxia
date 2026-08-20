@@ -46,7 +46,7 @@ import {
   MarkdownReaderStyle,
   MarkdownProgressSnapshot,
   MarkdownPageTurnResult
-} from '../components/editor/MarkdownViewerComponent';
+} from 'manxia_features_ui/src/main/ets/components/editor/MarkdownViewerComponent';
 import { MangaViewer } from '../components/MangaViewer';
 import { PreloadDebugInfo } from '../components/PreloadDebugOverlay';
 import { TextReaderSettingsPanel } from '../components/TextReaderSettingsPanel';

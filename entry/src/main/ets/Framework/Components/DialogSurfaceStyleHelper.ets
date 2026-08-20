@@ -1,6 +1,6 @@
 import { GlassLevel, GlassStyleToken, ThemeManager, ThemeType } from 'manxia_theme/src/main/ets/Framework/Managers/ThemeManager';
 import { ThemeAwareState } from 'manxia_theme/src/main/ets/Framework/Components/ThemeAware';
-import { SettingsPageSurfaceManager, SettingsPageSurfaceStyle } from '../../pages/settings/SettingsPageSurfaceManager';
+import { SettingsPageSurfaceManager, SettingsPageSurfaceStyle } from 'manxia_features_ui/src/main/ets/pages/settings/SettingsPageSurfaceManager';
 
 export class DialogSurfaceStyleHelper {
   private static readonly themeManager: ThemeManager = ThemeManager.getInstance();

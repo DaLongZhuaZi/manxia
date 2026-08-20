@@ -26,9 +26,9 @@ import { SettingsManager } from '../../Framework/Managers/SettingsManager';
 import { GlobalBackgroundLayerMode } from 'manxia_theme/src/main/ets/Framework/Components/GlobalBackgroundLayer';
 import { SharedPageBackgroundLayer } from '../../Framework/Components/SharedPageBackgroundLayer';
 import { SettingsImmersiveTitleBar } from './SettingsImmersiveTitleBar';
-import { SettingsPageTitleBarManager } from './SettingsPageTitleBarManager';
+import { SettingsPageTitleBarManager } from 'manxia_features_ui/src/main/ets/pages/settings/SettingsPageTitleBarManager';
 import { eventBus, GameEvent, RemoteLibraryConfigChangedPayload } from '../../Framework/EventBus';
-import { SettingsPanelSurfaceHelper } from './SettingsPanelSurfaceHelper';
+import { SettingsPanelSurfaceHelper } from 'manxia_features_ui/src/main/ets/pages/settings/SettingsPanelSurfaceHelper';
 
 const TAG = 'KomgaSettingsPage';
 const PAGE_BOTTOM_SPACER: number = 32;

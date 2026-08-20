@@ -191,7 +191,7 @@ import { PageSettingsSubPage, PageSettingsHelper, SceneType, DetailPageType } fr
 import { ShortcutSettingsSubPage } from './settings/ShortcutSettingsSubPage';
 import { MainMenuSettingsSubPage } from './settings/MainMenuSettingsSubPage';
 import { SourceFeatureSettingsSubPage } from './settings/SourceFeatureSettingsSubPage';
-import { SettingsPageSurfaceManager } from './settings/SettingsPageSurfaceManager';
+import { SettingsPageSurfaceManager } from 'manxia_features_ui/src/main/ets/pages/settings/SettingsPageSurfaceManager';
 import { UnifiedDetailPageParams, UnifiedContentType } from 'manxia_core/src/main/ets/Models/UnifiedContentModels';
 import { FontAwareHelper, FontAwareState } from '../Framework/Components/FontAware';
 import { UnifiedDetailPage } from './UnifiedDetailPage';

@@ -13,7 +13,7 @@ import { getKomgaSourceExecutor, KomgaSourceExecutor } from '../Framework/Source
 import { KomgaContentType } from '../Framework/Source/KomgaModels';
 import KomgaCacheManager from '../Framework/Source/KomgaCacheManager';
 import { KomgaImage } from '../components/KomgaImage';
-import { SettingsImmersiveTitleActionItem, SettingsPageTitleBarManager } from './settings/SettingsPageTitleBarManager';
+import { SettingsImmersiveTitleActionItem, SettingsPageTitleBarManager } from 'manxia_features_ui/src/main/ets/pages/settings/SettingsPageTitleBarManager';
 import { SettingsImmersiveTitleBar } from './settings/SettingsImmersiveTitleBar';
 import { MangaReaderContentType, MangaReaderPageParams } from './MangaReaderPage';
 import { openMangaReaderInIsolatedAbility } from '../Framework/Reader/MangaReaderAbilityLauncher';

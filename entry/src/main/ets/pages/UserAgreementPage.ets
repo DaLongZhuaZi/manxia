@@ -10,8 +10,8 @@ import { DisplayMode } from 'manxia_theme/src/main/ets/Utils/WindowManager';
 import { PageWindowCoordinator } from 'manxia_theme/src/main/ets/Utils/PageWindowCoordinator';
 import { ngfPagePolicyHostFacade } from '../Framework/NGF/uiShell/index';
 import { SettingsImmersiveTitleBar } from './settings/SettingsImmersiveTitleBar';
-import { SettingsPageTitleBarManager } from './settings/SettingsPageTitleBarManager';
-import { SettingsPanelSurfaceHelper } from './settings/SettingsPanelSurfaceHelper';
+import { SettingsPageTitleBarManager } from 'manxia_features_ui/src/main/ets/pages/settings/SettingsPageTitleBarManager';
+import { SettingsPanelSurfaceHelper } from 'manxia_features_ui/src/main/ets/pages/settings/SettingsPanelSurfaceHelper';
 
 const TAG = 'UserAgreementPage';
 /**

@@ -3,7 +3,7 @@ import { ThemeAwareState, ThemeAwareHelper } from 'manxia_theme/src/main/ets/Fra
 import { SettingsImmersiveTitleBar } from './settings/SettingsImmersiveTitleBar';
 import { GlobalBackgroundLayerMode } from 'manxia_theme/src/main/ets/Framework/Components/GlobalBackgroundLayer';
 import { SharedPageBackgroundLayer } from '../Framework/Components/SharedPageBackgroundLayer';
-import { SettingsPanelSurfaceHelper } from './settings/SettingsPanelSurfaceHelper';
+import { SettingsPanelSurfaceHelper } from 'manxia_features_ui/src/main/ets/pages/settings/SettingsPanelSurfaceHelper';
 
 @Component
 struct SupporterAgreementPage {

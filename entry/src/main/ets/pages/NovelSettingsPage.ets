@@ -15,10 +15,10 @@ import { FontAwareHelper, FontAwareState } from '../Framework/Components/FontAwa
 import { preferences } from '@kit.ArkData';
 import { common } from '@kit.AbilityKit';
 import { SettingsImmersiveTitleBar } from './settings/SettingsImmersiveTitleBar';
-import { SettingsPageTitleBarManager } from './settings/SettingsPageTitleBarManager';
+import { SettingsPageTitleBarManager } from 'manxia_features_ui/src/main/ets/pages/settings/SettingsPageTitleBarManager';
 import { GlobalBackgroundLayerMode } from 'manxia_theme/src/main/ets/Framework/Components/GlobalBackgroundLayer';
 import { SharedPageBackgroundLayer } from '../Framework/Components/SharedPageBackgroundLayer';
-import { SettingsPanelSurfaceHelper } from './settings/SettingsPanelSurfaceHelper';
+import { SettingsPanelSurfaceHelper } from 'manxia_features_ui/src/main/ets/pages/settings/SettingsPanelSurfaceHelper';
 
 const TAG = 'NovelSettingsPage';
 const NOVEL_SETTINGS_STORE = 'novel_settings';

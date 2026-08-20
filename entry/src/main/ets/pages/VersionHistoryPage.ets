@@ -26,8 +26,8 @@ import {
   DEFAULT_VERSION_COMMIT_FETCH_LIMIT
 } from '../Framework/Managers/VersionHistoryManager';
 import { SettingsImmersiveTitleBar } from './settings/SettingsImmersiveTitleBar';
-import { SettingsPageTitleBarManager } from './settings/SettingsPageTitleBarManager';
-import { SettingsPanelSurfaceHelper } from './settings/SettingsPanelSurfaceHelper';
+import { SettingsPageTitleBarManager } from 'manxia_features_ui/src/main/ets/pages/settings/SettingsPageTitleBarManager';
+import { SettingsPanelSurfaceHelper } from 'manxia_features_ui/src/main/ets/pages/settings/SettingsPanelSurfaceHelper';
 
 const TAG = 'VersionHistoryPage';
 const TITLE_BAR_HEIGHT_MINI: number = 56;

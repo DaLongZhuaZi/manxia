@@ -62,10 +62,10 @@ import { showArchivePasswordDialog } from '../Framework/Components/ArchivePasswo
 import { ParsedArchiveStructure as CompressionParsedStructure } from 'manxia_core/src/main/ets/Utils/CompressionUtils';
 import { getHelpPanelManagerV2 } from '../Framework/Components/HelpPanelV2';
 import { SettingsImmersiveTitleBar } from './settings/SettingsImmersiveTitleBar';
-import { SettingsImmersiveTitleActionItem, SettingsPageTitleBarManager } from './settings/SettingsPageTitleBarManager';
+import { SettingsImmersiveTitleActionItem, SettingsPageTitleBarManager } from 'manxia_features_ui/src/main/ets/pages/settings/SettingsPageTitleBarManager';
 import { GlobalBackgroundLayerMode } from 'manxia_theme/src/main/ets/Framework/Components/GlobalBackgroundLayer';
 import { SharedPageBackgroundLayer } from '../Framework/Components/SharedPageBackgroundLayer';
-import { SettingsPanelSurfaceHelper } from './settings/SettingsPanelSurfaceHelper';
+import { SettingsPanelSurfaceHelper } from 'manxia_features_ui/src/main/ets/pages/settings/SettingsPanelSurfaceHelper';
 import {
   ExternalFileTaskFactory,
   ExternalFileTaskParams,

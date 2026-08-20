@@ -19,8 +19,8 @@ import { FontAwareHelper, FontAwareState } from '../Framework/Components/FontAwa
 import { PageLifecycleManager } from 'manxia_core/src/main/ets/Framework/Lifecycle/index';
 import { SandboxManager } from 'manxia_core/src/main/ets/Framework/Storage/SandboxManager';
 import { picker, fileIo, fileUri as coreFileUri } from '@kit.CoreFileKit';
-import { BackupOptionsDialog } from '../components/backup/BackupOptionsDialog';
-import { RestoreOptionsDialog } from '../components/backup/RestoreOptionsDialog';
+import { BackupOptionsDialog } from 'manxia_features_ui/src/main/ets/components/backup/BackupOptionsDialog';
+import { RestoreOptionsDialog } from 'manxia_features_ui/src/main/ets/components/backup/RestoreOptionsDialog';
 import { WebDAVConfigDialog } from '../components/backup/WebDAVConfigDialog';
 import { util } from '@kit.ArkTS';
 import { common } from '@kit.AbilityKit';
@@ -36,15 +36,15 @@ import { SavedFTPConnection, DEFAULT_FTP_CONNECTION, createFTPConnection } from 
 import { getHelpPanelManagerV2 } from '../Framework/Components/HelpPanelV2';
 import { preferences } from '@kit.ArkData';
 import { promptAction } from '@kit.ArkUI';
-import { SettingsSearchSupport } from './settings/SettingsSearchSupport';
+import { SettingsSearchSupport } from 'manxia_features_ui/src/main/ets/pages/settings/SettingsSearchSupport';
 import { AppGuideOverlay, GuideHighlightRect } from '../Framework/Components/AppGuideOverlay';
 import { ensureGuideAnchorVisibleInScroller, resolveGuideHighlightRectInRoot } from '../Framework/Components/AppGuideSupport';
 import { AppGuideManager, AppGuidePageId, AppGuideStep } from '../Framework/Managers/AppGuideManager';
 import { SettingsImmersiveTitleBar } from './settings/SettingsImmersiveTitleBar';
-import { SettingsImmersiveTitleActionItem, SettingsPageTitleBarManager } from './settings/SettingsPageTitleBarManager';
+import { SettingsImmersiveTitleActionItem, SettingsPageTitleBarManager } from 'manxia_features_ui/src/main/ets/pages/settings/SettingsPageTitleBarManager';
 import { GlobalBackgroundLayerMode } from 'manxia_theme/src/main/ets/Framework/Components/GlobalBackgroundLayer';
 import { SharedPageBackgroundLayer } from '../Framework/Components/SharedPageBackgroundLayer';
-import { SettingsPanelSurfaceHelper } from './settings/SettingsPanelSurfaceHelper';
+import { SettingsPanelSurfaceHelper } from 'manxia_features_ui/src/main/ets/pages/settings/SettingsPanelSurfaceHelper';
 import { ExternalFileTaskParamStore } from 'manxia_network/src/main/ets/Framework/ExternalFile/ExternalFileTaskParamStore';
 
 const TAG = 'BackupPage';

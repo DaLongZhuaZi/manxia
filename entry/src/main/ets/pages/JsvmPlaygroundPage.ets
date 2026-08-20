@@ -19,7 +19,7 @@ import { testHtmlParser } from 'manxia_core/src/main/ets/libs/htmlparser/index';
 import { getLegadoRhinoEngine, JsEngineType, LegadoRhinoEngine } from '../Framework/Novel/LegadoRhinoEngine';
 import { getLegadoJsEngine } from '../Framework/Novel/LegadoJsEngine';
 import { SettingsImmersiveTitleBar } from './settings/SettingsImmersiveTitleBar';
-import { SettingsPageTitleBarManager } from './settings/SettingsPageTitleBarManager';
+import { SettingsPageTitleBarManager } from 'manxia_features_ui/src/main/ets/pages/settings/SettingsPageTitleBarManager';
 import quickjs from 'libquickjs_engine.so';
 
 const TAG = 'JsvmPlaygroundPage';

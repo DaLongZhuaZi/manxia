@@ -22,8 +22,8 @@ import { LegadoMangaImageExtractor } from 'manxia_novel/src/main/ets/Framework/N
 import { LegadoWebViewComponent } from '../Framework/Novel/LegadoWebViewComponent';
 import { getLegadoJsEngine } from '../Framework/Novel/LegadoJsEngine';
 import { SettingsImmersiveTitleBar } from './settings/SettingsImmersiveTitleBar';
-import { SettingsPanelSurfaceHelper } from './settings/SettingsPanelSurfaceHelper';
-import { SettingsPageTitleBarManager } from './settings/SettingsPageTitleBarManager';
+import { SettingsPanelSurfaceHelper } from 'manxia_features_ui/src/main/ets/pages/settings/SettingsPanelSurfaceHelper';
+import { SettingsPageTitleBarManager } from 'manxia_features_ui/src/main/ets/pages/settings/SettingsPageTitleBarManager';
 
 const TAG = 'NovelSourceDebugPage';
 

@@ -8,10 +8,10 @@ import { getNetworkFolderManager, NetworkFolderManager } from '../Framework/Netw
 import { BackgroundTaskManager, TaskType, TaskNotificationScene, TaskStatus } from '../Framework/Task/BackgroundTaskManager';
 import type { BackgroundTask, TaskStatusListener } from '../Framework/Task/BackgroundTaskManager';
 import { SettingsImmersiveTitleBar } from './settings/SettingsImmersiveTitleBar';
-import { SettingsPageTitleBarManager } from './settings/SettingsPageTitleBarManager';
+import { SettingsPageTitleBarManager } from 'manxia_features_ui/src/main/ets/pages/settings/SettingsPageTitleBarManager';
 import { GlobalBackgroundLayerMode } from 'manxia_theme/src/main/ets/Framework/Components/GlobalBackgroundLayer';
 import { SharedPageBackgroundLayer } from '../Framework/Components/SharedPageBackgroundLayer';
-import { SettingsPanelSurfaceHelper } from './settings/SettingsPanelSurfaceHelper';
+import { SettingsPanelSurfaceHelper } from 'manxia_features_ui/src/main/ets/pages/settings/SettingsPanelSurfaceHelper';
 import {
   NetworkFolderCacheDetail,
   NetworkFolderDirectoryCacheDetail,

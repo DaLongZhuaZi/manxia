@@ -22,12 +22,12 @@ import { ErrorRecordManager, ErrorRecord, ErrorSource, ErrorSummary, TagCount, C
 import { getErrorMonitorService } from '../../Framework/Debug/ErrorMonitorService';
 import { getCrashRecorderService } from '../../Framework/Debug/CrashRecorderService';
 import { DownloadDirManager } from '../../Framework/Storage/DownloadDirManager';
-import { SettingsSearchSupport } from './SettingsSearchSupport';
-import { SettingsPanelSurfaceHelper } from './SettingsPanelSurfaceHelper';
+import { SettingsSearchSupport } from 'manxia_features_ui/src/main/ets/pages/settings/SettingsSearchSupport';
+import { SettingsPanelSurfaceHelper } from 'manxia_features_ui/src/main/ets/pages/settings/SettingsPanelSurfaceHelper';
 import { GlobalBackgroundLayerMode } from 'manxia_theme/src/main/ets/Framework/Components/GlobalBackgroundLayer';
 import { SharedPageBackgroundLayer } from '../../Framework/Components/SharedPageBackgroundLayer';
 import { SettingsImmersiveTitleBar } from './SettingsImmersiveTitleBar';
-import { SettingsPageTitleBarManager } from './SettingsPageTitleBarManager';
+import { SettingsPageTitleBarManager } from 'manxia_features_ui/src/main/ets/pages/settings/SettingsPageTitleBarManager';
 
 const TAG = 'ErrorManagementSubPage';
 const TITLE_BAR_HEIGHT_MINI: number = 56;

@@ -24,7 +24,7 @@ import {
   LegadoExploreDetailOpenStatus,
   openLegadoExploreDetail
 } from '../Novel/LegadoExploreDetailNavigator';
-import { SettingsPageSurfaceManager } from '../../pages/settings/SettingsPageSurfaceManager';
+import { SettingsPageSurfaceManager } from 'manxia_features_ui/src/main/ets/pages/settings/SettingsPageSurfaceManager';
 import { AvifImage } from '../../components/AvifImage';
 import { DataManager } from '../Data/DataManager';
 import { SettingsManager, SettingKeys } from '../Managers/SettingsManager';

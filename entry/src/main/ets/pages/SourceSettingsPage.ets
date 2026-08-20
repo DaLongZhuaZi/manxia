@@ -27,10 +27,10 @@ import { MangaSourceEngine, EngineConfig } from '../Framework/WebView/MangaSourc
 import { AntiCrawlerConfig, CloudflareConfig, CaptchaConfig, IpBlockConfig } from 'manxia_source_engine/src/main/ets/Framework/WebView/MangaSourceTypes';
 import { getHelpPanelManagerV2 } from '../Framework/Components/HelpPanelV2';
 import { SettingsImmersiveTitleBar } from './settings/SettingsImmersiveTitleBar';
-import { SettingsImmersiveTitleActionItem, SettingsPageTitleBarManager } from './settings/SettingsPageTitleBarManager';
+import { SettingsImmersiveTitleActionItem, SettingsPageTitleBarManager } from 'manxia_features_ui/src/main/ets/pages/settings/SettingsPageTitleBarManager';
 import { GlobalBackgroundLayerMode } from 'manxia_theme/src/main/ets/Framework/Components/GlobalBackgroundLayer';
 import { SharedPageBackgroundLayer } from '../Framework/Components/SharedPageBackgroundLayer';
-import { SettingsPanelSurfaceHelper } from './settings/SettingsPanelSurfaceHelper';
+import { SettingsPanelSurfaceHelper } from 'manxia_features_ui/src/main/ets/pages/settings/SettingsPanelSurfaceHelper';
 
 const TAG: string = 'SourceSettingsPage';
 const COPYMANGA_SOURCE_PKG: string = 'com.manxia.extension.zh.copymangawebview';

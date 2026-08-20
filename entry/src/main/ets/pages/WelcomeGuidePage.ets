@@ -19,7 +19,7 @@ import {
   initializeReaderKitRuntimeGate,
   isReaderKitRuntimeForceDisabled
 } from '../Framework/Initialization/ReaderKitFeatureGate';
-import { SettingsPanelSurfaceHelper } from './settings/SettingsPanelSurfaceHelper';
+import { SettingsPanelSurfaceHelper } from 'manxia_features_ui/src/main/ets/pages/settings/SettingsPanelSurfaceHelper';
 import { BuiltInThemeResources } from 'manxia_theme/src/main/ets/Framework/Theme/BuiltInThemeResources';
 import { common } from '@kit.AbilityKit';
 import { pasteboard } from '@kit.BasicServicesKit';

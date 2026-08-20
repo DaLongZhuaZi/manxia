@@ -1,0 +1,3 @@
+{
+  "module": { "name": "manxia_features_ui", "type": "har", "deviceTypes": [ "phone", "tablet", "2in1" ] }
+}

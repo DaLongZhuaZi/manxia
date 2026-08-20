@@ -11,8 +11,8 @@ import { picker, fileIo } from '@kit.CoreFileKit';
 import { util } from '@kit.ArkTS';
 import { common } from '@kit.AbilityKit';
 import { logger } from 'manxia_core/src/main/ets/Utils/Logger';
-import { CodeEditorComponent, EditorTheme, CodeEditorController } from '../components/editor/CodeEditorComponent';
-import { MarkdownViewerComponent, MarkdownTheme, TocItem, MarkdownViewerController } from '../components/editor/MarkdownViewerComponent';
+import { CodeEditorComponent, EditorTheme, CodeEditorController } from 'manxia_features_ui/src/main/ets/components/editor/CodeEditorComponent';
+import { MarkdownViewerComponent, MarkdownTheme, TocItem, MarkdownViewerController } from 'manxia_features_ui/src/main/ets/components/editor/MarkdownViewerComponent';
 import {
   fileEditorService,
   SearchResult,

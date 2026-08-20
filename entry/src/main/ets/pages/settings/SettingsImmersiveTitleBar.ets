@@ -1,5 +1,5 @@
 import { ThemeType } from 'manxia_theme/src/main/ets/Framework/Managers/ThemeManager';
-import { SettingsImmersiveTitleActionItem, SettingsPageTitleBarManager } from './SettingsPageTitleBarManager';
+import { SettingsImmersiveTitleActionItem, SettingsPageTitleBarManager } from 'manxia_features_ui/src/main/ets/pages/settings/SettingsPageTitleBarManager';
 import { ngfNavigationShellFacade } from '../../Framework/NGF/uiShell/index';
 
 interface SettingsImmersiveThemeState {

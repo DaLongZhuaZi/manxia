@@ -28,7 +28,7 @@ import {
 } from 'manxia_core/src/main/ets/Models/MangaModels';
 import { HighlightLineType } from 'manxia_core/src/main/ets/Models/AnnotationModels';
 import { DialogSurfaceStyleHelper } from './DialogSurfaceStyleHelper';
-import { SettingsGlassStyleHelper } from '../../pages/settings/SettingsGlassStyleHelper';
+import { SettingsGlassStyleHelper } from 'manxia_features_ui/src/main/ets/pages/settings/SettingsGlassStyleHelper';
 import {
   CurlStartPosition,
   PageCurlConfigV2,

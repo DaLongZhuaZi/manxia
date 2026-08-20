@@ -6,8 +6,8 @@ import { promptAction } from '@kit.ArkUI';
 import { logger } from 'manxia_core/src/main/ets/Utils/Logger';
 import { ThemeAwareState, ThemeAwareHelper } from 'manxia_theme/src/main/ets/Framework/Components/ThemeAware';
 import { SourceDialogScaffold } from './SourceDialogScaffold';
-import { SettingsPageSurfaceManager, SettingsPageSurfaceStyle } from '../../pages/settings/SettingsPageSurfaceManager';
-import { SettingsGlassStyleHelper } from '../../pages/settings/SettingsGlassStyleHelper';
+import { SettingsPageSurfaceManager, SettingsPageSurfaceStyle } from 'manxia_features_ui/src/main/ets/pages/settings/SettingsPageSurfaceManager';
+import { SettingsGlassStyleHelper } from 'manxia_features_ui/src/main/ets/pages/settings/SettingsGlassStyleHelper';
 import { eventBus, GameEvent, IEventPayload, ReadAloudCacheUpdatedPayload } from '../EventBus';
 import {
   UnifiedContent,

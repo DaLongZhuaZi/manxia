@@ -12,7 +12,7 @@ import { logger } from 'manxia_core/src/main/ets/Utils/Logger';
 import { WebDAVTestResult } from 'manxia_network/src/main/ets/Framework/WebDAV/WebDAVClient';
 import { WebDAVErrorAnalyzer, WEBDAV_SERVER_GUIDES, WebDAVServerGuide } from 'manxia_network/src/main/ets/Framework/WebDAV/WebDAVErrorAnalyzer';
 import { getAutoBackupScheduler, formatNextBackupTime, AutoBackupStatus } from '../../Framework/WebDAV/WebDAVAutoBackupScheduler';
-import { SettingsPanelSurfaceHelper } from '../../pages/settings/SettingsPanelSurfaceHelper';
+import { SettingsPanelSurfaceHelper } from 'manxia_features_ui/src/main/ets/pages/settings/SettingsPanelSurfaceHelper';
 import { NetworkScannerAdapter } from '../../Framework/Network/NetworkScannerAdapter';
 import { NetworkScanHost, ProtocolPort } from 'manxia_core/src/main/ets/Models/NetworkFolderModels';
 

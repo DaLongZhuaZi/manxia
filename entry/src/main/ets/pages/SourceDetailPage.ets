@@ -41,8 +41,8 @@ import { PageSettingsHelper, DetailPageType } from './settings/PageSettingsSubPa
 import { UnifiedDetailPageParams, UnifiedContentType } from 'manxia_core/src/main/ets/Models/UnifiedContentModels';
 import { SourceContentCache, SourceContentCacheFreshness, SourceContentCacheSnapshot } from '../Framework/Cache/SourceContentCache';
 import { SettingsImmersiveTitleBar } from './settings/SettingsImmersiveTitleBar';
-import { SettingsImmersiveTitleActionItem, SettingsPageTitleBarManager } from './settings/SettingsPageTitleBarManager';
-import { SettingsPageSurfaceManager } from './settings/SettingsPageSurfaceManager';
+import { SettingsImmersiveTitleActionItem, SettingsPageTitleBarManager } from 'manxia_features_ui/src/main/ets/pages/settings/SettingsPageTitleBarManager';
+import { SettingsPageSurfaceManager } from 'manxia_features_ui/src/main/ets/pages/settings/SettingsPageSurfaceManager';
 import { OnlineImageLoader } from '../Framework/Cache/OnlineImageLoader';
 import { sourceDebugLogManager } from '../Framework/Debug/SourceDebugLogManager';
 import { LabelUtils } from 'manxia_core/src/main/ets/Utils/LabelUtils';

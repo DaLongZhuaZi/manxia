@@ -31,8 +31,8 @@ import { getUnifiedAnnotationManager, UnifiedAnnotationManager } from '../Framew
 import { UnifiedAnnotationRecord, UnifiedAnnotationType } from 'manxia_core/src/main/ets/Models/AnnotationModels';
 import { AnnotationCenterPageParams } from './AnnotationCenterPage';
 import { SettingsImmersiveTitleBar } from './settings/SettingsImmersiveTitleBar';
-import { SettingsImmersiveTitleActionItem, SettingsPageTitleBarManager } from './settings/SettingsPageTitleBarManager';
-import { SettingsPageSurfaceManager } from './settings/SettingsPageSurfaceManager';
+import { SettingsImmersiveTitleActionItem, SettingsPageTitleBarManager } from 'manxia_features_ui/src/main/ets/pages/settings/SettingsPageTitleBarManager';
+import { SettingsPageSurfaceManager } from 'manxia_features_ui/src/main/ets/pages/settings/SettingsPageSurfaceManager';
 import { SharedPageBackgroundLayer } from '../Framework/Components/SharedPageBackgroundLayer';
 import { GlobalBackgroundLayerMode } from 'manxia_theme/src/main/ets/Framework/Components/GlobalBackgroundLayer';
 

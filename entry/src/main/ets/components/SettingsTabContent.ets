@@ -6,7 +6,7 @@
 import { logger } from 'manxia_core/src/main/ets/Utils/Logger';
 import { ThemeAwareState, ThemeAwareHelper } from 'manxia_theme/src/main/ets/Framework/Components/ThemeAware';
 import { ThemeType } from 'manxia_theme/src/main/ets/Framework/Managers/ThemeManager';
-import { SettingsPageSurfaceManager, SettingsPageSurfaceStyle } from '../pages/settings/SettingsPageSurfaceManager';
+import { SettingsPageSurfaceManager, SettingsPageSurfaceStyle } from 'manxia_features_ui/src/main/ets/pages/settings/SettingsPageSurfaceManager';
 import { AnnotationCenterPageParams } from '../pages/AnnotationCenterPage';
 import { openFileEditorInIsolatedAbility } from '../Framework/Editor/FileEditorAbilityLauncher';
 import {

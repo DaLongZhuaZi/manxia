@@ -19,7 +19,7 @@ import { DeviceAdaptationManager, DeviceInfo, DeviceChangeListener } from 'manxi
 import { LogCollector, LogEntry, LogFilter, LogStats } from 'manxia_core/src/main/ets/Framework/Debug/LogCollector';
 import { deviceInfo } from '@kit.BasicServicesKit';
 import { SettingsImmersiveTitleBar } from './settings/SettingsImmersiveTitleBar';
-import { SettingsPageTitleBarManager } from './settings/SettingsPageTitleBarManager';
+import { SettingsPageTitleBarManager } from 'manxia_features_ui/src/main/ets/pages/settings/SettingsPageTitleBarManager';
 import { GlobalBackgroundLayerMode } from 'manxia_theme/src/main/ets/Framework/Components/GlobalBackgroundLayer';
 import { SharedPageBackgroundLayer } from '../Framework/Components/SharedPageBackgroundLayer';
 

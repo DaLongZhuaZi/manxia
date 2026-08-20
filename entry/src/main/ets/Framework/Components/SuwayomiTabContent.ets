@@ -10,7 +10,7 @@ import { SuwayomiCategory, PaginatedResult, MangaSortOption, MANGA_SORT_OPTIONS 
 import SuwayomiCacheManager from '../Source/SuwayomiCacheManager';
 import DownloadDirManager from '../Storage/DownloadDirManager';
 import { ComicInfo as SuwayomiComicInfo } from '../Source/SourceExecutor';
-import { SettingsPageSurfaceManager } from '../../pages/settings/SettingsPageSurfaceManager';
+import { SettingsPageSurfaceManager } from 'manxia_features_ui/src/main/ets/pages/settings/SettingsPageSurfaceManager';
 import { SuwayomiImage } from '../../components/SuwayomiImage';
 import { SuwayomiSourceBrowseParams } from '../../pages/SuwayomiSourceBrowsePage';
 import { eventBus, GameEvent, IEventPayload, RemoteLibraryConfigChangedPayload } from '../EventBus';

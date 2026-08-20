@@ -23,8 +23,8 @@ import { ThemeManager, ThemeType } from 'manxia_theme/src/main/ets/Framework/Man
 import { DisplayMode } from 'manxia_theme/src/main/ets/Utils/WindowManager';
 import { PageWindowCoordinator } from 'manxia_theme/src/main/ets/Utils/PageWindowCoordinator';
 import { SettingsImmersiveTitleBar } from './settings/SettingsImmersiveTitleBar';
-import { SettingsPanelSurfaceHelper } from './settings/SettingsPanelSurfaceHelper';
-import { SettingsImmersiveTitleActionItem, SettingsPageTitleBarManager } from './settings/SettingsPageTitleBarManager';
+import { SettingsPanelSurfaceHelper } from 'manxia_features_ui/src/main/ets/pages/settings/SettingsPanelSurfaceHelper';
+import { SettingsImmersiveTitleActionItem, SettingsPageTitleBarManager } from 'manxia_features_ui/src/main/ets/pages/settings/SettingsPageTitleBarManager';
 
 const TAG = 'NovelReplaceRulePage';
 

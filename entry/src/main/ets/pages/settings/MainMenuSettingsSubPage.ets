@@ -23,12 +23,12 @@ import {
 import { getSuwayomiTracker, SuwayomiTracker, SuwayomiConfig } from '../../Framework/Tracking/trackers/SuwayomiTracker';
 import { getKomgaTracker, KomgaTracker } from '../../Framework/Tracking/trackers/KomgaTracker';
 import { KomgaConfig } from '../../Framework/Source/KomgaModels';
-import { SettingsSearchSupport } from './SettingsSearchSupport';
-import { SettingsPanelSurfaceHelper } from './SettingsPanelSurfaceHelper';
+import { SettingsSearchSupport } from 'manxia_features_ui/src/main/ets/pages/settings/SettingsSearchSupport';
+import { SettingsPanelSurfaceHelper } from 'manxia_features_ui/src/main/ets/pages/settings/SettingsPanelSurfaceHelper';
 import { GlobalBackgroundLayerMode } from 'manxia_theme/src/main/ets/Framework/Components/GlobalBackgroundLayer';
 import { SharedPageBackgroundLayer } from '../../Framework/Components/SharedPageBackgroundLayer';
 import { SettingsImmersiveTitleBar } from './SettingsImmersiveTitleBar';
-import { SettingsPageTitleBarManager } from './SettingsPageTitleBarManager';
+import { SettingsPageTitleBarManager } from 'manxia_features_ui/src/main/ets/pages/settings/SettingsPageTitleBarManager';
 
 const TAG = 'MainMenuSettingsSubPage';
 const TITLE_BAR_HEIGHT = 56;

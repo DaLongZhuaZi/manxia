@@ -39,11 +39,11 @@ import { AppGuideOverlay, GuideHighlightRect } from '../Framework/Components/App
 import { resolveGuideHighlightRectInRoot } from '../Framework/Components/AppGuideSupport';
 import { AppGuideManager, AppGuidePageId, AppGuideStep } from '../Framework/Managers/AppGuideManager';
 import { SettingsImmersiveTitleBar } from './settings/SettingsImmersiveTitleBar';
-import { SettingsPageTitleBarManager } from './settings/SettingsPageTitleBarManager';
-import { SettingsPageSurfaceManager } from './settings/SettingsPageSurfaceManager';
+import { SettingsPageTitleBarManager } from 'manxia_features_ui/src/main/ets/pages/settings/SettingsPageTitleBarManager';
+import { SettingsPageSurfaceManager } from 'manxia_features_ui/src/main/ets/pages/settings/SettingsPageSurfaceManager';
 import { GlobalBackgroundLayerMode } from 'manxia_theme/src/main/ets/Framework/Components/GlobalBackgroundLayer';
 import { SharedPageBackgroundLayer } from '../Framework/Components/SharedPageBackgroundLayer';
-import { SettingsPanelSurfaceHelper } from './settings/SettingsPanelSurfaceHelper';
+import { SettingsPanelSurfaceHelper } from 'manxia_features_ui/src/main/ets/pages/settings/SettingsPanelSurfaceHelper';
 import { SourceDetailSearchExecutor, getSourceDetailSearchExecutor } from '../Framework/Services/SourceDetailSearchExecutor';
 import { openSourceDetailInIsolatedAbility } from '../Framework/Source/SourceDetailAbilityLauncher';
 import { MangaDetailPageParams } from './MangaDetailPage';

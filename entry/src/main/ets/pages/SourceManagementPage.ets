@@ -26,10 +26,10 @@ import { ProxyConfigDialog } from '../components/source/ProxyConfigDialog';
 import { SourceManager, getSourceManager } from '../Framework/Source/SourceManager';
 import { SourceTester, TestResult, TestItemResult } from '../Framework/Source/SourceTester';
 import { SettingsImmersiveTitleBar } from './settings/SettingsImmersiveTitleBar';
-import { SettingsPageTitleBarManager } from './settings/SettingsPageTitleBarManager';
+import { SettingsPageTitleBarManager } from 'manxia_features_ui/src/main/ets/pages/settings/SettingsPageTitleBarManager';
 import { GlobalBackgroundLayerMode } from 'manxia_theme/src/main/ets/Framework/Components/GlobalBackgroundLayer';
 import { SharedPageBackgroundLayer } from '../Framework/Components/SharedPageBackgroundLayer';
-import { SettingsPanelSurfaceHelper } from './settings/SettingsPanelSurfaceHelper';
+import { SettingsPanelSurfaceHelper } from 'manxia_features_ui/src/main/ets/pages/settings/SettingsPanelSurfaceHelper';
 import { sourceDebugLogManager } from '../Framework/Debug/SourceDebugLogManager';
 import {
   SourceDiagnosticPageParams,

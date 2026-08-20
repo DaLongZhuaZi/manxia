@@ -15,10 +15,10 @@ import { getHelpPanelManagerV2 } from '../Framework/Components/HelpPanelV2';
 import { HELP_ITEMS_DATA, HELP_CATEGORIES, HelpItemData } from 'manxia_core/src/main/ets/Data/HelpData';
 import { AppGuideFlowId, AppGuideFlowSummary, AppGuideManager } from '../Framework/Managers/AppGuideManager';
 import { SettingsImmersiveTitleBar } from './settings/SettingsImmersiveTitleBar';
-import { SettingsPageTitleBarManager } from './settings/SettingsPageTitleBarManager';
+import { SettingsPageTitleBarManager } from 'manxia_features_ui/src/main/ets/pages/settings/SettingsPageTitleBarManager';
 import { GlobalBackgroundLayerMode } from 'manxia_theme/src/main/ets/Framework/Components/GlobalBackgroundLayer';
 import { SharedPageBackgroundLayer } from '../Framework/Components/SharedPageBackgroundLayer';
-import { SettingsPanelSurfaceHelper } from './settings/SettingsPanelSurfaceHelper';
+import { SettingsPanelSurfaceHelper } from 'manxia_features_ui/src/main/ets/pages/settings/SettingsPanelSurfaceHelper';
 
 const TAG = 'HelpCenterPage';
 const TITLE_BAR_HEIGHT_MINI: number = 56;

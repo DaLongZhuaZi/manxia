@@ -11,7 +11,8 @@
     "manxia_network": "file:./manxia-network",
     "manxia_novel": "file:./manxia-novel",
     "manxia_theme": "file:./manxia-theme",
-    "manxia_reader_ui": "file:./manxia-reader-ui"
+    "manxia_reader_ui": "file:./manxia-reader-ui",
+    "manxia_features_ui": "file:./manxia-features-ui"
   },
   "devDependencies": {
     "@ohos/hypium": "1.0.21",

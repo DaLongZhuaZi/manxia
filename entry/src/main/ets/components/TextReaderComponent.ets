@@ -15,7 +15,7 @@ import { common } from '@kit.AbilityKit';
 import { systemShare } from '@kit.ShareKit';
 import { uniformTypeDescriptor as utd } from '@kit.ArkData';
 import { DialogSurfaceStyleHelper } from '../Framework/Components/DialogSurfaceStyleHelper';
-import { SettingsGlassStyleHelper } from '../pages/settings/SettingsGlassStyleHelper';
+import { SettingsGlassStyleHelper } from 'manxia_features_ui/src/main/ets/pages/settings/SettingsGlassStyleHelper';
 import {
   getHoldingAwarenessManager,
   HoldingAwarenessFeature,

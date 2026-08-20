@@ -13,7 +13,7 @@ import { logger } from 'manxia_core/src/main/ets/Utils/Logger';
 import { PageLifecycleManager } from 'manxia_core/src/main/ets/Framework/Lifecycle/index';
 import { DeviceAdaptationManager, DeviceInfo, DeviceChangeListener, Breakpoint } from 'manxia_theme/src/main/ets/Framework/Managers/DeviceAdaptationManager';
 import { ResponsiveLayoutHelper } from 'manxia_core/src/main/ets/Framework/Utils/ResponsiveLayout';
-import { SettingsSearchSupport, SettingsSearchResult } from './SettingsSearchSupport';
+import { SettingsSearchSupport, SettingsSearchResult } from 'manxia_features_ui/src/main/ets/pages/settings/SettingsSearchSupport';
 import { AppGuideOverlay, GuideHighlightRect } from '../../Framework/Components/AppGuideOverlay';
 import { ensureGuideAnchorVisibleInScroller, resolveGuideHighlightRectInRoot } from '../../Framework/Components/AppGuideSupport';
 import { AppGuideManager, AppGuidePageId, AppGuideStep } from '../../Framework/Managers/AppGuideManager';
@@ -21,8 +21,8 @@ import { GlobalBackgroundLayerMode } from 'manxia_theme/src/main/ets/Framework/C
 import { SharedPageBackgroundLayer } from '../../Framework/Components/SharedPageBackgroundLayer';
 import { PageWindowCoordinator } from 'manxia_theme/src/main/ets/Utils/PageWindowCoordinator';
 import { SettingsImmersiveTitleBar } from './SettingsImmersiveTitleBar';
-import { SettingsPageTitleBarManager } from './SettingsPageTitleBarManager';
-import { SettingsPageSurfaceManager, SettingsPageSurfaceStyle, SettingsPageRowVisualStyle } from './SettingsPageSurfaceManager';
+import { SettingsPageTitleBarManager } from 'manxia_features_ui/src/main/ets/pages/settings/SettingsPageTitleBarManager';
+import { SettingsPageSurfaceManager, SettingsPageSurfaceStyle, SettingsPageRowVisualStyle } from 'manxia_features_ui/src/main/ets/pages/settings/SettingsPageSurfaceManager';
 
 const TAG = 'GlobalSettingsPage';
 const TITLE_BAR_HEIGHT_MINI: number = 56;

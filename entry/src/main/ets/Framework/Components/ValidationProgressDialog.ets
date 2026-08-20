@@ -7,7 +7,7 @@
 
 import { ThemeAwareState, ThemeAwareHelper } from 'manxia_theme/src/main/ets/Framework/Components/ThemeAware';
 import { AppColors } from 'manxia_theme/src/main/ets/Framework/Theme/AppColors';
-import { SettingsPageSurfaceManager } from '../../pages/settings/SettingsPageSurfaceManager';
+import { SettingsPageSurfaceManager } from 'manxia_features_ui/src/main/ets/pages/settings/SettingsPageSurfaceManager';
 
 /**
  * 校验进度信息
