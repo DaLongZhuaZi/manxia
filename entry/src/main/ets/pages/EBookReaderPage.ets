@@ -1,3 +1,4 @@
+import { ISettingsManagerFacade, SettingsManagerHolder } from 'manxia_core/src/main/ets/Framework/Contracts/ISettingsManagerFacade';
 import { SafeUtils } from 'manxia_core/src/main/ets/Utils/SafeUtils';
 // 文件路径: entry/src/main/ets/pages/EBookReaderPage.ets
 /**
@@ -26,7 +27,7 @@ import {
   EBookContentMode,
   DEFAULT_EBOOK_READING_SETTINGS
 } from 'manxia_core/src/main/ets/Models/EBookModels';
-import { SettingsManager, SettingKeys } from '../Framework/Managers/SettingsManager';
+import { SettingKeys } from 'manxia_core/src/main/ets/Framework/Contracts/SettingKeys';
 import { EBookDataManager } from '../Framework/Data/EBookDataManager';
 import { PdfViewerComponent } from '../Framework/Components/PdfViewerComponent';
 import { PdfKitViewerComponent, PdfViewerCallbacks, PdfViewerController } from '../Framework/Components/PdfKitViewerComponent';
@@ -277,7 +278,7 @@ struct EBookReaderPage {
   private interactionOverlayDismissTimer: number = -1;
 
   // UI上下文（用于设置沉浸式模式）
-  private settingsManager: SettingsManager = SettingsManager.getInstance();
+  private settingsManager: ISettingsManagerFacade = SettingsManagerHolder.get();
   private ebookDataManager: EBookDataManager = EBookDataManager.getInstance();
   private annotationManager = getUnifiedAnnotationManager();
   private readAloudController: ReadAloudController = ReadAloudController.getInstance();
@@ -1807,7 +1808,7 @@ struct EBookReaderPage {
   * 用于 TXT 格式电子书，优先使用全局设置，除非用户已修改
   */
   private loadTextReaderSettingsWithGlobalDefaults(ebook: EBook): void {
-    const settingsManager = SettingsManager.getInstance();
+    const settingsManager: ISettingsManagerFacade = SettingsManagerHolder.get();
     
     // 获取全局纯文本阅读器设置
     const globalFontSize = clampTextReaderFontSize(settingsManager.getNumber(SettingKeys.GLOBAL_TEXT_FONT_SIZE, DEFAULT_TEXT_READER_SETTINGS.textStyle.fontSize));

@@ -1,3 +1,4 @@
+import { ISettingsManagerFacade, SettingsManagerHolder } from 'manxia_core/src/main/ets/Framework/Contracts/ISettingsManagerFacade';
 import { SafeFileUtils } from 'manxia_core/src/main/ets/Utils/SafeFileUtils';
 import { SafeUtils } from 'manxia_core/src/main/ets/Utils/SafeUtils';
 import { logger } from 'manxia_core/src/main/ets/Utils/Logger';
@@ -62,7 +63,7 @@ import {
   UnifiedAnnotationType
 } from 'manxia_core/src/main/ets/Models/AnnotationModels';
 import { getUnifiedAnnotationManager } from '../Framework/Annotations/UnifiedAnnotationManager';
-import { SettingsManager } from '../Framework/Managers/SettingsManager';
+
 import { AddRuleParams, NovelReplaceRuleManager, ReplaceRule, ReplaceScope } from '../Framework/Novel/NovelReplaceRuleManager';
 import {
   DEFAULT_READ_ALOUD_SETTINGS,
@@ -244,7 +245,7 @@ export struct EpubWebViewReaderPage {
   private pendingContinuationPageIndex: number = -1;
   private sessionStartTimestamp: number = 0;
   private themeManager: ThemeManager = ThemeManager.getInstance();
-  private settingsManager: SettingsManager = SettingsManager.getInstance();
+  private settingsManager: ISettingsManagerFacade = SettingsManagerHolder.get();
   private readAloudController: ReadAloudController = ReadAloudController.getInstance();
   private hasNotifiedTransitionReaderReady: boolean = false;
   private epubCurlGestureActive: boolean = false;
@@ -323,7 +324,7 @@ export struct EpubWebViewReaderPage {
       distributedReadingService.clearContinuationFlags();
     }
     this.themeManager = ThemeManager.getInstance();
-    this.settingsManager = SettingsManager.getInstance();
+    this.settingsManager = SettingsManagerHolder.get();
     eventBus.subscribe(GameEvent.READ_ALOUD_STATE_CHANGED, this.onReadAloudStateChanged);
     AppStorage.setOrCreate('ReadAloudCurrentHostPage', 'EpubWebViewReaderPage');
     this.syncReadAloudStateFromController();

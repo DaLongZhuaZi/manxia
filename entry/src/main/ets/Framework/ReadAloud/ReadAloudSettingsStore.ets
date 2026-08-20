@@ -1,3 +1,4 @@
+import { ISettingsManagerFacade, SettingsManagerHolder } from 'manxia_core/src/main/ets/Framework/Contracts/ISettingsManagerFacade';
 import {
   DEFAULT_READ_ALOUD_SETTINGS,
   DEFAULT_REMOTE_READ_ALOUD_SETTINGS,
@@ -6,11 +7,11 @@ import {
   ReadAloudSettings,
   normalizeReadAloudSettings
 } from 'manxia_core/src/main/ets/Models/TextReaderModels';
-import { SettingKeys, SettingsManager } from '../Managers/SettingsManager';
+import { SettingKeys } from 'manxia_core/src/main/ets/Framework/Contracts/SettingKeys';
 
 let globalReadAloudPersistQueue: Promise<void> = Promise.resolve();
 
-export function loadGlobalReadAloudSettings(settingsManager: SettingsManager): ReadAloudSettings {
+export function loadGlobalReadAloudSettings(settingsManager: ISettingsManagerFacade): ReadAloudSettings {
   const engineRaw = settingsManager.getString(
     SettingKeys.GLOBAL_TEXT_READ_ALOUD_ENGINE,
     DEFAULT_READ_ALOUD_SETTINGS.engineType
@@ -139,7 +140,7 @@ export function loadGlobalReadAloudSettings(settingsManager: SettingsManager): R
   });
 }
 
-export async function persistGlobalReadAloudSettings(settingsManager: SettingsManager, settings: ReadAloudSettings): Promise<void> {
+export async function persistGlobalReadAloudSettings(settingsManager: ISettingsManagerFacade, settings: ReadAloudSettings): Promise<void> {
   const normalized = normalizeReadAloudSettings(settings);
   const remote = normalized.remote ?? DEFAULT_REMOTE_READ_ALOUD_SETTINGS;
 

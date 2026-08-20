@@ -1,3 +1,4 @@
+import { ISettingsManagerFacade, SettingsManagerHolder } from 'manxia_core/src/main/ets/Framework/Contracts/ISettingsManagerFacade';
 import { SafeUtils } from 'manxia_core/src/main/ets/Utils/SafeUtils';
 /**
  * 小说听书页面（播放器样式）
@@ -16,7 +17,7 @@ import {
   DEFAULT_READ_ALOUD_SETTINGS,
   ReadAloudSettings
 } from 'manxia_core/src/main/ets/Models/TextReaderModels';
-import { SettingsManager } from '../Framework/Managers/SettingsManager';
+
 import { ReadAloudController } from '../Framework/ReadAloud/ReadAloudController';
 import { ReadAloudPlaybackState } from '../Framework/ReadAloud/ReadAloudTypes';
 import { eventBus, GameEvent, IEventPayload, ReadAloudStatePayload } from '../Framework/EventBus';
@@ -55,7 +56,7 @@ export struct NovelReadAloudPage {
   private sourceManager = getNovelSourceManager();
   private cacheManager = getNovelChapterCacheManager();
   private readAloudController: ReadAloudController = ReadAloudController.getInstance();
-  private settingsManager: SettingsManager = SettingsManager.getInstance();
+  private settingsManager: ISettingsManagerFacade = SettingsManagerHolder.get();
 
   private sourceId: string = '';
   private bookUrl: string = '';

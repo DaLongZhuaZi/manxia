@@ -11,6 +11,8 @@ export interface ISettingsManagerFacade {
   setString(key: string, value: string): Promise<void>;
   setNumber(key: string, value: number): Promise<void>;
   syncToAppStorage(): void;
+  getJSON<T>(key: string, defaultValue: T): T;
+  setJSON<T>(key: string, value: T): Promise<void>;
 }
 
 /**

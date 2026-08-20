@@ -1,3 +1,4 @@
+import { ISettingsManagerFacade, SettingsManagerHolder } from 'manxia_core/src/main/ets/Framework/Contracts/ISettingsManagerFacade';
 import { SafeUtils } from 'manxia_core/src/main/ets/Utils/SafeUtils';
 /**
  * 小说书源管理页面
@@ -22,7 +23,7 @@ import { NovelSourceInfo } from 'manxia_core/src/main/ets/Models/NovelModels';
 import { LegadoSourceImportResult, LegadoBookSource, LegadoBookSourceType } from 'manxia_novel/src/main/ets/Framework/Novel/LegadoSourceTypes';
 import { ThemeAwareState, ThemeAwareHelper } from 'manxia_theme/src/main/ets/Framework/Components/ThemeAware';
 import { ThemeManager, ThemeType } from 'manxia_theme/src/main/ets/Framework/Managers/ThemeManager';
-import { SettingKeys, SettingsManager } from '../Framework/Managers/SettingsManager';
+import { SettingKeys } from 'manxia_core/src/main/ets/Framework/Contracts/SettingKeys';
 import { FontAwareHelper, FontAwareState } from 'manxia_theme/src/main/ets/Framework/Components/FontAware';
 import { SourceDialogScaffold } from '../Framework/Components/SourceDialogScaffold';
 import { NovelSearchPageParams } from './NovelBookshelfPage';
@@ -242,7 +243,7 @@ export struct NovelSourceManagementPage {
   private isLoadingMore: boolean = false;
   private sourceManager: NovelSourceManager = getNovelSourceManager();
   private v2QualificationRunner: LegadoV2QualificationRunner = new LegadoV2QualificationRunner(this.sourceManager);
-  private settingsManager: SettingsManager = SettingsManager.getInstance();
+  private settingsManager: ISettingsManagerFacade = SettingsManagerHolder.get();
   private listScroller: Scroller = new Scroller();
   // 校验进度对话框
   private validationProgressController: ValidationProgressController | null = null;
