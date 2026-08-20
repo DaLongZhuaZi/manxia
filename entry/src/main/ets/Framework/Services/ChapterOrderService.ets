@@ -12,7 +12,7 @@ import {
 import { MangaChapter } from 'manxia_core/src/main/ets/Models/MangaModels';
 import { EBookChapter, EBookFormat } from 'manxia_core/src/main/ets/Models/EBookModels';
 import { LegadoChapter } from 'manxia_novel/src/main/ets/Framework/Novel/LegadoSourceTypes';
-import { MangaAdapter, EBookAdapter, NovelAdapter } from '../Adapters/UnifiedContentAdapter';
+import { MangaAdapter, EBookAdapter, NovelAdapter } from 'manxia_novel/src/main/ets/Framework/Adapters/UnifiedContentAdapter';
 import { buildLocalTextNovelBookId } from '../Adapters/LocalTextNovelAdapter';
 import { DatabaseManager } from 'manxia_core/src/main/ets/Framework/Database/DatabaseManager';
 import { DatabaseValue, GenericQueryRecord } from 'manxia_core/src/main/ets/Framework/Database/DatabaseTypes';

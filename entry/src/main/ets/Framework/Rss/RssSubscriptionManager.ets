@@ -14,7 +14,7 @@ import {
   RssItemQueryOptions,
   RssSourceFetchMeta,
   RssSubscriptionDataManager
-} from './RssSubscriptionDataManager';
+} from 'manxia_novel/src/main/ets/Framework/Rss/RssSubscriptionDataManager';
 import { ParsedRssFeed, RssFeedParser } from './RssFeedParser';
 import { LegadoRuleAnalyzer } from '../Novel/LegadoRuleAnalyzer';
 import { LegadoUrlAnalyzer, ParsedUrlRequest, RequestMethod } from '../Novel/LegadoUrlAnalyzer';

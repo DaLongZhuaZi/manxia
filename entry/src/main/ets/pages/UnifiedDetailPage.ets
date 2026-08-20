@@ -63,7 +63,7 @@ import {
   EBookAdapter,
   NovelAdapter,
   AdapterOptions
-} from '../Framework/Adapters/UnifiedContentAdapter';
+} from 'manxia_novel/src/main/ets/Framework/Adapters/UnifiedContentAdapter';
 import {
   inspectEBookImagePageSignals,
   resolveEBookReaderRouteName

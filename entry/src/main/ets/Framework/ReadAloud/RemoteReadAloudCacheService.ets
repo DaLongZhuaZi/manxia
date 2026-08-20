@@ -33,7 +33,7 @@ import { getNovelContentProcessor, ContentProcessConfig } from '../Novel/NovelCo
 import { LegadoChapter } from 'manxia_novel/src/main/ets/Framework/Novel/LegadoSourceTypes';
 import { EBook, EBookFormat } from 'manxia_core/src/main/ets/Models/EBookModels';
 import { EBookDataManager } from 'manxia_core/src/main/ets/Framework/Data/EBookDataManager';
-import { EBookAdapter, NovelAdapter } from '../Adapters/UnifiedContentAdapter';
+import { EBookAdapter, NovelAdapter } from 'manxia_novel/src/main/ets/Framework/Adapters/UnifiedContentAdapter';
 import { processReadAloudNovelContentByBook } from './ReadAloudTextProcessing';
 import {
   buildLocalTextNovelBookId,

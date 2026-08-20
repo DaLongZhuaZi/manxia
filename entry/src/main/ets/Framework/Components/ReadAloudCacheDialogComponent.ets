@@ -14,7 +14,7 @@ import {
   UnifiedContentType,
   UnifiedReadStatus
 } from 'manxia_core/src/main/ets/Models/UnifiedContentModels';
-import { EBookAdapter } from '../Adapters/UnifiedContentAdapter';
+import { EBookAdapter } from 'manxia_novel/src/main/ets/Framework/Adapters/UnifiedContentAdapter';
 import { buildLocalTextNovelBookId } from '../Adapters/LocalTextNovelAdapter';
 import {
   RemoteReadAloudCacheChapterSummary,

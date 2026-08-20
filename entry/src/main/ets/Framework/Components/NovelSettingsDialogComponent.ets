@@ -17,7 +17,7 @@ import {
   UnifiedContentType,
   UnifiedDetailPageParams
 } from 'manxia_core/src/main/ets/Models/UnifiedContentModels';
-import { EBookAdapter, NovelAdapter } from '../Adapters/UnifiedContentAdapter';
+import { EBookAdapter, NovelAdapter } from 'manxia_novel/src/main/ets/Framework/Adapters/UnifiedContentAdapter';
 import { buildLocalTextNovelBookId } from '../Adapters/LocalTextNovelAdapter';
 import { getNovelTxtTocRuleManager, TxtTocRule } from '../Novel/NovelTxtTocRuleManager';
 import { NovelReplaceRuleManager, ReplaceScope, ReplaceRule } from '../Novel/NovelReplaceRuleManager';

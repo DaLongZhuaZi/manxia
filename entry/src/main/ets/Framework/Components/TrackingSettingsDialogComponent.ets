@@ -38,7 +38,7 @@ import {
   UnifiedContent,
   UnifiedContentType
 } from 'manxia_core/src/main/ets/Models/UnifiedContentModels';
-import { MangaAdapter, NovelAdapter } from '../Adapters/UnifiedContentAdapter';
+import { MangaAdapter, NovelAdapter } from 'manxia_novel/src/main/ets/Framework/Adapters/UnifiedContentAdapter';
 import { Manga } from 'manxia_core/src/main/ets/Models/MangaModels';
 import { NovelBook, NovelReadStatus } from 'manxia_core/src/main/ets/Models/NovelModels';
 import { RemoteLibraryMangaBridge } from '../Source/RemoteLibraryMangaBridge';
