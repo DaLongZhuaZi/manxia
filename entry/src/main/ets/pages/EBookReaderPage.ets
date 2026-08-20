@@ -95,7 +95,7 @@ import {
 } from '../Framework/ReadAloud/ReadAloudSettingsStore';
 import { ReadAloudSettingsInfoPanel } from '../components/ReadAloudSettingsInfoPanel';
 import { UnifiedContentType } from 'manxia_core/src/main/ets/Models/UnifiedContentModels';
-import { getUnifiedAnnotationManager } from '../Framework/Annotations/UnifiedAnnotationManager';
+import { getUnifiedAnnotationManager } from 'manxia_core/src/main/ets/Framework/Annotations/UnifiedAnnotationManager';
 import { AnnotationAnchor, UnifiedAnnotationType } from 'manxia_core/src/main/ets/Models/AnnotationModels';
 import { MangaReadFlowMonitor } from 'manxia_reader_ui/src/main/ets/Framework/Reader/MangaReadFlowMonitor';
 import {

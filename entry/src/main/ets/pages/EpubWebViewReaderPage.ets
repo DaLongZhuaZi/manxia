@@ -62,7 +62,7 @@ import {
   UnifiedAnnotationRecord,
   UnifiedAnnotationType
 } from 'manxia_core/src/main/ets/Models/AnnotationModels';
-import { getUnifiedAnnotationManager } from '../Framework/Annotations/UnifiedAnnotationManager';
+import { getUnifiedAnnotationManager } from 'manxia_core/src/main/ets/Framework/Annotations/UnifiedAnnotationManager';
 
 import { AddRuleParams, NovelReplaceRuleManager, ReplaceRule, ReplaceScope } from '../Framework/Novel/NovelReplaceRuleManager';
 import {

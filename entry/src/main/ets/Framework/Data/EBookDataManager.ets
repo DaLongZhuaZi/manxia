@@ -28,7 +28,7 @@ import {
 } from 'manxia_core/src/main/ets/Models/MangaModels';
 import { logger } from 'manxia_core/src/main/ets/Utils/Logger';
 import { SettingsManager, SettingKeys } from '../Managers/SettingsManager';
-import { getUnifiedAnnotationManager } from '../Annotations/UnifiedAnnotationManager';
+import { getUnifiedAnnotationManager } from 'manxia_core/src/main/ets/Framework/Annotations/UnifiedAnnotationManager';
 import { UnifiedContentType } from 'manxia_core/src/main/ets/Models/UnifiedContentModels';
 import { fileIo as fs } from '@kit.CoreFileKit';
 import DownloadDirManager from 'manxia_core/src/main/ets/Framework/Storage/DownloadDirManager';

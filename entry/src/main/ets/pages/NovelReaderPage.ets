@@ -79,7 +79,7 @@ import { NovelDictRuleManager, DictRule } from '../Framework/Novel/NovelDictRule
 import { ReadAloudController } from '../Framework/ReadAloud/ReadAloudController';
 import { ReadAloudPlaybackState } from '../Framework/ReadAloud/ReadAloudTypes';
 import { eventBus, GameEvent, IEventPayload, ReadAloudStatePayload } from '../Framework/EventBus';
-import { getUnifiedAnnotationManager } from '../Framework/Annotations/UnifiedAnnotationManager';
+import { getUnifiedAnnotationManager } from 'manxia_core/src/main/ets/Framework/Annotations/UnifiedAnnotationManager';
 import { AnnotationCenterPageParams } from './AnnotationCenterPage';
 import { EBook, EBookReadingProgress } from 'manxia_core/src/main/ets/Models/EBookModels';
 import { EBookDataManager } from '../Framework/Data/EBookDataManager';

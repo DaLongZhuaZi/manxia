@@ -28,7 +28,7 @@ import { NovelBook, NovelChapter, NovelReadProgress, NovelReaderSettings, DEFAUL
 import { getNovelLoginManager } from './NovelLoginManager';
 import { getNovelCoverGenerator } from 'manxia_novel/src/main/ets/Framework/Novel/NovelCoverGenerator';
 import { LibraryCoverManager } from 'manxia_core/src/main/ets/Framework/Storage/LibraryCoverManager';
-import { getUnifiedAnnotationManager } from '../Annotations/UnifiedAnnotationManager';
+import { getUnifiedAnnotationManager } from 'manxia_core/src/main/ets/Framework/Annotations/UnifiedAnnotationManager';
 import { UnifiedContentType } from 'manxia_core/src/main/ets/Models/UnifiedContentModels';
 
 const TAG = 'NovelDataManager';

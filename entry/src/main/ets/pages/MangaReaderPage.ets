@@ -103,7 +103,7 @@ import { window } from '@kit.ArkUI';
 import { eventBus, GameEvent, BasePayload } from '../Framework/EventBus';
 import { PageLifecycleManager, CancellationError } from 'manxia_core/src/main/ets/Framework/Lifecycle/index';
 import { UnifiedContentType } from 'manxia_core/src/main/ets/Models/UnifiedContentModels';
-import { getUnifiedAnnotationManager } from '../Framework/Annotations/UnifiedAnnotationManager';
+import { getUnifiedAnnotationManager } from 'manxia_core/src/main/ets/Framework/Annotations/UnifiedAnnotationManager';
 import { AnnotationAnchor, UnifiedAnnotationType } from 'manxia_core/src/main/ets/Models/AnnotationModels';
 import { AnnotationCenterPageParams } from './AnnotationCenterPage';
 import { AppGuideOverlay, GuideHighlightRect } from '../Framework/Components/AppGuideOverlay';

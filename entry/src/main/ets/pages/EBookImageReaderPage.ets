@@ -16,7 +16,7 @@ import { ThemeManager } from 'manxia_theme/src/main/ets/Framework/Managers/Theme
 import { getFontManager, FontScene } from 'manxia_theme/src/main/ets/Framework/Managers/FontManager';
 import { EBookDataManager } from '../Framework/Data/EBookDataManager';
 import { EBookParserFactory } from '../Framework/Parsers/EBookParser';
-import { getUnifiedAnnotationManager } from '../Framework/Annotations/UnifiedAnnotationManager';
+import { getUnifiedAnnotationManager } from 'manxia_core/src/main/ets/Framework/Annotations/UnifiedAnnotationManager';
 import { UnifiedContentType } from 'manxia_core/src/main/ets/Models/UnifiedContentModels';
 import { AnnotationAnchor, UnifiedAnnotationType } from 'manxia_core/src/main/ets/Models/AnnotationModels';
 import { AnnotationCenterPageParams } from './AnnotationCenterPage';

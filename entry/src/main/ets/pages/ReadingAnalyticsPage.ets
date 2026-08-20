@@ -27,7 +27,7 @@ import { MangaDetailPageParams } from './MangaDetailPage';
 import { EBookDetailPageParams } from './EBookDetailPage';
 import { NovelDetailPageParams } from './NovelBookshelfPage';
 import { widgetDataSync } from '../Utils/WidgetDataSync';
-import { getUnifiedAnnotationManager, UnifiedAnnotationManager } from '../Framework/Annotations/UnifiedAnnotationManager';
+import { getUnifiedAnnotationManager, UnifiedAnnotationManager } from 'manxia_core/src/main/ets/Framework/Annotations/UnifiedAnnotationManager';
 import { UnifiedAnnotationRecord, UnifiedAnnotationType } from 'manxia_core/src/main/ets/Models/AnnotationModels';
 import { AnnotationCenterPageParams } from './AnnotationCenterPage';
 import { SettingsImmersiveTitleBar } from './settings/SettingsImmersiveTitleBar';

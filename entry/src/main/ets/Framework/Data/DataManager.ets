@@ -37,7 +37,7 @@ import {
 } from 'manxia_core/src/main/ets/Framework/Database/DatabaseTypes';
 import { SandboxManager } from 'manxia_core/src/main/ets/Framework/Storage/SandboxManager';
 import { LibraryCoverManager } from 'manxia_core/src/main/ets/Framework/Storage/LibraryCoverManager';
-import { getUnifiedAnnotationManager } from '../Annotations/UnifiedAnnotationManager';
+import { getUnifiedAnnotationManager } from 'manxia_core/src/main/ets/Framework/Annotations/UnifiedAnnotationManager';
 import { ImageCacheManager, ImageCacheConfig, MemoryCacheConfig, DiskCacheConfig} from '../Cache/ImageCacheManager';
 import { ComicArchiveManager, ComicChapterInfo, ComicPageInfo } from 'manxia_core/src/main/ets/Framework/Compress/ComicArchiveManager';
 import { HSPPluginManager } from '../Plugin/HSPPluginManager';
