@@ -8,7 +8,7 @@
 import { preferences } from '@kit.ArkData';
 import { logger } from 'manxia_core/src/main/ets/Utils/Logger';
 import { getContext } from 'manxia_theme/src/main/ets/GlobalContext';
-import { WelcomeGuideManager } from './WelcomeGuideManager';
+import { WelcomeGuideManager } from 'manxia_core/src/main/ets/Framework/Managers/WelcomeGuideManager';
 
 const TAG = 'AppGuideManager';
 

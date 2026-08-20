@@ -6,7 +6,7 @@ import { ThemeManager, ThemeType } from 'manxia_theme/src/main/ets/Framework/Man
 import { FontAwareHelper, FontAwareState } from 'manxia_theme/src/main/ets/Framework/Components/FontAware';
 import { SettingKeys } from 'manxia_core/src/main/ets/Framework/Contracts/SettingKeys';
 // (removed direct SettingsManager import)
-import { GuideStep, WelcomeGuideManager } from '../../Framework/Managers/WelcomeGuideManager';
+import { GuideStep, WelcomeGuideManager } from 'manxia_core/src/main/ets/Framework/Managers/WelcomeGuideManager';
 import { logger } from 'manxia_core/src/main/ets/Utils/Logger';
 import { GlobalBackgroundLayerMode } from 'manxia_theme/src/main/ets/Framework/Components/GlobalBackgroundLayer';
 import { SharedPageBackgroundLayer } from '../../Framework/Components/SharedPageBackgroundLayer';

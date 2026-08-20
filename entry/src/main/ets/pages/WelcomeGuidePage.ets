@@ -10,7 +10,7 @@ import { PageLifecycleManager } from 'manxia_core/src/main/ets/Framework/Lifecyc
 import { ThemeManager, ThemeType, CustomThemeData, CustomThemeMode } from 'manxia_theme/src/main/ets/Framework/Managers/ThemeManager';
 import { ThemeAwareHelper, ThemeAwareState } from 'manxia_theme/src/main/ets/Framework/Components/ThemeAware';
 import { FontAwareHelper, FontAwareState } from 'manxia_theme/src/main/ets/Framework/Components/FontAware';
-import { WelcomeGuideManager, GuideStep, GuideFlowMode } from '../Framework/Managers/WelcomeGuideManager';
+import { WelcomeGuideManager, GuideStep, GuideFlowMode } from 'manxia_core/src/main/ets/Framework/Managers/WelcomeGuideManager';
 import { SettingKeys } from 'manxia_core/src/main/ets/Framework/Contracts/SettingKeys';
 import { DataManager } from '../Framework/Data/DataManager';
 import { AppNotificationManager } from 'manxia_core/src/main/ets/Framework/Managers/NotificationManager';

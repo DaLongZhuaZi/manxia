@@ -4,7 +4,7 @@
  * 提供便捷的测试方法，用于开发和调试引导功能
  */
 
-import { WelcomeGuideManager, GuideStep } from '../Framework/Managers/WelcomeGuideManager';
+import { WelcomeGuideManager, GuideStep } from 'manxia_core/src/main/ets/Framework/Managers/WelcomeGuideManager';
 import { logger } from 'manxia_core/src/main/ets/Utils/Logger';
 
 const TAG = 'WelcomeGuideTestHelper';
