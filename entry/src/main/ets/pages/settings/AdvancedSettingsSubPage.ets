@@ -9,7 +9,8 @@ import { LengthMetrics, promptAction } from '@kit.ArkUI';
 import { ThemeAwareState, ThemeAwareHelper } from 'manxia_theme/src/main/ets/Framework/Components/ThemeAware';
 import { ThemeManager, ThemeType } from 'manxia_theme/src/main/ets/Framework/Managers/ThemeManager';
 import { FontAwareHelper, FontAwareState } from 'manxia_theme/src/main/ets/Framework/Components/FontAware';
-import { SettingsManager, SettingKeys } from '../../Framework/Managers/SettingsManager';
+import { ISettingsManagerFacade, SettingsManagerHolder } from 'manxia_core/src/main/ets/Framework/Contracts/ISettingsManagerFacade';
+import { SettingKeys } from 'manxia_core/src/main/ets/Framework/Contracts/SettingKeys';
 import { ContentFilterManager } from '../../Framework/Managers/ContentFilterManager';
 import { WelcomeGuideManager } from '../../Framework/Managers/WelcomeGuideManager';
 import { AppGuideManager } from '../../Framework/Managers/AppGuideManager';
@@ -54,7 +55,7 @@ export struct AdvancedSettingsSubPage {
   @StorageLink('source_settings_visible') sourceSettingsVisible: boolean = false;
   private themeManager: ThemeManager = ThemeManager.getInstance();
   private componentId: string = 'AdvancedSettingsSubPage';
-  private settingsManager: SettingsManager = SettingsManager.getInstance();
+  private settingsManager: ISettingsManagerFacade = SettingsManagerHolder.get();
   private welcomeGuideManager: WelcomeGuideManager = WelcomeGuideManager.getInstance();
   private appGuideManager: AppGuideManager = AppGuideManager.getInstance();
 

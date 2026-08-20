@@ -1,5 +1,6 @@
 import { SafeUtils } from 'manxia_core/src/main/ets/Utils/SafeUtils';
 import { SettingKeys } from 'manxia_core/src/main/ets/Framework/Contracts/SettingKeys';
+import { ISettingsManagerFacade, SettingsManagerHolder } from 'manxia_core/src/main/ets/Framework/Contracts/ISettingsManagerFacade';
 /**
  * 设置管理器
  * 负责管理应用的所有设置，使用数据库持久化存储
@@ -31,7 +32,7 @@ export enum SettingType {
 /**
  * 设置管理器类
  */
-export class SettingsManager {
+export class SettingsManager implements ISettingsManagerFacade {
   private static instance: SettingsManager;
   private dataManager: DataManager | null = null;
   private settingsCache: Map<string, string> = new Map();
@@ -62,7 +63,9 @@ export class SettingsManager {
       logger.error(TAG, '❌ 设置管理器初始化失败', String(error));
       throw error as Error;
     }
-  }
+  
+  SettingsManagerHolder.register(this);
+}
 
   /**
    * 加载所有设置到缓存
