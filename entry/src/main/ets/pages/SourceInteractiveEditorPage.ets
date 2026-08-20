@@ -26,7 +26,7 @@ import {
   TaskStatus,
   TaskType
 } from '../Framework/Task/BackgroundTaskManager';
-import { TaskNavigationTarget } from '../Framework/Task/TaskNavigationTypes';
+import { TaskNavigationTarget } from 'manxia_network/src/main/ets/Framework/Task/TaskNavigationTypes';
 import {
   sourceAutoCheckHistoryService,
   SourceAutoCheckRecord,

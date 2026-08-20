@@ -7,10 +7,10 @@
 
 import { common } from '@kit.AbilityKit';
 import { logger } from 'manxia_core/src/main/ets/Utils/Logger';
-import { FeedbackCenterCacheManager, FeedbackCenterCacheStats } from '../Framework/Cache/FeedbackCenterCacheManager';
+import { FeedbackCenterCacheManager, FeedbackCenterCacheStats } from 'manxia_network/src/main/ets/Framework/Cache/FeedbackCenterCacheManager';
 import { CacheConfigManager, CacheConfig, MemoryCacheConfig, DiskCacheConfig, PreloadConfig } from '../Framework/Cache/CacheConfigManager';
 import { SmartPreloadStrategy, PreloadStats } from '../Framework/Cache/SmartPreloadStrategy';
-import { DiskCacheManager } from '../Framework/Cache/DiskCacheManager';
+import { DiskCacheManager } from 'manxia_network/src/main/ets/Framework/Cache/DiskCacheManager';
 import { ThemeManager, ThemeType } from '../Framework/Managers/ThemeManager';
 import { ThemeAwareHelper } from '../Framework/Components/ThemeAware';
 import { FontAwareHelper, FontAwareState } from '../Framework/Components/FontAware';

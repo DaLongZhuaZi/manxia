@@ -10,7 +10,7 @@ import {
 import {
   getNetworkTransportFailureCoordinator,
   NetworkTransportFailureCoordinator
-} from '../Network/NetworkTransportFailureCoordinator';
+} from 'manxia_network/src/main/ets/Framework/Network/NetworkTransportFailureCoordinator';
 
 const TAG = 'MangaReadFlowMonitor';
 

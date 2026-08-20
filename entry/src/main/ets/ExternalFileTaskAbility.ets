@@ -6,13 +6,13 @@ import { SettingsManager } from './Framework/Managers/SettingsManager';
 import {
   EXTERNAL_FILE_TASK_ABILITY_INSTANCE_ID_KEY,
   EXTERNAL_FILE_TASK_ABILITY_PAGE
-} from './Framework/ExternalFile/ExternalFileTaskAbilityConstants';
-import { ExternalFileTaskParamStore } from './Framework/ExternalFile/ExternalFileTaskParamStore';
+} from 'manxia_network/src/main/ets/Framework/ExternalFile/ExternalFileTaskAbilityConstants';
+import { ExternalFileTaskParamStore } from 'manxia_network/src/main/ets/Framework/ExternalFile/ExternalFileTaskParamStore';
 import {
   ExternalFileTaskFactory,
   ExternalFileTaskKind,
   ExternalFileTaskParams
-} from './Framework/ExternalFile/ExternalFileTaskTypes';
+} from 'manxia_network/src/main/ets/Framework/ExternalFile/ExternalFileTaskTypes';
 
 const TAG: string = 'ExternalFileTaskAbility';
 const DEFAULT_TASK_TITLE: string = '外部文件任务';

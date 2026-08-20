@@ -49,7 +49,7 @@ import {
   FEEDBACK_DRAFT_PART_FILE_NAME,
   FEEDBACK_MAX_ATTACHMENT_BYTES,
   FEEDBACK_PENDING_DIR_NAME
-} from '../Framework/Cache/FeedbackCenterCacheManager';
+} from 'manxia_network/src/main/ets/Framework/Cache/FeedbackCenterCacheManager';
 import { logger } from 'manxia_core/src/main/ets/Utils/Logger';
 
 const TAG = 'MangaFeedbackPage';

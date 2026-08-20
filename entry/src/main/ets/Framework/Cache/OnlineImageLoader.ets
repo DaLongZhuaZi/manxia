@@ -15,7 +15,7 @@ import { http } from '@kit.NetworkKit';
 import { webview } from '@kit.ArkWeb';
 import CookieManager from '../Managers/CookieManager';
 import { cryptoFramework } from '@kit.CryptoArchitectureKit';
-import { DiskCacheManager } from './DiskCacheManager';
+import { DiskCacheManager } from 'manxia_network/src/main/ets/Framework/Cache/DiskCacheManager';
 import { DataManager, PageCacheUpdate } from '../Data/DataManager';
 import { JinmantiantangDescrambler, JinmantiantangParameters } from 'manxia_core/src/main/ets/Framework/ImageProcessing/JinmantiantangDescrambler';
 import { UserAgentManager } from '../Managers/UserAgentManager';
@@ -23,13 +23,13 @@ import { AvifDecoder, isAvifFormat } from '../Image/AvifDecoder';
 import { GlobalWebViewContainer, WebViewEventCallbacks } from 'manxia_source_engine/src/main/ets/Framework/WebView/WebViewContainerPage';
 import { WebViewSourceConfig } from 'manxia_source_engine/src/main/ets/Framework/WebView/WebViewImageLoader';
 import { OnlineMangaArchiveService } from '../Download/OnlineMangaArchiveService';
-import { DownloadCacheFlowMonitor, getDownloadCacheFlowMonitor } from '../Download/DownloadCacheFlowMonitor';
-import { DownloadCacheFailureTtlCache, getDownloadCacheFailureTtlCache } from '../Download/DownloadCacheFailureTtlCache';
+import { DownloadCacheFlowMonitor, getDownloadCacheFlowMonitor } from 'manxia_network/src/main/ets/Framework/Download/DownloadCacheFlowMonitor';
+import { DownloadCacheFailureTtlCache, getDownloadCacheFailureTtlCache } from 'manxia_network/src/main/ets/Framework/Download/DownloadCacheFailureTtlCache';
 import {
   DownloadCacheLimiterPermit,
   DownloadCacheSourceLimiter,
   getDownloadCacheSourceLimiter
-} from '../Download/DownloadCacheSourceLimiter';
+} from 'manxia_network/src/main/ets/Framework/Download/DownloadCacheSourceLimiter';
 import {
   DownloadCacheContentType,
   DownloadCacheEntrySource,
@@ -38,17 +38,17 @@ import {
   DownloadCacheFlowSessionInfo,
   DownloadCacheFlowSeverity,
   DownloadCacheFlowStage
-} from '../Download/DownloadCacheFlowTypes';
+} from 'manxia_network/src/main/ets/Framework/Download/DownloadCacheFlowTypes';
 import {
   LegadoImageTransportTrace,
   LegadoImageTransportTraceContext
-} from '../Network/LegadoImageTransportTrace';
+} from 'manxia_network/src/main/ets/Framework/Network/LegadoImageTransportTrace';
 import {
   getNetworkTransportFailureCoordinator,
   NetworkTransportCircuitDecision,
   NetworkTransportFailureCoordinator,
   NetworkTransportFailureDescriptor
-} from '../Network/NetworkTransportFailureCoordinator';
+} from 'manxia_network/src/main/ets/Framework/Network/NetworkTransportFailureCoordinator';
 
 
 const TAG = 'OnlineImageLoader';

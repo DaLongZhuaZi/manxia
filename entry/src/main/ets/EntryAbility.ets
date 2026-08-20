@@ -64,13 +64,13 @@ import { distributedFileManager } from './Framework/Distributed/DistributedFileM
 import { distributedDataSyncManager } from './Framework/Distributed/DistributedDataSyncManager';
 import { distributedPermissionManager } from './Framework/Distributed/DistributedPermissionManager';
 import { continuationStateHelper } from './Framework/Distributed/ContinuationStateHelper';
-import { openExternalFileTaskInIsolatedAbilityByContext } from './Framework/ExternalFile/ExternalFileTaskLauncher';
+import { openExternalFileTaskInIsolatedAbilityByContext } from 'manxia_network/src/main/ets/Framework/ExternalFile/ExternalFileTaskLauncher';
 import {
   ExternalFileTaskFactory,
   ExternalFileTaskKind,
   ExternalFileTaskParams,
   ExternalFileTaskSource
-} from './Framework/ExternalFile/ExternalFileTaskTypes';
+} from 'manxia_network/src/main/ets/Framework/ExternalFile/ExternalFileTaskTypes';
 
 export default class EntryAbility extends UIAbility {
 

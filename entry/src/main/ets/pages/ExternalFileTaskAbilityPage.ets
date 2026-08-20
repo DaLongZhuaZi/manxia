@@ -24,19 +24,19 @@ import { FILE_EDITOR_ABILITY_HOST_MODE } from '../Framework/Editor/FileEditorAbi
 import {
   ExternalFileTaskParamStore,
   ExternalFileTaskWindowPayload
-} from '../Framework/ExternalFile/ExternalFileTaskParamStore';
+} from 'manxia_network/src/main/ets/Framework/ExternalFile/ExternalFileTaskParamStore';
 import {
   ExternalFileTaskFactory,
   ExternalFileTaskKind,
   ExternalFileTaskParams,
   ExternalFileTaskSource
-} from '../Framework/ExternalFile/ExternalFileTaskTypes';
+} from 'manxia_network/src/main/ets/Framework/ExternalFile/ExternalFileTaskTypes';
 import {
   ExternalImportNavigationCoordinator,
   ExternalImportNavigationRequest,
   ExternalImportNavigationSource,
   ExternalImportNavigationTarget
-} from '../Framework/ExternalFile/ExternalImportNavigationCoordinator';
+} from 'manxia_network/src/main/ets/Framework/ExternalFile/ExternalImportNavigationCoordinator';
 import { ImportFlowMonitor, getImportFlowMonitor } from '../Framework/Import/ImportFlowMonitor';
 import {
   ImportFlowEntrySource,

@@ -9,7 +9,7 @@ import { DataService } from '../Services/DataService';
 import { BusinessError } from '@kit.BasicServicesKit';
 import { common } from '@kit.AbilityKit';
 import { initializeNovelModule } from '../Novel/NovelInitializer';
-import { DiskCacheManager } from '../Cache/DiskCacheManager';
+import { DiskCacheManager } from 'manxia_network/src/main/ets/Framework/Cache/DiskCacheManager';
 import { SandboxManager } from 'manxia_core/src/main/ets/Framework/Storage/SandboxManager';
 import { DataManager } from '../Data/DataManager';
 import { getSubscriptionInitializer } from '../Subscription/SubscriptionInitializer';

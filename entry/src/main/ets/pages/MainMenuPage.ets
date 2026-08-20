@@ -201,9 +201,9 @@ import {
   ExternalImportNavigationCoordinator,
   ExternalImportNavigationPayload,
   ExternalImportNavigationTarget
-} from '../Framework/ExternalFile/ExternalImportNavigationCoordinator';
+} from 'manxia_network/src/main/ets/Framework/ExternalFile/ExternalImportNavigationCoordinator';
 import { getCoverImageManager } from '../Framework/Image/CoverImageManager';
-import { LocalImageCacheManager } from '../Framework/Cache/LocalImageCacheManager';
+import { LocalImageCacheManager } from 'manxia_network/src/main/ets/Framework/Cache/LocalImageCacheManager';
 import { CoverCacheManager } from '../Framework/Cache/CoverCacheManager';
 import { LibraryCoverManager, LibraryCoverType } from 'manxia_core/src/main/ets/Framework/Storage/LibraryCoverManager';
 import { AvifImage } from '../components/AvifImage';

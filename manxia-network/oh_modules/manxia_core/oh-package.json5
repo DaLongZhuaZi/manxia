@@ -1,0 +1,10 @@
+{
+  "name": "manxia_core",
+  "version": "1.0.0",
+  "description": "漫匣核心基础层：日志/类型/生命周期/存储/资源映射/纯工具",
+  "main": "./src/main/ets/index.ets",
+  "author": "",
+  "license": "",
+  "dependencies": {},
+  "devDependencies": {}
+}

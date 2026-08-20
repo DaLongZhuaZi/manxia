@@ -38,13 +38,13 @@ import {
   ProtocolPort
 } from '../Models/NetworkFolderModels';
 import { NetworkScannerAdapter } from '../Framework/Network/NetworkScannerAdapter';
-import { openExternalFileTaskInIsolatedAbility } from '../Framework/ExternalFile/ExternalFileTaskLauncher';
+import { openExternalFileTaskInIsolatedAbility } from 'manxia_network/src/main/ets/Framework/ExternalFile/ExternalFileTaskLauncher';
 import {
   ExternalFileTaskFactory,
   ExternalFileTaskKind,
   ExternalFileTaskParams,
   ExternalFileTaskSource
-} from '../Framework/ExternalFile/ExternalFileTaskTypes';
+} from 'manxia_network/src/main/ets/Framework/ExternalFile/ExternalFileTaskTypes';
 import { ImportFlowMonitor, getImportFlowMonitor } from '../Framework/Import/ImportFlowMonitor';
 import {
   ImportFlowContentType,

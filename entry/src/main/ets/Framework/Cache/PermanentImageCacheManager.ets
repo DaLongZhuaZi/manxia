@@ -13,7 +13,7 @@ import { BusinessError } from '@ohos.base';
 import { DataManager } from '../Data/DataManager';
 import { MangaPage } from '../../Models/MangaModels';
 import { DatabaseManager } from 'manxia_core/src/main/ets/Framework/Database/DatabaseManager';
-import { DownloadCacheFlowMonitor, getDownloadCacheFlowMonitor } from '../Download/DownloadCacheFlowMonitor';
+import { DownloadCacheFlowMonitor, getDownloadCacheFlowMonitor } from 'manxia_network/src/main/ets/Framework/Download/DownloadCacheFlowMonitor';
 import { eventBus, GameEvent, MangaCacheUpdatedPayload } from '../EventBus';
 import {
   DownloadCacheContentType,
@@ -23,7 +23,7 @@ import {
   DownloadCacheFlowSessionInfo,
   DownloadCacheFlowSeverity,
   DownloadCacheFlowStage
-} from '../Download/DownloadCacheFlowTypes';
+} from 'manxia_network/src/main/ets/Framework/Download/DownloadCacheFlowTypes';
 
 const TAG = 'PermanentImageCacheManager';
 

@@ -22,7 +22,7 @@ import { GlobalWebViewContainer, WebViewEventCallbacks } from 'manxia_source_eng
 import { MangaSourceEngine, EngineConfig } from './MangaSourceEngine';
 import { AntiCrawlerConfig } from 'manxia_source_engine/src/main/ets/Framework/WebView/MangaSourceTypes';
 import { DataManager } from '../Data/DataManager';
-import { WebViewDataCacheManager } from '../Cache/WebViewDataCacheManager';
+import { WebViewDataCacheManager } from 'manxia_network/src/main/ets/Framework/Cache/WebViewDataCacheManager';
 import { WebViewAuthManager } from './WebViewAuthManager';
 import { UserAgentManager } from '../Managers/UserAgentManager';
 import { LegadoMangaSourceBridge } from '../Novel/LegadoMangaSourceBridge';

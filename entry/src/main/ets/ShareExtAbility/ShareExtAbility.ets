@@ -8,13 +8,13 @@ import { UIExtensionAbility, UIExtensionContentSession, Want } from '@kit.Abilit
 import { window } from '@kit.ArkUI';
 import { fileUri } from '@kit.CoreFileKit';
 import { logger } from 'manxia_core/src/main/ets/Utils/Logger';
-import { openExternalFileTaskInIsolatedAbilityByContext } from '../Framework/ExternalFile/ExternalFileTaskLauncher';
+import { openExternalFileTaskInIsolatedAbilityByContext } from 'manxia_network/src/main/ets/Framework/ExternalFile/ExternalFileTaskLauncher';
 import {
   ExternalFileTaskFactory,
   ExternalFileTaskKind,
   ExternalFileTaskParams,
   ExternalFileTaskSource
-} from '../Framework/ExternalFile/ExternalFileTaskTypes';
+} from 'manxia_network/src/main/ets/Framework/ExternalFile/ExternalFileTaskTypes';
 import {
   NETWORK_FOLDER_CODE_EXTENSIONS,
   NETWORK_FOLDER_FONT_EXTENSIONS,

@@ -16,12 +16,12 @@ import { DataManager, DownloadTask, DownloadTaskInput, DownloadTaskUpdate, Onlin
 import { DatabaseManager } from 'manxia_core/src/main/ets/Framework/Database/DatabaseManager';
 import { ComicSourceDatabaseRecord, GenericQueryRecord, UpdateRecordData } from 'manxia_core/src/main/ets/Framework/Database/DatabaseTypes';
 import { DownloadStatus } from 'manxia_core/src/main/ets/Framework/Types/StatusEnums';
-import { BackgroundTaskHelper } from '../Task/BackgroundTaskHelper';
+import { BackgroundTaskHelper } from 'manxia_network/src/main/ets/Framework/Task/BackgroundTaskHelper';
 import { OnlineArchiveCreateResult, OnlineArchiveMetadata, OnlineArchivePageFile, OnlineMangaArchiveService } from './OnlineMangaArchiveService';
 import { eventBus, GameEvent, MangaCacheUpdatedPayload } from '../EventBus';
 import { CookieManager } from '../Managers/CookieManager';
 import util from '@ohos.util';
-import { DownloadCacheFlowMonitor, getDownloadCacheFlowMonitor } from './DownloadCacheFlowMonitor';
+import { DownloadCacheFlowMonitor, getDownloadCacheFlowMonitor } from 'manxia_network/src/main/ets/Framework/Download/DownloadCacheFlowMonitor';
 import {
   DownloadCacheContentType,
   DownloadCacheEntrySource,
@@ -30,7 +30,7 @@ import {
   DownloadCacheFlowSessionInfo,
   DownloadCacheFlowSeverity,
   DownloadCacheFlowStage
-} from './DownloadCacheFlowTypes';
+} from 'manxia_network/src/main/ets/Framework/Download/DownloadCacheFlowTypes';
 
 const TAG = 'DownloadManager';
 const DOWNLOAD_BACKGROUND_TASK_OWNER = 'download_manager_queue';

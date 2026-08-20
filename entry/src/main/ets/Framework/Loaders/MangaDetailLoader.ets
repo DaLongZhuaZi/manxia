@@ -33,7 +33,7 @@ import { DataService } from '../Services/DataService';
 import { WebViewSourceManager } from '../WebView/WebViewSourceManager';
 import { MangaSourceEngine, EngineResult, MangaDetailWithChapters } from '../WebView/MangaSourceEngine';
 import { MangaInfo, ChapterInfo as WebViewChapterInfo, PageInfo as SourcePageInfo, PageRequestHeader } from 'manxia_source_engine/src/main/ets/Framework/WebView/MangaSourceTypes';
-import { WebViewDataCacheManager } from '../Cache/WebViewDataCacheManager';
+import { WebViewDataCacheManager } from 'manxia_network/src/main/ets/Framework/Cache/WebViewDataCacheManager';
 import { getLegadoMangaSourceBridge, LegadoMangaDetailResult } from '../Novel/LegadoMangaSourceBridge';
 import { MangaIdentityResolver, MangaIdentityResolveResult } from '../Reader/MangaIdentityResolver';
 import webview from '@ohos.web.webview';

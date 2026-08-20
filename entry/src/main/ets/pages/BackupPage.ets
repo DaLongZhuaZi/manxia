@@ -27,11 +27,11 @@ import { common } from '@kit.AbilityKit';
 import { Want } from '@kit.AbilityKit';
 import { getWebDAVBackupManager, RemoteBackupInfo, WebDAVSyncStatus } from '../Framework/WebDAV/WebDAVBackupManager';
 import { WebDAVSettings, DEFAULT_WEBDAV_SETTINGS } from '../Models/WebDAVModels';
-import { WebDAVClient, WebDAVConfig, WebDAVTestResult } from '../Framework/WebDAV/WebDAVClient';
-import { quickTestWebDAVNative } from '../Framework/WebDAV/WebDAVNativeTest';
-import { WebDAVNativeConfig, WebDAVNativeClient, isNativeModuleAvailable } from '../Framework/WebDAV/WebDAVNativeClient';
-import { WebDAVErrorAnalyzer, analyzeWebDAVError } from '../Framework/WebDAV/WebDAVErrorAnalyzer';
-import { FTPConfig, FTPNativeClient, FTPFileInfo, isFTPNativeAvailable } from '../Framework/FTP/FTPNativeClient';
+import { WebDAVClient, WebDAVConfig, WebDAVTestResult } from 'manxia_network/src/main/ets/Framework/WebDAV/WebDAVClient';
+import { quickTestWebDAVNative } from 'manxia_network/src/main/ets/Framework/WebDAV/WebDAVNativeTest';
+import { WebDAVNativeConfig, WebDAVNativeClient, isNativeModuleAvailable } from 'manxia_network/src/main/ets/Framework/WebDAV/WebDAVNativeClient';
+import { WebDAVErrorAnalyzer, analyzeWebDAVError } from 'manxia_network/src/main/ets/Framework/WebDAV/WebDAVErrorAnalyzer';
+import { FTPConfig, FTPNativeClient, FTPFileInfo, isFTPNativeAvailable } from 'manxia_network/src/main/ets/Framework/FTP/FTPNativeClient';
 import { SavedFTPConnection, DEFAULT_FTP_CONNECTION, createFTPConnection } from '../Models/FTPModels';
 import { getHelpPanelManagerV2 } from '../Framework/Components/HelpPanelV2';
 import { preferences } from '@kit.ArkData';
@@ -45,7 +45,7 @@ import { SettingsImmersiveTitleActionItem, SettingsPageTitleBarManager } from '.
 import { GlobalBackgroundLayerMode } from '../Framework/Components/GlobalBackgroundLayer';
 import { SharedPageBackgroundLayer } from '../Framework/Components/SharedPageBackgroundLayer';
 import { SettingsPanelSurfaceHelper } from './settings/SettingsPanelSurfaceHelper';
-import { ExternalFileTaskParamStore } from '../Framework/ExternalFile/ExternalFileTaskParamStore';
+import { ExternalFileTaskParamStore } from 'manxia_network/src/main/ets/Framework/ExternalFile/ExternalFileTaskParamStore';
 
 const TAG = 'BackupPage';
 const TITLE_BAR_HEIGHT_MINI: number = 56;

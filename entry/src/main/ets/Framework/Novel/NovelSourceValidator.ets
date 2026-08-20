@@ -17,7 +17,7 @@ import { awaitNovelSourceValidationTask } from './NovelSourceValidationDeadline'
 import { NovelSearchResult } from '../../Models/NovelModels';
 import { AppNotificationManager } from '../Managers/NotificationManager';
 import { SettingKeys, SettingsManager } from '../Managers/SettingsManager';
-import { BackgroundTaskHelper } from '../Task/BackgroundTaskHelper';
+import { BackgroundTaskHelper } from 'manxia_network/src/main/ets/Framework/Task/BackgroundTaskHelper';
 import { common } from '@kit.AbilityKit';
 
 const TAG = 'NovelSourceValidator';

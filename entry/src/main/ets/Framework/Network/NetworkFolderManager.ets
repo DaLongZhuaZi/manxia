@@ -14,7 +14,7 @@ import {
   exportSymKeyToBase64,
   importSymKeyFromBase64
 } from 'manxia_core/src/main/ets/Utils/CryptoUtils';
-import { FTPConfig, FTPFileInfo, FTPListResult, FTPNativeClient } from '../FTP/FTPNativeClient';
+import { FTPConfig, FTPFileInfo, FTPListResult, FTPNativeClient } from 'manxia_network/src/main/ets/Framework/FTP/FTPNativeClient';
 import {
   SMBClientAdapter,
   SMBDirectoryEntry,
@@ -26,8 +26,8 @@ import {
   WebDAVNativeConfig,
   WebDAVNativeFileInfo,
   WebDAVNativeListResult
-} from '../WebDAV/WebDAVNativeClient';
-import { WebDAVClient, WebDAVConfig, WebDAVFile } from '../WebDAV/WebDAVClient';
+} from 'manxia_network/src/main/ets/Framework/WebDAV/WebDAVNativeClient';
+import { WebDAVClient, WebDAVConfig, WebDAVFile } from 'manxia_network/src/main/ets/Framework/WebDAV/WebDAVClient';
 import { SandboxManager } from 'manxia_core/src/main/ets/Framework/Storage/SandboxManager';
 import DownloadDirManager from '../Storage/DownloadDirManager';
 import {

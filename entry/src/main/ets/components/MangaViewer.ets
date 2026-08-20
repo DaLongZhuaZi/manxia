@@ -63,7 +63,7 @@ import {
   MangaViewerImageDimensions
 } from './MangaLoadStateCommitter';
 // 新增：本地图片缓存管理器
-import { CacheStats, LocalImageCacheManager } from '../Framework/Cache/LocalImageCacheManager';
+import { CacheStats, LocalImageCacheManager } from 'manxia_network/src/main/ets/Framework/Cache/LocalImageCacheManager';
 import { MangaAssetLoadCoordinator } from '../Framework/Reader/MangaAssetLoadCoordinator';
 import { MangaAssetLoader } from '../Framework/Reader/MangaAssetLoader';
 import { MangaAssetMetricsSnapshot, MangaAssetMonitor } from '../Framework/Reader/MangaAssetMonitor';
@@ -88,7 +88,7 @@ import {
   NetworkTransportFailureCoordinator,
   NetworkTransportFailureDescriptor,
   NetworkTransportFailureKind
-} from '../Framework/Network/NetworkTransportFailureCoordinator';
+} from 'manxia_network/src/main/ets/Framework/Network/NetworkTransportFailureCoordinator';
 import {
   MangaAssetLoadContextInput,
   MangaAssetLoadContextResolver

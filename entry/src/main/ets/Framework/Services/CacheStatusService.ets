@@ -29,7 +29,7 @@ import {
   CacheStatusIncrementalStore,
   getCacheStatusIncrementalStore
 } from './CacheStatusIncrementalStore';
-import { DownloadCacheFlowMonitor, getDownloadCacheFlowMonitor } from '../Download/DownloadCacheFlowMonitor';
+import { DownloadCacheFlowMonitor, getDownloadCacheFlowMonitor } from 'manxia_network/src/main/ets/Framework/Download/DownloadCacheFlowMonitor';
 import {
   DownloadCacheContentType,
   DownloadCacheEntrySource,
@@ -38,7 +38,7 @@ import {
   DownloadCacheFlowSessionInfo,
   DownloadCacheFlowSeverity,
   DownloadCacheFlowStage
-} from '../Download/DownloadCacheFlowTypes';
+} from 'manxia_network/src/main/ets/Framework/Download/DownloadCacheFlowTypes';
 
 const TAG = 'CacheStatusService';
 const SUPPORTED_MANGA_CACHE_IMAGE_EXTENSIONS: string[] = ['jpg', 'jpeg', 'png', 'webp', 'gif', 'bmp', 'avif'];

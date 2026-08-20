@@ -70,8 +70,8 @@ import {
   ExternalFileTaskFactory,
   ExternalFileTaskParams,
   ExternalFileTaskSource
-} from '../Framework/ExternalFile/ExternalFileTaskTypes';
-import { openExternalFileTaskInIsolatedAbility } from '../Framework/ExternalFile/ExternalFileTaskLauncher';
+} from 'manxia_network/src/main/ets/Framework/ExternalFile/ExternalFileTaskTypes';
+import { openExternalFileTaskInIsolatedAbility } from 'manxia_network/src/main/ets/Framework/ExternalFile/ExternalFileTaskLauncher';
 import { MangaReadFlowImportReport, MangaReadFlowImportReporter } from '../Framework/Reader/MangaReadFlowImportReporter';
 import { ImportArchiveParseCache, getImportArchiveParseCache } from '../Framework/Import/ImportArchiveParseCache';
 import { ImportDuplicateDetectionCache, getImportDuplicateDetectionCache } from '../Framework/Import/ImportDuplicateDetectionCache';

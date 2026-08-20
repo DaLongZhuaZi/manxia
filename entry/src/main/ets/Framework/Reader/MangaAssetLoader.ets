@@ -12,15 +12,15 @@ import {
   RequestHeaderEntry as OnlineRequestHeaderEntry,
   RequestHeaders as OnlineRequestHeaders
 } from '../Cache/OnlineImageLoader';
-import { LocalImageCacheManager } from '../Cache/LocalImageCacheManager';
+import { LocalImageCacheManager } from 'manxia_network/src/main/ets/Framework/Cache/LocalImageCacheManager';
 import {
   LegadoImageTransportTrace,
   LegadoImageTransportTraceContext
-} from '../Network/LegadoImageTransportTrace';
+} from 'manxia_network/src/main/ets/Framework/Network/LegadoImageTransportTrace';
 import {
   getNetworkTransportFailureCoordinator,
   NetworkTransportFailureCoordinator
-} from '../Network/NetworkTransportFailureCoordinator';
+} from 'manxia_network/src/main/ets/Framework/Network/NetworkTransportFailureCoordinator';
 import {
   MangaAssetLoadReason,
   MangaAssetLoadRequest,

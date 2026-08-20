@@ -70,7 +70,7 @@ import {
   parseTransferNativeRtcSdpSignalPayload
 } from '../Models/TransferModels';
 import type { NetworkFolderImportCategory } from '../Models/NetworkFolderModels';
-import { openExternalFileTaskInIsolatedAbility } from '../Framework/ExternalFile/ExternalFileTaskLauncher';
+import { openExternalFileTaskInIsolatedAbility } from 'manxia_network/src/main/ets/Framework/ExternalFile/ExternalFileTaskLauncher';
 
 const TAG = 'TransferPage';
 const TRANSFER_ACCENT_COLOR: string = '#0F8A6C';

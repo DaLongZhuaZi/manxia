@@ -41,7 +41,7 @@ import { ResponsiveLayoutHelper } from '../Framework/Utils/ResponsiveLayout';
 import { WebViewSourceManager } from '../Framework/WebView/WebViewSourceManager';
 import { MangaSourceEngine, EngineResult, MangaDetailWithChapters } from '../Framework/WebView/MangaSourceEngine';
 import { MangaInfo, ChapterInfo as WebViewChapterInfo, PageInfo as SourcePageInfo, PageRequestHeader } from 'manxia_source_engine/src/main/ets/Framework/WebView/MangaSourceTypes';
-import { WebViewDataCacheManager } from '../Framework/Cache/WebViewDataCacheManager';
+import { WebViewDataCacheManager } from 'manxia_network/src/main/ets/Framework/Cache/WebViewDataCacheManager';
 import { ChapterPreloadManager, ChapterInfo } from '../Framework/Preload/ChapterPreloadManager';
 import { getLegadoMangaSourceBridge, LegadoMangaDetailResult, LegadoMangaPageResult } from '../Framework/Novel/LegadoMangaSourceBridge';
 import { DownloadPageItem } from '../Framework/Download/DownloadManager';

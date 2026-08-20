@@ -12,7 +12,7 @@ import { getNovelChapterCacheManager, NovelChapterCacheManager, DownloadProgress
 import { LegadoChapter } from '../Novel/LegadoSourceTypes';
 import { AppNotificationManager } from '../Managers/NotificationManager';
 import { common } from '@kit.AbilityKit';
-import { DownloadCacheFlowMonitor, getDownloadCacheFlowMonitor } from './DownloadCacheFlowMonitor';
+import { DownloadCacheFlowMonitor, getDownloadCacheFlowMonitor } from 'manxia_network/src/main/ets/Framework/Download/DownloadCacheFlowMonitor';
 import {
   DownloadCacheContentType,
   DownloadCacheEntrySource,
@@ -21,7 +21,7 @@ import {
   DownloadCacheFlowSessionInfo,
   DownloadCacheFlowSeverity,
   DownloadCacheFlowStage
-} from './DownloadCacheFlowTypes';
+} from 'manxia_network/src/main/ets/Framework/Download/DownloadCacheFlowTypes';
 
 const TAG = 'UnifiedDownloadManager';
 
