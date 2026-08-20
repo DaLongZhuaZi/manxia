@@ -48,7 +48,7 @@ import {
   XIAOMI_MIMO_REMOTE_READ_ALOUD_VOICE_OPTIONS
 } from 'manxia_core/src/main/ets/Models/TextReaderModels';
 import { EBookFormat } from 'manxia_core/src/main/ets/Models/EBookModels';
-import { AppGuideStep } from '../Managers/AppGuideManager';
+import { AppGuideStep } from 'manxia_core/src/main/ets/Framework/Managers/AppGuideManager';
 import { GuideHighlightRect } from './AppGuideOverlay';
 
 const TAG = 'ReadAloudCacheDialogComponent';

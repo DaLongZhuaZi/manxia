@@ -272,7 +272,7 @@ import { getNovelInitializer } from '../Framework/Novel/NovelInitializer';
 import { FontManager } from 'manxia_theme/src/main/ets/Framework/Managers/FontManager';
 import { ReadAloudController } from '../Framework/ReadAloud/ReadAloudController';
 import { ReadAloudPlaybackState } from '../Framework/ReadAloud/ReadAloudTypes';
-import { AppGuideFlowDefinition, AppGuideFlowId, AppGuideManager, AppGuidePageId, AppGuideStep } from '../Framework/Managers/AppGuideManager';
+import { AppGuideFlowDefinition, AppGuideFlowId, AppGuideManager, AppGuidePageId, AppGuideStep } from 'manxia_core/src/main/ets/Framework/Managers/AppGuideManager';
 
 // 导入Suwayomi相关（仅保留非Tab组件使用的导入）
 import SuwayomiCacheManager from '../Framework/Source/SuwayomiCacheManager';

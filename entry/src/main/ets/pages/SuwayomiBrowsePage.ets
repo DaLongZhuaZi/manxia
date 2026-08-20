@@ -22,7 +22,7 @@ import DownloadDirManager from 'manxia_core/src/main/ets/Framework/Storage/Downl
 import { SuwayomiImage } from '../components/SuwayomiImage';
 import { AppGuideOverlay, GuideHighlightRect } from '../Framework/Components/AppGuideOverlay';
 import { resolveGuideHighlightRectInRoot } from '../Framework/Components/AppGuideSupport';
-import { AppGuideManager, AppGuidePageId, AppGuideStep } from '../Framework/Managers/AppGuideManager';
+import { AppGuideManager, AppGuidePageId, AppGuideStep } from 'manxia_core/src/main/ets/Framework/Managers/AppGuideManager';
 import { BasicDataSource } from 'manxia_core/src/main/ets/Utils/BasicDataSource';
 
 const TAG = 'SuwayomiBrowsePage';

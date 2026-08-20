@@ -13,7 +13,7 @@ import { ISettingsManagerFacade, SettingsManagerHolder } from 'manxia_core/src/m
 import { SettingKeys } from 'manxia_core/src/main/ets/Framework/Contracts/SettingKeys';
 import { ContentFilterManager } from 'manxia_core/src/main/ets/Framework/Managers/ContentFilterManager';
 import { WelcomeGuideManager } from 'manxia_core/src/main/ets/Framework/Managers/WelcomeGuideManager';
-import { AppGuideManager } from '../../Framework/Managers/AppGuideManager';
+import { AppGuideManager } from 'manxia_core/src/main/ets/Framework/Managers/AppGuideManager';
 import { common, Want } from '@kit.AbilityKit';
 import { logger, LOG_LEVEL_NAMES, LOG_LEVEL_VALUES, LogLevel } from 'manxia_core/src/main/ets/Utils/Logger';
 import { PageLifecycleManager } from 'manxia_core/src/main/ets/Framework/Lifecycle/index';

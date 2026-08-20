@@ -8,7 +8,7 @@ import { FontAwareHelper, FontAwareState } from 'manxia_theme/src/main/ets/Frame
 import { ThemeType } from 'manxia_theme/src/main/ets/Framework/Managers/ThemeManager';
 import { AppGuideOverlay, GuideHighlightRect } from '../Framework/Components/AppGuideOverlay';
 import { resolveGuideHighlightRectInRoot } from '../Framework/Components/AppGuideSupport';
-import { AppGuideManager, AppGuidePageId, AppGuideStep } from '../Framework/Managers/AppGuideManager';
+import { AppGuideManager, AppGuidePageId, AppGuideStep } from 'manxia_core/src/main/ets/Framework/Managers/AppGuideManager';
 import { TabContentCacheManager, KomgaCacheData } from '../Framework/Cache/TabContentCacheManager';
 import { ComicInfo } from '../Framework/Source/SourceExecutor';
 import KomgaCacheManager from '../Framework/Source/KomgaCacheManager';
