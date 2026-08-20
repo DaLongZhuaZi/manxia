@@ -1,4 +1,4 @@
-import { ProxyProtocol, ProxyConfig, IProxyManagerFacade, ProxyManagerHolder } from 'manxia_core/src/main/ets/Framework/Contracts/ProxyManagerFacade';
+import { ProxyProtocol, ProxyConfig, ProxyTestResult, IProxyManagerFacade, ProxyManagerHolder } from 'manxia_core/src/main/ets/Framework/Contracts/ProxyManagerFacade';
 import { SafeUtils } from 'manxia_core/src/main/ets/Utils/SafeUtils';
 /**
  * 网络代理管理器
@@ -14,7 +14,7 @@ import { LocalProxyBridge, LocalProxyBridgeConfig, LocalProxyBridgeUpstreamProto
 const TAG = 'ProxyManager';
 const PROXY_SETTINGS_KEY = 'network_proxy_settings';
 
-export { ProxyProtocol, ProxyConfig };
+export { ProxyProtocol, ProxyConfig, ProxyTestResult };
 
 
 /**
@@ -648,13 +648,7 @@ export class ProxyManager implements IProxyManagerFacade {
 /**
  * 代理测试结果
  */
-export interface ProxyTestResult {
-  success: boolean;
-  url: string;
-  responseCode?: number;
-  responseTime?: number;
-  error?: string;
-}
+
 
 /**
  * 获取代理管理器实例

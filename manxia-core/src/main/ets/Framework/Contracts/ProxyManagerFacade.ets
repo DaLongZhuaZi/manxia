@@ -30,6 +30,14 @@ export interface ProxyConfig {
   socks5Password: string;
 }
 
+export interface ProxyTestResult {
+  success: boolean;
+  url: string;
+  responseCode?: number;
+  responseTime?: number;
+  error?: string;
+}
+
 export interface IProxyManagerFacade {
   getConfig(): ProxyConfig;
   isEnabled(): boolean;
@@ -37,6 +45,8 @@ export interface IProxyManagerFacade {
   getHttpsProxyUrl(): string | undefined;
   saveConfig(config: ProxyConfig): Promise<void>;
   applySystemProxy(): Promise<void>;
+  initialize(): Promise<void>;
+  testSingleUrl(url: string): Promise<ProxyTestResult>;
 }
 
 export class ProxyManagerHolder {

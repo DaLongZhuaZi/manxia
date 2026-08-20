@@ -1,3 +1,4 @@
+import { IProxyManagerFacade, ProxyManagerHolder } from 'manxia_core/src/main/ets/Framework/Contracts/ProxyManagerFacade';
 ﻿/**
  * 代理配置对话框（图源网络代理）
  * 统一用于 MainMenuPage / SourceManagementPage
@@ -58,7 +59,7 @@ export struct ProxyConfigDialog {
   @Local isTestingProxy: boolean = false;
   @Local proxyTestSites: ProxyTestSite[] = [];
 
-  private proxyManager: ProxyManager = ProxyManager.getInstance();
+  private proxyManager: IProxyManagerFacade = ProxyManagerHolder.get();
   private readonly tabOrder: ProxyDialogTab[] = ['settings', 'sources', 'test'];
   private swipeStartX: number = 0;
   private swipeOffsetX: number = 0;
