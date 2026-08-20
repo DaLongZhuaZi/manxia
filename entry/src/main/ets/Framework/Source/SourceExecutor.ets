@@ -8,7 +8,7 @@ import { logger } from 'manxia_core/src/main/ets/Utils/Logger';
 import { DataManager } from '../Data/DataManager';
 import { JSONSourceParser, JSONSourceConfig } from './JSONSourceParser';
 import { http } from '@kit.NetworkKit';
-import { ProxyManager } from '../Network/ProxyManager';
+import { ProxyManager } from 'manxia_core/src/main/ets/Framework/Network/ProxyManager';
 import { UserAgentManager } from 'manxia_core/src/main/ets/Framework/Managers/UserAgentManager';
 
 const TAG = 'SourceExecutor';

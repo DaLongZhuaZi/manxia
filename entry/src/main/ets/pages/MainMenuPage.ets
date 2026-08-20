@@ -294,7 +294,7 @@ import { ContentFilterManager } from 'manxia_core/src/main/ets/Framework/Manager
 import { PrivacyModeManager } from 'manxia_core/src/main/ets/Framework/Managers/PrivacyModeManager';
 import { PrivacyAuthDialogComponent, PrivacyAuthDialogMode } from '../Framework/Components/PrivacyAuthDialogComponent';
 import { SourceDialogScaffold } from '../Framework/Components/SourceDialogScaffold';
-import { ProxyManager, ProxyConfig, DEFAULT_PROXY_CONFIG, ProxyProtocol } from '../Framework/Network/ProxyManager';
+import { ProxyManager, ProxyConfig, DEFAULT_PROXY_CONFIG, ProxyProtocol } from 'manxia_core/src/main/ets/Framework/Network/ProxyManager';
 import { ProxyConfigDialog } from '../components/source/ProxyConfigDialog';
 import { BookshelfCategoryManager, BookshelfCategory, ContentType, CategoryItem } from '../Framework/Data/BookshelfCategoryManager';
 import { SettingKeys } from 'manxia_core/src/main/ets/Framework/Contracts/SettingKeys';

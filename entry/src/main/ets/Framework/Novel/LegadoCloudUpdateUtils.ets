@@ -5,7 +5,7 @@ import { http } from '@kit.NetworkKit';
 import { util } from '@kit.ArkTS';
 import { logger } from 'manxia_core/src/main/ets/Utils/Logger';
 import { SafeFileUtils } from 'manxia_core/src/main/ets/Utils/SafeFileUtils';
-import { ProxyManager } from '../Network/ProxyManager';
+import { ProxyManager } from 'manxia_core/src/main/ets/Framework/Network/ProxyManager';
 
 const TAG = 'LegadoCloudUpdateUtils';
 const REPOSITORY_PROXY_GH: string = 'https://gh-proxy.org/';

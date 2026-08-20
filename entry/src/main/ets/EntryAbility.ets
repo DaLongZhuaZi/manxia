@@ -24,7 +24,7 @@ import { AppNotificationManager } from 'manxia_core/src/main/ets/Framework/Manag
 import { MangaDownloadManager } from './Framework/Download/DownloadManager';
 import { getNovelSourceValidator } from './Framework/Novel/NovelSourceValidator';
 import { uiContextManager } from 'manxia_theme/src/main/ets/Framework/Managers/UIContextManager';
-import { ProxyManager } from './Framework/Network/ProxyManager';
+import { ProxyManager } from 'manxia_core/src/main/ets/Framework/Network/ProxyManager';
 import { getFontManager } from 'manxia_theme/src/main/ets/Framework/Managers/FontManager';
 import { getDownloadSyncManager } from 'manxia_core/src/main/ets/Framework/Managers/DownloadSyncManager';
 import { getChangelogManager } from 'manxia_core/src/main/ets/Framework/Managers/ChangelogManager';

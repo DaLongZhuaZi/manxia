@@ -24,7 +24,7 @@ import { getLegadoJsEngine, JsContext, LegadoJsSourceEffects } from './LegadoJsE
 import { getNovelReplaceRuleManager, ReplaceScope } from './NovelReplaceRuleManager';
 import { getNovelLoginManager } from './NovelLoginManager';
 import { HtmlFormatter } from 'manxia_novel/src/main/ets/Framework/Novel/HtmlFormatter';
-import { ProxyManager } from '../Network/ProxyManager';
+import { ProxyManager } from 'manxia_core/src/main/ets/Framework/Network/ProxyManager';
 import { LegadoMangaExtractedImage, LegadoMangaImageExtractor } from 'manxia_novel/src/main/ets/Framework/Novel/LegadoMangaImageExtractor';
 
 const TAG = 'NovelSourceExecutor';

@@ -21,7 +21,7 @@ import {
   SourceMaintenancePageParams,
   SourceMaintenanceSyncState
 } from '../Framework/Source/SourceMaintenanceManager';
-import { ProxyManager, ProxyConfig, DEFAULT_PROXY_CONFIG } from '../Framework/Network/ProxyManager';
+import { ProxyManager, ProxyConfig, DEFAULT_PROXY_CONFIG } from 'manxia_core/src/main/ets/Framework/Network/ProxyManager';
 import { ProxyConfigDialog } from '../components/source/ProxyConfigDialog';
 import { SourceManager, getSourceManager } from '../Framework/Source/SourceManager';
 import { SourceTester, TestResult, TestItemResult } from '../Framework/Source/SourceTester';
