@@ -8,7 +8,7 @@ import { webview } from '@kit.ArkWeb';
 import { HdsNavDestination } from '@kit.UIDesignKit';
 import { logger } from 'manxia_core/src/main/ets/Utils/Logger';
 import { SafeUtils } from 'manxia_core/src/main/ets/Utils/SafeUtils';
-import { AppFloatingWindowConfig, WindowManager } from '../Utils/WindowManager';
+import { AppFloatingWindowConfig, WindowManager } from 'manxia_theme/src/main/ets/Utils/WindowManager';
 import { ThemeAwareHelper, ThemeAwareState } from 'manxia_theme/src/main/ets/Framework/Components/ThemeAware';
 import { ThemeManager, ThemeType } from 'manxia_theme/src/main/ets/Framework/Managers/ThemeManager';
 import { AppColors } from 'manxia_theme/src/main/ets/Framework/Theme/AppColors';

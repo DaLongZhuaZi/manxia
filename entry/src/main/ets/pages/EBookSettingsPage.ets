@@ -37,8 +37,8 @@ import {
 import { eventBus, GameEvent, BasePayload } from '../Framework/EventBus';
 import { getHelpPanelManagerV2 } from '../Framework/Components/HelpPanelV2';
 import { getFontManager, SystemFont, CustomFont } from '../Framework/Managers/FontManager';
-import { DisplayMode } from '../Utils/WindowManager';
-import { PageWindowCoordinator } from '../Utils/PageWindowCoordinator';
+import { DisplayMode } from 'manxia_theme/src/main/ets/Utils/WindowManager';
+import { PageWindowCoordinator } from 'manxia_theme/src/main/ets/Utils/PageWindowCoordinator';
 
 const TAG = 'EBookSettingsPage';
 const TITLE_BAR_HEIGHT_MINI: number = 56;

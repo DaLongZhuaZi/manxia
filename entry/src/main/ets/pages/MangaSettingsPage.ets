@@ -36,7 +36,7 @@ import { ScraperContentType } from 'manxia_core/src/main/ets/Framework/Scraper/S
 import { getHelpPanelManagerV2 } from '../Framework/Components/HelpPanelV2';
 import { getCoverImageManager } from '../Framework/Image/CoverImageManager';
 import { image } from '@kit.ImageKit';
-import { PageWindowCoordinator } from '../Utils/PageWindowCoordinator';
+import { PageWindowCoordinator } from 'manxia_theme/src/main/ets/Utils/PageWindowCoordinator';
 import { SettingsPanelSurfaceHelper } from './settings/SettingsPanelSurfaceHelper';
 import { GlobalBackgroundLayerMode } from 'manxia_theme/src/main/ets/Framework/Components/GlobalBackgroundLayer';
 import { SharedPageBackgroundLayer } from '../Framework/Components/SharedPageBackgroundLayer';

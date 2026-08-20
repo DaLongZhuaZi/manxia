@@ -14,8 +14,8 @@ import { FontAwareHelper, FontAwareState } from '../Framework/Components/FontAwa
 import { RssFeedItem, RssSubscriptionSource } from 'manxia_core/src/main/ets/Models/RssSubscriptionModels';
 import { getRssSubscriptionInitializer } from '../Framework/Rss/RssSubscriptionInitializer';
 import { getRssSubscriptionManager, RssSubscriptionManager } from '../Framework/Rss/RssSubscriptionManager';
-import { DisplayMode } from '../Utils/WindowManager';
-import { PageWindowCoordinator } from '../Utils/PageWindowCoordinator';
+import { DisplayMode } from 'manxia_theme/src/main/ets/Utils/WindowManager';
+import { PageWindowCoordinator } from 'manxia_theme/src/main/ets/Utils/PageWindowCoordinator';
 
 const TAG = 'RssSubscriptionDetailPage';
 const TITLE_BAR_HEIGHT_MINI = 56;

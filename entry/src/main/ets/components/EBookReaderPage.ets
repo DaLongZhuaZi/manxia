@@ -11,7 +11,7 @@ import { ReaderSafeAreaUtils } from '../Utils/ReaderSafeAreaUtils';
 import { ReaderOrientationLockHelper } from 'manxia_core/src/main/ets/Utils/ReaderOrientationLockHelper';
 import { ThemeAwareState, ThemeAwareHelper } from 'manxia_theme/src/main/ets/Framework/Components/ThemeAware';
 import { ThemeManager, ThemeType, GlassEffectContext } from 'manxia_theme/src/main/ets/Framework/Managers/ThemeManager';
-import { WindowManager, DisplayMode } from '../Utils/WindowManager';
+import { WindowManager, DisplayMode } from 'manxia_theme/src/main/ets/Utils/WindowManager';
 import { EBook, EBookChapter, EBookReadingProgress, EBookReadingSettings, EBookPageMode, EBookFormat, DEFAULT_EBOOK_READING_SETTINGS, EBOOK_THEME_PRESETS, EBookThemePreset } from 'manxia_core/src/main/ets/Models/EBookModels';
 import { SettingsManager, SettingKeys } from '../Framework/Managers/SettingsManager';
 import { EBookDataManager } from '../Framework/Data/EBookDataManager';

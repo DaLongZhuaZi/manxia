@@ -1,5 +1,5 @@
-import { DisplayMode } from '../../../../Utils/WindowManager';
-import { PageWindowCoordinator } from '../../../../Utils/PageWindowCoordinator';
+import { DisplayMode } from 'manxia_theme/src/main/ets/Utils/WindowManager';
+import { PageWindowCoordinator } from 'manxia_theme/src/main/ets/Utils/PageWindowCoordinator';
 import { uiContextManager } from '../../../Managers/UIContextManager';
 import { IPagePolicyHost } from '../contracts/IPagePolicyHost';
 

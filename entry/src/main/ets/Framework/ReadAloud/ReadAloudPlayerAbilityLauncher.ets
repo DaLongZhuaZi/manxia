@@ -1,7 +1,7 @@
 import { common, StartOptions, Want } from '@kit.AbilityKit';
 import { UIContext } from '@kit.ArkUI';
 import { logger } from 'manxia_core/src/main/ets/Utils/Logger';
-import { DisplayMode } from '../../Utils/WindowManager';
+import { DisplayMode } from 'manxia_theme/src/main/ets/Utils/WindowManager';
 import { NovelReaderPageParams } from '../../pages/NovelBookshelfPage';
 import {
   READ_ALOUD_PLAYER_ABILITY_NAME,

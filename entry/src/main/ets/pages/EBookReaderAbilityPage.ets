@@ -1,7 +1,7 @@
 import { common } from '@kit.AbilityKit';
 import { FrameCallback, UIContext } from '@kit.ArkUI';
 import { logger } from 'manxia_core/src/main/ets/Utils/Logger';
-import { DisplayMode, WindowManager } from '../Utils/WindowManager';
+import { DisplayMode, WindowManager } from 'manxia_theme/src/main/ets/Utils/WindowManager';
 import { EBookReaderPage } from './EBookReaderPage';
 import { EBookImageReaderPage } from './EBookImageReaderPage';
 import { EpubWebViewReaderPage } from './EpubWebViewReaderPage';

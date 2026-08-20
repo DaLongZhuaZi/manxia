@@ -5,7 +5,7 @@
 import { common } from '@kit.AbilityKit';
 import { logger } from 'manxia_core/src/main/ets/Utils/Logger';
 import { SafeUtils } from 'manxia_core/src/main/ets/Utils/SafeUtils';
-import { WindowManager } from '../Utils/WindowManager';
+import { WindowManager } from 'manxia_theme/src/main/ets/Utils/WindowManager';
 import { interactiveSourceEditorService } from '../Framework/SourceEditor/InteractiveSourceEditorService';
 import {
   SourceEditorGuidePhase,

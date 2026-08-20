@@ -11,7 +11,7 @@ import { ThemeAwareState, ThemeAwareHelper } from 'manxia_theme/src/main/ets/Fra
 import { ThemeType } from 'manxia_theme/src/main/ets/Framework/Managers/ThemeManager';
 import { webview } from '@kit.ArkWeb';
 import { promptAction } from '@kit.ArkUI';
-import { WindowManager, DisplayMode } from '../Utils/WindowManager';
+import { WindowManager, DisplayMode } from 'manxia_theme/src/main/ets/Utils/WindowManager';
 
 const TAG = 'ZLibraryReaderPage';
 

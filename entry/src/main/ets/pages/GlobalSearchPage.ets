@@ -34,7 +34,7 @@ import { HdsNavDestination, HdsNavDestinationAttribute, ScrollEffectType } from 
 import { LengthMetrics } from '@kit.ArkUI';
 import { preferences } from '@kit.ArkData';
 import { webview } from '@kit.ArkWeb';
-import { WindowManager, DisplayMode } from '../Utils/WindowManager';
+import { WindowManager, DisplayMode } from 'manxia_theme/src/main/ets/Utils/WindowManager';
 import { AppGuideOverlay, GuideHighlightRect } from '../Framework/Components/AppGuideOverlay';
 import { resolveGuideHighlightRectInRoot } from '../Framework/Components/AppGuideSupport';
 import { AppGuideManager, AppGuidePageId, AppGuideStep } from '../Framework/Managers/AppGuideManager';

@@ -12,7 +12,7 @@ import { DeepLinkRouter } from './Framework/Utils/DeepLinkRouter';
 import { FeedbackTurnstileBridge } from './Framework/Services/FeedbackTurnstileBridge';
 import { logCollector } from 'manxia_core/src/main/ets/Framework/Debug/LogCollector';
 import { logger } from 'manxia_core/src/main/ets/Utils/Logger';
-import { WindowManager, DisplayMode } from './Utils/WindowManager';
+import { WindowManager, DisplayMode } from 'manxia_theme/src/main/ets/Utils/WindowManager';
 import { OrientationLockApplyResult, OrientationLockManager, OrientationLockStrategy } from 'manxia_core/src/main/ets/Utils/OrientationLockManager';
 import { DataInitializer } from './Framework/Initialization/DataInitializer';
 import { ThemeManager } from 'manxia_theme/src/main/ets/Framework/Managers/ThemeManager';

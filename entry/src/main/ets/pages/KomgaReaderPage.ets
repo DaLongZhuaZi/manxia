@@ -9,7 +9,7 @@ import { ChapterInfo, ComicDetailInfo, PageInfo } from '../Framework/Source/Sour
 import { getKomgaSourceExecutor, KomgaSourceExecutor } from '../Framework/Source/KomgaSourceExecutor';
 import { KomgaContentType, KomgaReaderProgress } from '../Framework/Source/KomgaModels';
 import { KomgaImage } from '../components/KomgaImage';
-import { WindowManager, DisplayMode } from '../Utils/WindowManager';
+import { WindowManager, DisplayMode } from 'manxia_theme/src/main/ets/Utils/WindowManager';
 import { MangaReadFlowMonitor } from '../Framework/Reader/MangaReadFlowMonitor';
 import {
   MangaReadFlowEvent,

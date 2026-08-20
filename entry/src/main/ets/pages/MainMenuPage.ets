@@ -134,8 +134,8 @@ import { buildNovelReaderParamsFromTxtEBook } from '../Framework/Adapters/LocalT
 import { ThemeSettingsPage } from './ThemeSettingsPage';
 import { CoverSelectionPage } from './CoverSelectionPage';
 import { LogFloatingWindow } from '../Utils/LogFloatingWindow';
-import { WindowManager, DisplayMode } from '../Utils/WindowManager';
-import { PageWindowCoordinator } from '../Utils/PageWindowCoordinator';
+import { WindowManager, DisplayMode } from 'manxia_theme/src/main/ets/Utils/WindowManager';
+import { PageWindowCoordinator } from 'manxia_theme/src/main/ets/Utils/PageWindowCoordinator';
 import { StorageManagementPage } from './StorageManagementPage';
 import { TaskFloatingBall } from '../Framework/Components/TaskFloatingBall';
 import { ReadAloudFloatingBall } from '../Framework/Components/ReadAloudFloatingBall';

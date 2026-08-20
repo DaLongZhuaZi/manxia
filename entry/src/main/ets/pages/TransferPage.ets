@@ -10,7 +10,7 @@ import { SettingsPageTitleBarManager } from './settings/SettingsPageTitleBarMana
 import { SettingsPanelSurfaceHelper } from './settings/SettingsPanelSurfaceHelper';
 import { GlobalBackgroundLayerMode } from 'manxia_theme/src/main/ets/Framework/Components/GlobalBackgroundLayer';
 import { SharedPageBackgroundLayer } from '../Framework/Components/SharedPageBackgroundLayer';
-import { AppFloatingWindowConfig, WindowManager } from '../Utils/WindowManager';
+import { AppFloatingWindowConfig, WindowManager } from 'manxia_theme/src/main/ets/Utils/WindowManager';
 import { getTransferConfigManager, TransferConfigManager } from '../Framework/Managers/TransferConfigManager';
 import { getLocalTransferServerService, LocalTransferServerService } from '../Framework/Services/LocalTransferServerService';
 import {

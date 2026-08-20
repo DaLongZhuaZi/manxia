@@ -6,8 +6,8 @@ import { HdsNavDestination, HdsNavDestinationAttribute, ScrollEffectType } from 
 import { ThemeAwareState, ThemeAwareHelper } from 'manxia_theme/src/main/ets/Framework/Components/ThemeAware';
 import { ThemeManager, ThemeType } from 'manxia_theme/src/main/ets/Framework/Managers/ThemeManager';
 import { logger } from 'manxia_core/src/main/ets/Utils/Logger';
-import { DisplayMode } from '../Utils/WindowManager';
-import { PageWindowCoordinator } from '../Utils/PageWindowCoordinator';
+import { DisplayMode } from 'manxia_theme/src/main/ets/Utils/WindowManager';
+import { PageWindowCoordinator } from 'manxia_theme/src/main/ets/Utils/PageWindowCoordinator';
 import { SettingsImmersiveTitleBar } from './settings/SettingsImmersiveTitleBar';
 import { SettingsPageTitleBarManager } from './settings/SettingsPageTitleBarManager';
 import { SettingsPanelSurfaceHelper } from './settings/SettingsPanelSurfaceHelper';

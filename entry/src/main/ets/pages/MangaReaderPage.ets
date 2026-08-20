@@ -9,9 +9,9 @@ import { SafeUtils } from 'manxia_core/src/main/ets/Utils/SafeUtils';
 import { logger } from 'manxia_core/src/main/ets/Utils/Logger';
 import { ReaderSafeAreaUtils } from '../Utils/ReaderSafeAreaUtils';
 import { common } from '@kit.AbilityKit';
-import { WindowManager, DisplayMode } from '../Utils/WindowManager';
+import { WindowManager, DisplayMode } from 'manxia_theme/src/main/ets/Utils/WindowManager';
 import { ReaderOrientationLockHelper } from 'manxia_core/src/main/ets/Utils/ReaderOrientationLockHelper';
-import { PageWindowCoordinator } from '../Utils/PageWindowCoordinator';
+import { PageWindowCoordinator } from 'manxia_theme/src/main/ets/Utils/PageWindowCoordinator';
 import { globalAnimationManager, AnimationType, AnimationState,
   AnimationEasing } from '../Framework/Animation/GlobalAnimationSystem';
 import { ThemeManager, ThemeType, GlassEffectContext } from 'manxia_theme/src/main/ets/Framework/Managers/ThemeManager';

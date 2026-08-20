@@ -1,6 +1,6 @@
 import { logger } from 'manxia_core/src/main/ets/Utils/Logger';
-import { DisplayMode, WindowManager } from '../../Utils/WindowManager';
-import { PageWindowCoordinator } from '../../Utils/PageWindowCoordinator';
+import { DisplayMode, WindowManager } from 'manxia_theme/src/main/ets/Utils/WindowManager';
+import { PageWindowCoordinator } from 'manxia_theme/src/main/ets/Utils/PageWindowCoordinator';
 
 const TAG: string = 'ReaderHostWindowRestoreCoordinator';
 const PENDING_KEY: string = 'readerHostWindowRestorePending';

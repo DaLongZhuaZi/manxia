@@ -1,7 +1,7 @@
 import { common } from '@kit.AbilityKit';
 import { pasteboard } from '@kit.BasicServicesKit';
 import { logger } from 'manxia_core/src/main/ets/Utils/Logger';
-import { WindowManager } from '../Utils/WindowManager';
+import { WindowManager } from 'manxia_theme/src/main/ets/Utils/WindowManager';
 import { getLocalTransferServerService, LocalTransferServerService } from '../Framework/Services/LocalTransferServerService';
 import { getTransferConfigManager, TransferConfigManager } from '../Framework/Managers/TransferConfigManager';
 import {

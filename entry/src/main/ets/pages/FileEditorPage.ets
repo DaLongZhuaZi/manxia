@@ -36,7 +36,7 @@ import {
 } from '../Framework/EventBus';
 import { ThemeAwareHelper } from 'manxia_theme/src/main/ets/Framework/Components/ThemeAware';
 import { ThemeManager, ThemeType } from 'manxia_theme/src/main/ets/Framework/Managers/ThemeManager';
-import { WindowManager, DisplayMode } from '../Utils/WindowManager';
+import { WindowManager, DisplayMode } from 'manxia_theme/src/main/ets/Utils/WindowManager';
 
 const TAG = 'FileEditorPage';
 const TITLE_BAR_HEIGHT_MINI: number = 56;

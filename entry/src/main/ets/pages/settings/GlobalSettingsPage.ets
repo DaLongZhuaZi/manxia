@@ -19,7 +19,7 @@ import { ensureGuideAnchorVisibleInScroller, resolveGuideHighlightRectInRoot } f
 import { AppGuideManager, AppGuidePageId, AppGuideStep } from '../../Framework/Managers/AppGuideManager';
 import { GlobalBackgroundLayerMode } from 'manxia_theme/src/main/ets/Framework/Components/GlobalBackgroundLayer';
 import { SharedPageBackgroundLayer } from '../../Framework/Components/SharedPageBackgroundLayer';
-import { PageWindowCoordinator } from '../../Utils/PageWindowCoordinator';
+import { PageWindowCoordinator } from 'manxia_theme/src/main/ets/Utils/PageWindowCoordinator';
 import { SettingsImmersiveTitleBar } from './SettingsImmersiveTitleBar';
 import { SettingsPageTitleBarManager } from './SettingsPageTitleBarManager';
 import { SettingsPageSurfaceManager, SettingsPageSurfaceStyle, SettingsPageRowVisualStyle } from './SettingsPageSurfaceManager';

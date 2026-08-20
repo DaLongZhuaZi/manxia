@@ -66,9 +66,9 @@ import { ThemeManager, ThemeType } from 'manxia_theme/src/main/ets/Framework/Man
 import { ThemeAwareState, ThemeAwareHelper } from 'manxia_theme/src/main/ets/Framework/Components/ThemeAware';
 import { FontAwareHelper, FontAwareState } from '../Framework/Components/FontAware';
 import { PageLifecycleManager } from 'manxia_core/src/main/ets/Framework/Lifecycle/index';
-import { WindowManager, DisplayMode } from '../Utils/WindowManager';
+import { WindowManager, DisplayMode } from 'manxia_theme/src/main/ets/Utils/WindowManager';
 import { ReaderOrientationLockHelper } from 'manxia_core/src/main/ets/Utils/ReaderOrientationLockHelper';
-import { PageWindowCoordinator } from '../Utils/PageWindowCoordinator';
+import { PageWindowCoordinator } from 'manxia_theme/src/main/ets/Utils/PageWindowCoordinator';
 import { curves, promptAction } from '@kit.ArkUI';
 import { webview } from '@kit.ArkWeb';
 import { preferences } from '@kit.ArkData';

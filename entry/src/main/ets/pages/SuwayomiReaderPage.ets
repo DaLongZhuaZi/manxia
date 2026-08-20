@@ -12,7 +12,7 @@ import { getSuwayomiSourceExecutor, SuwayomiSourceExecutor } from '../Framework/
 import { PageInfo, ChapterInfo, ComicDetailInfo } from '../Framework/Source/SourceExecutor';
 import { display, curves, UIContext } from '@kit.ArkUI';
 import { window } from '@kit.ArkUI';
-import { WindowManager, DisplayMode } from '../Utils/WindowManager';
+import { WindowManager, DisplayMode } from 'manxia_theme/src/main/ets/Utils/WindowManager';
 import { AvifDecoder, isAvifFormat } from '../Framework/Image/AvifDecoder';
 import { http } from '@kit.NetworkKit';
 import { image } from '@kit.ImageKit';

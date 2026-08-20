@@ -6,7 +6,7 @@ import { PageLifecycleManager } from 'manxia_core/src/main/ets/Framework/Lifecyc
 import { ThemeManager, ThemeType, CUSTOM_THEME_KEYS } from 'manxia_theme/src/main/ets/Framework/Managers/ThemeManager';
 import { ThemeAwareHelper, ThemeAwareState } from 'manxia_theme/src/main/ets/Framework/Components/ThemeAware';
 import { WelcomeGuideManager } from '../Framework/Managers/WelcomeGuideManager';
-import { WindowManager, DisplayMode } from '../Utils/WindowManager';
+import { WindowManager, DisplayMode } from 'manxia_theme/src/main/ets/Utils/WindowManager';
 import { common } from '@kit.AbilityKit';
 import { colorMap } from 'manxia_core/src/main/ets/Data/ResourceMap';
 import { BuiltInThemeResources } from 'manxia_theme/src/main/ets/Framework/Theme/BuiltInThemeResources';

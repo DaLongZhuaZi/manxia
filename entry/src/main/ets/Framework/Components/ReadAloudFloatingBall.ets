@@ -8,7 +8,7 @@ import {
   NovelAudioReadAloudSnapshot,
   NovelAudioReadAloudStateListener
 } from '../ReadAloud/NovelAudioReadAloudSessionManager';
-import { WindowManager, DisplayMode } from '../../Utils/WindowManager';
+import { WindowManager, DisplayMode } from 'manxia_theme/src/main/ets/Utils/WindowManager';
 import { openReadAloudPlayerInIsolatedAbility } from '../ReadAloud/ReadAloudPlayerAbilityLauncher';
 import {
   getHoldingAwarenessManager,

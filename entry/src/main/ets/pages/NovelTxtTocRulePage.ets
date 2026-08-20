@@ -20,8 +20,8 @@ import { SharedPageBackgroundLayer } from '../Framework/Components/SharedPageBac
 import { ThemeAwareState, ThemeAwareHelper } from 'manxia_theme/src/main/ets/Framework/Components/ThemeAware';
 import { FontAwareHelper, FontAwareState } from '../Framework/Components/FontAware';
 import { ThemeManager, ThemeType } from 'manxia_theme/src/main/ets/Framework/Managers/ThemeManager';
-import { DisplayMode } from '../Utils/WindowManager';
-import { PageWindowCoordinator } from '../Utils/PageWindowCoordinator';
+import { DisplayMode } from 'manxia_theme/src/main/ets/Utils/WindowManager';
+import { PageWindowCoordinator } from 'manxia_theme/src/main/ets/Utils/PageWindowCoordinator';
 import { SettingsImmersiveTitleBar } from './settings/SettingsImmersiveTitleBar';
 import { SettingsPanelSurfaceHelper } from './settings/SettingsPanelSurfaceHelper';
 import { SettingsImmersiveTitleActionItem, SettingsPageTitleBarManager } from './settings/SettingsPageTitleBarManager';

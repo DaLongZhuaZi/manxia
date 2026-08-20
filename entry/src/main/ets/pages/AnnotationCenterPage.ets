@@ -12,8 +12,8 @@ import { GlobalBackgroundLayerMode } from 'manxia_theme/src/main/ets/Framework/C
 import { SharedPageBackgroundLayer } from '../Framework/Components/SharedPageBackgroundLayer';
 import { ThemeAwareHelper, ThemeAwareState } from 'manxia_theme/src/main/ets/Framework/Components/ThemeAware';
 import { ThemeManager } from 'manxia_theme/src/main/ets/Framework/Managers/ThemeManager';
-import { WindowManager, DisplayMode } from '../Utils/WindowManager';
-import { PageWindowCoordinator } from '../Utils/PageWindowCoordinator';
+import { WindowManager, DisplayMode } from 'manxia_theme/src/main/ets/Utils/WindowManager';
+import { PageWindowCoordinator } from 'manxia_theme/src/main/ets/Utils/PageWindowCoordinator';
 import { getUnifiedAnnotationManager, UnifiedAnnotationManager } from '../Framework/Annotations/UnifiedAnnotationManager';
 import { getHelpPanelManagerV2 } from '../Framework/Components/HelpPanelV2';
 import { DataManager } from '../Framework/Data/DataManager';

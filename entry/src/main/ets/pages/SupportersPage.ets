@@ -10,8 +10,8 @@ import { ThemeManager, ThemeType } from 'manxia_theme/src/main/ets/Framework/Man
 import { FontAwareHelper, FontAwareState } from '../Framework/Components/FontAware';
 import { logger } from 'manxia_core/src/main/ets/Utils/Logger';
 import { PageLifecycleManager } from 'manxia_core/src/main/ets/Framework/Lifecycle/index';
-import { DisplayMode } from '../Utils/WindowManager';
-import { PageWindowCoordinator } from '../Utils/PageWindowCoordinator';
+import { DisplayMode } from 'manxia_theme/src/main/ets/Utils/WindowManager';
+import { PageWindowCoordinator } from 'manxia_theme/src/main/ets/Utils/PageWindowCoordinator';
 import { ngfPagePolicyHostFacade } from '../Framework/NGF/uiShell/index';
 import { common } from '@kit.AbilityKit';
 import { SupporterDataManager, SupporterRecord } from '../Framework/Managers/SupporterDataManager';

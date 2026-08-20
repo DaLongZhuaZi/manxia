@@ -6,8 +6,8 @@ import { continuationStateHelper } from '../Framework/Distributed/ContinuationSt
 import { ReadAloudController } from '../Framework/ReadAloud/ReadAloudController';
 import { eventBus, GameEvent, IEventPayload } from '../Framework/EventBus';
 import { ReadAloudPlaybackState, ReadAloudSessionContext, ReadAloudStateSnapshot } from '../Framework/ReadAloud/ReadAloudTypes';
-import { WindowManager, DisplayMode } from '../Utils/WindowManager';
-import { PageWindowCoordinator } from '../Utils/PageWindowCoordinator';
+import { WindowManager, DisplayMode } from 'manxia_theme/src/main/ets/Utils/WindowManager';
+import { PageWindowCoordinator } from 'manxia_theme/src/main/ets/Utils/PageWindowCoordinator';
 import { ThemeAwareHelper, ThemeAwareState } from 'manxia_theme/src/main/ets/Framework/Components/ThemeAware';
 import { SourceDialogScaffold } from '../Framework/Components/SourceDialogScaffold';
 import { DialogSurfaceStyleHelper } from '../Framework/Components/DialogSurfaceStyleHelper';
