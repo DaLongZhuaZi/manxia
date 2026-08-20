@@ -17,7 +17,7 @@ import { LegadoWorkflowKind } from 'manxia_novel/src/main/ets/Framework/Novel/Le
 import { getLegadoSourceAutomationToken } from 'manxia_novel/src/main/ets/Framework/Novel/LegadoSourceAutomationIdentity';
 import { LegadoBookSourceType } from 'manxia_novel/src/main/ets/Framework/Novel/LegadoSourceTypes';
 import { getLegadoMangaSourceBridge, LegadoMangaVirtualSource } from '../Framework/Novel/LegadoMangaSourceBridge';
-import { getNovelSettingsManager, NovelSettingsManager } from '../Framework/Novel/NovelSettingsManager';
+import { getNovelSettingsManager, NovelSettingsManager } from 'manxia_core/src/main/ets/Framework/Novel/NovelSettingsManager';
 import { NovelSearchResult, NovelSourceInfo } from 'manxia_core/src/main/ets/Models/NovelModels';
 import { ThemeAwareState, ThemeAwareHelper } from 'manxia_theme/src/main/ets/Framework/Components/ThemeAware';
 import { ThemeManager, ThemeType } from 'manxia_theme/src/main/ets/Framework/Managers/ThemeManager';

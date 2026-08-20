@@ -62,7 +62,7 @@ import {
   CreateThoughtInput
 } from 'manxia_core/src/main/ets/Models/AnnotationModels';
 import { SettingKeys } from 'manxia_core/src/main/ets/Framework/Contracts/SettingKeys';
-import { getNovelSettingsManager, BrowseHistoryInput } from '../Framework/Novel/NovelSettingsManager';
+import { getNovelSettingsManager, BrowseHistoryInput } from 'manxia_core/src/main/ets/Framework/Novel/NovelSettingsManager';
 import { ThemeManager, ThemeType } from 'manxia_theme/src/main/ets/Framework/Managers/ThemeManager';
 import { ThemeAwareState, ThemeAwareHelper } from 'manxia_theme/src/main/ets/Framework/Components/ThemeAware';
 import { FontAwareHelper, FontAwareState } from 'manxia_theme/src/main/ets/Framework/Components/FontAware';

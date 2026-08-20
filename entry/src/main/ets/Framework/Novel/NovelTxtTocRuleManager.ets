@@ -10,7 +10,7 @@
 import { logger } from 'manxia_core/src/main/ets/Utils/Logger';
 import { SettingsManager } from 'manxia_core/src/main/ets/Framework/Managers/SettingsManager';
 import { getNovelDataManager } from './NovelDataManager';
-import { DEFAULT_TXT_TOC_RULES as SETTINGS_TXT_TOC_RULES, TxtTocRule as SettingsTxtTocRule } from './NovelSettingsManager';
+import { DEFAULT_TXT_TOC_RULES as SETTINGS_TXT_TOC_RULES, TxtTocRule as SettingsTxtTocRule } from 'manxia_core/src/main/ets/Framework/Novel/NovelSettingsManager';
 
 const TAG = 'NovelTxtTocRuleManager';
 const ENHANCED_BUILT_IN_RULE_VERSION_KEY = 'novel_txt_toc_enhanced_builtin_rules_version';

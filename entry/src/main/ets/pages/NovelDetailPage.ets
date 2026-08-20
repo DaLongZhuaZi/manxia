@@ -14,7 +14,7 @@ import { PageLifecycleManager } from 'manxia_core/src/main/ets/Framework/Lifecyc
 import { getNovelSourceManager } from '../Framework/Novel/NovelSourceManager';
 import { getNovelDataManager } from '../Framework/Novel/NovelDataManager';
 import { getNovelChapterCacheManager } from '../Framework/Novel/NovelChapterCacheManager';
-import { getNovelSettingsManager, BrowseHistoryInput } from '../Framework/Novel/NovelSettingsManager';
+import { getNovelSettingsManager, BrowseHistoryInput } from 'manxia_core/src/main/ets/Framework/Novel/NovelSettingsManager';
 import { getNovelCoverGenerator, NovelCoverGenerator } from 'manxia_novel/src/main/ets/Framework/Novel/NovelCoverGenerator';
 import { getNovelSourceSearchService, SourceSearchResult, SearchTaskHandle } from '../Framework/Novel/NovelSourceSearchService';
 import { LegadoBook, LegadoChapter } from 'manxia_novel/src/main/ets/Framework/Novel/LegadoSourceTypes';

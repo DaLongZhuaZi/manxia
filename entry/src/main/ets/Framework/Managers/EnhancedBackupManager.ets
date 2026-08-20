@@ -12,7 +12,7 @@ import { SandboxManager } from 'manxia_core/src/main/ets/Framework/Storage/Sandb
 import { DatabaseManager } from 'manxia_core/src/main/ets/Framework/Database/DatabaseManager';
 import { getNovelDataManager, NovelDataManager } from '../Novel/NovelDataManager';
 import { getNovelSourceManager, NovelSourceManager } from '../Novel/NovelSourceManager';
-import { getNovelSettingsManager, NovelSettingsManager } from '../Novel/NovelSettingsManager';
+import { getNovelSettingsManager, NovelSettingsManager } from 'manxia_core/src/main/ets/Framework/Novel/NovelSettingsManager';
 import { SettingsManager, SettingKeys } from 'manxia_core/src/main/ets/Framework/Managers/SettingsManager';
 import { AppInfoManager } from 'manxia_core/src/main/ets/Framework/Managers/AppInfoManager';
 import { getTarPackager, TarPackager } from 'manxia_core/src/main/ets/Framework/Utils/TarPackager';
@@ -82,7 +82,7 @@ import { loadKomgaConfig, saveKomgaConfig } from '../Source/KomgaConfigStore';
 
 import { NovelBook, NovelSourceInfo, NovelReadStatus } from 'manxia_core/src/main/ets/Models/NovelModels';
 import { LegadoBookSource, LegadoSourceImportResult } from 'manxia_novel/src/main/ets/Framework/Novel/LegadoSourceTypes';
-import { BrowseHistoryInput, BrowseHistoryItem } from '../Novel/NovelSettingsManager';
+import { BrowseHistoryInput, BrowseHistoryItem } from 'manxia_core/src/main/ets/Framework/Novel/NovelSettingsManager';
 import { fileIo as fs } from '@kit.CoreFileKit';
 import { deviceInfo } from '@kit.BasicServicesKit';
 import { DatabaseRecord, DatabaseValue } from 'manxia_core/src/main/ets/Framework/Database/DatabaseTypes';
