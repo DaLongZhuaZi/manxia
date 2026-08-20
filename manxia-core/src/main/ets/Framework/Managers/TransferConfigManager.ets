@@ -3,7 +3,8 @@
  */
 
 import { logger } from 'manxia_core/src/main/ets/Utils/Logger';
-import { SettingKeys, SettingsManager } from './SettingsManager';
+import { ISettingsManagerFacade, SettingsManagerHolder } from 'manxia_core/src/main/ets/Framework/Contracts/ISettingsManagerFacade';
+import { SettingKeys } from 'manxia_core/src/main/ets/Framework/Contracts/SettingKeys';
 import {
   TransferConfig,
   cloneTransferConfig,
@@ -15,7 +16,7 @@ const TAG = 'TransferConfigManager';
 
 export class TransferConfigManager {
   private static instance: TransferConfigManager;
-  private settingsManager: SettingsManager = SettingsManager.getInstance();
+  private get settingsManager(): ISettingsManagerFacade { return SettingsManagerHolder.get(); }
 
   private constructor() {}
 

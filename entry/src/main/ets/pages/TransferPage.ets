@@ -11,7 +11,7 @@ import { SettingsPanelSurfaceHelper } from 'manxia_features_ui/src/main/ets/page
 import { GlobalBackgroundLayerMode } from 'manxia_theme/src/main/ets/Framework/Components/GlobalBackgroundLayer';
 import { SharedPageBackgroundLayer } from '../Framework/Components/SharedPageBackgroundLayer';
 import { AppFloatingWindowConfig, WindowManager } from 'manxia_theme/src/main/ets/Utils/WindowManager';
-import { getTransferConfigManager, TransferConfigManager } from '../Framework/Managers/TransferConfigManager';
+import { getTransferConfigManager, TransferConfigManager } from 'manxia_core/src/main/ets/Framework/Managers/TransferConfigManager';
 import { getLocalTransferServerService, LocalTransferServerService } from '../Framework/Services/LocalTransferServerService';
 import {
   getTransferSignalClientService,

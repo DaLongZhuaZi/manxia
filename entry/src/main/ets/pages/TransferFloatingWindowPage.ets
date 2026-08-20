@@ -3,7 +3,7 @@ import { pasteboard } from '@kit.BasicServicesKit';
 import { logger } from 'manxia_core/src/main/ets/Utils/Logger';
 import { WindowManager } from 'manxia_theme/src/main/ets/Utils/WindowManager';
 import { getLocalTransferServerService, LocalTransferServerService } from '../Framework/Services/LocalTransferServerService';
-import { getTransferConfigManager, TransferConfigManager } from '../Framework/Managers/TransferConfigManager';
+import { getTransferConfigManager, TransferConfigManager } from 'manxia_core/src/main/ets/Framework/Managers/TransferConfigManager';
 import {
   TransferConfig,
   TransferLocalAddress,

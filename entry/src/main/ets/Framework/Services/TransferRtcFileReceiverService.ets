@@ -7,7 +7,7 @@
 
 import { util } from '@kit.ArkTS';
 import { logger } from 'manxia_core/src/main/ets/Utils/Logger';
-import { getTransferConfigManager, TransferConfigManager } from '../Managers/TransferConfigManager';
+import { getTransferConfigManager, TransferConfigManager } from 'manxia_core/src/main/ets/Framework/Managers/TransferConfigManager';
 import {
   getTransferUploadStoreService,
   TransferStagedUploadSession,
