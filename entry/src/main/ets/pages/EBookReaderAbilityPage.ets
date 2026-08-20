@@ -15,7 +15,7 @@ import {
   EBookFormat,
   EBookReaderEngine
 } from 'manxia_core/src/main/ets/Models/EBookModels';
-import { createUserManualEBookFromRawFile, isUserManualId } from '../Data/UserManualData';
+import { createUserManualEBookFromRawFile, isUserManualId } from 'manxia_core/src/main/ets/Framework/Data/UserManualData';
 import { READER_ABILITY_HOST_MULTITON } from 'manxia_reader_ui/src/main/ets/Framework/Reader/MangaReaderAbilityConstants';
 import { RemoteControlSocketChannel, RemoteFileRequestOptions } from '../Framework/Distributed/RemoteControlSocketChannel';
 import { OnlineEBookImportService } from '../Framework/Services/OnlineEBookImportService';

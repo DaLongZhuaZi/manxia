@@ -12,7 +12,7 @@ import { preferences } from '@kit.ArkData';
 import { common } from '@kit.AbilityKit';
 import { logger } from 'manxia_core/src/main/ets/Utils/Logger';
 import { getContext } from 'manxia_theme/src/main/ets/GlobalContext';
-import { createUserManualEBookFromRawFile, getLegacyUserManualIds, getUserManualId } from '../../Data/UserManualData';
+import { createUserManualEBookFromRawFile, getLegacyUserManualIds, getUserManualId } from 'manxia_core/src/main/ets/Framework/Data/UserManualData';
 import { EBookDataManager } from '../Data/EBookDataManager';
 
 const TAG = 'WelcomeGuideManager';
