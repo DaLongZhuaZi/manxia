@@ -1,4 +1,5 @@
 ﻿import { SafeFileUtils } from 'manxia_core/src/main/ets/Utils/SafeFileUtils';
+import { IDataManagerFacade, DataManagerHolder } from 'manxia_core/src/main/ets/Framework/Contracts/IDataManagerFacade';
 // 文件路径: entry/src/main/ets/pages/DownloadManagerPage.ets
 /**
  * 下载管理页面
@@ -337,7 +338,7 @@ struct DownloadManagerPage {
     this.isCacheLoading = true;
     try {
       // [改进] 直接从数据库获取所有有缓存的漫画
-      const cachedMangas = await this.dataManager.getAllCachedMangas();
+      const cachedMangas = await DataManagerHolder.get().getAllCachedMangas();
       const mangaCacheList: ContentCacheStats[] = [];
       
       logger.info(TAG, `数据库返回 ${cachedMangas.length} 部漫画，开始获取详细缓存状态...`);

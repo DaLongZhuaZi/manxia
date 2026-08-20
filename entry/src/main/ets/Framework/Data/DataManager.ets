@@ -5,6 +5,7 @@
  */
 
 import { CacheConfig, CacheConfigInput, CacheStats, CachedMangaInfo, ChapterArchiveInfo, ChapterComicIdRecord, ChapterInfo, ChapterInfoCreationResult, ChapterInfoInput, ChapterPageCountRecord, ChapterUpdateRecord, ChapterWithPages, ComicBasicInfoUpdate, ComicInfo, ComicInfoBatchRecord, ComicInfoInput, ComicSource, ComicSourceConfigPatch, ComicSourceDatabaseInput, ComicSourceInput, ComicSourceUpdate, ConfigObject, CountQueryResult, CountRecord, DataManagerConfig, DataManagerConfigInput, DataStats, DeleteComicsResult, DiskCacheStats, DownloadTask, DownloadTaskInput, DownloadTaskUpdate, FavoriteInfo, FavoriteInfoInput, IncompleteLocalImportCleanupResult, LocalComicCleanupRecord, MemoryCacheStats, OnlineChapterInfo, OnlineChapterInfoInput, OnlineComicInfo, OnlineComicInfoInput, OnlineComicSourceSaveInput, OnlinePageInfo, OnlinePageInfoInput, OnlinePageRequestHeader, OnlineReadHistory, PageArchiveInfo, PageCacheUpdate, PageInfo, PageInfoInput, QueryOptions, ReadHistory, ReadHistoryInput, SourceConfigResult, SourceCredentials, StorageStats, UpdateDataRecord } from 'manxia_core/src/main/ets/Framework/Contracts/DataContracts';
+import { IDataManagerFacade, DataManagerHolder } from 'manxia_core/src/main/ets/Framework/Contracts/IDataManagerFacade';
 
 import { SafeFileUtils } from 'manxia_core/src/main/ets/Utils/SafeFileUtils';
 import { SafeUtils } from 'manxia_core/src/main/ets/Utils/SafeUtils';
@@ -78,7 +79,7 @@ type ReadHistoryQueryResult = ReadHistoryDatabaseRecord;
  * 图源配置查询结果接口
  * [新增] 用于按名称查找图源时的返回值
  */
-export class DataManager {
+export class DataManager implements IDataManagerFacade {
   private static instance: DataManager | null = null;
 
   // 核心管理器
@@ -186,7 +187,9 @@ export class DataManager {
       logger.error(TAG, '数据管理器初始化失败', String(error));
       throw new Error(String(error));
     }
-  }
+  
+  DataManagerHolder.register(this);
+}
 
   /**
    * 数据库记录转换为业务对象的工具方法
