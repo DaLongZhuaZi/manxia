@@ -4,13 +4,15 @@
  * 后续接线：DataManager implements 本接口，并在启动初始化后 DataManagerHolder.register(this)。
  */
 import { SourceConfigResult, CachedMangaInfo } from './DataContracts';
-import { UserSettingsDatabaseRecord } from '../Database/DatabaseTypes';
+import { UserSettingsDatabaseRecord, ComicSourceDatabaseRecord } from '../Database/DatabaseTypes';
 
 export interface IDataManagerFacade {
   getSourceConfigByName(sourceName: string): Promise<SourceConfigResult | null>;
   getCachedMangasBySource(sourceId: number): Promise<CachedMangaInfo[]>;
   getAllCachedMangas(): Promise<CachedMangaInfo[]>;
   getSourceUserSetting(sourceId: number, keyName: string): Promise<UserSettingsDatabaseRecord | null>;
+  getComicSourceById(sourceId: number): Promise<ComicSourceDatabaseRecord | null>;
+  updateComicSourceCookies(sourceId: number, cookiesJson: string): Promise<void>;
 }
 
 export class DataManagerHolder {
