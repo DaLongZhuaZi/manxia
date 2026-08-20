@@ -26,7 +26,7 @@ import { getNovelSourceValidator } from './Framework/Novel/NovelSourceValidator'
 import { uiContextManager } from 'manxia_theme/src/main/ets/Framework/Managers/UIContextManager';
 import { ProxyManager } from './Framework/Network/ProxyManager';
 import { getFontManager } from 'manxia_theme/src/main/ets/Framework/Managers/FontManager';
-import { getDownloadSyncManager } from './Framework/Managers/DownloadSyncManager';
+import { getDownloadSyncManager } from 'manxia_core/src/main/ets/Framework/Managers/DownloadSyncManager';
 import { getChangelogManager } from './Framework/Managers/ChangelogManager';
 import { getAutoBackupScheduler } from './Framework/WebDAV/WebDAVAutoBackupScheduler';
 import { widgetDataSync } from './Utils/WidgetDataSync';

@@ -9,7 +9,7 @@ import {
   VersionHistoryManager,
   VersionRepositoryUpdateCheckResult,
   VersionRepositoryVersionMarker
-} from '../Managers/VersionHistoryManager';
+} from 'manxia_core/src/main/ets/Framework/Managers/VersionHistoryManager';
 import { AppInfoManager } from 'manxia_core/src/main/ets/Framework/Managers/AppInfoManager';
 import { LegadoSourceImportResult } from 'manxia_novel/src/main/ets/Framework/Novel/LegadoSourceTypes';
 import { getNovelSourceManager, NovelSourceManager } from './NovelSourceManager';

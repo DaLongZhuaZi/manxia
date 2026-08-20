@@ -1,3 +1,4 @@
+import { http } from '@kit.NetworkKit';
 /** 网络代理契约（Stage 6 契约化推广）—— 公共类型与接口，entry ProxyManager 实现并自注册。*/
 
 export enum ProxyProtocol {
@@ -45,6 +46,7 @@ export interface IProxyManagerFacade {
   getHttpsProxyUrl(): string | undefined;
   saveConfig(config: ProxyConfig): Promise<void>;
   applySystemProxy(): Promise<void>;
+  applyToHttpOptions(options: http.HttpRequestOptions, url: string): Promise<void>;
   initialize(): Promise<void>;
   testSingleUrl(url: string): Promise<ProxyTestResult>;
 }

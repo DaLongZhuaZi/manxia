@@ -24,7 +24,7 @@ import {
   VersionCommitRepositoryResult,
   DEFAULT_VERSION_COMMIT_REPOSITORIES,
   DEFAULT_VERSION_COMMIT_FETCH_LIMIT
-} from '../Framework/Managers/VersionHistoryManager';
+} from 'manxia_core/src/main/ets/Framework/Managers/VersionHistoryManager';
 import { SettingsImmersiveTitleBar } from './settings/SettingsImmersiveTitleBar';
 import { SettingsPageTitleBarManager } from 'manxia_features_ui/src/main/ets/pages/settings/SettingsPageTitleBarManager';
 import { SettingsPanelSurfaceHelper } from 'manxia_features_ui/src/main/ets/pages/settings/SettingsPanelSurfaceHelper';

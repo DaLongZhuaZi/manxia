@@ -8,7 +8,7 @@ import {
   VersionCommitRepositoryTarget,
   VersionHistoryManager,
   VersionRepositoryVersionMarker
-} from '../Managers/VersionHistoryManager';
+} from 'manxia_core/src/main/ets/Framework/Managers/VersionHistoryManager';
 import { AppInfoManager } from 'manxia_core/src/main/ets/Framework/Managers/AppInfoManager';
 import {
   LegadoCloudLogLevel,

@@ -35,7 +35,7 @@ import {
   MANXIA_LEGADO_RUNTIME_REPOSITORY_KEY,
   MANXIA_LEGADO_SOURCES_REPOSITORY_KEY,
   VersionRepositoryVersionMarker
-} from '../Framework/Managers/VersionHistoryManager';
+} from 'manxia_core/src/main/ets/Framework/Managers/VersionHistoryManager';
 
 const TAG = 'NovelSourceEnginePage';
 

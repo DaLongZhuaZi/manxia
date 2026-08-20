@@ -9,7 +9,7 @@ import { logger } from 'manxia_core/src/main/ets/Utils/Logger';
 import { fileIo } from '@kit.CoreFileKit';
 import { Context } from '@kit.AbilityKit';
 import { http } from '@kit.NetworkKit';
-import { ProxyManager } from '../Network/ProxyManager';
+import { IProxyManagerFacade, ProxyManagerHolder } from 'manxia_core/src/main/ets/Framework/Contracts/ProxyManagerFacade';
 
 const TAG = 'VersionHistoryManager';
 const VERSION_HISTORY_DIR = 'version-history';
@@ -553,7 +553,7 @@ export class VersionHistoryManager {
         }
       };
 
-      const proxyManager = ProxyManager.getInstance();
+      const proxyManager: IProxyManagerFacade = ProxyManagerHolder.get();
       if (proxyManager.isEnabled()) {
         await proxyManager.applyToHttpOptions(options, url);
       }
@@ -630,7 +630,7 @@ export class VersionHistoryManager {
         }
       };
 
-      const proxyManager = ProxyManager.getInstance();
+      const proxyManager: IProxyManagerFacade = ProxyManagerHolder.get();
       if (proxyManager.isEnabled()) {
         await proxyManager.applyToHttpOptions(options, url);
       }
@@ -981,7 +981,7 @@ export class VersionHistoryManager {
         }
       };
 
-      const proxyManager = ProxyManager.getInstance();
+      const proxyManager: IProxyManagerFacade = ProxyManagerHolder.get();
       if (proxyManager.isEnabled()) {
         await proxyManager.applyToHttpOptions(options, url);
       }
