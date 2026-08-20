@@ -1,3 +1,4 @@
+import { AnimationSettings, DEFAULT_ANIMATION_SETTINGS, AnimationSettingsListener } from 'manxia_core/src/main/ets/Framework/Contracts/AnimationSettings';
 /**
  * 动画设置管理器
  * 统一管理APP内所有动画的开关和配置
@@ -7,36 +8,23 @@
 import { logger } from 'manxia_core/src/main/ets/Utils/Logger';
 import { SettingsManager, SettingKeys } from '../Managers/SettingsManager';
 
+export { AnimationSettings, DEFAULT_ANIMATION_SETTINGS, AnimationSettingsListener };
 const TAG = 'AnimationSettingsManager';
 
 /**
  * 动画设置配置接口
  */
-export interface AnimationSettings {
-  // 书籍打开/关闭动画
-  bookOpenEnabled: boolean;       // 书籍打开动画开关
-  bookCloseEnabled: boolean;      // 书籍关闭动画开关
-  bookOpenDuration: number;       // 书籍打开动画时长(ms)
-  bookCloseDuration: number;      // 书籍关闭动画时长(ms)
-  // 主页面底栏动画
-  mainPageBottomBarAnimationEnabled: boolean; // 主页面底栏动画开关（关闭后底栏常驻）
-}
+
 
 /**
  * 默认动画设置
  */
-export const DEFAULT_ANIMATION_SETTINGS: AnimationSettings = {
-  bookOpenEnabled: true,
-  bookCloseEnabled: true,
-  bookOpenDuration: 400,
-  bookCloseDuration: 350,
-  mainPageBottomBarAnimationEnabled: false // 默认关闭底栏动画
-};
+;
 
 /**
  * 动画设置变化监听器类型
  */
-export type AnimationSettingsListener = (settings: AnimationSettings) => void;
+
 
 /**
  * 动画设置管理器类（单例）
