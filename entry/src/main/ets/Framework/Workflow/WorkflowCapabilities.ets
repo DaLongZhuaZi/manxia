@@ -10,7 +10,7 @@ import ChineseConverter, { type ChineseConversionConfig } from 'manxia_core/src/
 import PaginationHandler, { type PaginationConfig, type PaginationResult } from 'manxia_core/src/main/ets/Framework/Utils/PaginationHandler';
 import UserAgentManager, { type UserAgentRotationConfig } from 'manxia_core/src/main/ets/Framework/Managers/UserAgentManager';
 import ErrorHandler, { type RetryConfig } from '../Network/ErrorHandler';
-import SessionManager, { type SessionRefreshConfig } from '../Managers/SessionManager';
+import SessionManager, { type SessionRefreshConfig } from 'manxia_core/src/main/ets/Framework/Managers/SessionManager';
 
 const TAG = 'WorkflowCapabilities';
 
