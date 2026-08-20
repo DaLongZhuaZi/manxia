@@ -1,3 +1,4 @@
+import { SourceIndexItem, SourceRepoIndex, UpdateCheckResult } from 'manxia_core/src/main/ets/Framework/Contracts/SourceUpdateManager';
 ﻿import { SafeUtils } from 'manxia_core/src/main/ets/Utils/SafeUtils';
 /**
  * 图源更新管理器
@@ -8,6 +9,7 @@ import { preferences } from '@kit.ArkData';
 import { http } from '@kit.NetworkKit';
 import { logger } from 'manxia_core/src/main/ets/Utils/Logger';
 
+export { SourceIndexItem, SourceRepoIndex, UpdateCheckResult };
 const TAG = 'SourceUpdateManager';
 const PREFERENCES_NAME = 'source_update_preferences';
 const REPO_INDEX_FILENAME = 'index.main.json';
@@ -15,34 +17,17 @@ const REPO_INDEX_FILENAME = 'index.main.json';
 /**
  * 图源仓库索引项
  */
-export interface SourceIndexItem {
-  name: string;
-  version: string;
-  file: string;
-  description?: string;
-  author?: string;
-  updateTime?: string;
-}
+
 
 /**
  * 图源仓库索引
  */
-export interface SourceRepoIndex {
-  version: string;
-  updateTime: string;
-  sources: SourceIndexItem[];
-}
+
 
 /**
  * 更新检查结果
  */
-export interface UpdateCheckResult {
-  hasUpdate: boolean;
-  remoteIndex: SourceRepoIndex | null;
-  localIndex: SourceRepoIndex | null;
-  updatedSources: SourceIndexItem[];
-  newSources: SourceIndexItem[];
-}
+
 
 /**
  * 图源更新管理器单例
