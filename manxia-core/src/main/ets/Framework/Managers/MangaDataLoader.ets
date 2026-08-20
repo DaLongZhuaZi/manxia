@@ -4,7 +4,7 @@
  */
 
 import { logger } from 'manxia_core/src/main/ets/Utils/Logger';
-import { DataManager } from '../Data/DataManager';
+import { IDataManagerFacade, DataManagerHolder } from 'manxia_core/src/main/ets/Framework/Contracts/IDataManagerFacade';
 import { 
   Manga, 
   OnlineManga, 
@@ -16,7 +16,7 @@ import {
   hasLocalImage,
   OnlineChapterDownloadStatus
 } from 'manxia_core/src/main/ets/Framework/Types/MangaTypes';
-import { MangaTypeAdapter } from '../Adapters/MangaTypeAdapter';
+import { MangaTypeAdapter } from 'manxia_core/src/main/ets/Framework/Adapters/MangaTypeAdapter';
 
 const TAG = 'MangaDataLoader';
 
@@ -56,13 +56,13 @@ export interface ChapterPagesLoadResult {
  */
 export class MangaDataLoader {
   private static instance: MangaDataLoader;
-  private dataManager: DataManager;
+  private get dataManager(): IDataManagerFacade { return DataManagerHolder.get(); }
   
   /** 缓存过期时间（毫秒）：24小时 */
   private readonly CACHE_EXPIRE_TIME = 24 * 60 * 60 * 1000;
   
   private constructor() {
-    this.dataManager = DataManager.getInstance();
+    
   }
   
   public static getInstance(): MangaDataLoader {

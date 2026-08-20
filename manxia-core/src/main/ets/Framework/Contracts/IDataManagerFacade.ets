@@ -3,8 +3,8 @@
  * 说明：当前仅暴露 3 个只读方法（签名与 entry DataManager 实现逐字核验一致）。
  * 后续接线：DataManager implements 本接口，并在启动初始化后 DataManagerHolder.register(this)。
  */
-import { SourceConfigResult, CachedMangaInfo } from './DataContracts';
-import { UserSettingsDatabaseRecord, ComicSourceDatabaseRecord } from '../Database/DatabaseTypes';
+import { SourceConfigResult, CachedMangaInfo, ComicInfo, ChapterInfo, PageInfo } from './DataContracts';
+import { UserSettingsDatabaseRecord, ComicSourceDatabaseRecord, DatabaseRecord } from '../Database/DatabaseTypes';
 
 export interface IDataManagerFacade {
   getSourceConfigByName(sourceName: string): Promise<SourceConfigResult | null>;
@@ -15,6 +15,11 @@ export interface IDataManagerFacade {
   updateComicSourceCookies(sourceId: number, cookiesJson: string): Promise<void>;
   clearComicSourceCookies(sourceId: number): Promise<void>;
   getUserSetting(userId: string, key: string): Promise<string | null>;
+  getComicById(comicId: string): Promise<ComicInfo | null>;
+  getChapterById(chapterId: string): Promise<ChapterInfo | null>;
+  getChaptersByMangaId(mangaId: string): Promise<ChapterInfo[]>;
+  getPagesByChapterId(chapterId: string): Promise<PageInfo[]>;
+  getAllComicSources(): Promise<DatabaseRecord[]>;
 }
 
 export class DataManagerHolder {
