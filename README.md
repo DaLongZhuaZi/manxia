@@ -579,6 +579,8 @@ entry（壳：Abilities/能力入口/main_pages 路由聚合）
  ├─ manxia-theme          主题/窗口/字体/UI 上下文（Stage6-U0/U2/U5）
  └─ manxia-core           日志/类型/Models/纯工具/资源映射/契约（Stage2、U1）
   (+ manxia-native 原生 so：avif/quickjs/webdav/transfer_rtc)
+
+> 最新权威计数/预留清单见 `docs/architecture/har-modularization/MODULE_MANIFEST.md`（v2）；Core 已去耦（出边=0）；Backup/Legado/DataManager/原生 等按边界留守 entry。
 ```
 ### 契约化（跨模块解耦范式）
 - 契约进 core：manxia-core/src/main/ets/Framework/Contracts/*（如 ISettingsManagerFacade + SettingsManagerHolder、SettingKeys）。

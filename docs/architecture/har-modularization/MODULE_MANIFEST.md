@@ -1,19 +1,31 @@
-# 漫匣 HAR 模块化 — 权威文件→模块清单（v1）
+# 漫匣 HAR 模块化 — 权威模块清单（v2，2026-08-21）
 
-> 生成：2026-08-20 13:40｜以磁盘实际位置为准（真值）。
+> 以磁盘实测为准。上一版 v1 已过时（反映 Stage6 早期）。
 
-## 各模块 ets 文件数
-- entry: 688
-- manxia_core: 96
-- manxia_source_engine: 34
-- manxia_network: 25
-- manxia_novel: 26
-- manxia_theme: 12
+## 当前各模块 ets 数（不含 .bak）
+- entry: 585（最初 810）
+- manxia-core: 139
+- manxia-theme: 30
+- manxia-novel: 28
+- manxia-network: 33
+- manxia-source-engine: 34
+- manxia-reader-ui: 18
+- manxia-features-ui: 17
 
-## 校验结论
-- 无跨模块相同相对路径（真重复=0）；编译通过（HAP 14:17）。
-- Duplicate file names 警告 = hvigor 多模块合并的评审型提示（同名 basename 跨模块），非致命。
-- 阶段 result JSON 的 moved 清单与磁盘实测一致（抽查 stage5 HtmlFormatter 等地对得上）。
+## 阶段达成
+- 契约化三件套：SettingsManager / ProxyManager / DataManager（类型+接口+Holder）。
+- 大量管理器与 UI 件整迁各模块；Wave-0 Core 去耦：core 反向耦合清零（出边=0）。
+- W2 分发：theme(A 11) + features-ui(B 4) + network(C 6) + novel(D 2) + LocalTransfer/Import 子项目闭环。
+- EBook 功能修复：划线 / MOBI / 进度；传书上传鉴权修复。
 
-## 用途
-后续所有阶段以本清单的模块归属为准；新增迁移时据此避免误判。
+## 预留 entry 清单（边界，不迁）
+- BackupManager x3（依赖 Novel/Legado 大簇）
+- DataManager（巨型数据层本体；类型/契约在 core）
+- NetworkFolderManager（依赖 SMBClientAdapter 原生）
+- MangaAssetLoader（依赖缓存簇，延后子项目）
+- Legado 运行时 18 件（Rhino/Wasm/JS 引擎等原生承载）
+- Abilities / 入口壳 / pages（assembly 层）
+
+## 校验口径
+- core 出边（对上层模块 import）= 0（脚本断言）
+- residual=0 / dangling=0 / 深路径目标存在 / 无反向依赖 / 无重名；每批门禁后提交
