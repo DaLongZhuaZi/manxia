@@ -208,3 +208,6 @@ extensions-source
 **/webdav/install-mbedtls-arm64/
 # DevEco/Hvigor generated module build profile (auto-generated, not source)
 **/BuildProfile.ets
+# Module-level ohpm links (created by ohpm install per module)
+**/oh_modules/
+**/node_modules/
