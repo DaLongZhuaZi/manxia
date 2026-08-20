@@ -14,7 +14,7 @@ import { logger } from 'manxia_core/src/main/ets/Utils/Logger';
 import { PageLifecycleManager } from 'manxia_core/src/main/ets/Framework/Lifecycle/index';
 import { ThemeAwareState, ThemeAwareHelper } from 'manxia_theme/src/main/ets/Framework/Components/ThemeAware';
 import { ThemeType } from 'manxia_theme/src/main/ets/Framework/Managers/ThemeManager';
-import { FontAwareHelper, FontAwareState } from '../Framework/Components/FontAware';
+import { FontAwareHelper, FontAwareState } from 'manxia_theme/src/main/ets/Framework/Components/FontAware';
 import { SourceDialogScaffold } from '../Framework/Components/SourceDialogScaffold';
 import { RssFetchResult, RssSubscriptionSource } from 'manxia_core/src/main/ets/Models/RssSubscriptionModels';
 import { getRssSubscriptionInitializer } from '../Framework/Rss/RssSubscriptionInitializer';

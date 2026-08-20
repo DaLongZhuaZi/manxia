@@ -21,7 +21,7 @@ import { getNovelSettingsManager, NovelSettingsManager } from '../Framework/Nove
 import { NovelSearchResult, NovelSourceInfo } from 'manxia_core/src/main/ets/Models/NovelModels';
 import { ThemeAwareState, ThemeAwareHelper } from 'manxia_theme/src/main/ets/Framework/Components/ThemeAware';
 import { ThemeManager, ThemeType } from 'manxia_theme/src/main/ets/Framework/Managers/ThemeManager';
-import { FontAwareHelper, FontAwareState } from '../Framework/Components/FontAware';
+import { FontAwareHelper, FontAwareState } from 'manxia_theme/src/main/ets/Framework/Components/FontAware';
 import { NovelDetailPageParams, NovelSearchPageParams } from './NovelBookshelfPage';
 import { NovelExplorePageParams } from './NovelExplorePage';
 import { DeviceAdaptationManager, DeviceChangeListener } from 'manxia_theme/src/main/ets/Framework/Managers/DeviceAdaptationManager';

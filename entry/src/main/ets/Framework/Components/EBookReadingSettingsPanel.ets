@@ -9,7 +9,7 @@ import { ThemeAwareHelper } from 'manxia_theme/src/main/ets/Framework/Components
 import { ThemeType } from 'manxia_theme/src/main/ets/Framework/Managers/ThemeManager';
 import { AppColors } from 'manxia_theme/src/main/ets/Framework/Theme/AppColors';
 import { EBookReadingSettings, EBookPageMode, DEFAULT_EBOOK_READING_SETTINGS } from 'manxia_core/src/main/ets/Models/EBookModels';
-import { getFontManager, SystemFont, CustomFont } from '../Managers/FontManager';
+import { getFontManager, SystemFont, CustomFont } from 'manxia_theme/src/main/ets/Framework/Managers/FontManager';
 
 const TAG = 'EBookReadingSettingsPanel';
 

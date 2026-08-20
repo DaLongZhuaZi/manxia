@@ -14,7 +14,7 @@ import {
   DoublePageVerticalDirection,
   PageTurnAnimationType
 } from 'manxia_core/src/main/ets/Models/MangaModels';
-import { getFontManager, SystemFont, CustomFont } from '../Framework/Managers/FontManager';
+import { getFontManager, SystemFont, CustomFont } from 'manxia_theme/src/main/ets/Framework/Managers/FontManager';
 import { UIContext, display } from '@kit.ArkUI';
 
 interface EpubSettingsPanelCallbacks {

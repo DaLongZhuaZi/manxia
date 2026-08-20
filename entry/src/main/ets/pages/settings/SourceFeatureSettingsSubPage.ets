@@ -2,7 +2,7 @@ import { HdsNavDestination } from '@kit.UIDesignKit';
 import { LengthMetrics } from '@kit.ArkUI';
 import { ThemeAwareHelper, ThemeAwareState } from 'manxia_theme/src/main/ets/Framework/Components/ThemeAware';
 import { ThemeManager, ThemeType } from 'manxia_theme/src/main/ets/Framework/Managers/ThemeManager';
-import { FontAwareHelper, FontAwareState } from '../../Framework/Components/FontAware';
+import { FontAwareHelper, FontAwareState } from 'manxia_theme/src/main/ets/Framework/Components/FontAware';
 import { SettingsManager, SettingKeys } from '../../Framework/Managers/SettingsManager';
 import { GuideStep, WelcomeGuideManager } from '../../Framework/Managers/WelcomeGuideManager';
 import { logger } from 'manxia_core/src/main/ets/Utils/Logger';

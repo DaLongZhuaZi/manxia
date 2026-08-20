@@ -9,7 +9,7 @@ import { HdsNavDestination, HdsNavDestinationAttribute, ScrollEffectType } from 
 import { LengthMetrics, promptAction } from '@kit.ArkUI';
 import { ThemeAwareState, ThemeAwareHelper } from 'manxia_theme/src/main/ets/Framework/Components/ThemeAware';
 import { ThemeManager, ThemeType } from 'manxia_theme/src/main/ets/Framework/Managers/ThemeManager';
-import { FontAwareHelper, FontAwareState } from '../../Framework/Components/FontAware';
+import { FontAwareHelper, FontAwareState } from 'manxia_theme/src/main/ets/Framework/Components/FontAware';
 import { SettingsManager, SettingKeys } from '../../Framework/Managers/SettingsManager';
 import { photoAccessHelper } from '@kit.MediaLibraryKit';
 import fs from '@ohos.file.fs';
@@ -54,7 +54,7 @@ import { ReadAloudController } from '../../Framework/ReadAloud/ReadAloudControll
 import { ReadAloudVoiceOption } from '../../Framework/ReadAloud/ReadAloudTypes';
 import { loadGlobalReadAloudSettings, persistGlobalReadAloudSettings } from '../../Framework/ReadAloud/ReadAloudSettingsStore';
 import { ReadAloudSettingsInfoPanel } from '../../components/ReadAloudSettingsInfoPanel';
-import { getFontManager, SystemFont, CustomFont } from '../../Framework/Managers/FontManager';
+import { getFontManager, SystemFont, CustomFont } from 'manxia_theme/src/main/ets/Framework/Managers/FontManager';
 import { SettingsSearchSupport } from 'manxia_features_ui/src/main/ets/pages/settings/SettingsSearchSupport';
 import { SettingsPanelSurfaceHelper } from 'manxia_features_ui/src/main/ets/pages/settings/SettingsPanelSurfaceHelper';
 import { GlobalBackgroundLayerMode } from 'manxia_theme/src/main/ets/Framework/Components/GlobalBackgroundLayer';

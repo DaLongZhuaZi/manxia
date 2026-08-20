@@ -11,7 +11,7 @@ import { LengthMetrics } from '@kit.ArkUI';
 import { preferences } from '@kit.ArkData';
 import { logger } from 'manxia_core/src/main/ets/Utils/Logger';
 import { ThemeAwareState, ThemeAwareHelper } from 'manxia_theme/src/main/ets/Framework/Components/ThemeAware';
-import { FontAwareState } from '../Framework/Components/FontAware';
+import { FontAwareState } from 'manxia_theme/src/main/ets/Framework/Components/FontAware';
 import { ThemeType, ThemeManager } from 'manxia_theme/src/main/ets/Framework/Managers/ThemeManager';
 import { getSuwayomiSourceExecutor, SuwayomiSourceExecutor, SuwayomiExtensionSource } from '../Framework/Source/SuwayomiSourceExecutor';
 import { ComicInfo } from '../Framework/Source/SourceExecutor';

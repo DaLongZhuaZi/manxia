@@ -9,7 +9,7 @@ import { logger } from 'manxia_core/src/main/ets/Utils/Logger';
 import { ComicInfo } from '../Source/SourceExecutor';
 import { preferences } from '@kit.ArkData';
 import { common } from '@kit.AbilityKit';
-import { uiContextManager } from '../Managers/UIContextManager';
+import { uiContextManager } from 'manxia_theme/src/main/ets/Framework/Managers/UIContextManager';
 
 const TAG = 'SourceContentCache';
 

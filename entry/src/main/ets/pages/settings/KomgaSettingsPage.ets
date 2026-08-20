@@ -3,7 +3,7 @@ import { http } from '@kit.NetworkKit';
 import { logger } from 'manxia_core/src/main/ets/Utils/Logger';
 import { base64Encode } from 'manxia_core/src/main/ets/Utils/CryptoUtils';
 import { ThemeAwareState, ThemeAwareHelper } from 'manxia_theme/src/main/ets/Framework/Components/ThemeAware';
-import { FontAwareHelper, FontAwareState } from '../../Framework/Components/FontAware';
+import { FontAwareHelper, FontAwareState } from 'manxia_theme/src/main/ets/Framework/Components/FontAware';
 import { ThemeType } from 'manxia_theme/src/main/ets/Framework/Managers/ThemeManager';
 import { getKomgaTracker } from '../../Framework/Tracking/trackers/KomgaTracker';
 import { getKomgaSourceExecutor } from '../../Framework/Source/KomgaSourceExecutor';

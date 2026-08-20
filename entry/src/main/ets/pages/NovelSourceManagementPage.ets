@@ -23,7 +23,7 @@ import { LegadoSourceImportResult, LegadoBookSource, LegadoBookSourceType } from
 import { ThemeAwareState, ThemeAwareHelper } from 'manxia_theme/src/main/ets/Framework/Components/ThemeAware';
 import { ThemeManager, ThemeType } from 'manxia_theme/src/main/ets/Framework/Managers/ThemeManager';
 import { SettingKeys, SettingsManager } from '../Framework/Managers/SettingsManager';
-import { FontAwareHelper, FontAwareState } from '../Framework/Components/FontAware';
+import { FontAwareHelper, FontAwareState } from 'manxia_theme/src/main/ets/Framework/Components/FontAware';
 import { SourceDialogScaffold } from '../Framework/Components/SourceDialogScaffold';
 import { NovelSearchPageParams } from './NovelBookshelfPage';
 import { ValidationProgressDialog, ValidationProgressController, ValidationProgressInfo } from '../Framework/Components/ValidationProgressDialog';

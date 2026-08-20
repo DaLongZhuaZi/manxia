@@ -5,7 +5,7 @@ import { cryptoFramework } from '@kit.CryptoArchitectureKit';
 import fileIo from '@ohos.file.fs';
 import { logger } from 'manxia_core/src/main/ets/Utils/Logger';
 import { SafeFileUtils } from 'manxia_core/src/main/ets/Utils/SafeFileUtils';
-import { uiContextManager } from '../Managers/UIContextManager';
+import { uiContextManager } from 'manxia_theme/src/main/ets/Framework/Managers/UIContextManager';
 import { getCookieStore } from 'manxia_novel/src/main/ets/Framework/Novel/LegadoCookieStore';
 import type {
   CookieChange,

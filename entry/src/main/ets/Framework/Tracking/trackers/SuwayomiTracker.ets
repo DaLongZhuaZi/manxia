@@ -19,7 +19,7 @@ import {
   UpdateTrackRecordParams,
   TrackerId
 } from '../TrackingModels';
-import { uiContextManager } from '../../Managers/UIContextManager';
+import { uiContextManager } from 'manxia_theme/src/main/ets/Framework/Managers/UIContextManager';
 
 const TAG = 'SuwayomiTracker';
 

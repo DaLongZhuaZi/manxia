@@ -7,7 +7,7 @@ import { SafeUtils } from 'manxia_core/src/main/ets/Utils/SafeUtils';
 import { logger } from 'manxia_core/src/main/ets/Utils/Logger';
 import { ThemeManager, ThemeType, CustomThemeData, CUSTOM_THEME_KEYS, THEME_CONFIGS, SplashRotationRule, CustomThemeMode } from 'manxia_theme/src/main/ets/Framework/Managers/ThemeManager';
 import { ThemeAwareState, ThemeAwareHelper } from 'manxia_theme/src/main/ets/Framework/Components/ThemeAware';
-import { FontAwareHelper, FontAwareState } from '../Framework/Components/FontAware';
+import { FontAwareHelper, FontAwareState } from 'manxia_theme/src/main/ets/Framework/Components/FontAware';
 import { PageLifecycleManager } from 'manxia_core/src/main/ets/Framework/Lifecycle/index';
 import { UserThemeConfigManager, TransparencyConfig, EffectsConfig, HdsTabEffectsConfig } from 'manxia_theme/src/main/ets/Framework/Theme/UserThemeConfig';
 import { photoAccessHelper } from '@kit.MediaLibraryKit';

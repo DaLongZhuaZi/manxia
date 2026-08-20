@@ -10,7 +10,7 @@ import { performanceAnalyzer, PerformanceMetrics, SystemMetrics } from './Perfor
 import { HidebugPerformanceCollector, HidebugPerformanceData } from './HidebugPerformanceCollector';
 import { PerformanceChart, ChartType, ChartConfig } from '../Components/PerformanceChart';
 import { hidebug } from '@kit.PerformanceAnalysisKit';
-import { uiContextManager } from '../Managers/UIContextManager';
+import { uiContextManager } from 'manxia_theme/src/main/ets/Framework/Managers/UIContextManager';
 
 const CONSOLE_PANEL_TAG = 'ConsolePanel';
 

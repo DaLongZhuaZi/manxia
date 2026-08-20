@@ -11,7 +11,7 @@ import { logger } from 'manxia_core/src/main/ets/Utils/Logger';
 import { base64Encode } from 'manxia_core/src/main/ets/Utils/CryptoUtils';
 import { ComicInfo, ChapterInfo, PageInfo, ComicDetailInfo } from './SourceExecutor';
 import { common } from '@kit.AbilityKit';
-import { uiContextManager } from '../Managers/UIContextManager';
+import { uiContextManager } from 'manxia_theme/src/main/ets/Framework/Managers/UIContextManager';
 
 const TAG = 'SuwayomiSource';
 

@@ -13,7 +13,7 @@ import { WindowManager, DisplayMode } from 'manxia_theme/src/main/ets/Utils/Wind
 import { ReaderOrientationLockHelper } from 'manxia_core/src/main/ets/Utils/ReaderOrientationLockHelper';
 import { PageWindowCoordinator } from 'manxia_theme/src/main/ets/Utils/PageWindowCoordinator';
 import { ThemeManager } from 'manxia_theme/src/main/ets/Framework/Managers/ThemeManager';
-import { getFontManager, FontScene } from '../Framework/Managers/FontManager';
+import { getFontManager, FontScene } from 'manxia_theme/src/main/ets/Framework/Managers/FontManager';
 import { EBookDataManager } from '../Framework/Data/EBookDataManager';
 import { EBookParserFactory } from '../Framework/Parsers/EBookParser';
 import { getUnifiedAnnotationManager } from '../Framework/Annotations/UnifiedAnnotationManager';

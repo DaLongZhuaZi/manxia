@@ -4,7 +4,7 @@ import fs from '@ohos.file.fs';
 import { util } from '@kit.ArkTS';
 import { preferences } from '@kit.ArkData';
 import { logger } from 'manxia_core/src/main/ets/Utils/Logger';
-import { uiContextManager } from '../Managers/UIContextManager';
+import { uiContextManager } from 'manxia_theme/src/main/ets/Framework/Managers/UIContextManager';
 import {
   ChapterOrderCacheRemapResult,
   ChapterOrderIndexRemap,

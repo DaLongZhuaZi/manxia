@@ -15,7 +15,7 @@ import { getEnhancedBackupManager, RestoreOptions } from '../Framework/Managers/
 import { BackupData, BackupMetadata, BackupOptions, DEFAULT_BACKUP_OPTIONS } from 'manxia_core/src/main/ets/Models/BackupModels';
 import { ThemeAwareHelper } from 'manxia_theme/src/main/ets/Framework/Components/ThemeAware';
 import { ThemeManager, ThemeType } from 'manxia_theme/src/main/ets/Framework/Managers/ThemeManager';
-import { FontAwareHelper, FontAwareState } from '../Framework/Components/FontAware';
+import { FontAwareHelper, FontAwareState } from 'manxia_theme/src/main/ets/Framework/Components/FontAware';
 import { PageLifecycleManager } from 'manxia_core/src/main/ets/Framework/Lifecycle/index';
 import { SandboxManager } from 'manxia_core/src/main/ets/Framework/Storage/SandboxManager';
 import { picker, fileIo, fileUri as coreFileUri } from '@kit.CoreFileKit';

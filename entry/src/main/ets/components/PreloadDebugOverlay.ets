@@ -2,7 +2,7 @@
 // 职责: 显示漫画阅读器的预加载调试信息
 
 import { logger } from 'manxia_core/src/main/ets/Utils/Logger';
-import { FontAwareHelper, FontAwareState } from '../Framework/Components/FontAware';
+import { FontAwareHelper, FontAwareState } from 'manxia_theme/src/main/ets/Framework/Components/FontAware';
 
 const TAG = 'PreloadDebugOverlay';
 

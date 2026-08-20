@@ -13,7 +13,7 @@ import { TestItem, TestCategory } from 'manxia_core/src/main/ets/Data/TestData';
 import { testData } from 'manxia_core/src/main/ets/Data/TestData';
 import { window } from '@kit.ArkUI';
 import { common } from '@kit.AbilityKit';
-import { uiContextManager } from '../Framework/Managers/UIContextManager';
+import { uiContextManager } from 'manxia_theme/src/main/ets/Framework/Managers/UIContextManager';
 import { ThemeManager, ThemeType } from 'manxia_theme/src/main/ets/Framework/Managers/ThemeManager';
 import { ThemeToggle } from 'manxia_theme/src/main/ets/Framework/Components/ThemeToggle';
 import { ThemeAwareState, ThemeAwareHelper } from 'manxia_theme/src/main/ets/Framework/Components/ThemeAware';

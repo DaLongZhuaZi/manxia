@@ -7,7 +7,7 @@
 import { logger } from 'manxia_core/src/main/ets/Utils/Logger';
 import { DatabaseManager } from 'manxia_core/src/main/ets/Framework/Database/DatabaseManager';
 import { TempMangaInfo, TempMangaDatabaseRecord } from 'manxia_core/src/main/ets/Models/TempMangaModels';
-import { uiContextManager } from '../Managers/UIContextManager';
+import { uiContextManager } from 'manxia_theme/src/main/ets/Framework/Managers/UIContextManager';
 import CookieManager from '../Managers/CookieManager';
 import fs from '@ohos.file.fs';
 import http from '@ohos.net.http';

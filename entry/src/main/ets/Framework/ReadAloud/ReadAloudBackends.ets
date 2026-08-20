@@ -19,7 +19,7 @@ import { http } from '@kit.NetworkKit';
 import fs from '@ohos.file.fs';
 import { util } from '@kit.ArkTS';
 import { media } from '@kit.MediaKit';
-import { uiContextManager } from '../Managers/UIContextManager';
+import { uiContextManager } from 'manxia_theme/src/main/ets/Framework/Managers/UIContextManager';
 import { eventBus, GameEvent, ReadAloudCacheUpdatedPayload } from '../EventBus';
 
 const TAG = 'ReadAloudBackends';

@@ -6302,7 +6302,7 @@ export class EnhancedBackupManager {
       
       // 通知FontManager重新加载设置
       try {
-        const fontManagerModule = await import('./FontManager');
+        const fontManagerModule = await import('manxia_theme/src/main/ets/Framework/Managers/FontManager');
         const fontManager = fontManagerModule.getFontManager();
         await fontManager.reloadSettings();
       } catch (reloadError) {

@@ -11,7 +11,7 @@ import { logger } from 'manxia_core/src/main/ets/Utils/Logger';
 import { SandboxManager } from 'manxia_core/src/main/ets/Framework/Storage/SandboxManager';
 import { ImageCacheManager } from '../Cache/ImageCacheManager';
 import { DatabaseManager } from 'manxia_core/src/main/ets/Framework/Database/DatabaseManager';
-import { uiContextManager } from '../Managers/UIContextManager';
+import { uiContextManager } from 'manxia_theme/src/main/ets/Framework/Managers/UIContextManager';
 import { BusinessError } from '@kit.BasicServicesKit';
 import DownloadDirManager from './DownloadDirManager';
 

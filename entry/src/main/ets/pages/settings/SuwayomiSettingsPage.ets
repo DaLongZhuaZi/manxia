@@ -11,7 +11,7 @@ import { logger } from 'manxia_core/src/main/ets/Utils/Logger';
 import { SafeUtils } from 'manxia_core/src/main/ets/Utils/SafeUtils';
 import { base64Encode } from 'manxia_core/src/main/ets/Utils/CryptoUtils';
 import { ThemeAwareState, ThemeAwareHelper } from 'manxia_theme/src/main/ets/Framework/Components/ThemeAware';
-import { FontAwareState } from '../../Framework/Components/FontAware';
+import { FontAwareState } from 'manxia_theme/src/main/ets/Framework/Components/FontAware';
 import { ThemeType } from 'manxia_theme/src/main/ets/Framework/Managers/ThemeManager';
 import { getSuwayomiTracker, SuwayomiTracker, SuwayomiConfig } from '../../Framework/Tracking/trackers/SuwayomiTracker';
 import { SettingsManager } from '../../Framework/Managers/SettingsManager';

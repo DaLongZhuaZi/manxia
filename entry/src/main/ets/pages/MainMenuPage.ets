@@ -39,7 +39,7 @@ import {
   HoldingAwarenessSource,
   HoldingUiAnchor
 } from '../Framework/Managers/HoldingAwarenessManager';
-import { uiContextManager } from '../Framework/Managers/UIContextManager';
+import { uiContextManager } from 'manxia_theme/src/main/ets/Framework/Managers/UIContextManager';
 
 // 导入页面组件
 // 测试页面导入已移除，测试功能仍保留在代码中但不再从主菜单导航
@@ -193,7 +193,7 @@ import { MainMenuSettingsSubPage } from './settings/MainMenuSettingsSubPage';
 import { SourceFeatureSettingsSubPage } from './settings/SourceFeatureSettingsSubPage';
 import { SettingsPageSurfaceManager } from 'manxia_features_ui/src/main/ets/pages/settings/SettingsPageSurfaceManager';
 import { UnifiedDetailPageParams, UnifiedContentType } from 'manxia_core/src/main/ets/Models/UnifiedContentModels';
-import { FontAwareHelper, FontAwareState } from '../Framework/Components/FontAware';
+import { FontAwareHelper, FontAwareState } from 'manxia_theme/src/main/ets/Framework/Components/FontAware';
 import { UnifiedDetailPage } from './UnifiedDetailPage';
 import { AnnotationCenterPage, AnnotationCenterPageParams } from './AnnotationCenterPage';
 import { AvifTestPage, AvifTestPageParams } from './AvifTestPage';
@@ -268,7 +268,7 @@ import { getNovelSourceManager, NovelSourceManager } from '../Framework/Novel/No
 import { LegadoBook, LegadoBookSource, LegadoBookSourceType } from 'manxia_novel/src/main/ets/Framework/Novel/LegadoSourceTypes';
 import { LegadoMangaSourceBridge } from '../Framework/Novel/LegadoMangaSourceBridge';
 import { getNovelInitializer } from '../Framework/Novel/NovelInitializer';
-import { FontManager } from '../Framework/Managers/FontManager';
+import { FontManager } from 'manxia_theme/src/main/ets/Framework/Managers/FontManager';
 import { ReadAloudController } from '../Framework/ReadAloud/ReadAloudController';
 import { ReadAloudPlaybackState } from '../Framework/ReadAloud/ReadAloudTypes';
 import { AppGuideFlowDefinition, AppGuideFlowId, AppGuideManager, AppGuidePageId, AppGuideStep } from '../Framework/Managers/AppGuideManager';

@@ -20,7 +20,7 @@ import { LegadoBook, LegadoChapter } from 'manxia_novel/src/main/ets/Framework/N
 import { NovelBook, NovelReadStatus, NovelSearchResult } from 'manxia_core/src/main/ets/Models/NovelModels';
 import { ThemeAwareState, ThemeAwareHelper } from 'manxia_theme/src/main/ets/Framework/Components/ThemeAware';
 import { ThemeManager, ThemeType } from 'manxia_theme/src/main/ets/Framework/Managers/ThemeManager';
-import { FontAwareHelper, FontAwareState } from '../Framework/Components/FontAware';
+import { FontAwareHelper, FontAwareState } from 'manxia_theme/src/main/ets/Framework/Components/FontAware';
 import { NovelDetailPageParams, NovelReaderPageParams } from './NovelBookshelfPage';
 import { startBookOpenTransitionWithComponentId } from '../components/BookTransitionOverlay';
 import { openNovelReaderInIsolatedAbility } from '../Framework/Reader/NovelReaderAbilityLauncher';

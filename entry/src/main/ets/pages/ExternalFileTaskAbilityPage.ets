@@ -12,7 +12,7 @@ import { FileEditorPage } from './FileEditorPage';
 import { SourceManager } from '../Framework/Source/SourceManager';
 import { getNovelSourceManager } from '../Framework/Novel/NovelSourceManager';
 import { getNovelInitializer } from '../Framework/Novel/NovelInitializer';
-import { FontManager, CustomFont } from '../Framework/Managers/FontManager';
+import { FontManager, CustomFont } from 'manxia_theme/src/main/ets/Framework/Managers/FontManager';
 import {
   fileEditorService,
   FileEditorOpenParams,

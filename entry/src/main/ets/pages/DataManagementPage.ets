@@ -9,7 +9,7 @@ import { HdsNavDestination, HdsNavDestinationAttribute, ScrollEffectType } from 
 import { LengthMetrics, UIContext, promptAction } from '@kit.ArkUI';
 import { ThemeManager, ThemeType } from 'manxia_theme/src/main/ets/Framework/Managers/ThemeManager';
 import { ThemeAwareState, ThemeAwareHelper } from 'manxia_theme/src/main/ets/Framework/Components/ThemeAware';
-import { FontAwareHelper, FontAwareState } from '../Framework/Components/FontAware';
+import { FontAwareHelper, FontAwareState } from 'manxia_theme/src/main/ets/Framework/Components/FontAware';
 import { logger } from 'manxia_core/src/main/ets/Utils/Logger';
 import { removeFileExtension } from 'manxia_core/src/main/ets/Utils/FileNameUtils';
 import { ThemeToggle } from 'manxia_theme/src/main/ets/Framework/Components/ThemeToggle';

@@ -8,7 +8,7 @@ import { logger } from 'manxia_core/src/main/ets/Utils/Logger';
 import { PageLifecycleManager } from 'manxia_core/src/main/ets/Framework/Lifecycle/index';
 import { ThemeManager, ThemeType, CustomThemeData, CustomThemeMode } from 'manxia_theme/src/main/ets/Framework/Managers/ThemeManager';
 import { ThemeAwareHelper, ThemeAwareState } from 'manxia_theme/src/main/ets/Framework/Components/ThemeAware';
-import { FontAwareHelper, FontAwareState } from '../Framework/Components/FontAware';
+import { FontAwareHelper, FontAwareState } from 'manxia_theme/src/main/ets/Framework/Components/FontAware';
 import { WelcomeGuideManager, GuideStep, GuideFlowMode } from '../Framework/Managers/WelcomeGuideManager';
 import { SettingsManager, SettingKeys } from '../Framework/Managers/SettingsManager';
 import { DataManager } from '../Framework/Data/DataManager';

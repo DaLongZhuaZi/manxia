@@ -12,7 +12,7 @@ import { PageWindowCoordinator } from 'manxia_theme/src/main/ets/Utils/PageWindo
 import { ReaderOrientationLockHelper } from 'manxia_core/src/main/ets/Utils/ReaderOrientationLockHelper';
 import { ReaderSafeAreaUtils } from '../Utils/ReaderSafeAreaUtils';
 import { ThemeManager } from 'manxia_theme/src/main/ets/Framework/Managers/ThemeManager';
-import { getFontManager, FontScene } from '../Framework/Managers/FontManager';
+import { getFontManager, FontScene } from 'manxia_theme/src/main/ets/Framework/Managers/FontManager';
 import { distributedReadingService } from '../Framework/Distributed/DistributedReadingService';
 import { distributedDataSyncManager, SyncReadingState } from '../Framework/Distributed/DistributedDataSyncManager';
 import { EBookDataManager } from '../Framework/Data/EBookDataManager';

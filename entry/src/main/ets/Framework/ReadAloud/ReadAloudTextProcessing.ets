@@ -2,7 +2,7 @@
 import { preferences } from '@kit.ArkData';
 import { logger } from 'manxia_core/src/main/ets/Utils/Logger';
 import { getNovelContentProcessor, ContentProcessConfig } from '../Novel/NovelContentProcessor';
-import { uiContextManager } from '../Managers/UIContextManager';
+import { uiContextManager } from 'manxia_theme/src/main/ets/Framework/Managers/UIContextManager';
 
 const TAG = 'ReadAloudTextProcessing';
 

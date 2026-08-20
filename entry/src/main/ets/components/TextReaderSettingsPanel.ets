@@ -36,7 +36,7 @@ import { logger } from 'manxia_core/src/main/ets/Utils/Logger';
 import { promptAction } from '@kit.ArkUI';
 import { EBookDataManager, BackgroundImageInfo } from '../Framework/Data/EBookDataManager';
 import { SettingsManager, SettingKeys } from '../Framework/Managers/SettingsManager';
-import { getFontManager, SystemFont, CustomFont, FontType } from '../Framework/Managers/FontManager';
+import { getFontManager, SystemFont, CustomFont, FontType } from 'manxia_theme/src/main/ets/Framework/Managers/FontManager';
 import { ReadAloudAvailability, ReadAloudEngineAvailabilityMap } from '../Framework/ReadAloud/ReadAloudAvailability';
 import { ReadAloudController } from '../Framework/ReadAloud/ReadAloudController';
 import { ReadAloudVoiceOption } from '../Framework/ReadAloud/ReadAloudTypes';
