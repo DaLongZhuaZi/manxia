@@ -8,7 +8,8 @@
 import { hdsMaterial } from '@kit.UIDesignKit';
 import { BusinessError } from '@kit.BasicServicesKit';
 import { logger } from 'manxia_core/src/main/ets/Utils/Logger';
-import { SettingKeys, SettingsManager } from './SettingsManager';
+import { ISettingsManagerFacade, SettingsManagerHolder } from 'manxia_core/src/main/ets/Framework/Contracts/ISettingsManagerFacade';
+import { SettingKeys } from 'manxia_core/src/main/ets/Framework/Contracts/SettingKeys';
 
 const TAG = 'VisualEffectsManager';
 
@@ -58,7 +59,7 @@ const DEFAULT_VISUAL_EFFECTS_SETTINGS: VisualEffectsSettings = {
 export class VisualEffectsManager {
   private static instance: VisualEffectsManager | null = null;
 
-  private settingsManager: SettingsManager = SettingsManager.getInstance();
+  private get settingsManager(): ISettingsManagerFacade { return SettingsManagerHolder.get(); }
   private currentState: VisualEffectsState = this.createDefaultState();
   private listeners: Set<VisualEffectsStateListener> = new Set();
   private initialized: boolean = false;
