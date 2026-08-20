@@ -8,7 +8,7 @@ import request from '@ohos.request';
 import { logger } from 'manxia_core/src/main/ets/Utils/Logger';
 import { common } from '@kit.AbilityKit';
 import fs from '@ohos.file.fs';
-import { DownloadDirManager } from '../Storage/DownloadDirManager';
+import { DownloadDirManager } from 'manxia_core/src/main/ets/Framework/Storage/DownloadDirManager';
 import http from '@ohos.net.http';
 import { BusinessError } from '@kit.BasicServicesKit';
 import { AppNotificationManager, NotificationType } from 'manxia_core/src/main/ets/Framework/Managers/NotificationManager';

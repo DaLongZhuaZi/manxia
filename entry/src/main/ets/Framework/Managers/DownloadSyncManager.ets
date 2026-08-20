@@ -8,7 +8,7 @@
 
 import { logger } from 'manxia_core/src/main/ets/Utils/Logger';
 import { fileIo as fs, fileUri } from '@kit.CoreFileKit';
-import { DownloadDirManager } from '../Storage/DownloadDirManager';
+import { DownloadDirManager } from 'manxia_core/src/main/ets/Framework/Storage/DownloadDirManager';
 
 const TAG = 'DownloadSyncManager';
 

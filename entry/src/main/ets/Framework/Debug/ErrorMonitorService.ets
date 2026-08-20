@@ -10,7 +10,7 @@ import { common } from '@kit.AbilityKit';
 import { fileIo as fs } from '@kit.CoreFileKit';
 import { LogLevel } from 'manxia_core/src/main/ets/Utils/Logger';
 import { LogCollector, LogEntry } from 'manxia_core/src/main/ets/Framework/Debug/LogCollector';
-import { DownloadDirManager } from '../Storage/DownloadDirManager';
+import { DownloadDirManager } from 'manxia_core/src/main/ets/Framework/Storage/DownloadDirManager';
 import { ErrorCategory, ErrorRecordManager } from './ErrorRecordManager';
 import { deviceInfo } from '@kit.BasicServicesKit';
 import { ngfEventBusFacade, NGFEventPayload, NGFInitializationEventName } from '../NGF';

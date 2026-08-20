@@ -18,7 +18,7 @@ import {
   DownloadDirManager,
   OnlineMangaArchiveLookupResult,
   OnlineMangaArchivePathRequest
-} from '../Storage/DownloadDirManager';
+} from 'manxia_core/src/main/ets/Framework/Storage/DownloadDirManager';
 import { PermanentImageCacheManager } from '../Cache/PermanentImageCacheManager';
 import { generateDbId } from 'manxia_core/src/main/ets/Framework/Utils/UUIDGenerator';
 import { eventBus, GameEvent, MangaCacheUpdatedPayload } from '../EventBus';

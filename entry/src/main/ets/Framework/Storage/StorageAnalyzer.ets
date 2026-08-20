@@ -13,7 +13,7 @@ import { ImageCacheManager } from '../Cache/ImageCacheManager';
 import { DatabaseManager } from 'manxia_core/src/main/ets/Framework/Database/DatabaseManager';
 import { uiContextManager } from 'manxia_theme/src/main/ets/Framework/Managers/UIContextManager';
 import { BusinessError } from '@kit.BasicServicesKit';
-import DownloadDirManager from './DownloadDirManager';
+import DownloadDirManager from 'manxia_core/src/main/ets/Framework/Storage/DownloadDirManager';
 
 const TAG = 'StorageAnalyzer';
 

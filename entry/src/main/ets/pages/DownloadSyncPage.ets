@@ -47,7 +47,7 @@ import { ensureGuideAnchorVisibleInScroller, resolveGuideHighlightRectInRoot } f
 import { AppGuideManager, AppGuidePageId, AppGuideStep } from '../Framework/Managers/AppGuideManager';
 import { BackgroundTaskManager, TaskType, TaskNotificationScene, TaskCancelSignal } from '../Framework/Task/BackgroundTaskManager';
 import { PdfImportResult } from '../Framework/Parsers/PdfToMangaImporter';
-import { DownloadDirManager } from '../Framework/Storage/DownloadDirManager';
+import { DownloadDirManager } from 'manxia_core/src/main/ets/Framework/Storage/DownloadDirManager';
 import { PdfImportService } from '../Framework/Services/PdfImportService';
 import { SettingsImmersiveTitleBar } from './settings/SettingsImmersiveTitleBar';
 import { SettingsImmersiveTitleActionItem, SettingsPageTitleBarManager } from 'manxia_features_ui/src/main/ets/pages/settings/SettingsPageTitleBarManager';

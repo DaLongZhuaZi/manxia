@@ -31,7 +31,7 @@ import { SettingsManager, SettingKeys } from '../Managers/SettingsManager';
 import { getUnifiedAnnotationManager } from '../Annotations/UnifiedAnnotationManager';
 import { UnifiedContentType } from 'manxia_core/src/main/ets/Models/UnifiedContentModels';
 import { fileIo as fs } from '@kit.CoreFileKit';
-import DownloadDirManager from '../Storage/DownloadDirManager';
+import DownloadDirManager from 'manxia_core/src/main/ets/Framework/Storage/DownloadDirManager';
 import { DataManager } from './DataManager';
 
 const TAG = 'EBookDataManager';

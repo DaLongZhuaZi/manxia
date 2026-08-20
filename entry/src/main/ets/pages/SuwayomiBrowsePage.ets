@@ -18,7 +18,7 @@ import { ComicInfo } from '../Framework/Source/SourceExecutor';
 import { SuwayomiCategory, PaginatedResult, MangaSortType, SortDirection, MangaSortOption, MANGA_SORT_OPTIONS } from '../Framework/Source/SuwayomiSource';
 import { SuwayomiSourceBrowseParams } from './SuwayomiSourceBrowsePage';
 import SuwayomiCacheManager from '../Framework/Source/SuwayomiCacheManager';
-import DownloadDirManager from '../Framework/Storage/DownloadDirManager';
+import DownloadDirManager from 'manxia_core/src/main/ets/Framework/Storage/DownloadDirManager';
 import { SuwayomiImage } from '../components/SuwayomiImage';
 import { AppGuideOverlay, GuideHighlightRect } from '../Framework/Components/AppGuideOverlay';
 import { resolveGuideHighlightRectInRoot } from '../Framework/Components/AppGuideSupport';

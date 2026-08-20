@@ -8,7 +8,7 @@ import { TabContentCacheManager } from '../Cache/TabContentCacheManager';
 import { getSuwayomiSourceExecutor, SuwayomiSourceExecutor, SuwayomiExtensionSource } from '../Source/SuwayomiSourceExecutor';
 import { SuwayomiCategory, PaginatedResult, MangaSortOption, MANGA_SORT_OPTIONS } from '../Source/SuwayomiSource';
 import SuwayomiCacheManager from '../Source/SuwayomiCacheManager';
-import DownloadDirManager from '../Storage/DownloadDirManager';
+import DownloadDirManager from 'manxia_core/src/main/ets/Framework/Storage/DownloadDirManager';
 import { ComicInfo as SuwayomiComicInfo } from '../Source/SourceExecutor';
 import { SettingsPageSurfaceManager } from 'manxia_features_ui/src/main/ets/pages/settings/SettingsPageSurfaceManager';
 import { SuwayomiImage } from '../../components/SuwayomiImage';

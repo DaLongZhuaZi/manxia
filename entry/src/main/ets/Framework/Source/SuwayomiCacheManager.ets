@@ -6,7 +6,7 @@
  */
 
 import { logger } from 'manxia_core/src/main/ets/Utils/Logger';
-import DownloadDirManager from '../Storage/DownloadDirManager';
+import DownloadDirManager from 'manxia_core/src/main/ets/Framework/Storage/DownloadDirManager';
 import fs from '@ohos.file.fs';
 import { http } from '@kit.NetworkKit';
 import { getSuwayomiSourceExecutor } from './SuwayomiSourceExecutor';

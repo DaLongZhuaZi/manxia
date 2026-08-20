@@ -9,7 +9,8 @@ import { picker, fileUri } from '@kit.CoreFileKit';
 import { common } from '@kit.AbilityKit';
 import fs from '@ohos.file.fs';
 import { logger } from 'manxia_core/src/main/ets/Utils/Logger';
-import { SettingsManager, SettingKeys } from '../Managers/SettingsManager';
+import { ISettingsManagerFacade, SettingsManagerHolder } from 'manxia_core/src/main/ets/Framework/Contracts/ISettingsManagerFacade';
+import { SettingKeys } from 'manxia_core/src/main/ets/Framework/Contracts/SettingKeys';
 
 const TAG = 'DownloadDirManager';
 const DOWNLOAD_SYNC_DIR_PATH_KEY = 'downloadSyncDirPath';
@@ -165,7 +166,7 @@ export class DownloadDirManager {
 
   private async persistDirInfoAsync(path: string, uri: string): Promise<void> {
     try {
-      const settingsManager = SettingsManager.getInstance();
+      const settingsManager: ISettingsManagerFacade = SettingsManagerHolder.get();
       await settingsManager.setString(SettingKeys.DOWNLOAD_SYNC_DIR_PATH, path);
       if (uri.length > 0) {
         await settingsManager.setString(SettingKeys.DOWNLOAD_SYNC_DIR_URI, uri);
@@ -187,7 +188,7 @@ export class DownloadDirManager {
     let savedPath = AppStorage.get<string>(DOWNLOAD_SYNC_DIR_PATH_KEY);
     let savedUri = AppStorage.get<string>(DOWNLOAD_SYNC_DIR_URI_KEY);
     if (!savedPath || savedPath.length === 0) {
-      const settingsManager = SettingsManager.getInstance();
+      const settingsManager: ISettingsManagerFacade = SettingsManagerHolder.get();
       savedPath = settingsManager.getString(SettingKeys.DOWNLOAD_SYNC_DIR_PATH, '');
       savedUri = settingsManager.getString(SettingKeys.DOWNLOAD_SYNC_DIR_URI, '');
     }

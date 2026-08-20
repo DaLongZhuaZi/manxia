@@ -25,7 +25,7 @@ import { Manga, MangaChapter } from 'manxia_core/src/main/ets/Models/MangaModels
 import { CompressionUtils, ExtractionResult, RecursiveExtractionResult } from 'manxia_core/src/main/ets/Utils/CompressionUtils';
 import { ComicInfoParser, ComicInfo } from 'manxia_core/src/main/ets/Utils/ComicInfoParser';
 import { SandboxManager } from 'manxia_core/src/main/ets/Framework/Storage/SandboxManager';
-import DownloadDirManager from '../Framework/Storage/DownloadDirManager';
+import DownloadDirManager from 'manxia_core/src/main/ets/Framework/Storage/DownloadDirManager';
 import { CoverSelectionData, showCoverSelectionDialog } from '../Framework/Components/CoverSelectionDialog';
 import { eventBus, GameEvent, MangaImportCompletedPayload, FileImportRequestedPayload, IEventPayload } from '../Framework/EventBus';
 

@@ -29,7 +29,7 @@ import {
 } from 'manxia_network/src/main/ets/Framework/WebDAV/WebDAVNativeClient';
 import { WebDAVClient, WebDAVConfig, WebDAVFile } from 'manxia_network/src/main/ets/Framework/WebDAV/WebDAVClient';
 import { SandboxManager } from 'manxia_core/src/main/ets/Framework/Storage/SandboxManager';
-import DownloadDirManager from '../Storage/DownloadDirManager';
+import DownloadDirManager from 'manxia_core/src/main/ets/Framework/Storage/DownloadDirManager';
 import {
   NetworkFolderBrowseResult,
   NetworkFolderCacheDetail,

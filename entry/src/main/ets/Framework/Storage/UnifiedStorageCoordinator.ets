@@ -13,7 +13,7 @@ import { SourceContentCache, CachedContent } from '../Cache/SourceContentCache';
 import { BookSourceCacheData, KomgaCacheData, SuwayomiCacheData, TabContentCacheManager } from '../Cache/TabContentCacheManager';
 import { WebViewDataCacheManager } from 'manxia_network/src/main/ets/Framework/Cache/WebViewDataCacheManager';
 import { DatabaseManager } from 'manxia_core/src/main/ets/Framework/Database/DatabaseManager';
-import DownloadDirManager from './DownloadDirManager';
+import DownloadDirManager from 'manxia_core/src/main/ets/Framework/Storage/DownloadDirManager';
 import { getNetworkFolderManager } from '../Network/NetworkFolderManager';
 import { NetworkFolderCacheStats } from 'manxia_core/src/main/ets/Models/NetworkFolderModels';
 import { CacheContentType, getCacheStatusService } from '../Services/CacheStatusService';
