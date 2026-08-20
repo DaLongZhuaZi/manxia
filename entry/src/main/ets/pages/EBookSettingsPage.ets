@@ -16,7 +16,8 @@ import { ThemeAwareState, ThemeAwareHelper } from 'manxia_theme/src/main/ets/Fra
 import { ThemeManager, ThemeType } from 'manxia_theme/src/main/ets/Framework/Managers/ThemeManager';
 import { FontAwareHelper, FontAwareState } from 'manxia_theme/src/main/ets/Framework/Components/FontAware';
 import { EBook, EBookReadingSettings, EBookPageMode, EBOOK_THEME_PRESETS, EBookThemePreset, EBookFormat, DEFAULT_EBOOK_READING_SETTINGS } from 'manxia_core/src/main/ets/Models/EBookModels';
-import { SettingsManager, SettingKeys } from '../Framework/Managers/SettingsManager';
+import { ISettingsManagerFacade, SettingsManagerHolder } from 'manxia_core/src/main/ets/Framework/Contracts/ISettingsManagerFacade';
+import { SettingKeys } from 'manxia_core/src/main/ets/Framework/Contracts/SettingKeys';
 import { EBookDataManager, BackgroundImageInfo } from '../Framework/Data/EBookDataManager';
 import { EBookSettingsPageParams } from './EBookDetailPage';
 import { DeviceAdaptationManager, DeviceChangeListener, DeviceInfo } from 'manxia_theme/src/main/ets/Framework/Managers/DeviceAdaptationManager';
@@ -230,7 +231,7 @@ export struct EBookSettingsPage {
       const seenPaths = new Set<string>();
       
       // 先添加全局设置的背景图片
-      const settingsManager = SettingsManager.getInstance();
+      const settingsManager: ISettingsManagerFacade = SettingsManagerHolder.get();
       const globalBgImagePath = settingsManager.getString(SettingKeys.GLOBAL_TEXT_BG_IMAGE_PATH, '');
       if (globalBgImagePath && globalBgImagePath.length > 0) {
         seenPaths.add(globalBgImagePath);
@@ -373,7 +374,7 @@ export struct EBookSettingsPage {
       this.coverImagePath = ebook.metadata.coverImagePath || '';
       
       // [修复] 先获取全局设置
-      const settingsManager = SettingsManager.getInstance();
+      const settingsManager: ISettingsManagerFacade = SettingsManagerHolder.get();
       const isTextFormat = ebook.format === EBookFormat.TXT;
       
       // 电子书全局设置

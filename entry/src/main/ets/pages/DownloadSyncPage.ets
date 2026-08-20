@@ -34,7 +34,8 @@ import { DeviceAdaptationManager, DeviceChangeListener, DeviceInfo, Breakpoint }
 import { ResponsiveLayoutHelper } from 'manxia_core/src/main/ets/Framework/Utils/ResponsiveLayout';
 import { EBookParserFactory, EBookCoverExtractor } from '../Framework/Parsers/EBookParser';
 import { getHelpPanelManagerV2 } from '../Framework/Components/HelpPanelV2';
-import { SettingsManager, SettingKeys } from '../Framework/Managers/SettingsManager';
+import { ISettingsManagerFacade, SettingsManagerHolder } from 'manxia_core/src/main/ets/Framework/Contracts/ISettingsManagerFacade';
+import { SettingKeys } from 'manxia_core/src/main/ets/Framework/Contracts/SettingKeys';
 import { NovelImportDialog, NovelImportDialogResult, TextEncoding } from '../Framework/Components/NovelImportDialog';
 import { EBookMetadataDialog, EBookMetadataDialogResult } from '../Framework/Components/EBookMetadataDialog';
 import { EBookMetadata, EBookChapter, EBook } from 'manxia_core/src/main/ets/Models/EBookModels';
@@ -1122,7 +1123,7 @@ A: 不会，原文件保持不变。`;
    */
   private async saveDownloadSyncSettings(): Promise<void> {
     try {
-      const settingsManager = SettingsManager.getInstance();
+      const settingsManager: ISettingsManagerFacade = SettingsManagerHolder.get();
       if (this.downloadDirPath) {
         await settingsManager.setString(SettingKeys.DOWNLOAD_SYNC_DIR_PATH, this.downloadDirPath);
       }
