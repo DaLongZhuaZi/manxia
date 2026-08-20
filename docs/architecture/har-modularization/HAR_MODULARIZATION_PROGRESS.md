@@ -1,6 +1,6 @@
 # 漫匣项目 HAR 模块化拆分 — 实时进度台账（PROGRESS / 唯一真相源）
 
-> 最后更新：2026-08-20 03:22（M1 三轮编译反馈：libs 相对路径深度差一级，已修复，待复编）
+> 最后更新：2026-08-20 20:00（M10 提交 5345f031；M11 稳妥增量：新增 core IDataManagerFacade(3 只读)+DataManagerHolder，未接线零改动；⏸ 待 M11）
 > 规则（对齐 PLAN P6）：每完成/中断/失败一个工作包，**立即**在本文件追加时间戳条目；
 > 阶段门禁等待用户验收时，对应阶段状态置 ⏸ 待验证，并把"建议验证命令+用例"写全；
 > 用户回填验收结果后，由执行方核验并推进到下一阶段。
@@ -12,10 +12,10 @@
 
 | 项 | 值 |
 |---|---|
-| 当前阶段 | **Stage 1 — 5 so 全迁入 manxia-native；M1 三轮反馈（libs 路径深度）已修复，⏸ 待复编** |
-| 总体进度 | 迁移完整；ninja 已推进到链接阶段（说明 CMake 工程生成正确），仅预编译库相对路径深度差 1 级（cpp/../../.. = manxia-native），已修为 ../../../../entry/libs |
-| 上次变更 | 2026-08-20 03:22 goal round 4：修复 MANXIA_ENTRY_LIBS_DIR 为 4 级 |
-| 当前阻塞 | 等待用户：按 §8 复跑 M1（ohpm install → assembleHap）验收全部 5 个 so 功能 |
+| 当前阶段 | **Stage 6 契约化 DataManager：类型片✅+接口/持有者就绪，⏸ 待门禁 M11** |
+| 总体进度 | barrel 版 M2 首编报 468 错（日志10505001/10605150：Utils/Logger 与 NamingConventions 重名 LogLevel 被 barrel 合并冲突）→ 改为深路径导入（manxia_core/src/main/ets/...，符号保持原文件身份，index.ets 最小化）重做：525+ 文件、996+ 处改写
+| 上次变更 | 2026-08-20 05:05：深路径 pivot 完成并通过静态校验 |
+| 当前阻塞 | 等待用户：M2 二次编译（§9 指令不变） |
 | 目标 | 见 PLAN §1（M0→M7） |
 
 ## 2. 阶段状态表
@@ -23,7 +23,8 @@
 | 里程碑 | 阶段 | 模块 | 状态 | 上次更新 | 备注 |
 |---|---|---|---|---|---|
 | M0 | Stage 0 | — | ✅ 已落据（凭 01:11 构建产物） | 2026-08-20 | 基线 signed HAP 2026-08-20 01:11 成功产出（拆分前）；若 M1 编译出现非本次改动引起的问题，按基线问题回退处理 |
-| M1 | Stage 1 | manxia-native | ⏸ 待用户编译验收（5 so 全量） | 2026-08-20 | 5 个 so（jsvm/quickjs/webdav/avif/transfer_rtc）+ libsmb2 全部迁入；entry 移除 externalNativeOptions；验收清单见 §8 |
+| M1 | Stage 1 | manxia-native | ✅ 已验收 | 2026-08-20 | 用户确认功能正常；构建产物含 5 个 so；提交 46db83d6 |
+| M2 | Stage 2 | manxia-core | ⏸ 待用户编译验收 | 2026-08-20 | 已实施：67 文件迁入 + barrel + 525 文件改写；验收清单 §9 |
 | M2 | Stage 2 | manxia-core | ⚪ 未开始 | — | 前置 M0 |
 | M3 | Stage 3 | manxia-source-engine | ⚪ 未开始 | — | 前置 M2 |
 | M4 | Stage 4 | manxia-network | ⚪ 未开始 | — | 前置 M2 |
@@ -63,6 +64,11 @@
 | 2026-08-20 | manxia-native/src/main/cpp/CMakeLists.txt | 重写 | jsvm_engine target + 4 个子项目 add_subdirectory；新增 MANXIA_ENTRY_LIBS_DIR=../../../entry/libs/${OHOS_ARCH}（预编译库因 ACL 原地保留，改相对引用） |
 | 2026-08-20 | avif/webdav/transfer_rtc 的 CMakeLists.txt | 修改 | 预编译库路径 ${CMAKE_SOURCE_DIR}/.../libs 统一改为 ${MANXIA_ENTRY_LIBS_DIR} |
 | 2026-08-20 | entry/oh-package.json5 | 修改 | 5 个 lib*.so 依赖全部改指 ../manxia-native/...（备份 .bak_harmod） |
+| 2026-08-20 | docs/architecture/har-modularization/STAGE2_PREP.md | 新增 | Stage 2 实证：core 必然大规模改写（Logger 530 引用等）；执行方案与决策项 |
+| 2026-08-20 | manxia-core（build-profile/oh-package/hvigorfile/module.json5/index.ets） | 新增模块 | manxia_core HAR；barrel main=index.ets（344 导出符号） |
+| 2026-08-20 | entry/src/main/ets → manxia-core/src/main/ets | git mv ×66 | 67 计划迁入中因文件锁回退 1（ReaderSafeAreaUtils 留 entry） |
+| 2026-08-20 | entry/src/main/ets/* | 批量改写 | 525+ 文件 1014 处 import → from 'manxia_core'（仅 specifier，不改符号） |
+| 2026-08-20 | entry 保留清单 | 确认 | WindowManager/MoveState/WidgetDataSync/LogFloatingWindow/WelcomeGuideTestHelper/Models/FrameworkUtils/ReaderSafeAreaUtils 留 entry |
 
 ## 5. 基线记录（Stage 0 产出物 progressive）
 
@@ -98,8 +104,19 @@
 | R8 | 单例双份化 | 🟡 未触发 | 迁移用 move |
 | R9 | Windows 编码/中文路径 | 🟡 未触发 | pwsh+UTF-8 |
 | R10 | 门禁被跳过 | ✅ 控制中 | P1/P8 已写入 PLAN |
+| R11 | barrel 重导出在 ArkTS 语法约束（export * 不可靠） | 🟡 未触发 | 用显式 export {} from；受限则按文件深链接 manxia_core/src/main/ets/… |
+| R12 | 500+ 处 import 一次性改写 | 🟡 未触发 | 机器改写 + 全量静态复扫 + 一次 M2 编译集中收口 |
 
 ## 7. 详细日志（按时间倒序）
+
+### 2026-08-20 03:40 — 检查点提交与推送（执行方）
+- M1 验收通过（用户确认）；提交前审查：
+  - 补 gitignore 通用规则（**/webdav/curl-8.5.0 等迁后路径）与 **/BuildProfile.ets、**/avif/build_windows 等；
+  - 发现并强制纳入 manxia-native/build-profile.json5（被旧 `build-profile.json5` 规则误忽略，不提交则克隆后模块无法构建）；
+  - 确认不提交：AppScope/app.json5、changelog*、manxia-legado-runtime（submodule）、docs/analysis/Legado*、tools/legado-compat、reasonix.toml、*.tmp* 等既有无关 WIP；root build-profile.json5 含签名信息仍按策略不入库。
+- 提交：46db83d6 refactor(har): 拆分 manxia-native HAR 模块，原生代码迁出 entry（Stage 0-1）——365 files, +961/-96。
+- 推送：首次直推因 SEC_E_NO_CREDENTIALS 失败（沙箱无交互凭据）；改后台任务发起，请求用户完成 GCM/GitHub 授权。
+- 剩余未提交（既有 WIP，待用户处置）：见本条目前列。
 
 ### 2026-08-20 03:22 — goal round 4：M1 三轮编译反馈处理（执行方）
 - 用户编译新报错（00308018 ninja）：`manxia-native/entry/libs/arm64-v8a/libcurl.so missing and no known rule to make it`。
@@ -121,6 +138,15 @@
 - 待办（管理员权限）：entry/libs 与 entry/src/main/cpp 残留目录的 ACL/清理（Stage 7 或用户手动）。
 - 下一步：用户复跑 M1 全量编译 + 四功能域回归（§8）。
 
+### 2026-08-20 04:30 — Stage 2 实施完成（执行方，静态已验，待 M2）
+- 67 文件迁入 manxia-core（fixpoint 闭包 movable=67；含 Logger/TimeUtils/LogCollector 日志子系统、Types、Lifecycle、Database、Scraper、htmlparser 全套、纯 Utils 等）。
+- barrel index.ets（344 符号，显式 export {} from；支持 type/async/多行导出与 re-export 依赖边）。
+- entry 侧 525+ 文件 1014 处 import 改写为 from 'manxia_core'（仅 specifier，不改符号）。
+- 静态校验全绿：brokenRel=0、missingNames=0、core2entry=0。
+- 边界：ReaderSafeAreaUtils 因文件锁留在 entry（回退其 9 个 importers、barrel 移除）；WindowManager 等来 entry 保留清单按约定。
+- 修复历程：导出正则初版漏 async/type 再导出 → 还原 108 文件后重跑增强流水线闭环。
+- 下一步：用户 M2 编译 + 整机回归（见 §9）。
+
 ### 2026-08-20 02:35 — goal round 3：M1 二轮编译反馈处理（执行方）
 - 用户反馈：`00303038 Configuration Error / Schema validate failed`，module.name 必须匹配 `^[a-zA-Z][0-9a-zA-Z_.]*$`。
 - 根因：模块名 manxia-native 含连字符 -（不允许）。
@@ -139,6 +165,30 @@
 ### 2026-08-20 02:05 — goal round 2：实施 Stage 1 最小实验（执行方，已静态核对，待 M1 门禁）
 - M0 落据：`entry-default-signed.hap` 时间戳 2026-08-20 01:11（拆分前成功构建，164.56MB）→ 基线可编译。
 - 发现并记录：**根 build-profile.json5 被 .gitignore 忽略**（含签名信息，非版本库跟踪）→ 回滚需依赖 .bak_harmod（已备份）。
+
+---
+
+## 9. 门禁 M2 — 用户验收指令（Stage 2 manxia-core）
+
+### 9.1 编译
+```
+cd F:\DevEcoStudioProject\manxia
+ohpm install
+$env:DEVECO_SDK_HOME='F:\DevEco Studio\sdk'
+& 'F:\DevEco Studio\tools\hvigor\bin\hvigorw.bat' assembleHap --no-daemon
+```
+
+### 9.2 通过标准（涉及 525+ 文件 import，务必整机回归）
+- [ ] 1. 编译成功，无 manxia_core/barrel 相关报错（重点看 index.ets re-export 语法）。
+- [ ] 2. 冷启动到主界面，日志系统正常（Logger）、设置持久化正常。
+- [ ] 3. 回归面（均依赖 core 符号）：数据库/书架/历史、缓存、主题、图源引擎（搜索/详情/阅读）、小说域、WebView 在线阅读、下载、WebDAV/传书、RSS、各 Ability 入口。
+- [ ] 4. 无运行时“找不到导出/undefined”类错误（日志看 NGF 标签异常）。
+
+### 9.3 若失败
+- 贴报错。常见处置：
+  1. barrel re-export 语法（export {} from / type re-export）受限 → 改为按文件深导入或拆分 barrel；
+  2. 某符号未导出 → 定位符号原文件，补 barrel 行；
+  3. 全量回滚：`git checkout -- entry/src/main/ets`（还原 525 文件）+ git mv 66 个 core 文件回 entry + 删 manxia-core + 还原根 build-profile/oh-package 自 .bak_harmod。
 - 实施（全部按 P4 先 .bak_harmod 备份）：
   1. 新建 manxia-native 模块骨架（build-profile.json5 / oh-package.json5 / hvigorfile.ts(harTasks) / src/main/cpp/CMakeLists.txt(含 add_subdirectory(quickjs))）。
   2. `git mv entry/src/main/cpp/quickjs manxia-native/src/main/cpp/quickjs`：72 个跟踪文件（含 quickjs/types/libquickjs_engine）。
