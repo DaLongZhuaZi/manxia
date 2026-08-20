@@ -14,7 +14,7 @@ import { DisplayMode } from 'manxia_theme/src/main/ets/Utils/WindowManager';
 import { PageWindowCoordinator } from 'manxia_theme/src/main/ets/Utils/PageWindowCoordinator';
 import { ngfPagePolicyHostFacade } from '../Framework/NGF/uiShell/index';
 import { common } from '@kit.AbilityKit';
-import { SupporterDataManager, SupporterRecord } from '../Framework/Managers/SupporterDataManager';
+import { SupporterDataManager, SupporterRecord } from 'manxia_core/src/main/ets/Framework/Managers/SupporterDataManager';
 
 const TAG = 'SupportersPage';
 const TITLE_BAR_HEIGHT_MINI: number = 56;

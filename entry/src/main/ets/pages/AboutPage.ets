@@ -23,7 +23,7 @@ import { SettingsPageTitleBarManager } from 'manxia_features_ui/src/main/ets/pag
 import { GlobalBackgroundLayerMode } from 'manxia_theme/src/main/ets/Framework/Components/GlobalBackgroundLayer';
 import { SharedPageBackgroundLayer } from '../Framework/Components/SharedPageBackgroundLayer';
 import { SettingsPanelSurfaceHelper } from 'manxia_features_ui/src/main/ets/pages/settings/SettingsPanelSurfaceHelper';
-import { SupporterDataManager } from '../Framework/Managers/SupporterDataManager';
+import { SupporterDataManager } from 'manxia_core/src/main/ets/Framework/Managers/SupporterDataManager';
 
 const TAG = 'AboutPage';
 const TITLE_BAR_HEIGHT_MINI: number = 56;

@@ -1,7 +1,7 @@
 import { common } from '@kit.AbilityKit';
 import { http } from '@kit.NetworkKit';
-import { ProxyManager } from '../Network/ProxyManager';
-import { SettingsManager } from './SettingsManager';
+import { IProxyManagerFacade, ProxyManagerHolder } from 'manxia_core/src/main/ets/Framework/Contracts/ProxyManagerFacade';
+import { ISettingsManagerFacade, SettingsManagerHolder } from 'manxia_core/src/main/ets/Framework/Contracts/ISettingsManagerFacade';
 import { SafeUtils } from 'manxia_core/src/main/ets/Utils/SafeUtils';
 import { logger } from 'manxia_core/src/main/ets/Utils/Logger';
 import { util } from '@kit.ArkTS';
@@ -24,7 +24,7 @@ class SupporterPayload {
 
 export class SupporterDataManager {
   private static instance: SupporterDataManager | null = null;
-  private settingsManager: SettingsManager = SettingsManager.getInstance();
+  private get settingsManager(): ISettingsManagerFacade { return SettingsManagerHolder.get(); }
   private refreshing: boolean = false;
 
   static getInstance(): SupporterDataManager {
@@ -98,7 +98,7 @@ export class SupporterDataManager {
     const request = http.createHttp();
     try {
       const options: http.HttpRequestOptions = { method: http.RequestMethod.GET, connectTimeout: 3500, readTimeout: 5000 };
-      const proxy = ProxyManager.getInstance();
+      const proxy: IProxyManagerFacade = ProxyManagerHolder.get();
       if (proxy.isEnabled()) await proxy.applyToHttpOptions(options, url);
       const response = await request.request(url, options);
       if (response.responseCode !== 200) {
