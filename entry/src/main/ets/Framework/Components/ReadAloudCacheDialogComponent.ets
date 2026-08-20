@@ -49,7 +49,7 @@ import {
 } from 'manxia_core/src/main/ets/Models/TextReaderModels';
 import { EBookFormat } from 'manxia_core/src/main/ets/Models/EBookModels';
 import { AppGuideStep } from 'manxia_core/src/main/ets/Framework/Managers/AppGuideManager';
-import { GuideHighlightRect } from './AppGuideOverlay';
+import { GuideHighlightRect } from 'manxia_theme/src/main/ets/Framework/Components/AppGuideOverlay';
 
 const TAG = 'ReadAloudCacheDialogComponent';
 

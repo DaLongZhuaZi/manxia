@@ -1,5 +1,5 @@
 import { UIContext } from '@kit.ArkUI';
-import { GuideHighlightRect } from './AppGuideOverlay';
+import { GuideHighlightRect } from 'manxia_theme/src/main/ets/Framework/Components/AppGuideOverlay';
 
 export interface GuideAnchorVisibilityResult {
   available: boolean;

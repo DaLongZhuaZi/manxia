@@ -36,7 +36,7 @@ import { isReaderKitEnabled } from '../Framework/Initialization/ReaderKitFeature
 import { EBookParserFactory } from '../Framework/Parsers/EBookParser';
 import { EBookReaderParams } from './EBookReaderRouteTypes';
 import { READER_ABILITY_HOST_MULTITON } from 'manxia_reader_ui/src/main/ets/Framework/Reader/MangaReaderAbilityConstants';
-import { EBookReadingSettingsPanel } from '../Framework/Components/EBookReadingSettingsPanel';
+import { EBookReadingSettingsPanel } from 'manxia_theme/src/main/ets/Framework/Components/EBookReadingSettingsPanel';
 import { curves, UIContext } from '@kit.ArkUI';
 import { display } from '@kit.ArkUI';
 import { TextReaderComponent, PaginationMode } from '../components/TextReaderComponent';
@@ -107,7 +107,7 @@ import {
   MangaReadFlowSourceKind
 } from 'manxia_reader_ui/src/main/ets/Framework/Reader/MangaReadFlowTypes';
 import { AnnotationCenterPageParams } from './AnnotationCenterPage';
-import { AppGuideOverlay, GuideHighlightRect } from '../Framework/Components/AppGuideOverlay';
+import { AppGuideOverlay, GuideHighlightRect } from 'manxia_theme/src/main/ets/Framework/Components/AppGuideOverlay';
 import { resolveGuideHighlightRectInRoot } from '../Framework/Components/AppGuideSupport';
 import { AppGuideManager, AppGuidePageId, AppGuideStep } from 'manxia_core/src/main/ets/Framework/Managers/AppGuideManager';
 import { distributedReadingService } from '../Framework/Distributed/DistributedReadingService';

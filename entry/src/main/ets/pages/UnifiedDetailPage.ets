@@ -124,7 +124,7 @@ import {
   PageListFetcher,
   DownloadPageItem
 } from '../Framework/Download/UnifiedDownloadManager';
-import { CoverCacheManager } from '../Framework/Cache/CoverCacheManager';
+import { CoverCacheManager } from 'manxia_theme/src/main/ets/Framework/Cache/CoverCacheManager';
 import { getCoverImageManager, CoverImageManager } from '../Framework/Image/CoverImageManager';
 import { OnlineLoadOptions, RequestHeaders } from '../Framework/Cache/OnlineImageLoader';
 import { LibraryCoverManager, LibraryCoverType } from 'manxia_core/src/main/ets/Framework/Storage/LibraryCoverManager';
@@ -207,7 +207,7 @@ import {
 } from 'manxia_reader_ui/src/main/ets/Framework/Reader/DetailOpenFlowTypes';
 
 import { startBookOpenTransitionWithComponentId, EBookBackgroundSettings } from '../components/BookTransitionOverlay';
-import { AppGuideOverlay, GuideHighlightRect } from '../Framework/Components/AppGuideOverlay';
+import { AppGuideOverlay, GuideHighlightRect } from 'manxia_theme/src/main/ets/Framework/Components/AppGuideOverlay';
 import { ensureGuideAnchorVisibleInScroller, resolveGuideHighlightRectInRoot } from '../Framework/Components/AppGuideSupport';
 import { AppGuideManager, AppGuidePageId, AppGuideStep } from 'manxia_core/src/main/ets/Framework/Managers/AppGuideManager';
 import { SettingsGlassStyleHelper } from 'manxia_features_ui/src/main/ets/pages/settings/SettingsGlassStyleHelper';

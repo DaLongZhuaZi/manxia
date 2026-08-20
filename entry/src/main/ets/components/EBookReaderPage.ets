@@ -18,7 +18,7 @@ import { EBookDataManager } from 'manxia_core/src/main/ets/Framework/Data/EBookD
 import { PdfViewerComponent } from '../Framework/Components/PdfViewerComponent';
 import { PdfKitViewerComponent, PdfViewerCallbacks } from '../Framework/Components/PdfKitViewerComponent';
 import { isReaderKitEnabled } from '../Framework/Initialization/ReaderKitFeatureGate';
-import { EBookReadingSettingsPanel } from '../Framework/Components/EBookReadingSettingsPanel';
+import { EBookReadingSettingsPanel } from 'manxia_theme/src/main/ets/Framework/Components/EBookReadingSettingsPanel';
 import { curves, UIContext } from '@kit.ArkUI';
 import { display } from '@kit.ArkUI';
 import { TextReaderComponent } from '../components/TextReaderComponent';

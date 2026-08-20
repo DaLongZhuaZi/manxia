@@ -13,7 +13,7 @@ import { JSONSourceParser } from './JSONSourceParser';
 import { fileIo } from '@kit.CoreFileKit';
 import { SourceRepositoryManager } from './SourceRepositoryManager';
 import { WebViewSourceManager } from '../WebView/WebViewSourceManager';
-import { CoverCacheManager } from '../Cache/CoverCacheManager';
+import { CoverCacheManager } from 'manxia_theme/src/main/ets/Framework/Cache/CoverCacheManager';
 import { ngfSourceRegistryFacade } from '../NGF';
 import { SourceCompatibilityService } from './SourceCompatibilityService';
 import { SourceIdentity } from 'manxia_source_engine/src/main/ets/Framework/Source/SourceIdentity';

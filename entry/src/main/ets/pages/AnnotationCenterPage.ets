@@ -29,7 +29,7 @@ import { buildNovelReaderParamsFromTxtEBook } from '../Framework/Adapters/LocalT
 import { UnifiedContentType } from 'manxia_core/src/main/ets/Models/UnifiedContentModels';
 import { UnifiedAnnotationRecord, UnifiedAnnotationType, HighlightLineType, AnnotationAnchor } from 'manxia_core/src/main/ets/Models/AnnotationModels';
 import { EBookFormat, EBookReadingProgress } from 'manxia_core/src/main/ets/Models/EBookModels';
-import { AppGuideOverlay, GuideHighlightRect } from '../Framework/Components/AppGuideOverlay';
+import { AppGuideOverlay, GuideHighlightRect } from 'manxia_theme/src/main/ets/Framework/Components/AppGuideOverlay';
 import { ensureGuideAnchorVisibleInScroller, resolveGuideHighlightRectInRoot } from '../Framework/Components/AppGuideSupport';
 import { AppGuideManager, AppGuidePageId, AppGuideStep } from 'manxia_core/src/main/ets/Framework/Managers/AppGuideManager';
 import { SettingsImmersiveTitleBar } from './settings/SettingsImmersiveTitleBar';

@@ -29,7 +29,7 @@ import { DeepLinkRouter, DeepLinkResult, DeepLinkSearchResult, DeepLinkSourceRes
 import { GlobalBackgroundLayer, GlobalBackgroundLayerMode } from 'manxia_theme/src/main/ets/Framework/Components/GlobalBackgroundLayer';
 import { SharedPageBackgroundLayer } from '../Framework/Components/SharedPageBackgroundLayer';
 import { AppNotificationManager } from 'manxia_core/src/main/ets/Framework/Managers/NotificationManager';
-import { AppGuideOverlay, GuideHighlightRect } from '../Framework/Components/AppGuideOverlay';
+import { AppGuideOverlay, GuideHighlightRect } from 'manxia_theme/src/main/ets/Framework/Components/AppGuideOverlay';
 import { ensureGuideAnchorVisibleInScroller, resolveGuideHighlightRectInRoot } from '../Framework/Components/AppGuideSupport';
 import {
   getHoldingAwarenessManager,
@@ -205,7 +205,7 @@ import {
 } from 'manxia_network/src/main/ets/Framework/ExternalFile/ExternalImportNavigationCoordinator';
 import { getCoverImageManager } from '../Framework/Image/CoverImageManager';
 import { LocalImageCacheManager } from 'manxia_network/src/main/ets/Framework/Cache/LocalImageCacheManager';
-import { CoverCacheManager } from '../Framework/Cache/CoverCacheManager';
+import { CoverCacheManager } from 'manxia_theme/src/main/ets/Framework/Cache/CoverCacheManager';
 import { LibraryCoverManager, LibraryCoverType } from 'manxia_core/src/main/ets/Framework/Storage/LibraryCoverManager';
 import { AvifImage } from '../components/AvifImage';
 import { RemoteControlPage } from './RemoteControlPage';

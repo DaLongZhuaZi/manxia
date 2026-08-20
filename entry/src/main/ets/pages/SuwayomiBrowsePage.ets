@@ -20,7 +20,7 @@ import { SuwayomiSourceBrowseParams } from './SuwayomiSourceBrowsePage';
 import SuwayomiCacheManager from '../Framework/Source/SuwayomiCacheManager';
 import DownloadDirManager from 'manxia_core/src/main/ets/Framework/Storage/DownloadDirManager';
 import { SuwayomiImage } from '../components/SuwayomiImage';
-import { AppGuideOverlay, GuideHighlightRect } from '../Framework/Components/AppGuideOverlay';
+import { AppGuideOverlay, GuideHighlightRect } from 'manxia_theme/src/main/ets/Framework/Components/AppGuideOverlay';
 import { resolveGuideHighlightRectInRoot } from '../Framework/Components/AppGuideSupport';
 import { AppGuideManager, AppGuidePageId, AppGuideStep } from 'manxia_core/src/main/ets/Framework/Managers/AppGuideManager';
 import { BasicDataSource } from 'manxia_core/src/main/ets/Utils/BasicDataSource';
