@@ -8,11 +8,11 @@
 import { HdsNavDestination } from '@kit.UIDesignKit';
 import { webview } from '@kit.ArkWeb';
 import { logger } from 'manxia_core/src/main/ets/Utils/Logger';
-import { ThemeAwareState, ThemeAwareHelper } from '../../Framework/Components/ThemeAware';
+import { ThemeAwareState, ThemeAwareHelper } from 'manxia_theme/src/main/ets/Framework/Components/ThemeAware';
 import { FontAwareState } from '../../Framework/Components/FontAware';
-import { ThemeType } from '../../Framework/Managers/ThemeManager';
+import { ThemeType } from 'manxia_theme/src/main/ets/Framework/Managers/ThemeManager';
 import { getSuwayomiTracker, SuwayomiTracker } from '../../Framework/Tracking/trackers/SuwayomiTracker';
-import { GlobalBackgroundLayerMode } from '../../Framework/Components/GlobalBackgroundLayer';
+import { GlobalBackgroundLayerMode } from 'manxia_theme/src/main/ets/Framework/Components/GlobalBackgroundLayer';
 import { SharedPageBackgroundLayer } from '../../Framework/Components/SharedPageBackgroundLayer';
 import { SettingsImmersiveTitleBar } from './SettingsImmersiveTitleBar';
 import { SettingsImmersiveTitleActionItem, SettingsPageTitleBarManager } from './SettingsPageTitleBarManager';

@@ -4,7 +4,7 @@
 
 import { promptAction } from '@kit.ArkUI';
 import { logger } from 'manxia_core/src/main/ets/Utils/Logger';
-import { ThemeAwareState, ThemeAwareHelper } from './ThemeAware';
+import { ThemeAwareState, ThemeAwareHelper } from 'manxia_theme/src/main/ets/Framework/Components/ThemeAware';
 import { SourceDialogScaffold } from './SourceDialogScaffold';
 import { SettingsPageSurfaceManager, SettingsPageSurfaceStyle } from '../../pages/settings/SettingsPageSurfaceManager';
 import { SettingsGlassStyleHelper } from '../../pages/settings/SettingsGlassStyleHelper';

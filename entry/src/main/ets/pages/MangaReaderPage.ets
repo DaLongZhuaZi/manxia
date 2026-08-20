@@ -14,9 +14,9 @@ import { ReaderOrientationLockHelper } from 'manxia_core/src/main/ets/Utils/Read
 import { PageWindowCoordinator } from '../Utils/PageWindowCoordinator';
 import { globalAnimationManager, AnimationType, AnimationState,
   AnimationEasing } from '../Framework/Animation/GlobalAnimationSystem';
-import { ThemeManager, ThemeType, GlassEffectContext } from '../Framework/Managers/ThemeManager';
+import { ThemeManager, ThemeType, GlassEffectContext } from 'manxia_theme/src/main/ets/Framework/Managers/ThemeManager';
 import { SettingsManager, SettingKeys } from '../Framework/Managers/SettingsManager';
-import { ThemeAwareState, ThemeAwareHelper } from '../Framework/Components/ThemeAware';
+import { ThemeAwareState, ThemeAwareHelper } from 'manxia_theme/src/main/ets/Framework/Components/ThemeAware';
 import { FontAwareHelper, FontAwareState } from '../Framework/Components/FontAware';
 import { UIContext, curves } from '@kit.ArkUI';
 import { display } from '@kit.ArkUI';
@@ -29,7 +29,7 @@ import { DataService } from '../Framework/Services/DataService';
 import { RemoteLibraryMangaBridge } from '../Framework/Source/RemoteLibraryMangaBridge';
 import { getSuwayomiSourceExecutor, SuwayomiSourceExecutor } from '../Framework/Source/SuwayomiSourceExecutor';
 import { ComicConverter } from '../Framework/Utils/ComicConverter';
-import { DeviceAdaptationManager, DeviceInfo, DeviceChangeListener } from '../Framework/Managers/DeviceAdaptationManager';
+import { DeviceAdaptationManager, DeviceInfo, DeviceChangeListener } from 'manxia_theme/src/main/ets/Framework/Managers/DeviceAdaptationManager';
 import { ResponsiveLayoutHelper } from '../Framework/Utils/ResponsiveLayout';
 import { 
   Manga, 

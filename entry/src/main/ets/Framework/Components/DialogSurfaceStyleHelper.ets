@@ -1,5 +1,5 @@
-import { GlassLevel, GlassStyleToken, ThemeManager, ThemeType } from '../Managers/ThemeManager';
-import { ThemeAwareState } from './ThemeAware';
+import { GlassLevel, GlassStyleToken, ThemeManager, ThemeType } from 'manxia_theme/src/main/ets/Framework/Managers/ThemeManager';
+import { ThemeAwareState } from 'manxia_theme/src/main/ets/Framework/Components/ThemeAware';
 import { SettingsPageSurfaceManager, SettingsPageSurfaceStyle } from '../../pages/settings/SettingsPageSurfaceManager';
 
 export class DialogSurfaceStyleHelper {

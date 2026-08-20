@@ -5,8 +5,8 @@
 
 import { promptAction } from '@kit.ArkUI';
 import { logger } from 'manxia_core/src/main/ets/Utils/Logger';
-import { ThemeAwareHelper } from '../../Framework/Components/ThemeAware';
-import { ThemeType } from '../../Framework/Managers/ThemeManager';
+import { ThemeAwareHelper } from 'manxia_theme/src/main/ets/Framework/Components/ThemeAware';
+import { ThemeType } from 'manxia_theme/src/main/ets/Framework/Managers/ThemeManager';
 import { ProxyConfig, DEFAULT_PROXY_CONFIG, ProxyManager, ProxyProtocol } from '../../Framework/Network/ProxyManager';
 import { SettingsPageSurfaceManager } from '../../pages/settings/SettingsPageSurfaceManager';
 

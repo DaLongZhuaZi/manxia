@@ -15,9 +15,9 @@ import { hidebug } from '@kit.PerformanceAnalysisKit';
 import pasteboard from '@ohos.pasteboard';
 import fs from '@ohos.file.fs';
 import { common } from '@kit.AbilityKit';
-import { ThemeManager } from '../Managers/ThemeManager';
-import { ThemeType } from '../Managers/ThemeManager';
-import { ThemeAwareHelper, ThemeAwareState } from '../Components/ThemeAware';
+import { ThemeManager } from 'manxia_theme/src/main/ets/Framework/Managers/ThemeManager';
+import { ThemeType } from 'manxia_theme/src/main/ets/Framework/Managers/ThemeManager';
+import { ThemeAwareHelper, ThemeAwareState } from 'manxia_theme/src/main/ets/Framework/Components/ThemeAware';
 import { FontAwareHelper, FontAwareState } from '../Components/FontAware';
 import { TimeUtils } from 'manxia_core/src/main/ets/Framework/Utils/TimeUtils';
 

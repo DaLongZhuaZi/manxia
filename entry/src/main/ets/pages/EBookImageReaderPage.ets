@@ -12,7 +12,7 @@ import { KeyCode } from '@kit.InputKit';
 import { WindowManager, DisplayMode } from '../Utils/WindowManager';
 import { ReaderOrientationLockHelper } from 'manxia_core/src/main/ets/Utils/ReaderOrientationLockHelper';
 import { PageWindowCoordinator } from '../Utils/PageWindowCoordinator';
-import { ThemeManager } from '../Framework/Managers/ThemeManager';
+import { ThemeManager } from 'manxia_theme/src/main/ets/Framework/Managers/ThemeManager';
 import { getFontManager, FontScene } from '../Framework/Managers/FontManager';
 import { EBookDataManager } from '../Framework/Data/EBookDataManager';
 import { EBookParserFactory } from '../Framework/Parsers/EBookParser';

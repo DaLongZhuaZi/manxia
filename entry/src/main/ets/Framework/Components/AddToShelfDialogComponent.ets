@@ -3,7 +3,7 @@
  * 从 UnifiedDetailPage 提取，用于选择要添加到的书架
  */
 
-import { ThemeAwareState, ThemeAwareHelper } from './ThemeAware';
+import { ThemeAwareState, ThemeAwareHelper } from 'manxia_theme/src/main/ets/Framework/Components/ThemeAware';
 import { SourceDialogScaffold } from './SourceDialogScaffold';
 import { TypeShelf, ShelfType, ShelfContentType } from '../Data/TypeShelfManager';
 

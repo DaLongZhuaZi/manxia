@@ -1,7 +1,7 @@
 import { SafeUtils } from 'manxia_core/src/main/ets/Utils/SafeUtils';
 import { preferences } from '@kit.ArkData';
 import { KomgaConfig, KomgaInstanceConfig, KOMGA_DEFAULT_CHAPTER_TEMPLATE } from './KomgaModels';
-import { getContext } from '../../GlobalContext';
+import { getContext } from 'manxia_theme/src/main/ets/GlobalContext';
 import { logger } from 'manxia_core/src/main/ets/Utils/Logger';
 
 const STORE_NAME: string = 'komga_config';

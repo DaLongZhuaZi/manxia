@@ -3,7 +3,7 @@ import { SafeUtils } from 'manxia_core/src/main/ets/Utils/SafeUtils';
 import { preferences } from '@kit.ArkData';
 import fs from '@ohos.file.fs';
 import { logger } from 'manxia_core/src/main/ets/Utils/Logger';
-import { getContext } from '../../GlobalContext';
+import { getContext } from 'manxia_theme/src/main/ets/GlobalContext';
 import {
   DEFAULT_READING_SETTINGS,
   ImageSourceType,

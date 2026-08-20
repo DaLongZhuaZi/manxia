@@ -5,7 +5,7 @@ import { SafeUtils } from 'manxia_core/src/main/ets/Utils/SafeUtils';
 
 import { HdsNavDestination, HdsNavDestinationAttribute, ScrollEffectType } from '@kit.UIDesignKit';
 import { Popup } from '@kit.ArkUI';
-import { ThemeAwareState, ThemeAwareHelper } from '../Framework/Components/ThemeAware';
+import { ThemeAwareState, ThemeAwareHelper } from 'manxia_theme/src/main/ets/Framework/Components/ThemeAware';
 import { FontAwareHelper, FontAwareState } from '../Framework/Components/FontAware';
 import { PageLifecycleManager, CancellationError } from 'manxia_core/src/main/ets/Framework/Lifecycle/index';
 import { AnimatedComponent } from '../Framework/Animation/AnimatedComponent';
@@ -27,7 +27,7 @@ import { DEFAULT_READING_SETTINGS, ReadingSettings } from '../Models/MangaModels
 import { DownloadStatus, MangaStatus, ReadingStatus, StatusConverter } from 'manxia_core/src/main/ets/Framework/Types/StatusEnums';
 import { ComicConverter } from '../Framework/Utils/ComicConverter';
 import { DataManager, ComicInfo, ComicInfoInput, ChapterInfo as DataChapterInfo, ChapterInfoInput, PageInfo, PageInfoInput, ReadHistory, OnlineChapterInfoInput, OnlinePageInfoInput, OnlineComicInfo, OnlineComicSourceSaveInput } from '../Framework/Data/DataManager';
-import { ThemeManager, ThemeType } from '../Framework/Managers/ThemeManager';
+import { ThemeManager, ThemeType } from 'manxia_theme/src/main/ets/Framework/Managers/ThemeManager';
 import { colorMap } from 'manxia_core/src/main/ets/Data/ResourceMap';
 import { MangaReaderPageParams, MangaReaderContentType } from './MangaReaderPage';
 import { openMangaReaderInIsolatedAbility } from '../Framework/Reader/MangaReaderAbilityLauncher';
@@ -36,7 +36,7 @@ import { MangaSettingsPageParams } from './MangaSettingsPage';
 import { GlobalSearchPageParams } from './GlobalSearchPage';
 import { startBookOpenTransition, startBookOpenTransitionWithComponentId, setReaderReady } from '../components/BookTransitionOverlay';
 import { CoverPosition } from '../components/BookOpenTransition';
-import { DeviceAdaptationManager, DeviceInfo, DeviceChangeListener, Breakpoint } from '../Framework/Managers/DeviceAdaptationManager';
+import { DeviceAdaptationManager, DeviceInfo, DeviceChangeListener, Breakpoint } from 'manxia_theme/src/main/ets/Framework/Managers/DeviceAdaptationManager';
 import { ResponsiveLayoutHelper } from '../Framework/Utils/ResponsiveLayout';
 import { WebViewSourceManager } from '../Framework/WebView/WebViewSourceManager';
 import { MangaSourceEngine, EngineResult, MangaDetailWithChapters } from '../Framework/WebView/MangaSourceEngine';

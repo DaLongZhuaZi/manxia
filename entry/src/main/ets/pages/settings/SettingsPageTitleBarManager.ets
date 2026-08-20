@@ -1,4 +1,4 @@
-import { ThemeType } from '../../Framework/Managers/ThemeManager';
+import { ThemeType } from 'manxia_theme/src/main/ets/Framework/Managers/ThemeManager';
 
 export interface SettingsImmersiveTitleActionItem {
   id: string;

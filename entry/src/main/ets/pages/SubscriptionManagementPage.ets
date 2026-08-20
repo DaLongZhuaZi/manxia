@@ -3,8 +3,8 @@ import { promptAction, UIContext, curves } from '@kit.ArkUI';
 import { common } from '@kit.AbilityKit';
 import { logger } from 'manxia_core/src/main/ets/Utils/Logger';
 import { PageLifecycleManager } from 'manxia_core/src/main/ets/Framework/Lifecycle/index';
-import { ThemeAwareHelper, ThemeAwareState } from '../Framework/Components/ThemeAware';
-import { ThemeType } from '../Framework/Managers/ThemeManager';
+import { ThemeAwareHelper, ThemeAwareState } from 'manxia_theme/src/main/ets/Framework/Components/ThemeAware';
+import { ThemeType } from 'manxia_theme/src/main/ets/Framework/Managers/ThemeManager';
 import { FontAwareHelper, FontAwareState } from '../Framework/Components/FontAware';
 import { SettingsManager } from '../Framework/Managers/SettingsManager';
 import { getTypeShelfManager, ShelfType, TypeShelf, TypeShelfManager } from '../Framework/Data/TypeShelfManager';
@@ -34,7 +34,7 @@ import {
   splitSubscriptionIntervalMinutesForDisplay
 } from '../Framework/Subscription';
 import { SourceDialogScaffold } from '../Framework/Components/SourceDialogScaffold';
-import { GlobalBackgroundLayerMode } from '../Framework/Components/GlobalBackgroundLayer';
+import { GlobalBackgroundLayerMode } from 'manxia_theme/src/main/ets/Framework/Components/GlobalBackgroundLayer';
 import { SharedPageBackgroundLayer } from '../Framework/Components/SharedPageBackgroundLayer';
 import { SettingsImmersiveTitleBar } from './settings/SettingsImmersiveTitleBar';
 import { SettingsImmersiveTitleActionItem, SettingsPageTitleBarManager } from './settings/SettingsPageTitleBarManager';

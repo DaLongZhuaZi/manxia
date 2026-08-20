@@ -5,8 +5,8 @@
  * 文件路径: entry/src/main/ets/components/backup/WebDAVConfigDialog.ets
  */
 
-import { ThemeAwareHelper } from '../../Framework/Components/ThemeAware';
-import { ThemeType } from '../../Framework/Managers/ThemeManager';
+import { ThemeAwareHelper } from 'manxia_theme/src/main/ets/Framework/Components/ThemeAware';
+import { ThemeType } from 'manxia_theme/src/main/ets/Framework/Managers/ThemeManager';
 import { WebDAVSettings } from '../../Models/WebDAVModels';
 import { logger } from 'manxia_core/src/main/ets/Utils/Logger';
 import { WebDAVTestResult } from 'manxia_network/src/main/ets/Framework/WebDAV/WebDAVClient';

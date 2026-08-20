@@ -7,13 +7,13 @@
 import { HdsNavDestination } from '@kit.UIDesignKit';
 import webview from '@ohos.web.webview';
 import { logger } from 'manxia_core/src/main/ets/Utils/Logger';
-import { ThemeType } from '../Framework/Managers/ThemeManager';
-import { ThemeAwareHelper, ThemeAwareState } from '../Framework/Components/ThemeAware';
+import { ThemeType } from 'manxia_theme/src/main/ets/Framework/Managers/ThemeManager';
+import { ThemeAwareHelper, ThemeAwareState } from 'manxia_theme/src/main/ets/Framework/Components/ThemeAware';
 import { FontAwareHelper, FontAwareState } from '../Framework/Components/FontAware';
 import { DataManager } from '../Framework/Data/DataManager';
 import CookieManager from '../Framework/Managers/CookieManager';
 import { WebViewAuthManager } from '../Framework/WebView/WebViewAuthManager';
-import { GlobalBackgroundLayerMode } from '../Framework/Components/GlobalBackgroundLayer';
+import { GlobalBackgroundLayerMode } from 'manxia_theme/src/main/ets/Framework/Components/GlobalBackgroundLayer';
 import { SharedPageBackgroundLayer } from '../Framework/Components/SharedPageBackgroundLayer';
 import { SettingsImmersiveTitleBar } from './settings/SettingsImmersiveTitleBar';
 import { SettingsImmersiveTitleActionItem, SettingsPageTitleBarManager } from './settings/SettingsPageTitleBarManager';

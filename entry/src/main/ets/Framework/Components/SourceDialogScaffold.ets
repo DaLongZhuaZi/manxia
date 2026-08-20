@@ -1,4 +1,4 @@
-import { ThemeAwareState } from './ThemeAware';
+import { ThemeAwareState } from 'manxia_theme/src/main/ets/Framework/Components/ThemeAware';
 import { DialogSurfaceStyleHelper } from './DialogSurfaceStyleHelper';
 
 export enum SourceDialogLayoutMode {

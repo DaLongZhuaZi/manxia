@@ -4,11 +4,11 @@
  * 融合分类选择和元数据输入
  */
 
-import { ThemeAwareState, ThemeAwareHelper } from './ThemeAware';
+import { ThemeAwareState, ThemeAwareHelper } from 'manxia_theme/src/main/ets/Framework/Components/ThemeAware';
 import { FontAwareHelper, FontAwareState } from './FontAware';
 import { DialogSurfaceStyleHelper } from './DialogSurfaceStyleHelper';
 import { logger } from 'manxia_core/src/main/ets/Utils/Logger';
-import { AppColors, ColorRole } from '../Theme/AppColors';
+import { AppColors, ColorRole } from 'manxia_theme/src/main/ets/Framework/Theme/AppColors';
 import { PdfContentType } from '../Parsers/PdfToMangaImporter';
 import { ScraperDialog, ScraperDialogConfig, ScraperDialogResult } from './ScraperDialog';
 import { ScraperContentType } from 'manxia_core/src/main/ets/Framework/Scraper/ScraperTypes';

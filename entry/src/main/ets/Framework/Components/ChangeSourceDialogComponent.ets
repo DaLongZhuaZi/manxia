@@ -3,7 +3,7 @@
 
 import { promptAction } from '@kit.ArkUI';
 import { logger } from 'manxia_core/src/main/ets/Utils/Logger';
-import { ThemeAwareState, ThemeAwareHelper } from './ThemeAware';
+import { ThemeAwareState, ThemeAwareHelper } from 'manxia_theme/src/main/ets/Framework/Components/ThemeAware';
 import { SourceDialogScaffold } from './SourceDialogScaffold';
 import { UnifiedContent, UnifiedContentType } from '../../Models/UnifiedContentModels';
 import { getNovelSourceSearchService, SourceSearchResult, SearchTaskHandle } from '../Novel/NovelSourceSearchService';

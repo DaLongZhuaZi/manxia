@@ -1,6 +1,6 @@
 import { logger } from 'manxia_core/src/main/ets/Utils/Logger';
 import { SafeUtils } from 'manxia_core/src/main/ets/Utils/SafeUtils';
-import { getContext } from '../../GlobalContext';
+import { getContext } from 'manxia_theme/src/main/ets/GlobalContext';
 import { preferences } from '@kit.ArkData';
 import { ChapterInfo, ComicDetailInfo, ComicInfo, PageInfo } from './SourceExecutor';
 import { getKomgaSource, KomgaSource } from './KomgaSource';

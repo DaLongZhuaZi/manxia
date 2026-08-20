@@ -6,7 +6,7 @@ import { BusinessError } from '@kit.BasicServicesKit';
 import { common } from '@kit.AbilityKit';
 import { display } from '@kit.ArkUI';
 import { logger } from 'manxia_core/src/main/ets/Utils/Logger';
-import { ThemeManager, ThemeType } from '../Framework/Managers/ThemeManager';
+import { ThemeManager, ThemeType } from 'manxia_theme/src/main/ets/Framework/Managers/ThemeManager';
 import { OrientationLockApplyResult, OrientationLockManager, OrientationLockStrategy } from 'manxia_core/src/main/ets/Utils/OrientationLockManager';
 
 /**

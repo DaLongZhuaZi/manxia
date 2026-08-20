@@ -1,5 +1,5 @@
 ﻿import { logger } from 'manxia_core/src/main/ets/Utils/Logger';
-import { ThemeManager } from '../Framework/Managers/ThemeManager';
+import { ThemeManager } from 'manxia_theme/src/main/ets/Framework/Managers/ThemeManager';
 import { EBookChapter } from '../Models/EBookModels';
 import { UIContext, display } from '@kit.ArkUI';
 

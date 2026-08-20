@@ -11,7 +11,7 @@ import {
   getChapterOrderRuleSorter
 } from '../Services/ChapterOrderRuleSorter';
 import { SourceDialogScaffold } from './SourceDialogScaffold';
-import { ThemeAwareHelper, ThemeAwareState } from './ThemeAware';
+import { ThemeAwareHelper, ThemeAwareState } from 'manxia_theme/src/main/ets/Framework/Components/ThemeAware';
 
 const TAG = 'ChapterOrderDialogComponent';
 

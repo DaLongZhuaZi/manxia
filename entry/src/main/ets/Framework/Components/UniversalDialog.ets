@@ -1,5 +1,5 @@
 ﻿import { logger } from 'manxia_core/src/main/ets/Utils/Logger';
-import { ThemeAwareState, ThemeAwareHelper } from './ThemeAware';
+import { ThemeAwareState, ThemeAwareHelper } from 'manxia_theme/src/main/ets/Framework/Components/ThemeAware';
 import { FontAwareHelper, FontAwareState } from './FontAware';
 import { DialogSurfaceStyleHelper } from './DialogSurfaceStyleHelper';
 import { UIContext, curves } from '@kit.ArkUI';

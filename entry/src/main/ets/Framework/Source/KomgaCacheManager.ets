@@ -1,7 +1,7 @@
 ﻿import { SafeFileUtils } from 'manxia_core/src/main/ets/Utils/SafeFileUtils';
 import fs from '@ohos.file.fs';
 import { http } from '@kit.NetworkKit';
-import { getContext } from '../../GlobalContext';
+import { getContext } from 'manxia_theme/src/main/ets/GlobalContext';
 import { logger } from 'manxia_core/src/main/ets/Utils/Logger';
 
 const TAG = 'KomgaCacheManager';

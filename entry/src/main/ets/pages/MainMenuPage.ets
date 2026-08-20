@@ -22,10 +22,10 @@ import { MoveState } from '../Utils/MoveState';
 
 // 主题相关导入
 import { ComicConverter, PreloadedComicConversionContext } from '../Framework/Utils/ComicConverter';
-import { ThemeAwareState, ThemeAwareHelper } from '../Framework/Components/ThemeAware';
+import { ThemeAwareState, ThemeAwareHelper } from 'manxia_theme/src/main/ets/Framework/Components/ThemeAware';
 import { UniversalDialogManager, ButtonStyle } from '../Framework/Components/UniversalDialog';
 import { DeepLinkRouter, DeepLinkResult, DeepLinkSearchResult, DeepLinkSourceResult, DeepLinkNovelSearchResult, DeepLinkNovelSourceResult, DeepLinkNovelDetailResult } from '../Framework/Utils/DeepLinkRouter';
-import { GlobalBackgroundLayer, GlobalBackgroundLayerMode } from '../Framework/Components/GlobalBackgroundLayer';
+import { GlobalBackgroundLayer, GlobalBackgroundLayerMode } from 'manxia_theme/src/main/ets/Framework/Components/GlobalBackgroundLayer';
 import { SharedPageBackgroundLayer } from '../Framework/Components/SharedPageBackgroundLayer';
 import { AppNotificationManager } from '../Framework/Managers/NotificationManager';
 import { AppGuideOverlay, GuideHighlightRect } from '../Framework/Components/AppGuideOverlay';
@@ -247,9 +247,9 @@ import { DataManager, ComicInfo, ReadHistory, ChapterInfo, DeleteComicsResult,
 import { ComicSourceDatabaseRecord } from 'manxia_core/src/main/ets/Framework/Database/DatabaseTypes';
 import { DatabaseManager } from 'manxia_core/src/main/ets/Framework/Database/DatabaseManager';
 
-import { ThemeManager, ThemeType, GlassEffectContext } from '../Framework/Managers/ThemeManager';
-import { AppColors, ColorRole } from '../Framework/Theme/AppColors';
-import { USER_THEME_KEYS } from '../Framework/Theme/UserThemeConfig';
+import { ThemeManager, ThemeType, GlassEffectContext } from 'manxia_theme/src/main/ets/Framework/Managers/ThemeManager';
+import { AppColors, ColorRole } from 'manxia_theme/src/main/ets/Framework/Theme/AppColors';
+import { USER_THEME_KEYS } from 'manxia_theme/src/main/ets/Framework/Theme/UserThemeConfig';
 import { DataService } from '../Framework/Services/DataService';
 import { EBookDataManager } from '../Framework/Data/EBookDataManager';
 import { EBookCoverExtractionResult, EBookCoverExtractor } from '../Framework/Parsers/EBookParser';
@@ -301,7 +301,7 @@ import { TypeShelfManager, TypeShelf, ShelfType, ShelfContentType, CreateShelfPa
 
 // 导入响应式布局
 import { DeviceAdaptationManager, DeviceInfo, DeviceChangeListener,
-  Breakpoint, FoldStatus } from '../Framework/Managers/DeviceAdaptationManager';
+  Breakpoint, FoldStatus } from 'manxia_theme/src/main/ets/Framework/Managers/DeviceAdaptationManager';
 import { ResponsiveLayoutHelper } from '../Framework/Utils/ResponsiveLayout';
 import { util } from '@kit.ArkTS';
 

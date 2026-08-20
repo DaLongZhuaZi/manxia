@@ -1,4 +1,4 @@
-import { ThemeManager, GlassLevel, GlassStyleToken } from '../../Framework/Managers/ThemeManager';
+import { ThemeManager, GlassLevel, GlassStyleToken } from 'manxia_theme/src/main/ets/Framework/Managers/ThemeManager';
 
 export class SettingsGlassStyleHelper {
   private static readonly themeManager: ThemeManager = ThemeManager.getInstance();

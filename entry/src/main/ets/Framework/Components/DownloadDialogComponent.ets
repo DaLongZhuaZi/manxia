@@ -1,7 +1,7 @@
 ﻿// 文件路径: entry/src/main/ets/Framework/Components/DownloadDialogComponent.ets
 // 职责: 下载/缓存章节选择对话框组件，从UnifiedDetailPage提取的独立组件
 
-import { ThemeAwareState, ThemeAwareHelper } from './ThemeAware';
+import { ThemeAwareState, ThemeAwareHelper } from 'manxia_theme/src/main/ets/Framework/Components/ThemeAware';
 import { SourceDialogScaffold } from './SourceDialogScaffold';
 import { UnifiedContent, UnifiedChapter, UnifiedContentType } from '../../Models/UnifiedContentModels';
 

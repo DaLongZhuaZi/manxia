@@ -5,10 +5,10 @@ import { SafeFileUtils } from 'manxia_core/src/main/ets/Utils/SafeFileUtils';
  * 提供元数据编辑、章节规则选择、编码检测等功能
  */
 
-import { ThemeAwareState, ThemeAwareHelper } from './ThemeAware';
+import { ThemeAwareState, ThemeAwareHelper } from 'manxia_theme/src/main/ets/Framework/Components/ThemeAware';
 import { DialogSurfaceStyleHelper } from './DialogSurfaceStyleHelper';
 import { logger } from 'manxia_core/src/main/ets/Utils/Logger';
-import { AppColors, ColorRole } from '../Theme/AppColors';
+import { AppColors, ColorRole } from 'manxia_theme/src/main/ets/Framework/Theme/AppColors';
 import { getNovelTxtTocRuleManager, TxtTocRule, TxtChapter } from '../Novel/NovelTxtTocRuleManager';
 import { NovelReplaceRuleManager, ReplaceRule, ReplaceScope } from '../Novel/NovelReplaceRuleManager';
 import { fileIo } from '@kit.CoreFileKit';

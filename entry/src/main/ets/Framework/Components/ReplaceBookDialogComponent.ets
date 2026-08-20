@@ -3,7 +3,7 @@
  * 从 UnifiedDetailPage 提取，用于换源后的书籍替换确认
  */
 
-import { ThemeAwareState, ThemeAwareHelper } from './ThemeAware';
+import { ThemeAwareState, ThemeAwareHelper } from 'manxia_theme/src/main/ets/Framework/Components/ThemeAware';
 import { SourceDialogScaffold } from './SourceDialogScaffold';
 import { OriginalBookInfo } from '../../Models/UnifiedContentModels';
 

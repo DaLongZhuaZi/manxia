@@ -11,8 +11,8 @@ import { FeedbackCenterCacheManager, FeedbackCenterCacheStats } from 'manxia_net
 import { CacheConfigManager, CacheConfig, MemoryCacheConfig, DiskCacheConfig, PreloadConfig } from '../Framework/Cache/CacheConfigManager';
 import { SmartPreloadStrategy, PreloadStats } from '../Framework/Cache/SmartPreloadStrategy';
 import { DiskCacheManager } from 'manxia_network/src/main/ets/Framework/Cache/DiskCacheManager';
-import { ThemeManager, ThemeType } from '../Framework/Managers/ThemeManager';
-import { ThemeAwareHelper } from '../Framework/Components/ThemeAware';
+import { ThemeManager, ThemeType } from 'manxia_theme/src/main/ets/Framework/Managers/ThemeManager';
+import { ThemeAwareHelper } from 'manxia_theme/src/main/ets/Framework/Components/ThemeAware';
 import { FontAwareHelper, FontAwareState } from '../Framework/Components/FontAware';
 
 const TAG = 'CacheManagementPanel';

@@ -20,7 +20,7 @@ import { cryptoFramework } from '@kit.CryptoArchitectureKit';
 import { connection } from '@kit.NetworkKit';
 import { logger } from 'manxia_core/src/main/ets/Utils/Logger';
 import { SafeFileUtils } from 'manxia_core/src/main/ets/Utils/SafeFileUtils';
-import { getContext } from '../../GlobalContext';
+import { getContext } from 'manxia_theme/src/main/ets/GlobalContext';
 import { EBookDataManager } from '../Data/EBookDataManager';
 import { DataManager } from '../Data/DataManager';
 import {

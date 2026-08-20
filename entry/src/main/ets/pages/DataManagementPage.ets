@@ -7,12 +7,12 @@ import { SafeUtils } from 'manxia_core/src/main/ets/Utils/SafeUtils';
  */
 import { HdsNavDestination, HdsNavDestinationAttribute, ScrollEffectType } from '@kit.UIDesignKit';
 import { LengthMetrics, UIContext, promptAction } from '@kit.ArkUI';
-import { ThemeManager, ThemeType } from '../Framework/Managers/ThemeManager';
-import { ThemeAwareState, ThemeAwareHelper } from '../Framework/Components/ThemeAware';
+import { ThemeManager, ThemeType } from 'manxia_theme/src/main/ets/Framework/Managers/ThemeManager';
+import { ThemeAwareState, ThemeAwareHelper } from 'manxia_theme/src/main/ets/Framework/Components/ThemeAware';
 import { FontAwareHelper, FontAwareState } from '../Framework/Components/FontAware';
 import { logger } from 'manxia_core/src/main/ets/Utils/Logger';
 import { removeFileExtension } from 'manxia_core/src/main/ets/Utils/FileNameUtils';
-import { ThemeToggle } from '../Framework/Components/ThemeToggle';
+import { ThemeToggle } from 'manxia_theme/src/main/ets/Framework/Components/ThemeToggle';
 import { PageLifecycleManager } from 'manxia_core/src/main/ets/Framework/Lifecycle/index';
 
 import { picker, Environment } from '@kit.CoreFileKit';
@@ -43,7 +43,7 @@ import { EBookMetadataDialog, EBookMetadataDialogResult } from '../Framework/Com
 import { PdfImportResult, PdfContentType, PdfImportMode } from '../Framework/Parsers/PdfToMangaImporter';
 import { PdfImportService } from '../Framework/Services/PdfImportService';
 import { DeviceAdaptationManager, DeviceInfo, DeviceChangeListener, Breakpoint,
-  DeviceType } from '../Framework/Managers/DeviceAdaptationManager';
+  DeviceType } from 'manxia_theme/src/main/ets/Framework/Managers/DeviceAdaptationManager';
 import { ResponsiveLayoutHelper } from '../Framework/Utils/ResponsiveLayout';
 import { image } from '@kit.ImageKit';
 import { AvifTranscoder, AvifTranscodeResult } from 'manxia_core/src/main/ets/Utils/AvifTranscoder';
@@ -63,7 +63,7 @@ import { ParsedArchiveStructure as CompressionParsedStructure } from 'manxia_cor
 import { getHelpPanelManagerV2 } from '../Framework/Components/HelpPanelV2';
 import { SettingsImmersiveTitleBar } from './settings/SettingsImmersiveTitleBar';
 import { SettingsImmersiveTitleActionItem, SettingsPageTitleBarManager } from './settings/SettingsPageTitleBarManager';
-import { GlobalBackgroundLayerMode } from '../Framework/Components/GlobalBackgroundLayer';
+import { GlobalBackgroundLayerMode } from 'manxia_theme/src/main/ets/Framework/Components/GlobalBackgroundLayer';
 import { SharedPageBackgroundLayer } from '../Framework/Components/SharedPageBackgroundLayer';
 import { SettingsPanelSurfaceHelper } from './settings/SettingsPanelSurfaceHelper';
 import {

@@ -4,13 +4,13 @@
  */
 
 import { logger } from 'manxia_core/src/main/ets/Utils/Logger';
-import { ThemeAwareState, ThemeAwareHelper } from '../Framework/Components/ThemeAware';
-import { ThemeType } from '../Framework/Managers/ThemeManager';
+import { ThemeAwareState, ThemeAwareHelper } from 'manxia_theme/src/main/ets/Framework/Components/ThemeAware';
+import { ThemeType } from 'manxia_theme/src/main/ets/Framework/Managers/ThemeManager';
 import { LoadingState } from 'manxia_core/src/main/ets/Utils/LoadingState';
 import { ContextMenuState } from 'manxia_core/src/main/ets/Utils/ContextMenuState';
 import { BasicDataSource } from 'manxia_core/src/main/ets/Utils/BasicDataSource';
 import { LibraryViewMode } from '../Framework/Components/BookSourceTabContent';
-import { AppColors } from '../Framework/Theme/AppColors';
+import { AppColors } from 'manxia_theme/src/main/ets/Framework/Theme/AppColors';
 import { SourceManager, SourceInfo } from '../Framework/Source/SourceManager';
 
 const TAG = 'SourceTabContent';

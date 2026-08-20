@@ -1,6 +1,6 @@
 ﻿import { curves, UIContext } from '@kit.ArkUI';
 import { textToSpeech } from '@kit.CoreSpeechKit';
-import { ThemeManager } from '../Framework/Managers/ThemeManager';
+import { ThemeManager } from 'manxia_theme/src/main/ets/Framework/Managers/ThemeManager';
 import { SettingKeys, SettingsManager } from '../Framework/Managers/SettingsManager';
 import {
   DEFAULT_REMOTE_READ_ALOUD_SETTINGS,

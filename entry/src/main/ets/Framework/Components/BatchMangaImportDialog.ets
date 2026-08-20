@@ -5,11 +5,11 @@
  * 支持智能分组、批量配置、章节识别等功能
  */
 
-import { ThemeAwareState, ThemeAwareHelper } from './ThemeAware';
+import { ThemeAwareState, ThemeAwareHelper } from 'manxia_theme/src/main/ets/Framework/Components/ThemeAware';
 import { DialogSurfaceStyleHelper } from './DialogSurfaceStyleHelper';
 import { FontAwareHelper, FontAwareState } from './FontAware';
 import { logger } from 'manxia_core/src/main/ets/Utils/Logger';
-import { AppColors } from '../Theme/AppColors';
+import { AppColors } from 'manxia_theme/src/main/ets/Framework/Theme/AppColors';
 import { fileIo } from '@kit.CoreFileKit';
 import { MangaImportMode, ChapterInfo, ParsedArchiveStructure, PrefilledComicInfo, ExistingMangaCandidate } from './MangaImportDialog';
 import { ScraperDialog, ScraperDialogConfig, ScraperDialogResult } from './ScraperDialog';

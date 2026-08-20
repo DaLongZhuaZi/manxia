@@ -16,7 +16,7 @@ import {
   HdsTabsFloatingStyle,
   SystemMaterialParams
 } from '@kit.UIDesignKit';
-import { ThemeType } from '../Managers/ThemeManager';
+import { ThemeType } from 'manxia_theme/src/main/ets/Framework/Managers/ThemeManager';
 
 const HDS_BAR_SIDE_GUARD: number = 8;
 const HDS_GLASS_BAR_OPACITY_RATIO: number = 0.82;

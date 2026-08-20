@@ -6,8 +6,8 @@
 
 import { logger } from 'manxia_core/src/main/ets/Utils/Logger';
 import { PageLifecycleManager } from 'manxia_core/src/main/ets/Framework/Lifecycle/index';
-import { ThemeManager, ThemeType, CustomThemeData, CustomThemeMode } from '../Framework/Managers/ThemeManager';
-import { ThemeAwareHelper, ThemeAwareState } from '../Framework/Components/ThemeAware';
+import { ThemeManager, ThemeType, CustomThemeData, CustomThemeMode } from 'manxia_theme/src/main/ets/Framework/Managers/ThemeManager';
+import { ThemeAwareHelper, ThemeAwareState } from 'manxia_theme/src/main/ets/Framework/Components/ThemeAware';
 import { FontAwareHelper, FontAwareState } from '../Framework/Components/FontAware';
 import { WelcomeGuideManager, GuideStep, GuideFlowMode } from '../Framework/Managers/WelcomeGuideManager';
 import { SettingsManager, SettingKeys } from '../Framework/Managers/SettingsManager';
@@ -20,7 +20,7 @@ import {
   isReaderKitRuntimeForceDisabled
 } from '../Framework/Initialization/ReaderKitFeatureGate';
 import { SettingsPanelSurfaceHelper } from './settings/SettingsPanelSurfaceHelper';
-import { BuiltInThemeResources } from '../Framework/Theme/BuiltInThemeResources';
+import { BuiltInThemeResources } from 'manxia_theme/src/main/ets/Framework/Theme/BuiltInThemeResources';
 import { common } from '@kit.AbilityKit';
 import { pasteboard } from '@kit.BasicServicesKit';
 import { distributedPermissionManager } from '../Framework/Distributed/DistributedPermissionManager';

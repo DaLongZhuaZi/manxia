@@ -8,7 +8,7 @@
 import { AbilityStage, Want, Configuration } from '@kit.AbilityKit'; 
 import { logger } from 'manxia_core/src/main/ets/Utils/Logger';
 import { startupController } from './Framework/Diagnostics/StartupController';
-import { themeManager, ThemeType } from './Framework/Managers/ThemeManager';
+import { themeManager, ThemeType } from 'manxia_theme/src/main/ets/Framework/Managers/ThemeManager';
 
 const TAG = 'MyAbilityStage';
 const MEMORY_WARNING_LEVEL_KEY = 'systemMemoryWarningLevel';

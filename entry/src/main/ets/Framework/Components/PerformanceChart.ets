@@ -6,9 +6,9 @@
  
 import { logger } from 'manxia_core/src/main/ets/Utils/Logger';
 import { PerformanceHistory } from '../Debug/HidebugPerformanceCollector';
-import { ThemeManager } from '../Managers/ThemeManager';
-import { ThemeType } from '../Managers/ThemeManager';
-import { ThemeAwareHelper, ThemeAwareState } from '../Components/ThemeAware';
+import { ThemeManager } from 'manxia_theme/src/main/ets/Framework/Managers/ThemeManager';
+import { ThemeType } from 'manxia_theme/src/main/ets/Framework/Managers/ThemeManager';
+import { ThemeAwareHelper, ThemeAwareState } from 'manxia_theme/src/main/ets/Framework/Components/ThemeAware';
 
 
 const CHART_TAG = 'PerformanceChart';

@@ -3,8 +3,8 @@
 
 import { HdsNavDestination, HdsNavDestinationAttribute, ScrollEffectType } from '@kit.UIDesignKit';
 import { LengthMetrics, UIContext, NavDestinationModifier } from '@kit.ArkUI';
-import { ThemeAwareState, ThemeAwareHelper } from '../Framework/Components/ThemeAware';
-import { ThemeManager, ThemeType } from '../Framework/Managers/ThemeManager';
+import { ThemeAwareState, ThemeAwareHelper } from 'manxia_theme/src/main/ets/Framework/Components/ThemeAware';
+import { ThemeManager, ThemeType } from 'manxia_theme/src/main/ets/Framework/Managers/ThemeManager';
 import { FontAwareHelper, FontAwareState } from '../Framework/Components/FontAware';
 import { SearchHistoryManager } from '../Framework/Managers/SearchHistoryManager';
 import { logger } from 'manxia_core/src/main/ets/Utils/Logger';
@@ -12,7 +12,7 @@ import { PageLifecycleManager } from 'manxia_core/src/main/ets/Framework/Lifecyc
 import { DataManager, ComicInfo, ChapterInfo } from '../Framework/Data/DataManager';
 import { ComicConverter } from '../Framework/Utils/ComicConverter';
 import { MangaDetailPageParams } from './MangaDetailPage';
-import { DeviceAdaptationManager, DeviceInfo, DeviceChangeListener, Breakpoint } from '../Framework/Managers/DeviceAdaptationManager';
+import { DeviceAdaptationManager, DeviceInfo, DeviceChangeListener, Breakpoint } from 'manxia_theme/src/main/ets/Framework/Managers/DeviceAdaptationManager';
 
 const TAG: string = 'SearchPage';
 const TITLE_BAR_HEIGHT_MINI: number = 56;

@@ -3,7 +3,7 @@ import { BusinessError } from '@kit.BasicServicesKit';
 import { cryptoFramework } from '@kit.CryptoArchitectureKit';
 import { logger } from 'manxia_core/src/main/ets/Utils/Logger';
 import { SettingsManager } from './SettingsManager';
-import { ThemeManager, ThemeType } from './ThemeManager';
+import { ThemeManager, ThemeType } from 'manxia_theme/src/main/ets/Framework/Managers/ThemeManager';
 
 const TAG = 'PrivacyModeManager';
 

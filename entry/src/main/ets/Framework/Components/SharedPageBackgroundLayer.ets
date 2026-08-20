@@ -1,5 +1,5 @@
 import { SettingKeys } from '../Managers/SettingsManager';
-import { GlobalBackgroundLayer, GlobalBackgroundLayerMode } from './GlobalBackgroundLayer';
+import { GlobalBackgroundLayer, GlobalBackgroundLayerMode } from 'manxia_theme/src/main/ets/Framework/Components/GlobalBackgroundLayer';
 
 @Component
 export struct SharedPageBackgroundLayer {

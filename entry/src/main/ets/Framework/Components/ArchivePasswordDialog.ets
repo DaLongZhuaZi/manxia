@@ -1,4 +1,4 @@
-﻿import { ThemeAwareState, ThemeAwareHelper } from './ThemeAware';
+﻿import { ThemeAwareState, ThemeAwareHelper } from 'manxia_theme/src/main/ets/Framework/Components/ThemeAware';
 import { promptAction } from '@kit.ArkUI';
 
 @CustomDialog

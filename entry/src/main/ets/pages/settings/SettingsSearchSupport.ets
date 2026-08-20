@@ -6,7 +6,7 @@
  * - 提供跨页面跳转目标暂存/消费能力
  */
 
-import { ThemeType } from '../../Framework/Managers/ThemeManager';
+import { ThemeType } from 'manxia_theme/src/main/ets/Framework/Managers/ThemeManager';
 import { logger } from 'manxia_core/src/main/ets/Utils/Logger';
 
 const TAG = 'SettingsSearchSupport';

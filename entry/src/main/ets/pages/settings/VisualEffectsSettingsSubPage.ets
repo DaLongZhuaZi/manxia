@@ -1,6 +1,6 @@
 import { hdsMaterial, HdsNavDestination } from '@kit.UIDesignKit';
 import { promptAction } from '@kit.ArkUI';
-import { ThemeAwareState, ThemeAwareHelper } from '../../Framework/Components/ThemeAware';
+import { ThemeAwareState, ThemeAwareHelper } from 'manxia_theme/src/main/ets/Framework/Components/ThemeAware';
 import { FontAwareHelper, FontAwareState } from '../../Framework/Components/FontAware';
 import { logger } from 'manxia_core/src/main/ets/Utils/Logger';
 import { PageLifecycleManager } from 'manxia_core/src/main/ets/Framework/Lifecycle/index';
@@ -9,7 +9,7 @@ import {
   DeviceInfo,
   DeviceChangeListener,
   Breakpoint
-} from '../../Framework/Managers/DeviceAdaptationManager';
+} from 'manxia_theme/src/main/ets/Framework/Managers/DeviceAdaptationManager';
 import { ResponsiveLayoutHelper } from '../../Framework/Utils/ResponsiveLayout';
 import {
   VisualEffectsManager,
@@ -18,12 +18,12 @@ import {
   VisualEffectsStateListener
 } from '../../Framework/Managers/VisualEffectsManager';
 import { SettingsSearchSupport } from './SettingsSearchSupport';
-import { GlobalBackgroundLayerMode } from '../../Framework/Components/GlobalBackgroundLayer';
+import { GlobalBackgroundLayerMode } from 'manxia_theme/src/main/ets/Framework/Components/GlobalBackgroundLayer';
 import { SharedPageBackgroundLayer } from '../../Framework/Components/SharedPageBackgroundLayer';
 import { SettingsImmersiveTitleBar } from './SettingsImmersiveTitleBar';
 import { SettingsPageTitleBarManager } from './SettingsPageTitleBarManager';
 import { SettingsPanelSurfaceHelper } from './SettingsPanelSurfaceHelper';
-import { ThemeType } from '../../Framework/Managers/ThemeManager';
+import { ThemeType } from 'manxia_theme/src/main/ets/Framework/Managers/ThemeManager';
 
 const TAG = 'VisualEffectsSettingsSubPage';
 

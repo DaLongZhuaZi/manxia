@@ -4,8 +4,8 @@
 import { logger } from 'manxia_core/src/main/ets/Utils/Logger';
 import { common } from '@kit.AbilityKit';
 import { promptAction, curves } from '@kit.ArkUI';
-import { ThemeAwareState, ThemeAwareHelper } from './ThemeAware';
-import { ThemeType } from '../Managers/ThemeManager';
+import { ThemeAwareState, ThemeAwareHelper } from 'manxia_theme/src/main/ets/Framework/Components/ThemeAware';
+import { ThemeType } from 'manxia_theme/src/main/ets/Framework/Managers/ThemeManager';
 import { TabContentCacheManager, BookSourceCacheData } from '../Cache/TabContentCacheManager';
 import { ContentFilterManager } from '../Managers/ContentFilterManager';
 import { getNovelSourceManager, NovelSourceManager } from '../Novel/NovelSourceManager';

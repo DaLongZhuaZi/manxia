@@ -3,13 +3,13 @@ import { LengthMetrics } from '@kit.ArkUI';
 import { fileUri } from '@kit.CoreFileKit';
 import { HdsNavDestination } from '@kit.UIDesignKit';
 import { logger } from 'manxia_core/src/main/ets/Utils/Logger';
-import { ThemeAwareHelper, ThemeAwareState } from '../Framework/Components/ThemeAware';
+import { ThemeAwareHelper, ThemeAwareState } from 'manxia_theme/src/main/ets/Framework/Components/ThemeAware';
 import { getNetworkFolderManager, NetworkFolderManager } from '../Framework/Network/NetworkFolderManager';
 import { BackgroundTaskManager, TaskType, TaskNotificationScene, TaskStatus } from '../Framework/Task/BackgroundTaskManager';
 import type { BackgroundTask, TaskStatusListener } from '../Framework/Task/BackgroundTaskManager';
 import { SettingsImmersiveTitleBar } from './settings/SettingsImmersiveTitleBar';
 import { SettingsPageTitleBarManager } from './settings/SettingsPageTitleBarManager';
-import { GlobalBackgroundLayerMode } from '../Framework/Components/GlobalBackgroundLayer';
+import { GlobalBackgroundLayerMode } from 'manxia_theme/src/main/ets/Framework/Components/GlobalBackgroundLayer';
 import { SharedPageBackgroundLayer } from '../Framework/Components/SharedPageBackgroundLayer';
 import { SettingsPanelSurfaceHelper } from './settings/SettingsPanelSurfaceHelper';
 import {

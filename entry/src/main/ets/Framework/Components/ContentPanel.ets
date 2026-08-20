@@ -7,9 +7,9 @@
  */
 
 import { logger } from 'manxia_core/src/main/ets/Utils/Logger';
-import { ThemeAwareHelper } from './ThemeAware';
-import { ThemeType } from '../Managers/ThemeManager';
-import { AppColors, ColorRole } from '../Theme/AppColors';
+import { ThemeAwareHelper } from 'manxia_theme/src/main/ets/Framework/Components/ThemeAware';
+import { ThemeType } from 'manxia_theme/src/main/ets/Framework/Managers/ThemeManager';
+import { AppColors, ColorRole } from 'manxia_theme/src/main/ets/Framework/Theme/AppColors';
 import { MarkdownViewerComponent, MarkdownTheme, MarkdownReaderStyle } from '../../components/editor/MarkdownViewerComponent';
 import { common } from '@kit.AbilityKit';
 import { fileIo } from '@kit.CoreFileKit';

@@ -1,5 +1,5 @@
-import { ThemeType } from '../../Framework/Managers/ThemeManager';
-import { ThemeAwareHelper } from '../../Framework/Components/ThemeAware';
+import { ThemeType } from 'manxia_theme/src/main/ets/Framework/Managers/ThemeManager';
+import { ThemeAwareHelper } from 'manxia_theme/src/main/ets/Framework/Components/ThemeAware';
 import { SettingsGlassStyleHelper } from './SettingsGlassStyleHelper';
 
 export interface SettingsPageSurfaceStyle {

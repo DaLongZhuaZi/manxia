@@ -2,9 +2,9 @@
 import { http } from '@kit.NetworkKit';
 import { logger } from 'manxia_core/src/main/ets/Utils/Logger';
 import { base64Encode } from 'manxia_core/src/main/ets/Utils/CryptoUtils';
-import { ThemeAwareState, ThemeAwareHelper } from '../../Framework/Components/ThemeAware';
+import { ThemeAwareState, ThemeAwareHelper } from 'manxia_theme/src/main/ets/Framework/Components/ThemeAware';
 import { FontAwareHelper, FontAwareState } from '../../Framework/Components/FontAware';
-import { ThemeType } from '../../Framework/Managers/ThemeManager';
+import { ThemeType } from 'manxia_theme/src/main/ets/Framework/Managers/ThemeManager';
 import { getKomgaTracker } from '../../Framework/Tracking/trackers/KomgaTracker';
 import { getKomgaSourceExecutor } from '../../Framework/Source/KomgaSourceExecutor';
 import { TabContentCacheManager } from '../../Framework/Cache/TabContentCacheManager';
@@ -23,7 +23,7 @@ import {
   getKomgaInstanceDisplayName
 } from '../../Framework/Source/KomgaConfigStore';
 import { SettingsManager } from '../../Framework/Managers/SettingsManager';
-import { GlobalBackgroundLayerMode } from '../../Framework/Components/GlobalBackgroundLayer';
+import { GlobalBackgroundLayerMode } from 'manxia_theme/src/main/ets/Framework/Components/GlobalBackgroundLayer';
 import { SharedPageBackgroundLayer } from '../../Framework/Components/SharedPageBackgroundLayer';
 import { SettingsImmersiveTitleBar } from './SettingsImmersiveTitleBar';
 import { SettingsPageTitleBarManager } from './SettingsPageTitleBarManager';

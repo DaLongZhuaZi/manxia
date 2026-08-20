@@ -12,9 +12,9 @@ import { PageLifecycleManager } from 'manxia_core/src/main/ets/Framework/Lifecyc
 import { uiContextManager } from '../Framework/Managers/UIContextManager';
 import { LengthMetrics, window } from '@kit.ArkUI';
 import { common } from '@kit.AbilityKit';
-import { ThemeManager, ThemeType } from '../Framework/Managers/ThemeManager';
-import { ThemeToggle } from '../Framework/Components/ThemeToggle';
-import { ThemeAwareState, ThemeAwareHelper } from '../Framework/Components/ThemeAware';
+import { ThemeManager, ThemeType } from 'manxia_theme/src/main/ets/Framework/Managers/ThemeManager';
+import { ThemeToggle } from 'manxia_theme/src/main/ets/Framework/Components/ThemeToggle';
+import { ThemeAwareState, ThemeAwareHelper } from 'manxia_theme/src/main/ets/Framework/Components/ThemeAware';
 
 
 interface GeneratedTypeLiteralInterface_1 {

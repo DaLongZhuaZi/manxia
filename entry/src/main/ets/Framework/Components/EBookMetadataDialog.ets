@@ -6,7 +6,7 @@
  */
 
 import { EBookMetadata, EBookChapter } from '../../Models/EBookModels';
-import { ThemeAwareState, ThemeAwareHelper } from './ThemeAware';
+import { ThemeAwareState, ThemeAwareHelper } from 'manxia_theme/src/main/ets/Framework/Components/ThemeAware';
 import { FontAwareHelper, FontAwareState } from './FontAware';
 import { DialogSurfaceStyleHelper } from './DialogSurfaceStyleHelper';
 import { ImportFilenameSuggestionPanel } from './ImportFilenameSuggestionPanel';

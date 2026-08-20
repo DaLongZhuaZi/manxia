@@ -34,8 +34,8 @@ import {
   FileEditorDocumentPayload,
   FileEditorCapabilityPayload
 } from '../Framework/EventBus';
-import { ThemeAwareHelper } from '../Framework/Components/ThemeAware';
-import { ThemeManager, ThemeType } from '../Framework/Managers/ThemeManager';
+import { ThemeAwareHelper } from 'manxia_theme/src/main/ets/Framework/Components/ThemeAware';
+import { ThemeManager, ThemeType } from 'manxia_theme/src/main/ets/Framework/Managers/ThemeManager';
 import { WindowManager, DisplayMode } from '../Utils/WindowManager';
 
 const TAG = 'FileEditorPage';

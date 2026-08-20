@@ -13,7 +13,7 @@ import { image } from '@kit.ImageKit';
 import { UIContext } from '@kit.ArkUI';
 import { fileIo } from '@kit.CoreFileKit';
 import { SettingsManager, SettingKeys } from '../Framework/Managers/SettingsManager';
-import { ThemeManager } from '../Framework/Managers/ThemeManager';
+import { ThemeManager } from 'manxia_theme/src/main/ets/Framework/Managers/ThemeManager';
 import { TextReaderSettings, DEFAULT_TEXT_READER_SETTINGS, BackgroundType } from '../Models/TextReaderModels';
 import { 
   BookOpenTransition, 

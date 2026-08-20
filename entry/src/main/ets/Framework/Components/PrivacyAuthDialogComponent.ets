@@ -2,7 +2,7 @@
 // 职责: 隐私模式密码验证对话框组件，从MainMenuPage提取的独立组件
 
 import { logger } from 'manxia_core/src/main/ets/Utils/Logger';
-import { ThemeAwareState, ThemeAwareHelper } from './ThemeAware';
+import { ThemeAwareState, ThemeAwareHelper } from 'manxia_theme/src/main/ets/Framework/Components/ThemeAware';
 import { SourceDialogScaffold } from './SourceDialogScaffold';
 import { DialogSurfaceStyleHelper } from './DialogSurfaceStyleHelper';
 import { PrivacyModeManager } from '../Managers/PrivacyModeManager';

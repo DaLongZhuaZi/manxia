@@ -4,11 +4,11 @@
  * 用于搜索和选择元数据信息
  */
 
-import { ThemeAwareState, ThemeAwareHelper } from './ThemeAware';
+import { ThemeAwareState, ThemeAwareHelper } from 'manxia_theme/src/main/ets/Framework/Components/ThemeAware';
 import { FontAwareHelper, FontAwareState } from './FontAware';
 import { DialogSurfaceStyleHelper } from './DialogSurfaceStyleHelper';
 import { logger } from 'manxia_core/src/main/ets/Utils/Logger';
-import { AppColors, ColorRole } from '../Theme/AppColors';
+import { AppColors, ColorRole } from 'manxia_theme/src/main/ets/Framework/Theme/AppColors';
 import { ScraperManager } from 'manxia_core/src/main/ets/Framework/Scraper/ScraperManager';
 import { ScraperSource, ScraperContentType, ScrapedMetadata } from 'manxia_core/src/main/ets/Framework/Scraper/ScraperTypes';
 import { LengthMetrics } from '@kit.ArkUI';

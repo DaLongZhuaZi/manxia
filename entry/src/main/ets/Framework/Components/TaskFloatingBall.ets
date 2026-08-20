@@ -5,7 +5,7 @@
 import { BackgroundTaskManager, BackgroundTask, TaskStatus, TaskProgress, TaskStatusListener } from '../Task/BackgroundTaskManager';
 import { logger } from 'manxia_core/src/main/ets/Utils/Logger';
 import { display } from '@kit.ArkUI';
-import { AppColors, ColorRole } from '../Theme/AppColors';
+import { AppColors, ColorRole } from 'manxia_theme/src/main/ets/Framework/Theme/AppColors';
 import { SourceInteractiveEditorPageParams } from 'manxia_source_engine/src/main/ets/Framework/SourceEditor/SourceEditorTypes';
 import { TaskNavigationTarget } from 'manxia_network/src/main/ets/Framework/Task/TaskNavigationTypes';
 import {

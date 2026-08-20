@@ -12,7 +12,7 @@
 import { logger } from 'manxia_core/src/main/ets/Utils/Logger';
 import { image } from '@kit.ImageKit';
 import { curves } from '@kit.ArkUI';
-import { ThemeManager } from '../Framework/Managers/ThemeManager';
+import { ThemeManager } from 'manxia_theme/src/main/ets/Framework/Managers/ThemeManager';
 import { getCoverImageManager } from '../Framework/Image/CoverImageManager';
 import { EBookBackgroundSettings } from './BookTransitionOverlay';
 

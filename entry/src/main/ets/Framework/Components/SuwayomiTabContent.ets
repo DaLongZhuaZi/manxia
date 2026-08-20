@@ -2,8 +2,8 @@
 // 职责: Suwayomi标签页内容组件，从MainMenuPage提取的独立组件
 
 import { logger } from 'manxia_core/src/main/ets/Utils/Logger';
-import { ThemeAwareState, ThemeAwareHelper } from './ThemeAware';
-import { ThemeType } from '../Managers/ThemeManager';
+import { ThemeAwareState, ThemeAwareHelper } from 'manxia_theme/src/main/ets/Framework/Components/ThemeAware';
+import { ThemeType } from 'manxia_theme/src/main/ets/Framework/Managers/ThemeManager';
 import { TabContentCacheManager } from '../Cache/TabContentCacheManager';
 import { getSuwayomiSourceExecutor, SuwayomiSourceExecutor, SuwayomiExtensionSource } from '../Source/SuwayomiSourceExecutor';
 import { SuwayomiCategory, PaginatedResult, MangaSortOption, MANGA_SORT_OPTIONS } from '../Source/SuwayomiSource';

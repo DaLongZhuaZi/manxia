@@ -4,7 +4,7 @@ import { EBook } from '../../Models/EBookModels';
 import { logger } from 'manxia_core/src/main/ets/Utils/Logger';
 import { EBookDataManager } from '../Data/EBookDataManager';
 import { EBookCoverExtractor, EBookParserFactory } from '../Parsers/EBookParser';
-import { getContext } from '../../GlobalContext';
+import { getContext } from 'manxia_theme/src/main/ets/GlobalContext';
 
 const TAG = 'OnlineEBookImportService';
 

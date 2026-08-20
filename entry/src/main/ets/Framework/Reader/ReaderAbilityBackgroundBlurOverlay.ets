@@ -1,5 +1,5 @@
 import { BackgroundBlurOverlay } from '../Components/BackgroundBlurOverlay';
-import { ThemeManager, ThemeType, ThemeChangeCallback } from '../Managers/ThemeManager';
+import { ThemeManager, ThemeType, ThemeChangeCallback } from 'manxia_theme/src/main/ets/Framework/Managers/ThemeManager';
 import { READER_ABILITY_WINDOW_BACKGROUND_KEY } from './MangaReaderAbilityConstants';
 
 @Component

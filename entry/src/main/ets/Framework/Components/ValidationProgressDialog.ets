@@ -5,8 +5,8 @@
  * 文件路径: entry/src/main/ets/Framework/Components/ValidationProgressDialog.ets
  */
 
-import { ThemeAwareState, ThemeAwareHelper } from './ThemeAware';
-import { AppColors } from '../Theme/AppColors';
+import { ThemeAwareState, ThemeAwareHelper } from 'manxia_theme/src/main/ets/Framework/Components/ThemeAware';
+import { AppColors } from 'manxia_theme/src/main/ets/Framework/Theme/AppColors';
 import { SettingsPageSurfaceManager } from '../../pages/settings/SettingsPageSurfaceManager';
 
 /**
