@@ -13,6 +13,8 @@ export interface ISettingsManagerFacade {
   syncToAppStorage(): void;
   isInitialized(): boolean;
   initialize(): Promise<void>;
+  setVisibleTabs(tabs: number[]): Promise<void>;
+  setBottomBarStyle(style: string): Promise<void>;
   getVisibleTabs(): Promise<number[]>;
   getBottomBarStyle(): string;
   getJSON<T>(key: string, defaultValue: T): T;

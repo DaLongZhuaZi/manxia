@@ -1,3 +1,4 @@
+import { ISettingsManagerFacade, SettingsManagerHolder } from 'manxia_core/src/main/ets/Framework/Contracts/ISettingsManagerFacade';
 import { SafeFileUtils } from 'manxia_core/src/main/ets/Utils/SafeFileUtils';
 import { SafeUtils } from 'manxia_core/src/main/ets/Utils/SafeUtils';
 // 文件路径: src/main/ets/pages/MainMenuPage.ets
@@ -296,7 +297,7 @@ import { SourceDialogScaffold } from '../Framework/Components/SourceDialogScaffo
 import { ProxyManager, ProxyConfig, DEFAULT_PROXY_CONFIG, ProxyProtocol } from '../Framework/Network/ProxyManager';
 import { ProxyConfigDialog } from '../components/source/ProxyConfigDialog';
 import { BookshelfCategoryManager, BookshelfCategory, ContentType, CategoryItem } from '../Framework/Data/BookshelfCategoryManager';
-import { SettingsManager, SettingKeys } from '../Framework/Managers/SettingsManager';
+import { SettingKeys } from 'manxia_core/src/main/ets/Framework/Contracts/SettingKeys';
 import { TypeShelfManager, TypeShelf, ShelfType, ShelfContentType, CreateShelfParams, SHELF_COLORS, SHELF_ICONS, getTypeShelfManager, DynamicShelfFilter, smartTokenize, matchesDynamicFilter, DynamicMatchItem } from '../Framework/Data/TypeShelfManager';
 
 // 导入响应式布局
@@ -735,7 +736,7 @@ struct MainMenuPage {
   @State loadingState: LoadingState = new LoadingState();
   private dataManager: DataManager = DataManager.getInstance();
   private dataService: DataService = DataService.getInstance();
-  private settingsManager: SettingsManager = SettingsManager.getInstance();
+  private settingsManager: ISettingsManagerFacade = SettingsManagerHolder.get();
   private sourceDetailWindowSequence: number = 0;
   @StorageLink('main_menu_bottom_bar_style') @Watch('onBottomBarStyleStorageChanged') private bottomBarStyle: string = 'custom'; // 'custom' | 'hds'
   @State private mainPageBottomBarAnimationEnabled: boolean = false;
@@ -11100,7 +11101,7 @@ struct MainMenuPage {
   private async loadVisibleTabs(): Promise<void> {
     const defaultVisibleTabs = this.getDefaultVisibleTabIndices();
     try {
-      const settingsManager = SettingsManager.getInstance();
+      const settingsManager: ISettingsManagerFacade = SettingsManagerHolder.get();
       const savedTabs = await settingsManager.getVisibleTabs();
       const allowedIndices = this.tabConfigs.map(cfg => cfg.index);
       const filteredDefaultTabs = defaultVisibleTabs.filter((idx: number) => allowedIndices.includes(idx));
@@ -11250,7 +11251,7 @@ struct MainMenuPage {
       // 不再排序，保持用户自定义顺序
       
       // 保存到持久化存储
-      const settingsManager = SettingsManager.getInstance();
+      const settingsManager: ISettingsManagerFacade = SettingsManagerHolder.get();
       await settingsManager.setVisibleTabs(finalIndices);
       // 同步到 AppStorage 以便 UI 响应
       AppStorage.setOrCreate('visible_tabs', finalIndices);

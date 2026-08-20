@@ -1,3 +1,4 @@
+import { ISettingsManagerFacade, SettingsManagerHolder } from 'manxia_core/src/main/ets/Framework/Contracts/ISettingsManagerFacade';
 // 文件路径: entry/src/main/ets/pages/settings/PageSettingsSubPage.ets
 /**
  * 页面设置子页面
@@ -16,7 +17,7 @@ import { ThemeManager, ThemeType } from 'manxia_theme/src/main/ets/Framework/Man
 import { FontAwareHelper, FontAwareState } from 'manxia_theme/src/main/ets/Framework/Components/FontAware';
 import { DeviceAdaptationManager, DeviceInfo, DeviceChangeListener, Breakpoint } from 'manxia_theme/src/main/ets/Framework/Managers/DeviceAdaptationManager';
 import { ResponsiveLayoutHelper } from 'manxia_core/src/main/ets/Framework/Utils/ResponsiveLayout';
-import { SettingsManager, SettingKeys } from '../../Framework/Managers/SettingsManager';
+import { SettingKeys } from 'manxia_core/src/main/ets/Framework/Contracts/SettingKeys';
 import { SettingsSearchSupport } from 'manxia_features_ui/src/main/ets/pages/settings/SettingsSearchSupport';
 import { SettingsPanelSurfaceHelper } from 'manxia_features_ui/src/main/ets/pages/settings/SettingsPanelSurfaceHelper';
 import { SettingsImmersiveTitleBar } from './SettingsImmersiveTitleBar';
@@ -128,7 +129,7 @@ export struct PageSettingsSubPage {
   @State backgroundBlurIconType: BackgroundBlurIconType = 'shield';
 
   // 设置管理器
-  private settingsManager: SettingsManager = SettingsManager.getInstance();
+  private settingsManager: ISettingsManagerFacade = SettingsManagerHolder.get();
 
   // 详情页选项列表（只保留默认和统一详情页两项）
   private detailPageOptions: DetailPageOption[] = [
@@ -1555,7 +1556,7 @@ export struct PageSettingsSubPage {
  * 重要：如果全局强制模式启用，所有场景都将使用统一详情页
  */
 export class PageSettingsHelper {
-  private static settingsManager: SettingsManager = SettingsManager.getInstance();
+  private static get settingsManager(): ISettingsManagerFacade { return SettingsManagerHolder.get(); }
   
   // 强制模式设置键
   private static readonly FORCE_UNIFIED_KEY = 'force_unified_detail_page_enabled';

@@ -1,3 +1,4 @@
+import { ISettingsManagerFacade, SettingsManagerHolder } from 'manxia_core/src/main/ets/Framework/Contracts/ISettingsManagerFacade';
 // 文件路径: entry/src/main/ets/pages/settings/MainMenuSettingsSubPage.ets
 /**
  * 主页面设置子页面
@@ -15,7 +16,7 @@ import { FontAwareHelper, FontAwareState } from 'manxia_theme/src/main/ets/Frame
 import { DataManager } from '../../Framework/Data/DataManager';
 import { DeviceAdaptationManager, DeviceInfo, DeviceChangeListener, Breakpoint } from 'manxia_theme/src/main/ets/Framework/Managers/DeviceAdaptationManager';
 import { ResponsiveLayoutHelper } from 'manxia_core/src/main/ets/Framework/Utils/ResponsiveLayout';
-import { SettingsManager, SettingKeys } from '../../Framework/Managers/SettingsManager';
+import { SettingKeys } from 'manxia_core/src/main/ets/Framework/Contracts/SettingKeys';
 import {
   AnimationSettingsManager,
   DEFAULT_ANIMATION_SETTINGS
@@ -141,7 +142,7 @@ export struct MainMenuSettingsSubPage {
   @State bottomBarStyle: string = 'custom';
 
   // 设置管理器
-  private settingsManager: SettingsManager = SettingsManager.getInstance();
+  private settingsManager: ISettingsManagerFacade = SettingsManagerHolder.get();
   private animationSettingsManager: AnimationSettingsManager = AnimationSettingsManager.getInstance();
   private suwayomiTracker: SuwayomiTracker = getSuwayomiTracker();
   private komgaTracker: KomgaTracker = getKomgaTracker();
@@ -2035,7 +2036,7 @@ export struct MainMenuSettingsSubPage {
  * 重要：如果全局强制模式启用，所有场景都将使用统一详情页
  */
 export class PageSettingsHelper {
-  private static settingsManager: SettingsManager = SettingsManager.getInstance();
+  private static get settingsManager(): ISettingsManagerFacade { return SettingsManagerHolder.get(); }
   
   // 强制模式设置键
   private static readonly FORCE_UNIFIED_KEY = 'force_unified_detail_page_enabled';

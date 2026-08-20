@@ -1,3 +1,4 @@
+import { ISettingsManagerFacade, SettingsManagerHolder } from 'manxia_core/src/main/ets/Framework/Contracts/ISettingsManagerFacade';
 ﻿import { SafeUtils } from 'manxia_core/src/main/ets/Utils/SafeUtils';
 import { http } from '@kit.NetworkKit';
 import { logger } from 'manxia_core/src/main/ets/Utils/Logger';
@@ -22,7 +23,7 @@ import {
   createEmptyKomgaConfig,
   getKomgaInstanceDisplayName
 } from '../../Framework/Source/KomgaConfigStore';
-import { SettingsManager } from '../../Framework/Managers/SettingsManager';
+
 import { GlobalBackgroundLayerMode } from 'manxia_theme/src/main/ets/Framework/Components/GlobalBackgroundLayer';
 import { SharedPageBackgroundLayer } from '../../Framework/Components/SharedPageBackgroundLayer';
 import { SettingsImmersiveTitleBar } from './SettingsImmersiveTitleBar';
@@ -77,7 +78,7 @@ export struct KomgaSettingsPage {
   @State testSuccess: boolean = false;
 
   private tracker = getKomgaTracker();
-  private settingsManager: SettingsManager = SettingsManager.getInstance();
+  private settingsManager: ISettingsManagerFacade = SettingsManagerHolder.get();
   private componentId: string = 'KomgaSettingsPage';
   private testConnectionRequestId: number = 0;
   private libraryLoadRequestId: number = 0;

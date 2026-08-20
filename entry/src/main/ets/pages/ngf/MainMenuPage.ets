@@ -1,3 +1,4 @@
+import { ISettingsManagerFacade, SettingsManagerHolder } from 'manxia_core/src/main/ets/Framework/Contracts/ISettingsManagerFacade';
 ﻿import { SafeUtils } from 'manxia_core/src/main/ets/Utils/SafeUtils';
 import { BusinessError } from '@kit.BasicServicesKit';
 import { NGFErrorContext, NGFErrorSeverity } from '../../Framework/NGF/core/contracts/IErrorHandler';
