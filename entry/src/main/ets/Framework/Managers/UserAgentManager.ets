@@ -4,8 +4,10 @@
  */
 
 import { logger } from 'manxia_core/src/main/ets/Utils/Logger';
-import { SettingsManager, SettingKeys } from './SettingsManager';
-import { DataManager, UserSettingsDatabaseRecord } from '../Data/DataManager';
+import { SettingKeys } from 'manxia_core/src/main/ets/Framework/Contracts/SettingKeys';
+import { ISettingsManagerFacade, SettingsManagerHolder } from 'manxia_core/src/main/ets/Framework/Contracts/ISettingsManagerFacade';
+import { IDataManagerFacade, DataManagerHolder } from 'manxia_core/src/main/ets/Framework/Contracts/IDataManagerFacade';
+import { UserSettingsDatabaseRecord } from 'manxia_core/src/main/ets/Framework/Database/DatabaseTypes';
 
 const TAG = 'UserAgentManager';
 
@@ -32,15 +34,15 @@ export const DEFAULT_USER_AGENTS: DefaultUserAgents = {
  */
 export class UserAgentManager {
   private static instance: UserAgentManager;
-  private settingsManager: SettingsManager;
-  private dataManager: DataManager;
+  private settingsManager: ISettingsManagerFacade;
+  private dataManager: IDataManagerFacade;
   
   // 缓存图源级别的UA设置
   private sourceUACache: Map<number, string | null> = new Map();
 
   private constructor() {
-    this.settingsManager = SettingsManager.getInstance();
-    this.dataManager = DataManager.getInstance();
+    this.settingsManager = SettingsManagerHolder.get();
+    this.dataManager = DataManagerHolder.get();
   }
 
   static getInstance(): UserAgentManager {
