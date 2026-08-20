@@ -2,7 +2,8 @@ import { userAuth } from '@kit.UserAuthenticationKit';
 import { BusinessError } from '@kit.BasicServicesKit';
 import { cryptoFramework } from '@kit.CryptoArchitectureKit';
 import { logger } from 'manxia_core/src/main/ets/Utils/Logger';
-import { SettingsManager } from './SettingsManager';
+import { ISettingsManagerFacade, SettingsManagerHolder } from 'manxia_core/src/main/ets/Framework/Contracts/ISettingsManagerFacade';
+import { SettingKeys } from 'manxia_core/src/main/ets/Framework/Contracts/SettingKeys';
 import { ThemeManager, ThemeType } from 'manxia_theme/src/main/ets/Framework/Managers/ThemeManager';
 
 const TAG = 'PrivacyModeManager';
@@ -15,12 +16,12 @@ export class PrivacyModeManager {
   private static instance: PrivacyModeManager | null = null;
   private isPrivacyMode: boolean = false;
   private listeners: Set<(isPrivacyMode: boolean) => void> = new Set();
-  private settingsManager: SettingsManager = SettingsManager.getInstance();
+  private settingsManager: ISettingsManagerFacade = SettingsManagerHolder.get();
   private themeManager: ThemeManager = ThemeManager.getInstance();
   private previousTheme: ThemeType = ThemeType.DARK;
 
   private constructor() {
-    this.settingsManager = SettingsManager.getInstance();
+    this.settingsManager = SettingsManagerHolder.get();
   }
 
   public static getInstance(): PrivacyModeManager {

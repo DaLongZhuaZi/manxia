@@ -291,7 +291,7 @@ import { getChangelogManager } from '../Framework/Managers/ChangelogManager';
 import { SourceUpdateManager } from 'manxia_core/src/main/ets/Framework/Managers/SourceUpdateManager';
 import { getVersionHistoryManager, VersionRepositoryUpdateCheckResult, MANXIA_EXTENSIONS_REPOSITORY_KEY } from '../Framework/Managers/VersionHistoryManager';
 import { ContentFilterManager } from 'manxia_core/src/main/ets/Framework/Managers/ContentFilterManager';
-import { PrivacyModeManager } from '../Framework/Managers/PrivacyModeManager';
+import { PrivacyModeManager } from 'manxia_core/src/main/ets/Framework/Managers/PrivacyModeManager';
 import { PrivacyAuthDialogComponent, PrivacyAuthDialogMode } from '../Framework/Components/PrivacyAuthDialogComponent';
 import { SourceDialogScaffold } from '../Framework/Components/SourceDialogScaffold';
 import { ProxyManager, ProxyConfig, DEFAULT_PROXY_CONFIG, ProxyProtocol } from '../Framework/Network/ProxyManager';

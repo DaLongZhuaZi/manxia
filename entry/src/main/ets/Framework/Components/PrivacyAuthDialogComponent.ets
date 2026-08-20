@@ -5,7 +5,7 @@ import { logger } from 'manxia_core/src/main/ets/Utils/Logger';
 import { ThemeAwareState, ThemeAwareHelper } from 'manxia_theme/src/main/ets/Framework/Components/ThemeAware';
 import { SourceDialogScaffold } from './SourceDialogScaffold';
 import { DialogSurfaceStyleHelper } from './DialogSurfaceStyleHelper';
-import { PrivacyModeManager } from '../Managers/PrivacyModeManager';
+import { PrivacyModeManager } from 'manxia_core/src/main/ets/Framework/Managers/PrivacyModeManager';
 import { SettingsManager, SettingKeys } from '../Managers/SettingsManager';
 
 const TAG = 'PrivacyAuthDialogComponent';
