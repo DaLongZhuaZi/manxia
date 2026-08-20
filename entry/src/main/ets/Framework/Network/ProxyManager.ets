@@ -6,7 +6,7 @@ import { SafeUtils } from 'manxia_core/src/main/ets/Utils/SafeUtils';
  */
 
 import { logger } from 'manxia_core/src/main/ets/Utils/Logger';
-import { SettingsManager } from '../Managers/SettingsManager';
+import { SettingsManager } from 'manxia_core/src/main/ets/Framework/Managers/SettingsManager';
 import { http, connection } from '@kit.NetworkKit';
 import { webview } from '@kit.ArkWeb';
 import { LocalProxyBridge, LocalProxyBridgeConfig, LocalProxyBridgeUpstreamProtocol } from 'manxia_network/src/main/ets/Framework/Network/LocalProxyBridge';

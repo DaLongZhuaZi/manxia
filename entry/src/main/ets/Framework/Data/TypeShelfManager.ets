@@ -5,7 +5,7 @@
  * 与BookshelfCategoryManager集成，复用内容-书架映射逻辑
  */
 import { logger } from 'manxia_core/src/main/ets/Utils/Logger';
-import { SettingsManager } from '../Managers/SettingsManager';
+import { SettingsManager } from 'manxia_core/src/main/ets/Framework/Managers/SettingsManager';
 import { BookshelfCategoryManager, ContentType, CategoryItem } from './BookshelfCategoryManager';
 
 const TAG = 'TypeShelfManager';

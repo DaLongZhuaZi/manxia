@@ -46,7 +46,7 @@ import { Manga, MangaChapter, MangaPage } from 'manxia_core/src/main/ets/Models/
 import { ParsedRemoteMangaId, RemoteLibraryMangaBridge } from '../Source/RemoteLibraryMangaBridge';
 import { BookshelfCategoryManager, CategoryItem, ContentType } from '../Data/BookshelfCategoryManager';
 import { DynamicMatchItem, DynamicShelfFilter, getTypeShelfManager, matchesDynamicFilter, ShelfContentType, ShelfType, TypeShelf, TypeShelfManager } from '../Data/TypeShelfManager';
-import { SettingsManager } from '../Managers/SettingsManager';
+import { SettingsManager } from 'manxia_core/src/main/ets/Framework/Managers/SettingsManager';
 import { ComicInfo, DataManager, FavoriteInfo, OnlineChapterInfoInput } from '../Data/DataManager';
 import { EBookDataManager } from 'manxia_core/src/main/ets/Framework/Data/EBookDataManager';
 import { EBook } from 'manxia_core/src/main/ets/Models/EBookModels';

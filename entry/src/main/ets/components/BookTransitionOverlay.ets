@@ -12,7 +12,7 @@ import { logger } from 'manxia_core/src/main/ets/Utils/Logger';
 import { image } from '@kit.ImageKit';
 import { UIContext } from '@kit.ArkUI';
 import { fileIo } from '@kit.CoreFileKit';
-import { SettingsManager, SettingKeys } from '../Framework/Managers/SettingsManager';
+import { SettingsManager, SettingKeys } from 'manxia_core/src/main/ets/Framework/Managers/SettingsManager';
 import { ThemeManager } from 'manxia_theme/src/main/ets/Framework/Managers/ThemeManager';
 import { TextReaderSettings, DEFAULT_TEXT_READER_SETTINGS, BackgroundType } from 'manxia_core/src/main/ets/Models/TextReaderModels';
 import { 

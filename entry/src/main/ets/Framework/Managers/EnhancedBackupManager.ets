@@ -13,7 +13,7 @@ import { DatabaseManager } from 'manxia_core/src/main/ets/Framework/Database/Dat
 import { getNovelDataManager, NovelDataManager } from '../Novel/NovelDataManager';
 import { getNovelSourceManager, NovelSourceManager } from '../Novel/NovelSourceManager';
 import { getNovelSettingsManager, NovelSettingsManager } from '../Novel/NovelSettingsManager';
-import { SettingsManager, SettingKeys } from './SettingsManager';
+import { SettingsManager, SettingKeys } from 'manxia_core/src/main/ets/Framework/Managers/SettingsManager';
 import { AppInfoManager } from 'manxia_core/src/main/ets/Framework/Managers/AppInfoManager';
 import { getTarPackager, TarPackager } from 'manxia_core/src/main/ets/Framework/Utils/TarPackager';
 import { preferences } from '@kit.ArkData';

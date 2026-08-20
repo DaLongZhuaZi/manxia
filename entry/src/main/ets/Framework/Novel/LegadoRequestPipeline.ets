@@ -1,7 +1,7 @@
 import { logger } from 'manxia_core/src/main/ets/Utils/Logger';
 import { taskpool, util } from '@kit.ArkTS';
 import { http } from '@kit.NetworkKit';
-import { SettingKeys, SettingsManager } from '../Managers/SettingsManager';
+import { SettingKeys, SettingsManager } from 'manxia_core/src/main/ets/Framework/Managers/SettingsManager';
 import { getCookieStore } from 'manxia_novel/src/main/ets/Framework/Novel/LegadoCookieStore';
 import { LegadoSourceParser } from 'manxia_novel/src/main/ets/Framework/Novel/LegadoSourceParser';
 import { LegadoUrlAnalyzer, ParsedUrlRequest } from './LegadoUrlAnalyzer';

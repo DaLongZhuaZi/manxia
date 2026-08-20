@@ -1,4 +1,4 @@
-import { SettingKeys } from '../Managers/SettingsManager';
+import { SettingKeys } from 'manxia_core/src/main/ets/Framework/Managers/SettingsManager';
 import { GlobalBackgroundLayer, GlobalBackgroundLayerMode } from 'manxia_theme/src/main/ets/Framework/Components/GlobalBackgroundLayer';
 
 @Component

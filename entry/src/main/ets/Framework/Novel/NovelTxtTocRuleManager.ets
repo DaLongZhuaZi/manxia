@@ -8,7 +8,7 @@
  */
 
 import { logger } from 'manxia_core/src/main/ets/Utils/Logger';
-import { SettingsManager } from '../Managers/SettingsManager';
+import { SettingsManager } from 'manxia_core/src/main/ets/Framework/Managers/SettingsManager';
 import { getNovelDataManager } from './NovelDataManager';
 import { DEFAULT_TXT_TOC_RULES as SETTINGS_TXT_TOC_RULES, TxtTocRule as SettingsTxtTocRule } from './NovelSettingsManager';
 

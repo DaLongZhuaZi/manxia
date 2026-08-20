@@ -5,7 +5,7 @@
  */
 import { deviceInfo } from '@kit.BasicServicesKit';
 import { logger } from 'manxia_core/src/main/ets/Utils/Logger';
-import { SettingKeys, SettingsManager } from '../Managers/SettingsManager';
+import { SettingKeys, SettingsManager } from 'manxia_core/src/main/ets/Framework/Managers/SettingsManager';
 
 const TAG = 'ReaderKitFeatureGate';
 

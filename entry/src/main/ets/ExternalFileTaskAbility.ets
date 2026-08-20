@@ -2,7 +2,7 @@ import { AbilityConstant, UIAbility, Want } from '@kit.AbilityKit';
 import { window } from '@kit.ArkUI';
 import { logger } from 'manxia_core/src/main/ets/Utils/Logger';
 import { DataInitializer } from './Framework/Initialization/DataInitializer';
-import { SettingsManager } from './Framework/Managers/SettingsManager';
+import { SettingsManager } from 'manxia_core/src/main/ets/Framework/Managers/SettingsManager';
 import {
   EXTERNAL_FILE_TASK_ABILITY_INSTANCE_ID_KEY,
   EXTERNAL_FILE_TASK_ABILITY_PAGE

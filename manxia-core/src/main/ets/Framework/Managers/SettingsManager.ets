@@ -7,7 +7,7 @@ import { ISettingsManagerFacade, SettingsManagerHolder } from 'manxia_core/src/m
  */
 
 import { logger } from 'manxia_core/src/main/ets/Utils/Logger';
-import { DataManager } from '../Data/DataManager';
+import { IDataManagerFacade, DataManagerHolder } from 'manxia_core/src/main/ets/Framework/Contracts/IDataManagerFacade';
 import { UserSettingsDatabaseRecord } from 'manxia_core/src/main/ets/Framework/Database/DatabaseTypes';
 
 const TAG = 'SettingsManager';
@@ -34,7 +34,7 @@ export enum SettingType {
  */
 export class SettingsManager implements ISettingsManagerFacade {
   private static instance: SettingsManager;
-  private dataManager: DataManager | null = null;
+  private dataManager: IDataManagerFacade | null = null;
   private settingsCache: Map<string, string> = new Map();
   private initialized: boolean = false;
 
@@ -52,7 +52,7 @@ export class SettingsManager implements ISettingsManagerFacade {
    */
   async initialize(): Promise<void> {
     try {
-      this.dataManager = DataManager.getInstance();
+      this.dataManager = DataManagerHolder.get();
       
       // 加载所有设置到缓存
       await this.loadAllSettings();

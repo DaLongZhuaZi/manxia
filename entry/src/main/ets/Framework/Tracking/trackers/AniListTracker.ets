@@ -6,7 +6,7 @@
 
 import { http } from '@kit.NetworkKit';
 import { logger } from 'manxia_core/src/main/ets/Utils/Logger';
-import { SettingsManager } from '../../Managers/SettingsManager';
+import { SettingsManager } from 'manxia_core/src/main/ets/Framework/Managers/SettingsManager';
 import { BaseTracker, TrackerAuthState } from './BaseTracker';
 import {
   TrackRecord,

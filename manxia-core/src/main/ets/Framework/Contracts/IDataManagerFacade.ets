@@ -15,6 +15,10 @@ export interface IDataManagerFacade {
   updateComicSourceCookies(sourceId: number, cookiesJson: string): Promise<void>;
   clearComicSourceCookies(sourceId: number): Promise<void>;
   getUserSetting(userId: string, key: string): Promise<string | null>;
+  getAllSettings(): Promise<UserSettingsDatabaseRecord[]>;
+  saveSetting(key: string, value: string, type: string): Promise<void>;
+  deleteSetting(key: string): Promise<void>;
+  clearAllSettings(): Promise<void>;
   getComicById(comicId: string): Promise<ComicInfo | null>;
   getChapterById(chapterId: string): Promise<ChapterInfo | null>;
   getChaptersByMangaId(mangaId: string): Promise<ChapterInfo[]>;

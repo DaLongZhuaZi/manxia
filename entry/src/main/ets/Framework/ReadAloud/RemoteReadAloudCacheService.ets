@@ -22,7 +22,7 @@ import {
   mergeRemoteReadAloudSettings,
   normalizeReadAloudSettings
 } from 'manxia_core/src/main/ets/Models/TextReaderModels';
-import { SettingKeys, SettingsManager } from '../Managers/SettingsManager';
+import { SettingKeys, SettingsManager } from 'manxia_core/src/main/ets/Framework/Managers/SettingsManager';
 import { loadGlobalReadAloudSettings, persistGlobalReadAloudSettings } from './ReadAloudSettingsStore';
 import { ReadAloudBackendFactory, ReadAloudPrecacheProgressSnapshot } from './ReadAloudBackends';
 import { ReadAloudController } from './ReadAloudController';

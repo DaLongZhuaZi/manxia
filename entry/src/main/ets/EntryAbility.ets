@@ -17,7 +17,7 @@ import { OrientationLockApplyResult, OrientationLockManager, OrientationLockStra
 import { DataInitializer } from './Framework/Initialization/DataInitializer';
 import { ThemeManager } from 'manxia_theme/src/main/ets/Framework/Managers/ThemeManager';
 import { DeviceAdaptationManager } from 'manxia_theme/src/main/ets/Framework/Managers/DeviceAdaptationManager';
-import { SettingsManager, SettingKeys } from './Framework/Managers/SettingsManager';
+import { SettingsManager, SettingKeys } from 'manxia_core/src/main/ets/Framework/Managers/SettingsManager';
 import { AnimationSettingsManager } from './Framework/Animation/AnimationSettingsManager';
 import { VisualEffectsManager } from 'manxia_core/src/main/ets/Framework/Managers/VisualEffectsManager';
 import { AppNotificationManager } from 'manxia_core/src/main/ets/Framework/Managers/NotificationManager';

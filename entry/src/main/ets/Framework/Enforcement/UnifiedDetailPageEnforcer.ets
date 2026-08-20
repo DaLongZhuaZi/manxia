@@ -11,7 +11,7 @@
  */
 
 import { logger } from 'manxia_core/src/main/ets/Utils/Logger';
-import { SettingsManager, SettingKeys } from '../Managers/SettingsManager';
+import { SettingsManager, SettingKeys } from 'manxia_core/src/main/ets/Framework/Managers/SettingsManager';
 import { DetailPageType, PageSettingKeys } from '../../pages/settings/PageSettingsSubPage';
 
 const TAG = 'UnifiedDetailPageEnforcer';

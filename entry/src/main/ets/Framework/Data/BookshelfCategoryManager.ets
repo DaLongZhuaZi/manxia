@@ -4,7 +4,7 @@
  * 类似iOS App Library的分类视图功能
  */
 import { logger } from 'manxia_core/src/main/ets/Utils/Logger';
-import { SettingsManager } from '../Managers/SettingsManager';
+import { SettingsManager } from 'manxia_core/src/main/ets/Framework/Managers/SettingsManager';
 
 const TAG = 'BookshelfCategoryManager';
 const CATEGORIES_KEY = 'bookshelf_categories';

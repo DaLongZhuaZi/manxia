@@ -27,7 +27,7 @@ import {
 import { SettingsPageSurfaceManager } from 'manxia_features_ui/src/main/ets/pages/settings/SettingsPageSurfaceManager';
 import { AvifImage } from '../../components/AvifImage';
 import { DataManager } from '../Data/DataManager';
-import { SettingsManager, SettingKeys } from '../Managers/SettingsManager';
+import { SettingsManager, SettingKeys } from 'manxia_core/src/main/ets/Framework/Managers/SettingsManager';
 
 const TAG = 'BookSourceTabContent';
 

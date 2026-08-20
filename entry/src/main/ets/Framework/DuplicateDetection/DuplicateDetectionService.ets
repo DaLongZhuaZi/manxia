@@ -7,7 +7,7 @@ import { logger } from 'manxia_core/src/main/ets/Utils/Logger';
 import { DataManager } from '../Data/DataManager';
 import { EBookDataManager } from 'manxia_core/src/main/ets/Framework/Data/EBookDataManager';
 import { NovelDataManager } from '../Novel/NovelDataManager';
-import { SettingsManager } from '../Managers/SettingsManager';
+import { SettingsManager } from 'manxia_core/src/main/ets/Framework/Managers/SettingsManager';
 import { normalizeText, combinedSimilarity } from './StringSimilarity';
 import {
   DuplicateCheckInput,

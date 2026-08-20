@@ -40,7 +40,7 @@ import { getNovelDataManager } from './NovelDataManager';
 import { getLegadoMangaSourceBridge } from './LegadoMangaSourceBridge';
 import { LargeFileJSONParser, ParseProgressCallback, ParseConfig } from 'manxia_novel/src/main/ets/Framework/Novel/LargeFileJSONParser';
 import { fileIo as fs } from '@kit.CoreFileKit';
-import { SettingsManager } from '../Managers/SettingsManager';
+import { SettingsManager } from 'manxia_core/src/main/ets/Framework/Managers/SettingsManager';
 import { LegadoExecutionCancellationToken, createLegadoCancellationToken } from 'manxia_novel/src/main/ets/Framework/Novel/LegadoExecutionCancellation';
 
 const TAG = 'NovelSourceManager';

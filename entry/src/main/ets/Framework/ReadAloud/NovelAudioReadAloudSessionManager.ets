@@ -8,7 +8,7 @@ import { getNovelChapterCacheManager } from '../Novel/NovelChapterCacheManager';
 import { LegadoBook, LegadoBookSourceType, LegadoChapter } from 'manxia_novel/src/main/ets/Framework/Novel/LegadoSourceTypes';
 import { DEFAULT_READ_ALOUD_SETTINGS, ReadAloudSettings } from 'manxia_core/src/main/ets/Models/TextReaderModels';
 import { loadGlobalReadAloudSettings } from './ReadAloudSettingsStore';
-import { SettingsManager } from '../Managers/SettingsManager';
+import { SettingsManager } from 'manxia_core/src/main/ets/Framework/Managers/SettingsManager';
 import { ReadAloudMediaCommandListener, ReadAloudMediaSession } from './ReadAloudMediaSession';
 import { ReadAloudPlaybackState, ReadAloudSessionContext, ReadAloudStateSnapshot } from './ReadAloudTypes';
 import { ReadAloudFlowMonitor } from 'manxia_novel/src/main/ets/Framework/ReadAloud/ReadAloudFlowMonitor';

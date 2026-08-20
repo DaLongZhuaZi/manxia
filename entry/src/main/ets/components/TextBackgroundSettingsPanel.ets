@@ -19,7 +19,7 @@ import { ThemeManager } from 'manxia_theme/src/main/ets/Framework/Managers/Theme
 import { ThemeAwareState, ThemeAwareHelper } from 'manxia_theme/src/main/ets/Framework/Components/ThemeAware';
 import { ThemeType } from 'manxia_theme/src/main/ets/Framework/Managers/ThemeManager';
 import { EBookDataManager, BackgroundImageInfo } from 'manxia_core/src/main/ets/Framework/Data/EBookDataManager';
-import { SettingsManager, SettingKeys } from '../Framework/Managers/SettingsManager';
+import { SettingsManager, SettingKeys } from 'manxia_core/src/main/ets/Framework/Managers/SettingsManager';
 import { photoAccessHelper } from '@kit.MediaLibraryKit';
 import fs from '@ohos.file.fs';
 import { curves, UIContext, display } from '@kit.ArkUI';

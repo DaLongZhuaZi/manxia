@@ -6,7 +6,7 @@ import { AnimationSettings, DEFAULT_ANIMATION_SETTINGS, AnimationSettingsListene
  */
 
 import { logger } from 'manxia_core/src/main/ets/Utils/Logger';
-import { SettingsManager, SettingKeys } from '../Managers/SettingsManager';
+import { SettingsManager, SettingKeys } from 'manxia_core/src/main/ets/Framework/Managers/SettingsManager';
 
 export { AnimationSettings, DEFAULT_ANIMATION_SETTINGS, AnimationSettingsListener };
 const TAG = 'AnimationSettingsManager';

@@ -19,7 +19,7 @@ import { ComicInfo, ReadHistory, OnlineComicInfo, UserSettingsDatabaseRecord } f
 import { ComicSourceDatabaseRecord } from 'manxia_core/src/main/ets/Framework/Database/DatabaseTypes';
 import { MangaStatus, ReadingStatus, StatusConverter } from 'manxia_core/src/main/ets/Framework/Types/StatusEnums';
 import { DataManager } from '../Data/DataManager';
-import { SettingsManager, SettingKeys } from '../Managers/SettingsManager';
+import { SettingsManager, SettingKeys } from 'manxia_core/src/main/ets/Framework/Managers/SettingsManager';
 import { logger } from 'manxia_core/src/main/ets/Utils/Logger';
 
 const TAG = 'ComicConverter';

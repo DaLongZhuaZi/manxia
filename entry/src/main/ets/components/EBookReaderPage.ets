@@ -13,7 +13,7 @@ import { ThemeAwareState, ThemeAwareHelper } from 'manxia_theme/src/main/ets/Fra
 import { ThemeManager, ThemeType, GlassEffectContext } from 'manxia_theme/src/main/ets/Framework/Managers/ThemeManager';
 import { WindowManager, DisplayMode } from 'manxia_theme/src/main/ets/Utils/WindowManager';
 import { EBook, EBookChapter, EBookReadingProgress, EBookReadingSettings, EBookPageMode, EBookFormat, DEFAULT_EBOOK_READING_SETTINGS, EBOOK_THEME_PRESETS, EBookThemePreset } from 'manxia_core/src/main/ets/Models/EBookModels';
-import { SettingsManager, SettingKeys } from '../Framework/Managers/SettingsManager';
+import { SettingsManager, SettingKeys } from 'manxia_core/src/main/ets/Framework/Managers/SettingsManager';
 import { EBookDataManager } from 'manxia_core/src/main/ets/Framework/Data/EBookDataManager';
 import { PdfViewerComponent } from '../Framework/Components/PdfViewerComponent';
 import { PdfKitViewerComponent, PdfViewerCallbacks } from '../Framework/Components/PdfKitViewerComponent';
