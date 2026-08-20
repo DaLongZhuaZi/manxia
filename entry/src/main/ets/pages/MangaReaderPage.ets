@@ -26,7 +26,7 @@ import { BusinessError } from '@kit.BasicServicesKit';
 import { DataManager, PageInfo, PageInfoInput, ChapterInfo, OnlineChapterInfo, OnlinePageInfo, OnlinePageInfoInput, UserSettingsDatabaseRecord, OnlineComicSourceSaveInput } from '../Framework/Data/DataManager';
 import { ComicSourceDatabaseRecord } from 'manxia_core/src/main/ets/Framework/Database/DatabaseTypes';
 import { DatabaseManager } from 'manxia_core/src/main/ets/Framework/Database/DatabaseManager';
-import CookieManager from '../Framework/Managers/CookieManager';
+import CookieManager from 'manxia_core/src/main/ets/Framework/Managers/CookieManager';
 import { DataService } from '../Framework/Services/DataService';
 import { RemoteLibraryMangaBridge } from '../Framework/Source/RemoteLibraryMangaBridge';
 import { getSuwayomiSourceExecutor, SuwayomiSourceExecutor } from '../Framework/Source/SuwayomiSourceExecutor';

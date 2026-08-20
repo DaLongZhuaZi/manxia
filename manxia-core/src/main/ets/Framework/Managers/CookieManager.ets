@@ -12,7 +12,7 @@
 import { http } from '@kit.NetworkKit';
 import { webview } from '@kit.ArkWeb';
 import { logger } from 'manxia_core/src/main/ets/Utils/Logger';
-import { DataManager } from '../Data/DataManager';
+import { IDataManagerFacade, DataManagerHolder } from 'manxia_core/src/main/ets/Framework/Contracts/IDataManagerFacade';
 import { RequestHeaderEntry, RequestHeaders } from 'manxia_core/src/main/ets/Framework/Contracts/ImageRequestHeaders';
 
 const TAG: string = 'CookieManager';
@@ -41,11 +41,11 @@ interface HttpHeadersObject {
 
 export class CookieManager {
   private static instance: CookieManager | null = null;
-  private readonly dataManager: DataManager;
+  private get dataManager(): IDataManagerFacade { return DataManagerHolder.get(); }
   private readonly defaultTtlMs: number = 7 * 24 * 60 * 60 * 1000;
 
   private constructor() {
-    this.dataManager = DataManager.getInstance();
+    
   }
 
   static getInstance(): CookieManager {

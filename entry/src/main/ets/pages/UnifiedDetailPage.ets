@@ -30,7 +30,7 @@ import { ResponsiveLayoutHelper } from 'manxia_core/src/main/ets/Framework/Utils
 import { ContentFilterManager } from 'manxia_core/src/main/ets/Framework/Managers/ContentFilterManager';
 import { SettingKeys } from 'manxia_core/src/main/ets/Framework/Contracts/SettingKeys';
 // ../Framework/Managers/SettingsManager';
-import CookieManager from '../Framework/Managers/CookieManager';
+import CookieManager from 'manxia_core/src/main/ets/Framework/Managers/CookieManager';
 import {
   ContentTrackingCardCallbacks,
   ContentTrackingCardState,

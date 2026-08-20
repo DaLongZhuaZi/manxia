@@ -15,7 +15,7 @@ import { SearchIntent, SearchIntentType } from 'manxia_source_engine/src/main/et
 import { EngineResult, SearchResult } from '../WebView/MangaSourceEngine';
 import { DirectSearchResult, MangaInfo } from 'manxia_source_engine/src/main/ets/Framework/WebView/MangaSourceTypes';
 import { WebViewSourceManager } from '../WebView/WebViewSourceManager';
-import CookieManager from '../Managers/CookieManager';
+import CookieManager from 'manxia_core/src/main/ets/Framework/Managers/CookieManager';
 import { getLegadoMangaSourceBridge } from '../Novel/LegadoMangaSourceBridge';
 import { GlobalSearchCancelSignal } from 'manxia_source_engine/src/main/ets/Framework/Search/GlobalSearchSessionTypes';
 

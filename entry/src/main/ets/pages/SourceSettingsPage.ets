@@ -19,7 +19,7 @@ import { WebViewAuthManager } from '../Framework/WebView/WebViewAuthManager';
 import { ComicSourceDatabaseRecord } from 'manxia_core/src/main/ets/Framework/Database/DatabaseTypes';
 import { SourceContentCache } from '../Framework/Cache/SourceContentCache';
 import { eventBus, GameEvent, SourceRuntimeConfigChangedPayload, buildSourceRuntimeConfigVersionKey } from '../Framework/EventBus';
-import CookieManager from '../Framework/Managers/CookieManager';
+import CookieManager from 'manxia_core/src/main/ets/Framework/Managers/CookieManager';
 import { SourceLoginPageParams } from './SourceLoginPage';
 import { ReadingMode, ReadingDirection, PageTurnAnimationType, DEFAULT_READING_SETTINGS } from 'manxia_core/src/main/ets/Models/MangaModels';
 import { EBookPageMode, EBOOK_THEME_PRESETS, EBookThemePreset, DEFAULT_EBOOK_READING_SETTINGS } from 'manxia_core/src/main/ets/Models/EBookModels';

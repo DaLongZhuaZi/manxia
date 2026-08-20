@@ -34,7 +34,7 @@ import { MangaSourceSelectorEngine } from 'manxia_source_engine/src/main/ets/Fra
 import { MangaSourceAntiCrawler } from 'manxia_source_engine/src/main/ets/Framework/WebView/MangaSourceAntiCrawler';
 import { MangaSourceAPIEngine, JSONExtractConfig } from './MangaSourceAPIEngine';
 import { DataManager } from '../Data/DataManager';
-import CookieManager from '../Managers/CookieManager';
+import CookieManager from 'manxia_core/src/main/ets/Framework/Managers/CookieManager';
 import { generatePicaSignature } from 'manxia_source_engine/src/main/ets/Framework/Source/SignatureHandler';
 import { UserAgentManager } from 'manxia_core/src/main/ets/Framework/Managers/UserAgentManager';
 import { sourceDiagnosticManager } from 'manxia_source_engine/src/main/ets/Framework/SourceEditor/SourceDiagnosticManager';

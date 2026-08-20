@@ -11,7 +11,7 @@ import { ThemeType } from 'manxia_theme/src/main/ets/Framework/Managers/ThemeMan
 import { ThemeAwareHelper, ThemeAwareState } from 'manxia_theme/src/main/ets/Framework/Components/ThemeAware';
 import { FontAwareHelper, FontAwareState } from 'manxia_theme/src/main/ets/Framework/Components/FontAware';
 import { DataManager } from '../Framework/Data/DataManager';
-import CookieManager from '../Framework/Managers/CookieManager';
+import CookieManager from 'manxia_core/src/main/ets/Framework/Managers/CookieManager';
 import { WebViewAuthManager } from '../Framework/WebView/WebViewAuthManager';
 import { GlobalBackgroundLayerMode } from 'manxia_theme/src/main/ets/Framework/Components/GlobalBackgroundLayer';
 import { SharedPageBackgroundLayer } from '../Framework/Components/SharedPageBackgroundLayer';

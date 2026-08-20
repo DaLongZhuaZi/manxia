@@ -5,7 +5,7 @@
 
 import { logger } from 'manxia_core/src/main/ets/Utils/Logger';
 import { webview } from '@kit.ArkWeb';
-import CookieManager from '../Managers/CookieManager';
+import CookieManager from 'manxia_core/src/main/ets/Framework/Managers/CookieManager';
 import http from '@ohos.net.http';
 
 const TAG = 'LoginManager';

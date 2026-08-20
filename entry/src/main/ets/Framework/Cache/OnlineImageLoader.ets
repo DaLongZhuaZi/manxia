@@ -13,7 +13,7 @@ import { image } from '@kit.ImageKit';
 import { logger } from 'manxia_core/src/main/ets/Utils/Logger';
 import { http } from '@kit.NetworkKit';
 import { webview } from '@kit.ArkWeb';
-import CookieManager from '../Managers/CookieManager';
+import CookieManager from 'manxia_core/src/main/ets/Framework/Managers/CookieManager';
 import { cryptoFramework } from '@kit.CryptoArchitectureKit';
 import { DiskCacheManager } from 'manxia_network/src/main/ets/Framework/Cache/DiskCacheManager';
 import { DataManager, PageCacheUpdate } from '../Data/DataManager';

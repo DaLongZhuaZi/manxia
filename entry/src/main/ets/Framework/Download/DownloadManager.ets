@@ -19,7 +19,7 @@ import { DownloadStatus } from 'manxia_core/src/main/ets/Framework/Types/StatusE
 import { BackgroundTaskHelper } from 'manxia_network/src/main/ets/Framework/Task/BackgroundTaskHelper';
 import { OnlineArchiveCreateResult, OnlineArchiveMetadata, OnlineArchivePageFile, OnlineMangaArchiveService } from './OnlineMangaArchiveService';
 import { eventBus, GameEvent, MangaCacheUpdatedPayload } from '../EventBus';
-import { CookieManager } from '../Managers/CookieManager';
+import { CookieManager } from 'manxia_core/src/main/ets/Framework/Managers/CookieManager';
 import util from '@ohos.util';
 import { DownloadCacheFlowMonitor, getDownloadCacheFlowMonitor } from 'manxia_network/src/main/ets/Framework/Download/DownloadCacheFlowMonitor';
 import {

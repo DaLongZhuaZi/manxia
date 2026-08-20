@@ -12,7 +12,7 @@ import { SandboxManager } from 'manxia_core/src/main/ets/Framework/Storage/Sandb
 import { BusinessError } from '@kit.BasicServicesKit';
 import { http } from '@kit.NetworkKit';
 import { CacheStats, MemoryCacheStats, DiskCacheStats } from '../Data/DataManager';
-import CookieManager from '../Managers/CookieManager';
+import CookieManager from 'manxia_core/src/main/ets/Framework/Managers/CookieManager';
 import { PermanentImageCacheManager } from './PermanentImageCacheManager';
 import { OnlineImageLoader, OnlineLoadOptions, RequestHeaders as OnlineRequestHeaders } from './OnlineImageLoader';
 import { SuwayomiCacheManager } from '../Source/SuwayomiCacheManager';

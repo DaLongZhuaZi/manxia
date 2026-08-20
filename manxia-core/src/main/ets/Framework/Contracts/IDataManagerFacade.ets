@@ -13,6 +13,7 @@ export interface IDataManagerFacade {
   getSourceUserSetting(sourceId: number, keyName: string): Promise<UserSettingsDatabaseRecord | null>;
   getComicSourceById(sourceId: number): Promise<ComicSourceDatabaseRecord | null>;
   updateComicSourceCookies(sourceId: number, cookiesJson: string): Promise<void>;
+  clearComicSourceCookies(sourceId: number): Promise<void>;
 }
 
 export class DataManagerHolder {
