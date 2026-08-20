@@ -33,7 +33,7 @@ import { eventBus, GameEvent, MangaDeletedPayload } from '../Framework/EventBus'
 import { SandboxManager } from 'manxia_core/src/main/ets/Framework/Storage/SandboxManager';
 import { ScraperDialog, ScraperDialogConfig, ScraperDialogResult } from '../Framework/Components/ScraperDialog';
 import { ScraperContentType } from 'manxia_core/src/main/ets/Framework/Scraper/ScraperTypes';
-import { getHelpPanelManagerV2 } from '../Framework/Components/HelpPanelV2';
+import { getHelpPanelManagerV2 } from 'manxia_features_ui/src/main/ets/Framework/Components/HelpPanelV2';
 import { getCoverImageManager } from '../Framework/Image/CoverImageManager';
 import { image } from '@kit.ImageKit';
 import { PageWindowCoordinator } from 'manxia_theme/src/main/ets/Utils/PageWindowCoordinator';

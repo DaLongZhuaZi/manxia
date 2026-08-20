@@ -10,7 +10,7 @@ import { WindowManager, DisplayMode } from 'manxia_theme/src/main/ets/Utils/Wind
 import { PageWindowCoordinator } from 'manxia_theme/src/main/ets/Utils/PageWindowCoordinator';
 import { ThemeAwareHelper, ThemeAwareState } from 'manxia_theme/src/main/ets/Framework/Components/ThemeAware';
 import { SourceDialogScaffold } from '../Framework/Components/SourceDialogScaffold';
-import { DialogSurfaceStyleHelper } from '../Framework/Components/DialogSurfaceStyleHelper';
+import { DialogSurfaceStyleHelper } from 'manxia_features_ui/src/main/ets/Framework/Components/DialogSurfaceStyleHelper';
 import {
   NovelAudioReadAloudLaunchParams,
   NovelAudioReadAloudSnapshot,

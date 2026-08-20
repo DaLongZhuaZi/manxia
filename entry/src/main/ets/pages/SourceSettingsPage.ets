@@ -25,7 +25,7 @@ import { ReadingMode, ReadingDirection, PageTurnAnimationType, DEFAULT_READING_S
 import { EBookPageMode, EBOOK_THEME_PRESETS, EBookThemePreset, DEFAULT_EBOOK_READING_SETTINGS } from 'manxia_core/src/main/ets/Models/EBookModels';
 import { MangaSourceEngine, EngineConfig } from '../Framework/WebView/MangaSourceEngine';
 import { AntiCrawlerConfig, CloudflareConfig, CaptchaConfig, IpBlockConfig } from 'manxia_source_engine/src/main/ets/Framework/WebView/MangaSourceTypes';
-import { getHelpPanelManagerV2 } from '../Framework/Components/HelpPanelV2';
+import { getHelpPanelManagerV2 } from 'manxia_features_ui/src/main/ets/Framework/Components/HelpPanelV2';
 import { SettingsImmersiveTitleBar } from './settings/SettingsImmersiveTitleBar';
 import { SettingsImmersiveTitleActionItem, SettingsPageTitleBarManager } from 'manxia_features_ui/src/main/ets/pages/settings/SettingsPageTitleBarManager';
 import { GlobalBackgroundLayerMode } from 'manxia_theme/src/main/ets/Framework/Components/GlobalBackgroundLayer';

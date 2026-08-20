@@ -8,7 +8,7 @@
 import { EBookMetadata, EBookChapter } from 'manxia_core/src/main/ets/Models/EBookModels';
 import { ThemeAwareState, ThemeAwareHelper } from 'manxia_theme/src/main/ets/Framework/Components/ThemeAware';
 import { FontAwareHelper, FontAwareState } from 'manxia_theme/src/main/ets/Framework/Components/FontAware';
-import { DialogSurfaceStyleHelper } from './DialogSurfaceStyleHelper';
+import { DialogSurfaceStyleHelper } from 'manxia_features_ui/src/main/ets/Framework/Components/DialogSurfaceStyleHelper';
 import { ImportFilenameSuggestionPanel } from 'manxia_theme/src/main/ets/Framework/Components/ImportFilenameSuggestionPanel';
 import { logger } from 'manxia_core/src/main/ets/Utils/Logger';
 import { promptAction } from '@kit.ArkUI';

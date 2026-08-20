@@ -36,7 +36,7 @@ import {
   clampTextReaderFontSize
 } from 'manxia_core/src/main/ets/Models/TextReaderModels';
 import { eventBus, GameEvent, BasePayload } from '../Framework/EventBus';
-import { getHelpPanelManagerV2 } from '../Framework/Components/HelpPanelV2';
+import { getHelpPanelManagerV2 } from 'manxia_features_ui/src/main/ets/Framework/Components/HelpPanelV2';
 import { getFontManager, SystemFont, CustomFont } from 'manxia_theme/src/main/ets/Framework/Managers/FontManager';
 import { DisplayMode } from 'manxia_theme/src/main/ets/Utils/WindowManager';
 import { PageWindowCoordinator } from 'manxia_theme/src/main/ets/Utils/PageWindowCoordinator';

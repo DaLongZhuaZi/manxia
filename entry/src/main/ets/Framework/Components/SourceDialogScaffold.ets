@@ -1,5 +1,5 @@
 import { ThemeAwareState } from 'manxia_theme/src/main/ets/Framework/Components/ThemeAware';
-import { DialogSurfaceStyleHelper } from './DialogSurfaceStyleHelper';
+import { DialogSurfaceStyleHelper } from 'manxia_features_ui/src/main/ets/Framework/Components/DialogSurfaceStyleHelper';
 
 export enum SourceDialogLayoutMode {
   CENTER = 0,

@@ -140,7 +140,7 @@ import { PageWindowCoordinator } from 'manxia_theme/src/main/ets/Utils/PageWindo
 import { StorageManagementPage } from './StorageManagementPage';
 import { TaskFloatingBall } from '../Framework/Components/TaskFloatingBall';
 import { ReadAloudFloatingBall } from '../Framework/Components/ReadAloudFloatingBall';
-import { HelpPanelOverlayV2 } from '../Framework/Components/HelpPanelV2';
+import { HelpPanelOverlayV2 } from 'manxia_features_ui/src/main/ets/Framework/Components/HelpPanelV2';
 import { SourceSettingsPage, SourceSettingsPageParams } from './SourceSettingsPage';
 import { SourceLoginPage } from './SourceLoginPage';
 import { BookSourceManagementPage } from './BookSourceManagementPage';

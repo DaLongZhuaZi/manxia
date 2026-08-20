@@ -60,7 +60,7 @@ import {
 } from '../Framework/Components/BatchMangaImportDialog';
 import { showArchivePasswordDialog } from 'manxia_theme/src/main/ets/Framework/Components/ArchivePasswordDialog';
 import { ParsedArchiveStructure as CompressionParsedStructure } from 'manxia_core/src/main/ets/Utils/CompressionUtils';
-import { getHelpPanelManagerV2 } from '../Framework/Components/HelpPanelV2';
+import { getHelpPanelManagerV2 } from 'manxia_features_ui/src/main/ets/Framework/Components/HelpPanelV2';
 import { SettingsImmersiveTitleBar } from './settings/SettingsImmersiveTitleBar';
 import { SettingsImmersiveTitleActionItem, SettingsPageTitleBarManager } from 'manxia_features_ui/src/main/ets/pages/settings/SettingsPageTitleBarManager';
 import { GlobalBackgroundLayerMode } from 'manxia_theme/src/main/ets/Framework/Components/GlobalBackgroundLayer';

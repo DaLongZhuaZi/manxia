@@ -15,7 +15,7 @@ import { ThemeManager } from 'manxia_theme/src/main/ets/Framework/Managers/Theme
 import { WindowManager, DisplayMode } from 'manxia_theme/src/main/ets/Utils/WindowManager';
 import { PageWindowCoordinator } from 'manxia_theme/src/main/ets/Utils/PageWindowCoordinator';
 import { getUnifiedAnnotationManager, UnifiedAnnotationManager } from 'manxia_core/src/main/ets/Framework/Annotations/UnifiedAnnotationManager';
-import { getHelpPanelManagerV2 } from '../Framework/Components/HelpPanelV2';
+import { getHelpPanelManagerV2 } from 'manxia_features_ui/src/main/ets/Framework/Components/HelpPanelV2';
 import { DataManager } from '../Framework/Data/DataManager';
 import { NovelDataManager } from '../Framework/Novel/NovelDataManager';
 import { EBookDataManager } from 'manxia_core/src/main/ets/Framework/Data/EBookDataManager';

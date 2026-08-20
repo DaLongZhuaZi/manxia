@@ -27,8 +27,8 @@ import { SettingKeys } from 'manxia_core/src/main/ets/Framework/Contracts/Settin
 import { FontAwareHelper, FontAwareState } from 'manxia_theme/src/main/ets/Framework/Components/FontAware';
 import { SourceDialogScaffold } from '../Framework/Components/SourceDialogScaffold';
 import { NovelSearchPageParams } from './NovelBookshelfPage';
-import { ValidationProgressDialog, ValidationProgressController, ValidationProgressInfo } from '../Framework/Components/ValidationProgressDialog';
-import { GroupManagementDialog, GroupInfo, SplitCondition } from '../Framework/Components/GroupManagementDialog';
+import { ValidationProgressDialog, ValidationProgressController, ValidationProgressInfo } from 'manxia_features_ui/src/main/ets/Framework/Components/ValidationProgressDialog';
+import { GroupManagementDialog, GroupInfo, SplitCondition } from 'manxia_features_ui/src/main/ets/Framework/Components/GroupManagementDialog';
 import { LegadoCompatibilityStatus, LegadoV2ExecutionPolicy } from 'manxia_novel/src/main/ets/Framework/Novel/LegadoCompatibilityTypes';
 import { getLegadoSourceAutomationToken } from 'manxia_novel/src/main/ets/Framework/Novel/LegadoSourceAutomationIdentity';
 import { LegadoV2QualificationResult, LegadoV2QualificationRunner } from '../Framework/Novel/LegadoV2QualificationRunner';

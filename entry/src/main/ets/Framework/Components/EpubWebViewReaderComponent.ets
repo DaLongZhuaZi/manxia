@@ -27,7 +27,7 @@ import {
   PageTurnAnimationType
 } from 'manxia_core/src/main/ets/Models/MangaModels';
 import { HighlightLineType } from 'manxia_core/src/main/ets/Models/AnnotationModels';
-import { DialogSurfaceStyleHelper } from './DialogSurfaceStyleHelper';
+import { DialogSurfaceStyleHelper } from 'manxia_features_ui/src/main/ets/Framework/Components/DialogSurfaceStyleHelper';
 import { SettingsGlassStyleHelper } from 'manxia_features_ui/src/main/ets/pages/settings/SettingsGlassStyleHelper';
 import {
   CurlStartPosition,
