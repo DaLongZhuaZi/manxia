@@ -1,3 +1,4 @@
+import { ISettingsManagerFacade, SettingsManagerHolder } from 'manxia_core/src/main/ets/Framework/Contracts/ISettingsManagerFacade';
 // 文件路径: entry/src/main/ets/pages/WelcomeGuidePage.ets
 /**
  * 欢迎引导页面
@@ -10,7 +11,7 @@ import { ThemeManager, ThemeType, CustomThemeData, CustomThemeMode } from 'manxi
 import { ThemeAwareHelper, ThemeAwareState } from 'manxia_theme/src/main/ets/Framework/Components/ThemeAware';
 import { FontAwareHelper, FontAwareState } from 'manxia_theme/src/main/ets/Framework/Components/FontAware';
 import { WelcomeGuideManager, GuideStep, GuideFlowMode } from '../Framework/Managers/WelcomeGuideManager';
-import { SettingsManager, SettingKeys } from '../Framework/Managers/SettingsManager';
+import { SettingKeys } from 'manxia_core/src/main/ets/Framework/Contracts/SettingKeys';
 import { DataManager } from '../Framework/Data/DataManager';
 import { AppNotificationManager } from 'manxia_core/src/main/ets/Framework/Managers/NotificationManager';
 import { InteractionManager } from 'manxia_core/src/main/ets/Framework/Managers/InteractionManager';
@@ -72,7 +73,7 @@ struct WelcomeGuidePage {
 
   // 引导管理器
   private welcomeGuideManager: WelcomeGuideManager = WelcomeGuideManager.getInstance();
-  private settingsManager: SettingsManager = SettingsManager.getInstance();
+  private settingsManager: ISettingsManagerFacade = SettingsManagerHolder.get();
   private dataManager: DataManager = DataManager.getInstance();
   private notificationManager: AppNotificationManager = AppNotificationManager.getInstance();
   private interactionManager: InteractionManager = InteractionManager.getInstance();
