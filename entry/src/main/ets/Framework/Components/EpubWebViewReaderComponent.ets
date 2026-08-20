@@ -521,7 +521,7 @@ class EpubWebViewReaderControllerImpl implements EpubWebViewReaderController {
 export struct EpubWebViewReaderComponent {
   @Prop params: EpubWebViewReaderParams;
   @Prop enableEpubAnnotations: boolean = false;
-  @Prop @Watch('onEpubHighlightRangesChange') epubHighlightRanges: EpubWebHighlightRange[] = [];
+  @Link @Watch('onEpubHighlightRangesChange') epubHighlightRanges: EpubWebHighlightRange[];
 
   private uiContext: UIContext | null = null;
   private webviewController: webview.WebviewController = new webview.WebviewController();

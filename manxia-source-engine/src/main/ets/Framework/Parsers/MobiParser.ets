@@ -732,7 +732,14 @@ function ensureDirectory(path: string): void {
   }
   if (statChecked) {
     if (!statIsDirectory) {
-      throw new Error(`路径已存在但不是目录: ${path}`);
+      logger.warn(TAG, `转换缓存路径存在但为文件，将清理后重建: ${path}`);
+      try {
+        SafeFileUtils.unlinkSync(path);
+      } catch (_unlinkError) {
+        throw new Error(`清理残留缓存文件失败(${path}): ${String(_unlinkError)}`);
+      }
+      SafeFileUtils.mkdirSync(path, true);
+      return;
     }
     return;
   }

@@ -82,7 +82,7 @@ import { eventBus, GameEvent, IEventPayload, ReadAloudStatePayload } from '../Fr
 import { getUnifiedAnnotationManager } from 'manxia_core/src/main/ets/Framework/Annotations/UnifiedAnnotationManager';
 import { AnnotationCenterPageParams } from './AnnotationCenterPage';
 import { EBook, EBookReadingProgress } from 'manxia_core/src/main/ets/Models/EBookModels';
-import { EBookDataManager } from '../Framework/Data/EBookDataManager';
+import { EBookDataManager } from 'manxia_core/src/main/ets/Framework/Data/EBookDataManager';
 import {
   buildLocalTextNovelBookId,
   buildTextReaderSettingsFromEBookSettings,

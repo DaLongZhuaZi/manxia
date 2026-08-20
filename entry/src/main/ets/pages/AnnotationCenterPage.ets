@@ -18,7 +18,7 @@ import { getUnifiedAnnotationManager, UnifiedAnnotationManager } from 'manxia_co
 import { getHelpPanelManagerV2 } from '../Framework/Components/HelpPanelV2';
 import { DataManager } from '../Framework/Data/DataManager';
 import { NovelDataManager } from '../Framework/Novel/NovelDataManager';
-import { EBookDataManager } from '../Framework/Data/EBookDataManager';
+import { EBookDataManager } from 'manxia_core/src/main/ets/Framework/Data/EBookDataManager';
 import {
   collectImageEntries,
   isImagePageEBook,

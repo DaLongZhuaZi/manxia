@@ -83,7 +83,7 @@ import { DataService } from '../Framework/Services/DataService';
 import { MangaDetailLoader, MangaDetailLoadParams, MangaDetailLoadResult, MangaLoadProgressCallback, ChapterProgressInfo } from '../Framework/Loaders/MangaDetailLoader';
 import { MangaIdentityResolver, MangaIdentityResolveResult } from '../Framework/Reader/MangaIdentityResolver';
 import webview from '@ohos.web.webview';
-import { EBookDataManager } from '../Framework/Data/EBookDataManager';
+import { EBookDataManager } from 'manxia_core/src/main/ets/Framework/Data/EBookDataManager';
 import { SourceManager, SourceInfo } from '../Framework/Source/SourceManager';
 import { SourceDetailReturnCoordinator } from '../Framework/Source/SourceDetailReturnCoordinator';
 import { RemoteLibraryMangaBridge } from '../Framework/Source/RemoteLibraryMangaBridge';

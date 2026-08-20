@@ -252,7 +252,7 @@ import { ThemeManager, ThemeType, GlassEffectContext } from 'manxia_theme/src/ma
 import { AppColors, ColorRole } from 'manxia_theme/src/main/ets/Framework/Theme/AppColors';
 import { USER_THEME_KEYS } from 'manxia_theme/src/main/ets/Framework/Theme/UserThemeConfig';
 import { DataService } from '../Framework/Services/DataService';
-import { EBookDataManager } from '../Framework/Data/EBookDataManager';
+import { EBookDataManager } from 'manxia_core/src/main/ets/Framework/Data/EBookDataManager';
 import { EBookCoverExtractionResult, EBookCoverExtractor } from '../Framework/Parsers/EBookParser';
 
 // 导入电子书相关模型

@@ -9,7 +9,7 @@ import { logger } from 'manxia_core/src/main/ets/Utils/Logger';
 import { DataService } from './DataService';
 import { ComicInfo } from '../Data/DataManager';
 import { ComicInfo as OnlineComicInfo } from '../Source/SourceExecutor';
-import { EBookDataManager } from '../Data/EBookDataManager';
+import { EBookDataManager } from 'manxia_core/src/main/ets/Framework/Data/EBookDataManager';
 import { getNovelDataManager, NovelDataManager } from '../Novel/NovelDataManager';
 import { getNovelSourceManager, NovelSourceManager } from '../Novel/NovelSourceManager';
 import { SearchParseOptions } from '../Novel/NovelSourceExecutor';

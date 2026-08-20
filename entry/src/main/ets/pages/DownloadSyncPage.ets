@@ -22,7 +22,7 @@ import { SandboxManager } from 'manxia_core/src/main/ets/Framework/Storage/Sandb
 import { eventBus, GameEvent, MangaImportCompletedPayload } from '../Framework/EventBus';
 import fs from '@ohos.file.fs';
 import { fileUri } from '@kit.CoreFileKit';
-import { EBookDataManager } from '../Framework/Data/EBookDataManager';
+import { EBookDataManager } from 'manxia_core/src/main/ets/Framework/Data/EBookDataManager';
 import { generateUUID } from 'manxia_core/src/main/ets/Framework/Utils/UUIDGenerator';
 import { createLocalMangaChapterExternalId } from 'manxia_core/src/main/ets/Utils/LocalMangaImportIdentity';
 import { PdfImportDialog, PdfImportDialogResult } from '../Framework/Components/PdfImportDialog';

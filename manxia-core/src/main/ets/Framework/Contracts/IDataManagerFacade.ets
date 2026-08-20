@@ -14,6 +14,7 @@ export interface IDataManagerFacade {
   getComicSourceById(sourceId: number): Promise<ComicSourceDatabaseRecord | null>;
   updateComicSourceCookies(sourceId: number, cookiesJson: string): Promise<void>;
   clearComicSourceCookies(sourceId: number): Promise<void>;
+  getUserSetting(userId: string, key: string): Promise<string | null>;
 }
 
 export class DataManagerHolder {

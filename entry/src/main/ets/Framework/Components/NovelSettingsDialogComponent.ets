@@ -24,7 +24,7 @@ import { NovelReplaceRuleManager, ReplaceScope, ReplaceRule } from '../Novel/Nov
 import { getNovelContentProcessor } from '../Novel/NovelContentProcessor';
 import { getNovelChapterCacheManager } from '../Novel/NovelChapterCacheManager';
 import { EBook, EBookMetadata, EBookFormat } from 'manxia_core/src/main/ets/Models/EBookModels';
-import { EBookDataManager } from '../Data/EBookDataManager';
+import { EBookDataManager } from 'manxia_core/src/main/ets/Framework/Data/EBookDataManager';
 import { getNovelDataManager } from '../Novel/NovelDataManager';
 import { ScraperDialog, ScraperDialogConfig, ScraperDialogResult } from './ScraperDialog';
 import { ScraperContentType } from 'manxia_core/src/main/ets/Framework/Scraper/ScraperTypes';

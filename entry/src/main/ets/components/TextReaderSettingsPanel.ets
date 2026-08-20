@@ -34,7 +34,7 @@ import { photoAccessHelper } from '@kit.MediaLibraryKit';
 import fs from '@ohos.file.fs';
 import { logger } from 'manxia_core/src/main/ets/Utils/Logger';
 import { promptAction } from '@kit.ArkUI';
-import { EBookDataManager, BackgroundImageInfo } from '../Framework/Data/EBookDataManager';
+import { EBookDataManager, BackgroundImageInfo } from 'manxia_core/src/main/ets/Framework/Data/EBookDataManager';
 import { SettingsManager, SettingKeys } from '../Framework/Managers/SettingsManager';
 import { getFontManager, SystemFont, CustomFont, FontType } from 'manxia_theme/src/main/ets/Framework/Managers/FontManager';
 import { ReadAloudAvailability, ReadAloudEngineAvailabilityMap } from '../Framework/ReadAloud/ReadAloudAvailability';

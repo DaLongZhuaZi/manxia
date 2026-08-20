@@ -18,7 +18,7 @@ import { FontAwareHelper, FontAwareState } from 'manxia_theme/src/main/ets/Frame
 import { EBook, EBookReadingSettings, EBookPageMode, EBOOK_THEME_PRESETS, EBookThemePreset, EBookFormat, DEFAULT_EBOOK_READING_SETTINGS } from 'manxia_core/src/main/ets/Models/EBookModels';
 import { ISettingsManagerFacade, SettingsManagerHolder } from 'manxia_core/src/main/ets/Framework/Contracts/ISettingsManagerFacade';
 import { SettingKeys } from 'manxia_core/src/main/ets/Framework/Contracts/SettingKeys';
-import { EBookDataManager, BackgroundImageInfo } from '../Framework/Data/EBookDataManager';
+import { EBookDataManager, BackgroundImageInfo } from 'manxia_core/src/main/ets/Framework/Data/EBookDataManager';
 import { EBookSettingsPageParams } from './EBookDetailPage';
 import { DeviceAdaptationManager, DeviceChangeListener, DeviceInfo } from 'manxia_theme/src/main/ets/Framework/Managers/DeviceAdaptationManager';
 import { SandboxManager } from 'manxia_core/src/main/ets/Framework/Storage/SandboxManager';

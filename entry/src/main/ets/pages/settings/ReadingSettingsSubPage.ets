@@ -48,7 +48,7 @@ import {
   clampTextReaderFontSize
 } from 'manxia_core/src/main/ets/Models/TextReaderModels';
 import { ResponsiveLayoutHelper } from 'manxia_core/src/main/ets/Framework/Utils/ResponsiveLayout';
-import { EBookDataManager, BackgroundImageInfo } from '../../Framework/Data/EBookDataManager';
+import { EBookDataManager, BackgroundImageInfo } from 'manxia_core/src/main/ets/Framework/Data/EBookDataManager';
 import { fileIo } from '@kit.CoreFileKit';
 import { ReadAloudAvailability, ReadAloudEngineAvailabilityMap } from '../../Framework/ReadAloud/ReadAloudAvailability';
 import { ReadAloudController } from '../../Framework/ReadAloud/ReadAloudController';

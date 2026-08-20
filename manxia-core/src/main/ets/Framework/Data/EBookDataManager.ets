@@ -27,12 +27,13 @@ import {
   DEFAULT_READING_SETTINGS as DEFAULT_IMAGE_READING_SETTINGS
 } from 'manxia_core/src/main/ets/Models/MangaModels';
 import { logger } from 'manxia_core/src/main/ets/Utils/Logger';
-import { SettingsManager, SettingKeys } from '../Managers/SettingsManager';
+import { ISettingsManagerFacade, SettingsManagerHolder } from 'manxia_core/src/main/ets/Framework/Contracts/ISettingsManagerFacade';
+import { SettingKeys } from 'manxia_core/src/main/ets/Framework/Contracts/SettingKeys';
 import { getUnifiedAnnotationManager } from 'manxia_core/src/main/ets/Framework/Annotations/UnifiedAnnotationManager';
 import { UnifiedContentType } from 'manxia_core/src/main/ets/Models/UnifiedContentModels';
 import { fileIo as fs } from '@kit.CoreFileKit';
 import DownloadDirManager from 'manxia_core/src/main/ets/Framework/Storage/DownloadDirManager';
-import { DataManager } from './DataManager';
+import { IDataManagerFacade, DataManagerHolder } from 'manxia_core/src/main/ets/Framework/Contracts/IDataManagerFacade';
 
 const TAG = 'EBookDataManager';
 
@@ -854,7 +855,7 @@ export class EBookDataManager {
   }
 
   public buildGlobalEBookReadingSettings(baseSettings: EBookReadingSettings = DEFAULT_EBOOK_READING_SETTINGS): EBookReadingSettings {
-    const settingsManager = SettingsManager.getInstance();
+    const settingsManager: ISettingsManagerFacade = SettingsManagerHolder.get();
     const themeIndex = Math.round(this.clampNumber(
       settingsManager.getNumber(SettingKeys.GLOBAL_EBOOK_THEME, 0),
       0,
@@ -1139,7 +1140,7 @@ export class EBookDataManager {
 
   private async loadLegacyImageReaderSettings(bookId: string): Promise<ImageReaderSettings | null> {
     try {
-      const dataManager = DataManager.getInstance();
+      const dataManager: IDataManagerFacade = DataManagerHolder.get();
       const settingKey = `manga_settings_${bookId}`;
       const settingsJson = await dataManager.getUserSetting('default_user', settingKey);
       if (!settingsJson || settingsJson.trim().length <= 0) {

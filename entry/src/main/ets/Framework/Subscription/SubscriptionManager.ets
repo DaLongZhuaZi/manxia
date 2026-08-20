@@ -48,7 +48,7 @@ import { BookshelfCategoryManager, CategoryItem, ContentType } from '../Data/Boo
 import { DynamicMatchItem, DynamicShelfFilter, getTypeShelfManager, matchesDynamicFilter, ShelfContentType, ShelfType, TypeShelf, TypeShelfManager } from '../Data/TypeShelfManager';
 import { SettingsManager } from '../Managers/SettingsManager';
 import { ComicInfo, DataManager, FavoriteInfo, OnlineChapterInfoInput } from '../Data/DataManager';
-import { EBookDataManager } from '../Data/EBookDataManager';
+import { EBookDataManager } from 'manxia_core/src/main/ets/Framework/Data/EBookDataManager';
 import { EBook } from 'manxia_core/src/main/ets/Models/EBookModels';
 import { WebViewSourceManager } from '../WebView/WebViewSourceManager';
 import { MangaSourceEngine } from '../WebView/MangaSourceEngine';

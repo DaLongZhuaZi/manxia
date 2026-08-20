@@ -3,7 +3,7 @@ import { EBookReaderPage } from './EBookReaderPage';
 import { EBookImageReaderPage } from './EBookImageReaderPage';
 import { EpubWebViewReaderPage } from './EpubWebViewReaderPage';
 import { EBookReaderParams } from './EBookReaderRouteTypes';
-import { EBookDataManager } from '../Framework/Data/EBookDataManager';
+import { EBookDataManager } from 'manxia_core/src/main/ets/Framework/Data/EBookDataManager';
 import { resolveEBookReaderRouteName } from '../Framework/Adapters/EBookImageReaderAdapter';
 import { EBookParserFactory } from '../Framework/Parsers/EBookParser';
 import {

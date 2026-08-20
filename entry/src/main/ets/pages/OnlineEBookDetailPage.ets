@@ -17,7 +17,7 @@ import { WebViewAuthManager } from '../Framework/WebView/WebViewAuthManager';
 import { AntiCrawlerConfig, TaskResult } from 'manxia_source_engine/src/main/ets/Framework/WebView/MangaSourceTypes';
 import { ImageCacheManager } from '../Framework/Cache/ImageCacheManager';
 import { DataManager } from '../Framework/Data/DataManager';
-import { EBookDataManager } from '../Framework/Data/EBookDataManager';
+import { EBookDataManager } from 'manxia_core/src/main/ets/Framework/Data/EBookDataManager';
 import { openEBookReaderRouterPage } from '../Framework/Adapters/EBookReaderRouteNavigator';
 import { OnlineEBookImportService } from '../Framework/Services/OnlineEBookImportService';
 import { webview } from '@kit.ArkWeb';

@@ -14,7 +14,7 @@ import { ReaderOrientationLockHelper } from 'manxia_core/src/main/ets/Utils/Read
 import { PageWindowCoordinator } from 'manxia_theme/src/main/ets/Utils/PageWindowCoordinator';
 import { ThemeManager } from 'manxia_theme/src/main/ets/Framework/Managers/ThemeManager';
 import { getFontManager, FontScene } from 'manxia_theme/src/main/ets/Framework/Managers/FontManager';
-import { EBookDataManager } from '../Framework/Data/EBookDataManager';
+import { EBookDataManager } from 'manxia_core/src/main/ets/Framework/Data/EBookDataManager';
 import { EBookParserFactory } from '../Framework/Parsers/EBookParser';
 import { getUnifiedAnnotationManager } from 'manxia_core/src/main/ets/Framework/Annotations/UnifiedAnnotationManager';
 import { UnifiedContentType } from 'manxia_core/src/main/ets/Models/UnifiedContentModels';

@@ -28,7 +28,7 @@ import {
   DEFAULT_EBOOK_READING_SETTINGS
 } from 'manxia_core/src/main/ets/Models/EBookModels';
 import { SettingKeys } from 'manxia_core/src/main/ets/Framework/Contracts/SettingKeys';
-import { EBookDataManager } from '../Framework/Data/EBookDataManager';
+import { EBookDataManager } from 'manxia_core/src/main/ets/Framework/Data/EBookDataManager';
 import { PdfViewerComponent } from '../Framework/Components/PdfViewerComponent';
 import { PdfKitViewerComponent, PdfViewerCallbacks, PdfViewerController } from '../Framework/Components/PdfKitViewerComponent';
 import { ReaderKitViewerComponent, ReaderKitViewerController } from '../Framework/Components/ReaderKitViewerComponent';

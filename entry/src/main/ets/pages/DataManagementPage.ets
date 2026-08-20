@@ -38,7 +38,7 @@ import { EBook, EBookMetadata } from 'manxia_core/src/main/ets/Models/EBookModel
 import { EBookParserFactory, EBookCoverExtractor } from '../Framework/Parsers/EBookParser';
 import { generateUUID } from 'manxia_core/src/main/ets/Framework/Utils/UUIDGenerator';
 import { createLocalMangaChapterExternalId, createPickedImageGroupUri } from 'manxia_core/src/main/ets/Utils/LocalMangaImportIdentity';
-import { EBookDataManager } from '../Framework/Data/EBookDataManager';
+import { EBookDataManager } from 'manxia_core/src/main/ets/Framework/Data/EBookDataManager';
 import { EBookMetadataDialog, EBookMetadataDialogResult } from '../Framework/Components/EBookMetadataDialog';
 import { PdfImportResult, PdfContentType, PdfImportMode } from '../Framework/Parsers/PdfToMangaImporter';
 import { PdfImportService } from '../Framework/Services/PdfImportService';

@@ -16,7 +16,7 @@ import { ThemeManager } from 'manxia_theme/src/main/ets/Framework/Managers/Theme
 import { getFontManager, FontScene } from 'manxia_theme/src/main/ets/Framework/Managers/FontManager';
 import { distributedReadingService } from '../Framework/Distributed/DistributedReadingService';
 import { distributedDataSyncManager, SyncReadingState } from '../Framework/Distributed/DistributedDataSyncManager';
-import { EBookDataManager } from '../Framework/Data/EBookDataManager';
+import { EBookDataManager } from 'manxia_core/src/main/ets/Framework/Data/EBookDataManager';
 import { EBookParserFactory, resolveEpubPackageDocumentPathFromRoot } from '../Framework/Parsers/EBookParser';
 import { convertMobiToExtractedDir } from 'manxia_source_engine/src/main/ets/Framework/Parsers/MobiParser';
 import { KeyCode, inputConsumer } from '@kit.InputKit';
@@ -5551,7 +5551,7 @@ export struct EpubWebViewReaderPage {
                 }
               } as EpubWebViewReaderParams,
               enableEpubAnnotations: true,
-              epubHighlightRanges: this.currentSpineHighlightRanges
+              epubHighlightRanges: $currentSpineHighlightRanges
             })
               .id(`epub_webview_reader_component_${this.readerMountEpoch}`)
               .width('100%')
