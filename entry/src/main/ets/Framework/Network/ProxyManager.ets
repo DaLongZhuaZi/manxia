@@ -1,3 +1,4 @@
+import { ProxyProtocol, ProxyConfig, IProxyManagerFacade, ProxyManagerHolder } from 'manxia_core/src/main/ets/Framework/Contracts/ProxyManagerFacade';
 import { SafeUtils } from 'manxia_core/src/main/ets/Utils/SafeUtils';
 /**
  * 网络代理管理器
@@ -13,38 +14,13 @@ import { LocalProxyBridge, LocalProxyBridgeConfig, LocalProxyBridgeUpstreamProto
 const TAG = 'ProxyManager';
 const PROXY_SETTINGS_KEY = 'network_proxy_settings';
 
-export enum ProxyProtocol {
-  HTTP = 'HTTP',
-  SOCKS5 = 'SOCKS5'
-}
+export { ProxyProtocol, ProxyConfig };
+
 
 /**
  * 代理配置接口
  */
-export interface ProxyConfig {
-  enabled: boolean;
-  protocol: ProxyProtocol;
-  sharedAuthEnabled: boolean;
-  sharedUsername: string;
-  sharedPassword: string;
-  httpEnabled: boolean;
-  httpHost: string;
-  httpPort: number;
-  httpAuthEnabled: boolean;
-  httpUsername: string;
-  httpPassword: string;
-  httpsEnabled: boolean;
-  httpsHost: string;
-  httpsPort: number;
-  httpsAuthEnabled: boolean;
-  httpsUsername: string;
-  httpsPassword: string;
-  socks5Host: string;
-  socks5Port: number;
-  socks5AuthEnabled: boolean;
-  socks5Username: string;
-  socks5Password: string;
-}
+
 
 /**
  * 默认代理配置
@@ -77,7 +53,7 @@ export const DEFAULT_PROXY_CONFIG: ProxyConfig = {
 /**
  * 代理管理器单例
  */
-export class ProxyManager {
+export class ProxyManager implements IProxyManagerFacade {
   private static instance: ProxyManager;
   private settingsManager: SettingsManager;
   private config: ProxyConfig = this.copyProxyConfig(DEFAULT_PROXY_CONFIG);
@@ -118,7 +94,9 @@ export class ProxyManager {
       this.initialized = true;
       await this.clearProxy();
     }
-  }
+  
+  ProxyManagerHolder.register(this);
+}
 
   /**
    * 获取当前代理配置

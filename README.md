@@ -563,5 +563,36 @@ SOFTWARE.
 ---
 
 <div align="center">
+## 🧩 模块化架构（HAR 分层）
+
+> 2026-08 起，项目由单 entry 拆分为分层 HAR 模块（每模块独立编译、逐级验收）。详见：
+> `docs/architecture/har-modularization/`（分析/计划/台账/MODULE_MANIFEST/阶段小结）。
+
+### 模块分层
+```
+entry（壳：Abilities/能力入口/main_pages 路由聚合）
+ ├─ manxia-features-ui    设置帮助类/备份/编辑器组件（Stage6-U4）
+ ├─ manxia-reader-ui      阅读器流程/组件（Stage6-U3）
+ ├─ manxia-novel          Novel/Legado 运行时/ReadAloud/Rss（Stage5）
+ ├─ manxia-network        Network/FTP/WebDAV/Download/Cache/Task（Stage4）
+ ├─ manxia-source-engine  NGF 抽象层/WebView/Source/Search（Stage3）
+ ├─ manxia-theme          主题/窗口/字体/UI 上下文（Stage6-U0/U2/U5）
+ └─ manxia-core           日志/类型/Models/纯工具/资源映射/契约（Stage2、U1）
+  (+ manxia-native 原生 so：avif/quickjs/webdav/transfer_rtc)
+```
+### 契约化（跨模块解耦范式）
+- 契约进 core：manxia-core/src/main/ets/Framework/Contracts/*（如 ISettingsManagerFacade + SettingsManagerHolder、SettingKeys）。
+- 实现自注册：entry 管理器 implements 接口并在 initialize() 自注册到 Holder。
+- 消费按接口：页面 SettingsManagerHolder.get() 按接口使用；已 12 页 rollout。
+- 深依赖用深路径导入（manxia_core/src/main/ets/...），规避 barrel 重名。
+
+### 约定
+- 新模块：build-profile / oh-package(name) / module.json5(type=har) / hvigorfile(harTasks)；根 build-profile+oh-package 注册；新模块需 `ohpm install` 同步。
+- 静态校验：residual=0 / dangling=0 / 深路径目标存在 / 无反向依赖。
+- 门禁：每阶段由用户编译+功能回归验收。
+
+---
+
+<div align="center">
 Made with ❤️ by DaLongzhuazi
 </div>
