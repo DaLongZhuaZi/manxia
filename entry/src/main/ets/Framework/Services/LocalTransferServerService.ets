@@ -32,7 +32,7 @@ import {
 } from 'manxia_core/src/main/ets/Models/TransferModels';
 import { getTransferConfigManager, TransferConfigManager } from '../Managers/TransferConfigManager';
 import { AppNotificationManager } from '../Managers/NotificationManager';
-import { getTransferSessionManager, TransferSessionManager } from '../Managers/TransferSessionManager';
+import { getTransferSessionManager, TransferSessionManager } from 'manxia_core/src/main/ets/Framework/Managers/TransferSessionManager';
 import { BackgroundTaskHelper } from 'manxia_network/src/main/ets/Framework/Task/BackgroundTaskHelper';
 import {
   getTransferUploadStoreService,
