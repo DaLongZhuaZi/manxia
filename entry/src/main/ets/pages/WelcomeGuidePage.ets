@@ -13,7 +13,7 @@ import { WelcomeGuideManager, GuideStep, GuideFlowMode } from '../Framework/Mana
 import { SettingsManager, SettingKeys } from '../Framework/Managers/SettingsManager';
 import { DataManager } from '../Framework/Data/DataManager';
 import { AppNotificationManager } from '../Framework/Managers/NotificationManager';
-import { InteractionManager } from '../Framework/Managers/InteractionManager';
+import { InteractionManager } from 'manxia_core/src/main/ets/Framework/Managers/InteractionManager';
 import { ContentFilterManager } from 'manxia_core/src/main/ets/Framework/Managers/ContentFilterManager';
 import {
   initializeReaderKitRuntimeGate,

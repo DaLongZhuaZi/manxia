@@ -12,7 +12,7 @@ import { image } from '@kit.ImageKit';
 import fs from '@ohos.file.fs';
 import { picker, fileUri as coreFileUri } from '@kit.CoreFileKit';
 import { hdsEffect } from '@kit.UIDesignKit';
-import { InteractionManager, VibrationScene } from '../Framework/Managers/InteractionManager';
+import { InteractionManager, VibrationScene } from 'manxia_core/src/main/ets/Framework/Managers/InteractionManager';
 import { BasicDataSource, BasicDataSourceStableUpdateResult } from 'manxia_core/src/main/ets/Utils/BasicDataSource';
 import { MultiSelectState } from 'manxia_core/src/main/ets/Utils/MultiSelectState';
 import { SwipeGestureState } from 'manxia_core/src/main/ets/Utils/SwipeGestureState';

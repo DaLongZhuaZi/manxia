@@ -41,7 +41,7 @@ import {
 import { HighlightLineType } from 'manxia_core/src/main/ets/Models/AnnotationModels';
 import { PageCurlEffectV2, PageCurlConfigV2, CurlStartPosition } from './PageCurlEffectV2';
 import { DualPageCurlEffect } from './DualPageCurlEffect';
-import { InteractionManager, VibrationScene } from '../Framework/Managers/InteractionManager';
+import { InteractionManager, VibrationScene } from 'manxia_core/src/main/ets/Framework/Managers/InteractionManager';
 
 
 const TAG = 'TextReaderComponent';
