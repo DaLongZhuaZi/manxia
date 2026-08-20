@@ -92,23 +92,23 @@ import {
 import { AppGuideOverlay, GuideHighlightRect } from '../Framework/Components/AppGuideOverlay';
 import { resolveGuideHighlightRectInRoot } from '../Framework/Components/AppGuideSupport';
 import { AppGuideManager, AppGuidePageId, AppGuideStep } from '../Framework/Managers/AppGuideManager';
-import { READER_ABILITY_HOST_MULTITON } from '../Framework/Reader/MangaReaderAbilityConstants';
+import { READER_ABILITY_HOST_MULTITON } from 'manxia_reader_ui/src/main/ets/Framework/Reader/MangaReaderAbilityConstants';
 import { openReadAloudPlayerInIsolatedAbility } from '../Framework/ReadAloud/ReadAloudPlayerAbilityLauncher';
 import { distributedReadingService } from '../Framework/Distributed/DistributedReadingService';
 import { distributedDataSyncManager, SyncReadingState } from '../Framework/Distributed/DistributedDataSyncManager';
 import { distributedPermissionManager } from '../Framework/Distributed/DistributedPermissionManager';
 import { continuationStateHelper } from '../Framework/Distributed/ContinuationStateHelper';
-import { DetailOpenFlowMonitor } from '../Framework/Reader/DetailOpenFlowMonitor';
+import { DetailOpenFlowMonitor } from 'manxia_reader_ui/src/main/ets/Framework/Reader/DetailOpenFlowMonitor';
 import {
   DetailOpenFlowEventType,
   DetailOpenFlowTargetKind
-} from '../Framework/Reader/DetailOpenFlowTypes';
-import { NovelReadFlowMonitor } from '../Framework/Reader/NovelReadFlowMonitor';
+} from 'manxia_reader_ui/src/main/ets/Framework/Reader/DetailOpenFlowTypes';
+import { NovelReadFlowMonitor } from 'manxia_reader_ui/src/main/ets/Framework/Reader/NovelReadFlowMonitor';
 import {
   NovelReadFlowEventType,
   NovelReadFlowSessionInfo,
   NovelReadFlowSeverity
-} from '../Framework/Reader/NovelReadFlowTypes';
+} from 'manxia_reader_ui/src/main/ets/Framework/Reader/NovelReadFlowTypes';
 
 const TAG = 'NovelReaderPage';
 const NOVEL_SETTINGS_STORE = 'novel_settings';

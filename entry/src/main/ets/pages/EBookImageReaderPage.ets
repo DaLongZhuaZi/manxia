@@ -65,10 +65,10 @@ import {
   shouldUseEBookImageReaderRoute
 } from '../Framework/Adapters/EBookImageReaderAdapter';
 import { EBookReaderParams } from './EBookReaderRouteTypes';
-import { READER_ABILITY_HOST_MULTITON } from '../Framework/Reader/MangaReaderAbilityConstants';
+import { READER_ABILITY_HOST_MULTITON } from 'manxia_reader_ui/src/main/ets/Framework/Reader/MangaReaderAbilityConstants';
 import { distributedReadingService } from '../Framework/Distributed/DistributedReadingService';
 import { distributedDataSyncManager, SyncReadingState } from '../Framework/Distributed/DistributedDataSyncManager';
-import { MangaReadFlowMonitor } from '../Framework/Reader/MangaReadFlowMonitor';
+import { MangaReadFlowMonitor } from 'manxia_reader_ui/src/main/ets/Framework/Reader/MangaReadFlowMonitor';
 import {
   MangaReadFlowEvent,
   MangaReadFlowEventType,
@@ -77,7 +77,7 @@ import {
   MangaReadFlowSeverity,
   MangaReadFlowSourceKind,
   mapReadingModeToFlowMode
-} from '../Framework/Reader/MangaReadFlowTypes';
+} from 'manxia_reader_ui/src/main/ets/Framework/Reader/MangaReadFlowTypes';
 
 const TAG = 'EBookImageReaderPage';
 

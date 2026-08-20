@@ -34,7 +34,7 @@ import { ReaderKitViewerComponent, ReaderKitViewerController } from '../Framewor
 import { isReaderKitEnabled } from '../Framework/Initialization/ReaderKitFeatureGate';
 import { EBookParserFactory } from '../Framework/Parsers/EBookParser';
 import { EBookReaderParams } from './EBookReaderRouteTypes';
-import { READER_ABILITY_HOST_MULTITON } from '../Framework/Reader/MangaReaderAbilityConstants';
+import { READER_ABILITY_HOST_MULTITON } from 'manxia_reader_ui/src/main/ets/Framework/Reader/MangaReaderAbilityConstants';
 import { EBookReadingSettingsPanel } from '../Framework/Components/EBookReadingSettingsPanel';
 import { curves, UIContext } from '@kit.ArkUI';
 import { display } from '@kit.ArkUI';
@@ -96,7 +96,7 @@ import { ReadAloudSettingsInfoPanel } from '../components/ReadAloudSettingsInfoP
 import { UnifiedContentType } from 'manxia_core/src/main/ets/Models/UnifiedContentModels';
 import { getUnifiedAnnotationManager } from '../Framework/Annotations/UnifiedAnnotationManager';
 import { AnnotationAnchor, UnifiedAnnotationType } from 'manxia_core/src/main/ets/Models/AnnotationModels';
-import { MangaReadFlowMonitor } from '../Framework/Reader/MangaReadFlowMonitor';
+import { MangaReadFlowMonitor } from 'manxia_reader_ui/src/main/ets/Framework/Reader/MangaReadFlowMonitor';
 import {
   MangaReadFlowEvent,
   MangaReadFlowEventType,
@@ -104,7 +104,7 @@ import {
   MangaReadFlowSessionInfo,
   MangaReadFlowSeverity,
   MangaReadFlowSourceKind
-} from '../Framework/Reader/MangaReadFlowTypes';
+} from 'manxia_reader_ui/src/main/ets/Framework/Reader/MangaReadFlowTypes';
 import { AnnotationCenterPageParams } from './AnnotationCenterPage';
 import { AppGuideOverlay, GuideHighlightRect } from '../Framework/Components/AppGuideOverlay';
 import { resolveGuideHighlightRectInRoot } from '../Framework/Components/AppGuideSupport';

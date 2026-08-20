@@ -196,13 +196,13 @@ import { openEBookReaderRouterPage } from '../Framework/Adapters/EBookReaderRout
 import { openEBookReaderInIsolatedAbility } from '../Framework/Reader/EBookReaderAbilityLauncher';
 import { openNovelReaderInIsolatedAbility } from '../Framework/Reader/NovelReaderAbilityLauncher';
 import { openReadAloudPlayerInIsolatedAbility } from '../Framework/ReadAloud/ReadAloudPlayerAbilityLauncher';
-import { DetailOpenFlowMonitor } from '../Framework/Reader/DetailOpenFlowMonitor';
+import { DetailOpenFlowMonitor } from 'manxia_reader_ui/src/main/ets/Framework/Reader/DetailOpenFlowMonitor';
 import {
   DetailOpenFlowEventType,
   DetailOpenFlowSeverity,
   DetailOpenFlowSessionInfo,
   DetailOpenFlowTargetKind
-} from '../Framework/Reader/DetailOpenFlowTypes';
+} from 'manxia_reader_ui/src/main/ets/Framework/Reader/DetailOpenFlowTypes';
 
 import { startBookOpenTransitionWithComponentId, EBookBackgroundSettings } from '../components/BookTransitionOverlay';
 import { AppGuideOverlay, GuideHighlightRect } from '../Framework/Components/AppGuideOverlay';

@@ -2,10 +2,10 @@ import { common, StartOptions, Want } from '@kit.AbilityKit';
 import { UIContext } from '@kit.ArkUI';
 import { logger } from 'manxia_core/src/main/ets/Utils/Logger';
 import { EBookReaderParams } from '../../pages/EBookReaderRouteTypes';
-import { EBOOK_READER_ABILITY_NAME } from './MangaReaderAbilityConstants';
+import { EBOOK_READER_ABILITY_NAME } from 'manxia_reader_ui/src/main/ets/Framework/Reader/MangaReaderAbilityConstants';
 import { EBookReaderAbilityParamStore } from './EBookReaderAbilityParamStore';
 import { isReaderPageMultitonEnabled } from './ReaderPageMultitonSettings';
-import { ReaderHostWindowRestoreCoordinator } from './ReaderHostWindowRestoreCoordinator';
+import { ReaderHostWindowRestoreCoordinator } from 'manxia_reader_ui/src/main/ets/Framework/Reader/ReaderHostWindowRestoreCoordinator';
 
 const TAG: string = 'EBookReaderAbilityLauncher';
 const APP_BUNDLE_NAME: string = 'com.dlzz.manxia';

@@ -6,9 +6,9 @@ import { EBookReaderParams } from './pages/EBookReaderRouteTypes';
 import {
   EBOOK_READER_ABILITY_INSTANCE_ID_KEY,
   EBOOK_READER_ABILITY_PAGE
-} from './Framework/Reader/MangaReaderAbilityConstants';
+} from 'manxia_reader_ui/src/main/ets/Framework/Reader/MangaReaderAbilityConstants';
 import { EBookReaderAbilityParamStore } from './Framework/Reader/EBookReaderAbilityParamStore';
-import { ReaderAbilityWindowLifecycleController } from './Framework/Reader/ReaderAbilityWindowLifecycleController';
+import { ReaderAbilityWindowLifecycleController } from 'manxia_reader_ui/src/main/ets/Framework/Reader/ReaderAbilityWindowLifecycleController';
 import { ContinuationBootstrap } from './Framework/Initialization/ContinuationBootstrap';
 
 const TAG: string = 'EBookReaderAbility';

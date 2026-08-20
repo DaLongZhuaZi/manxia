@@ -82,7 +82,7 @@ import {
 import {
   MangaReaderSessionGuard,
   MangaReaderSessionSnapshot
-} from '../Framework/Reader/MangaReaderSessionGuard';
+} from 'manxia_reader_ui/src/main/ets/Framework/Reader/MangaReaderSessionGuard';
 import {
   getNetworkTransportFailureCoordinator,
   NetworkTransportFailureCoordinator,
@@ -223,23 +223,23 @@ import {
   MangaReaderCacheSnapshot,
   MangaReaderCacheSnapshotInput
 } from './MangaReaderCacheMonitor';
-import { MangaReadFlowMonitor } from '../Framework/Reader/MangaReadFlowMonitor';
+import { MangaReadFlowMonitor } from 'manxia_reader_ui/src/main/ets/Framework/Reader/MangaReadFlowMonitor';
 import {
   MangaReadFlowSessionBridge,
   MangaReadFlowSessionBridgeContext,
   MangaReadFlowSessionBridgeResult
-} from '../Framework/Reader/MangaReadFlowSessionBridge';
+} from 'manxia_reader_ui/src/main/ets/Framework/Reader/MangaReadFlowSessionBridge';
 import {
   MangaReadFlowEvent,
   MangaReadFlowEventType,
   MangaReadFlowSeverity,
   MangaReadFlowSourceKind,
   mapReadingModeToFlowMode
-} from '../Framework/Reader/MangaReadFlowTypes';
+} from 'manxia_reader_ui/src/main/ets/Framework/Reader/MangaReadFlowTypes';
 import {
   MangaScrollableReadFlowContext,
   MangaScrollableReadFlowReporter
-} from '../Framework/Reader/MangaScrollableReadFlowReporter';
+} from 'manxia_reader_ui/src/main/ets/Framework/Reader/MangaScrollableReadFlowReporter';
 import {
   DoublePageSmartDisplayMode,
   DoublePageSmartDisplayPlan,

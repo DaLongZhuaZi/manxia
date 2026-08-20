@@ -37,7 +37,7 @@ import { getErrorMonitorService } from './Framework/Debug/ErrorMonitorService';
 import { getErrorRecordManager } from './Framework/Debug/ErrorRecordManager';
 import { getHoldingAwarenessManager } from './Framework/Managers/HoldingAwarenessManager';
 import { initializeReaderKitRuntimeGate } from './Framework/Initialization/ReaderKitFeatureGate';
-import { ReaderHostWindowRestoreCoordinator } from './Framework/Reader/ReaderHostWindowRestoreCoordinator';
+import { ReaderHostWindowRestoreCoordinator } from 'manxia_reader_ui/src/main/ets/Framework/Reader/ReaderHostWindowRestoreCoordinator';
 import {
   NETWORK_FOLDER_AVIF_EXTENSIONS,
   NETWORK_FOLDER_BACKUP_EXTENSIONS,

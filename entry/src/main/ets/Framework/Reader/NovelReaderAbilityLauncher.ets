@@ -2,10 +2,10 @@ import { common, StartOptions, Want } from '@kit.AbilityKit';
 import { UIContext } from '@kit.ArkUI';
 import { logger } from 'manxia_core/src/main/ets/Utils/Logger';
 import { NovelReaderPageParams } from '../../pages/NovelBookshelfPage';
-import { NOVEL_READER_ABILITY_NAME } from './MangaReaderAbilityConstants';
+import { NOVEL_READER_ABILITY_NAME } from 'manxia_reader_ui/src/main/ets/Framework/Reader/MangaReaderAbilityConstants';
 import { NovelReaderAbilityParamStore } from './NovelReaderAbilityParamStore';
 import { isReaderPageMultitonEnabled } from './ReaderPageMultitonSettings';
-import { ReaderHostWindowRestoreCoordinator } from './ReaderHostWindowRestoreCoordinator';
+import { ReaderHostWindowRestoreCoordinator } from 'manxia_reader_ui/src/main/ets/Framework/Reader/ReaderHostWindowRestoreCoordinator';
 
 const TAG: string = 'NovelReaderAbilityLauncher';
 const APP_BUNDLE_NAME: string = 'com.dlzz.manxia';

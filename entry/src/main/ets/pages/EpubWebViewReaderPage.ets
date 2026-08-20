@@ -92,20 +92,20 @@ import {
 import { EBookReaderParams } from './EBookReaderRouteTypes';
 import { isReaderKitEnabled } from '../Framework/Initialization/ReaderKitFeatureGate';
 import { openEBookReaderRouterPage } from '../Framework/Adapters/EBookReaderRouteNavigator';
-import { READER_ABILITY_HOST_MULTITON } from '../Framework/Reader/MangaReaderAbilityConstants';
+import { READER_ABILITY_HOST_MULTITON } from 'manxia_reader_ui/src/main/ets/Framework/Reader/MangaReaderAbilityConstants';
 import { openReadAloudPlayerInIsolatedAbility } from '../Framework/ReadAloud/ReadAloudPlayerAbilityLauncher';
 import type { KeyEvent as InputKeyEvent } from '@kit.InputKit';
-import { DetailOpenFlowMonitor } from '../Framework/Reader/DetailOpenFlowMonitor';
+import { DetailOpenFlowMonitor } from 'manxia_reader_ui/src/main/ets/Framework/Reader/DetailOpenFlowMonitor';
 import {
   DetailOpenFlowEventType,
   DetailOpenFlowTargetKind
-} from '../Framework/Reader/DetailOpenFlowTypes';
-import { EpubReadFlowMonitor } from '../Framework/Reader/EpubReadFlowMonitor';
+} from 'manxia_reader_ui/src/main/ets/Framework/Reader/DetailOpenFlowTypes';
+import { EpubReadFlowMonitor } from 'manxia_reader_ui/src/main/ets/Framework/Reader/EpubReadFlowMonitor';
 import {
   EpubReadFlowEventType,
   EpubReadFlowSessionInfo,
   EpubReadFlowSeverity
-} from '../Framework/Reader/EpubReadFlowTypes';
+} from 'manxia_reader_ui/src/main/ets/Framework/Reader/EpubReadFlowTypes';
 
 const TAG = 'EpubWebViewReaderPage';
 const IMAGE_RESOURCE_PATH_PATTERN: RegExp = /\.(apng|avif|bmp|gif|heic|heif|jpe?g|png|svg|webp)$/i;

@@ -10,7 +10,7 @@ import { getKomgaSourceExecutor, KomgaSourceExecutor } from '../Framework/Source
 import { KomgaContentType, KomgaReaderProgress } from '../Framework/Source/KomgaModels';
 import { KomgaImage } from '../components/KomgaImage';
 import { WindowManager, DisplayMode } from 'manxia_theme/src/main/ets/Utils/WindowManager';
-import { MangaReadFlowMonitor } from '../Framework/Reader/MangaReadFlowMonitor';
+import { MangaReadFlowMonitor } from 'manxia_reader_ui/src/main/ets/Framework/Reader/MangaReadFlowMonitor';
 import {
   MangaReadFlowEvent,
   MangaReadFlowEventType,
@@ -18,7 +18,7 @@ import {
   MangaReadFlowSessionInfo,
   MangaReadFlowSeverity,
   MangaReadFlowSourceKind
-} from '../Framework/Reader/MangaReadFlowTypes';
+} from 'manxia_reader_ui/src/main/ets/Framework/Reader/MangaReadFlowTypes';
 
 const TAG = 'KomgaReaderPage';
 const READING_PROGRESS_STORE: string = 'komga_reading_progress';

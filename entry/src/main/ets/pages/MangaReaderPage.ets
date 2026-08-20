@@ -110,7 +110,7 @@ import { AppGuideManager, AppGuidePageId, AppGuideStep } from '../Framework/Mana
 import {
   MANGA_READER_ABILITY_HOST_MULTITON,
   MANGA_READER_ABILITY_INSTANCE_ID_KEY
-} from '../Framework/Reader/MangaReaderAbilityConstants';
+} from 'manxia_reader_ui/src/main/ets/Framework/Reader/MangaReaderAbilityConstants';
 import {
   MangaReaderAbilityParamStore,
   MangaReaderAbilityWindowPayload
@@ -123,7 +123,7 @@ import {
   MangaReaderPageGuardStatusPlan,
   MangaReaderPageSyncGuard
 } from './MangaReaderPageSyncGuard';
-import { MangaReadFlowMonitor } from '../Framework/Reader/MangaReadFlowMonitor';
+import { MangaReadFlowMonitor } from 'manxia_reader_ui/src/main/ets/Framework/Reader/MangaReadFlowMonitor';
 import {
   MangaReadFlowEvent,
   MangaReadFlowEventType,
@@ -131,17 +131,17 @@ import {
   MangaReadFlowSeverity,
   MangaReadFlowSourceKind,
   mapReadingModeToFlowMode
-} from '../Framework/Reader/MangaReadFlowTypes';
+} from 'manxia_reader_ui/src/main/ets/Framework/Reader/MangaReadFlowTypes';
 import {
   MangaReaderLaunchContext,
   MangaReaderLaunchContextInput,
   MangaReaderLaunchContextResolver
-} from '../Framework/Reader/MangaReaderLaunchContextResolver';
+} from 'manxia_reader_ui/src/main/ets/Framework/Reader/MangaReaderLaunchContextResolver';
 import {
   MangaChapterResolveGuard,
   MangaChapterResolveGuardInput,
   MangaChapterResolveGuardPlan
-} from '../Framework/Reader/MangaChapterResolveGuard';
+} from 'manxia_reader_ui/src/main/ets/Framework/Reader/MangaChapterResolveGuard';
 import { MangaIdentityResolver, MangaIdentityResolveResult } from '../Framework/Reader/MangaIdentityResolver';
 import { distributedReadingService } from '../Framework/Distributed/DistributedReadingService';
 import { distributedDataSyncManager, SyncReadingState } from '../Framework/Distributed/DistributedDataSyncManager';

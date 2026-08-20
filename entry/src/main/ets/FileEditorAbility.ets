@@ -1,7 +1,7 @@
 import { AbilityConstant, UIAbility, Want } from '@kit.AbilityKit';
 import { window } from '@kit.ArkUI';
 import { logger } from 'manxia_core/src/main/ets/Utils/Logger';
-import { ReaderAbilityWindowLifecycleController } from './Framework/Reader/ReaderAbilityWindowLifecycleController';
+import { ReaderAbilityWindowLifecycleController } from 'manxia_reader_ui/src/main/ets/Framework/Reader/ReaderAbilityWindowLifecycleController';
 import { FileEditorOpenParams } from './Framework/Editor/FileEditorService';
 import {
   FILE_EDITOR_ABILITY_INSTANCE_ID_KEY,

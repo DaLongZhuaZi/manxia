@@ -6,9 +6,9 @@ import { NovelReaderPageParams } from './pages/NovelBookshelfPage';
 import {
   NOVEL_READER_ABILITY_INSTANCE_ID_KEY,
   NOVEL_READER_ABILITY_PAGE
-} from './Framework/Reader/MangaReaderAbilityConstants';
+} from 'manxia_reader_ui/src/main/ets/Framework/Reader/MangaReaderAbilityConstants';
 import { NovelReaderAbilityParamStore } from './Framework/Reader/NovelReaderAbilityParamStore';
-import { ReaderAbilityWindowLifecycleController } from './Framework/Reader/ReaderAbilityWindowLifecycleController';
+import { ReaderAbilityWindowLifecycleController } from 'manxia_reader_ui/src/main/ets/Framework/Reader/ReaderAbilityWindowLifecycleController';
 
 const TAG: string = 'NovelReaderAbility';
 const DEFAULT_READER_INSTANCE_TITLE: string = '小说阅读器';

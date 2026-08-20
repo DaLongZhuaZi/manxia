@@ -16,7 +16,7 @@ import { WindowManager, DisplayMode } from 'manxia_theme/src/main/ets/Utils/Wind
 import { AvifDecoder, isAvifFormat } from '../Framework/Image/AvifDecoder';
 import { http } from '@kit.NetworkKit';
 import { image } from '@kit.ImageKit';
-import { MangaReadFlowMonitor } from '../Framework/Reader/MangaReadFlowMonitor';
+import { MangaReadFlowMonitor } from 'manxia_reader_ui/src/main/ets/Framework/Reader/MangaReadFlowMonitor';
 import {
   MangaReadFlowEvent,
   MangaReadFlowEventType,
@@ -24,7 +24,7 @@ import {
   MangaReadFlowSessionInfo,
   MangaReadFlowSeverity,
   MangaReadFlowSourceKind
-} from '../Framework/Reader/MangaReadFlowTypes';
+} from 'manxia_reader_ui/src/main/ets/Framework/Reader/MangaReadFlowTypes';
 import { MangaAssetRetryMode } from '../Framework/Reader/MangaAssetTypes';
 import {
   buildMangaImageRetryKey,

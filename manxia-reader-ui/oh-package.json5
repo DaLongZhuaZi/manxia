@@ -1,0 +1,10 @@
+{
+  "name": "manxia_reader_ui",
+  "version": "1.0.0",
+  "description": "漫匣阅读器 UI 层：Reader 流程/常量 + 阅读器组件子集",
+  "main": "./src/main/ets/index.ets",
+  "author": "",
+  "license": "",
+  "dependencies": { "manxia_core": "file:../manxia-core", "manxia_theme": "file:../manxia-theme", "manxia_source_engine": "file:../manxia-source-engine" },
+  "devDependencies": {}
+}

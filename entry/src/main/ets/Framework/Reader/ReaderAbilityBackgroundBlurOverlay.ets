@@ -1,6 +1,6 @@
 import { BackgroundBlurOverlay } from '../Components/BackgroundBlurOverlay';
 import { ThemeManager, ThemeType, ThemeChangeCallback } from 'manxia_theme/src/main/ets/Framework/Managers/ThemeManager';
-import { READER_ABILITY_WINDOW_BACKGROUND_KEY } from './MangaReaderAbilityConstants';
+import { READER_ABILITY_WINDOW_BACKGROUND_KEY } from 'manxia_reader_ui/src/main/ets/Framework/Reader/MangaReaderAbilityConstants';
 
 @Component
 export struct ReaderAbilityBackgroundBlurOverlay {

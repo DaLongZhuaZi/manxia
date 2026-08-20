@@ -22,7 +22,7 @@ import {
 } from '../Components/PdfImportDialog';
 import { TaskCancelSignal } from '../Task/BackgroundTaskManager';
 import { ImportFilenameIntelligenceService } from './ImportFilenameIntelligenceService';
-import { MangaReadFlowImportReport, MangaReadFlowImportReporter } from '../Reader/MangaReadFlowImportReporter';
+import { MangaReadFlowImportReport, MangaReadFlowImportReporter } from 'manxia_reader_ui/src/main/ets/Framework/Reader/MangaReadFlowImportReporter';
 import { ImportFlowMonitor, getImportFlowMonitor } from '../Import/ImportFlowMonitor';
 import {
   ImportFlowContentType,

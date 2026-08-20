@@ -18,12 +18,12 @@ import {
   ReadAloudFlowSessionInfo,
   ReadAloudFlowSeverity
 } from 'manxia_novel/src/main/ets/Framework/ReadAloud/ReadAloudFlowTypes';
-import { DetailOpenFlowMonitor } from '../Reader/DetailOpenFlowMonitor';
+import { DetailOpenFlowMonitor } from 'manxia_reader_ui/src/main/ets/Framework/Reader/DetailOpenFlowMonitor';
 import { LegadoWorkflowOutputKind } from 'manxia_novel/src/main/ets/Framework/Novel/LegadoCompatibilityTypes';
 import {
   DetailOpenFlowEventType,
   DetailOpenFlowTargetKind
-} from '../Reader/DetailOpenFlowTypes';
+} from 'manxia_reader_ui/src/main/ets/Framework/Reader/DetailOpenFlowTypes';
 
 const TAG = 'NovelAudioSessionManager';
 const CHAPTER_LIST_CACHE_MAX_AGE_HOURS: number = 48;
