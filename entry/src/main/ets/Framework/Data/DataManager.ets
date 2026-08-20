@@ -902,7 +902,7 @@ export class DataManager implements IDataManagerFacade {
         const source = await this.getComicSourceById(sourceId);
         if (source && source.isNSFW === 1) {
           try {
-            const cfmModule = await import('../Managers/ContentFilterManager');
+            const cfmModule = await import('manxia_core/src/main/ets/Framework/Managers/ContentFilterManager');
             const filterManager = cfmModule.ContentFilterManager.getInstance();
             if (filterManager.isNsfwScopeImageSourceEnabled()) {
               isNSFW = true;
@@ -5295,7 +5295,7 @@ export class DataManager implements IDataManagerFacade {
       // 【NSFW作用域】从图源继承NSFW状态：如果图源是NSFW且作用域开关开启，则其内容自动继承
       if (isNSFWVal === 0 && srcRecord && srcRecord.isNSFW === 1) {
         try {
-          const cfmModule = await import('../Managers/ContentFilterManager');
+          const cfmModule = await import('manxia_core/src/main/ets/Framework/Managers/ContentFilterManager');
           const filterManager = cfmModule.ContentFilterManager.getInstance();
           if (filterManager.isNsfwScopeImageSourceEnabled()) {
             isNSFWVal = 1;

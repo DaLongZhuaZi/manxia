@@ -14,7 +14,7 @@ import { SettingsManager, SettingKeys } from '../Framework/Managers/SettingsMana
 import { DataManager } from '../Framework/Data/DataManager';
 import { AppNotificationManager } from '../Framework/Managers/NotificationManager';
 import { InteractionManager } from '../Framework/Managers/InteractionManager';
-import { ContentFilterManager } from '../Framework/Managers/ContentFilterManager';
+import { ContentFilterManager } from 'manxia_core/src/main/ets/Framework/Managers/ContentFilterManager';
 import {
   initializeReaderKitRuntimeGate,
   isReaderKitRuntimeForceDisabled

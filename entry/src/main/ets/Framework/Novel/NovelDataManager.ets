@@ -810,7 +810,7 @@ export class NovelDataManager {
             // 检查书源NSFW作用域开关
             let scopeEnabled = true;
             try {
-              const cfmModule = await import('../Managers/ContentFilterManager');
+              const cfmModule = await import('manxia_core/src/main/ets/Framework/Managers/ContentFilterManager');
               scopeEnabled = cfmModule.ContentFilterManager.getInstance().isNsfwScopeBookSourceEnabled();
             } catch (_e) {
               // ContentFilterManager未初始化时默认启用

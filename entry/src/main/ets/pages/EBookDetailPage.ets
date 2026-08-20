@@ -24,7 +24,7 @@ import { ScraperDialog, ScraperDialogConfig, ScraperDialogResult } from '../Fram
 import { ScraperContentType } from 'manxia_core/src/main/ets/Framework/Scraper/ScraperTypes';
 import { GlobalSearchPageParams } from './GlobalSearchPage';
 import { startBookOpenTransition, startBookOpenTransitionWithComponentId, CoverPosition, EBookBackgroundSettings } from '../components/BookTransitionOverlay';
-import { ContentFilterManager } from '../Framework/Managers/ContentFilterManager';
+import { ContentFilterManager } from 'manxia_core/src/main/ets/Framework/Managers/ContentFilterManager';
 import { buildNovelReaderParamsFromTxtEBook } from '../Framework/Adapters/LocalTextNovelAdapter';
 
 const TAG = 'EBookDetailPage';

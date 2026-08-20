@@ -57,7 +57,7 @@ import { DatabaseRecord, ComicSourceDatabaseRecord } from 'manxia_core/src/main/
 import { DatabaseManager } from 'manxia_core/src/main/ets/Framework/Database/DatabaseManager';
 import { OnlineImageLoader, RequestHeaderEntry as OnlineRequestHeaderEntry, RequestHeaders as OnlineRequestHeaders } from '../Framework/Cache/OnlineImageLoader';
 import { promptAction } from '@kit.ArkUI';
-import { ContentFilterManager } from '../Framework/Managers/ContentFilterManager';
+import { ContentFilterManager } from 'manxia_core/src/main/ets/Framework/Managers/ContentFilterManager';
 import { AvifImage } from '../components/AvifImage';
 
 const TAG: string = 'MangaDetailPage';

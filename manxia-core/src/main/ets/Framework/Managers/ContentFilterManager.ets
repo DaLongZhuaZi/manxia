@@ -4,7 +4,8 @@
  */
 
 import { logger } from 'manxia_core/src/main/ets/Utils/Logger';
-import { SettingsManager, SettingKeys } from './SettingsManager';
+import { SettingKeys } from 'manxia_core/src/main/ets/Framework/Contracts/SettingKeys';
+import { ISettingsManagerFacade, SettingsManagerHolder } from 'manxia_core/src/main/ets/Framework/Contracts/ISettingsManagerFacade';
 
 const TAG = 'ContentFilterManager';
 
@@ -23,14 +24,14 @@ export interface FilterStats {
  */
 export class ContentFilterManager {
   private static instance: ContentFilterManager;
-  private settingsManager: SettingsManager;
+  private settingsManager: ISettingsManagerFacade;
   private sfwModeEnabled: boolean = false;
   private nsfwScopeImageSourceEnabled: boolean = true;
   private nsfwScopeBookSourceEnabled: boolean = true;
   private listeners: Set<(enabled: boolean) => void> = new Set();
 
   private constructor() {
-    this.settingsManager = SettingsManager.getInstance();
+    this.settingsManager = SettingsManagerHolder.get();
     this.loadSFWModeSetting();
   }
 

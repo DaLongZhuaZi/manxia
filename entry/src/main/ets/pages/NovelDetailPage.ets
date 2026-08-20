@@ -29,7 +29,7 @@ import { TextReaderSettings, DEFAULT_TEXT_READER_SETTINGS, BackgroundType, DEFAU
 import { TextReaderSettingsPanel } from '../components/TextReaderSettingsPanel';
 import { SettingKeys } from 'manxia_core/src/main/ets/Framework/Contracts/SettingKeys';
 import { SymbolGlyphModifier } from '@kit.ArkUI';
-import { ContentFilterManager } from '../Framework/Managers/ContentFilterManager';
+import { ContentFilterManager } from 'manxia_core/src/main/ets/Framework/Managers/ContentFilterManager';
 import { AppColors } from 'manxia_theme/src/main/ets/Framework/Theme/AppColors';
 import { GlobalBackgroundLayerMode } from 'manxia_theme/src/main/ets/Framework/Components/GlobalBackgroundLayer';
 import { SharedPageBackgroundLayer } from '../Framework/Components/SharedPageBackgroundLayer';
