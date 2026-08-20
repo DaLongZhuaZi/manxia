@@ -15,7 +15,9 @@ import { PageWindowCoordinator } from 'manxia_theme/src/main/ets/Utils/PageWindo
 import { globalAnimationManager, AnimationType, AnimationState,
   AnimationEasing } from '../Framework/Animation/GlobalAnimationSystem';
 import { ThemeManager, ThemeType, GlassEffectContext } from 'manxia_theme/src/main/ets/Framework/Managers/ThemeManager';
-import { SettingsManager, SettingKeys } from '../Framework/Managers/SettingsManager';
+import { ISettingsManagerFacade, SettingsManagerHolder } from 'manxia_core/src/main/ets/Framework/Contracts/ISettingsManagerFacade';
+import { SettingKeys } from 'manxia_core/src/main/ets/Framework/Contracts/SettingKeys';
+// OLD: ../Framework/Managers/SettingsManager';
 import { ThemeAwareState, ThemeAwareHelper } from 'manxia_theme/src/main/ets/Framework/Components/ThemeAware';
 import { FontAwareHelper, FontAwareState } from 'manxia_theme/src/main/ets/Framework/Components/FontAware';
 import { UIContext, curves } from '@kit.ArkUI';
@@ -571,7 +573,7 @@ export struct MangaReaderPage {
   @State isReadingSettingsReady: boolean = false;// 阅读设置是否已加载
   private static hasShownInteractionHint: boolean = false;// 进程内缓存，持久化状态见 SettingsManager
   private static lastShownReadingMode: ReadingMode | null = null;// 上次显示提示时的阅读模式
-  private settingsManager: SettingsManager = SettingsManager.getInstance();
+  private settingsManager: ISettingsManagerFacade = SettingsManagerHolder.get();
   
   // 设置面板动画状态
   @State showDebugClickIndicator: boolean = false;

@@ -8,7 +8,9 @@ import { EBook } from 'manxia_core/src/main/ets/Models/EBookModels';
 import { NovelBook, NovelSearchResult, NovelSourceInfo } from 'manxia_core/src/main/ets/Models/NovelModels';
 import { ThemeAwareState, ThemeAwareHelper } from 'manxia_theme/src/main/ets/Framework/Components/ThemeAware';
 import { ThemeManager, ThemeType } from 'manxia_theme/src/main/ets/Framework/Managers/ThemeManager';
-import { SettingsManager, SettingKeys } from '../Framework/Managers/SettingsManager';
+import { ISettingsManagerFacade, SettingsManagerHolder } from 'manxia_core/src/main/ets/Framework/Contracts/ISettingsManagerFacade';
+import { SettingKeys } from 'manxia_core/src/main/ets/Framework/Contracts/SettingKeys';
+// OLD: ../Framework/Managers/SettingsManager';
 import { FontAwareHelper, FontAwareState } from 'manxia_theme/src/main/ets/Framework/Components/FontAware';
 import { DeviceAdaptationManager, DeviceInfo, DeviceChangeListener, Breakpoint } from 'manxia_theme/src/main/ets/Framework/Managers/DeviceAdaptationManager';
 import { ResponsiveLayoutHelper } from 'manxia_core/src/main/ets/Framework/Utils/ResponsiveLayout';
@@ -191,7 +193,7 @@ export struct GlobalSearchPage {
   private searchService: GlobalSearchService = getGlobalSearchService();
   private searchFlowMonitor: GlobalSearchFlowMonitor = getGlobalSearchFlowMonitor();
   private sourceDetailSearchExecutor: SourceDetailSearchExecutor = getSourceDetailSearchExecutor();
-  private settingsManager: SettingsManager = SettingsManager.getInstance();
+  private settingsManager: ISettingsManagerFacade = SettingsManagerHolder.get();
   private pathStack: NavPathStack = new NavPathStack();
   private sourceDetailWindowSequence: number = 0;
   private lastProgressUpdate: number = 0;  // 上次进度更新时间戳
