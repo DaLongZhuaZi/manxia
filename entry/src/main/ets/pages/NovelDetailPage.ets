@@ -1,3 +1,4 @@
+import { ISettingsManagerFacade, SettingsManagerHolder } from 'manxia_core/src/main/ets/Framework/Contracts/ISettingsManagerFacade';
 ﻿/**
  * 小说详情页面
  * 展示书籍详情和章节列表
@@ -26,7 +27,7 @@ import { startBookOpenTransitionWithComponentId } from '../components/BookTransi
 import { openNovelReaderInIsolatedAbility } from '../Framework/Reader/NovelReaderAbilityLauncher';
 import { TextReaderSettings, DEFAULT_TEXT_READER_SETTINGS, BackgroundType, DEFAULT_TEXT_STYLE, TextAlignment } from 'manxia_core/src/main/ets/Models/TextReaderModels';
 import { TextReaderSettingsPanel } from '../components/TextReaderSettingsPanel';
-import { SettingsManager, SettingKeys } from '../Framework/Managers/SettingsManager';
+import { SettingKeys } from 'manxia_core/src/main/ets/Framework/Contracts/SettingKeys';
 import { SymbolGlyphModifier } from '@kit.ArkUI';
 import { ContentFilterManager } from '../Framework/Managers/ContentFilterManager';
 import { AppColors } from 'manxia_theme/src/main/ets/Framework/Theme/AppColors';
@@ -80,7 +81,7 @@ export struct NovelDetailPage {
   // 设置面板动画状态
   @State settingsPanelOpacity: number = 0;
   @State settingsPanelScale: number = 0.95;
-  private settingsManager: SettingsManager = SettingsManager.getInstance();
+  private settingsManager: ISettingsManagerFacade = SettingsManagerHolder.get();
   private sourceId: string = '';
   private bookUrl: string = '';
   private requestCarrierKey: string = '';

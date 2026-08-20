@@ -1,3 +1,4 @@
+import { ISettingsManagerFacade, SettingsManagerHolder } from 'manxia_core/src/main/ets/Framework/Contracts/ISettingsManagerFacade';
 import { SafeUtils } from 'manxia_core/src/main/ets/Utils/SafeUtils';
 import { sha256Hash } from 'manxia_core/src/main/ets/Utils/CryptoUtils';
 /**
@@ -60,7 +61,7 @@ import {
   UnifiedAnnotationRecord,
   CreateThoughtInput
 } from 'manxia_core/src/main/ets/Models/AnnotationModels';
-import { SettingsManager, SettingKeys } from '../Framework/Managers/SettingsManager';
+import { SettingKeys } from 'manxia_core/src/main/ets/Framework/Contracts/SettingKeys';
 import { getNovelSettingsManager, BrowseHistoryInput } from '../Framework/Novel/NovelSettingsManager';
 import { ThemeManager, ThemeType } from 'manxia_theme/src/main/ets/Framework/Managers/ThemeManager';
 import { ThemeAwareState, ThemeAwareHelper } from 'manxia_theme/src/main/ets/Framework/Components/ThemeAware';
@@ -257,7 +258,7 @@ export struct NovelReaderPage {
   private ebookDataManager: EBookDataManager = EBookDataManager.getInstance();
   private annotationManager = getUnifiedAnnotationManager();
   private cacheManager = getNovelChapterCacheManager();
-  private settingsManager: SettingsManager = SettingsManager.getInstance();
+  private settingsManager: ISettingsManagerFacade = SettingsManagerHolder.get();
   private readAloudController: ReadAloudController = ReadAloudController.getInstance();
   private readStartTime: number = 0;
   private lastSaveTime: number = 0;

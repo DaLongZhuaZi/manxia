@@ -11,6 +11,10 @@ export interface ISettingsManagerFacade {
   setString(key: string, value: string): Promise<void>;
   setNumber(key: string, value: number): Promise<void>;
   syncToAppStorage(): void;
+  isInitialized(): boolean;
+  initialize(): Promise<void>;
+  getVisibleTabs(): Promise<number[]>;
+  getBottomBarStyle(): string;
   getJSON<T>(key: string, defaultValue: T): T;
   setJSON<T>(key: string, value: T): Promise<void>;
 }

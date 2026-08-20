@@ -1,3 +1,4 @@
+import { ISettingsManagerFacade, SettingsManagerHolder } from 'manxia_core/src/main/ets/Framework/Contracts/ISettingsManagerFacade';
 ﻿import { HdsNavDestination } from '@kit.UIDesignKit';
 import { promptAction, UIContext, curves } from '@kit.ArkUI';
 import { common } from '@kit.AbilityKit';
@@ -6,7 +7,7 @@ import { PageLifecycleManager } from 'manxia_core/src/main/ets/Framework/Lifecyc
 import { ThemeAwareHelper, ThemeAwareState } from 'manxia_theme/src/main/ets/Framework/Components/ThemeAware';
 import { ThemeType } from 'manxia_theme/src/main/ets/Framework/Managers/ThemeManager';
 import { FontAwareHelper, FontAwareState } from 'manxia_theme/src/main/ets/Framework/Components/FontAware';
-import { SettingsManager } from '../Framework/Managers/SettingsManager';
+
 import { getTypeShelfManager, ShelfType, TypeShelf, TypeShelfManager } from '../Framework/Data/TypeShelfManager';
 import {
   getSubscriptionInitializer,
@@ -124,7 +125,7 @@ export struct SubscriptionManagementPage {
 
   private readonly lifecycle: PageLifecycleManager = new PageLifecycleManager('SubscriptionManagementPage', { enableDebug: true });
   private readonly createDialogScroller: Scroller = new Scroller();
-  private readonly settingsManager: SettingsManager = SettingsManager.getInstance();
+  private readonly settingsManager: ISettingsManagerFacade = SettingsManagerHolder.get();
   private readonly typeShelfManager: TypeShelfManager = getTypeShelfManager();
   private readonly manager: SubscriptionManager = getSubscriptionManager();
   private uiContext: UIContext | undefined = undefined;
