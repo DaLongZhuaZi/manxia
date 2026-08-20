@@ -15,7 +15,7 @@ import {
   MangaSourceInfo,
   ReadingProgress,
   ReadingSettings
-} from '../../Models/MangaModels';
+} from 'manxia_core/src/main/ets/Models/MangaModels';
 import { DataManager, FavoriteInfo } from '../Data/DataManager';
 import { DownloadStatus, ReadingStatus, StatusConverter } from 'manxia_core/src/main/ets/Framework/Types/StatusEnums';
 import { ComicInfo, ComicDetailInfo, ChapterInfo, PageInfo } from './SourceExecutor';

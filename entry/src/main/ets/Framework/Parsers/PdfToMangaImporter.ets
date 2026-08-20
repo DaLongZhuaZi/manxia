@@ -10,7 +10,7 @@ import { pdfService } from '@kit.PDFKit';
 import { fileIo } from '@kit.CoreFileKit';
 import { image } from '@kit.ImageKit';
 import { logger } from 'manxia_core/src/main/ets/Utils/Logger';
-import { generateUUID } from '../Utils/UUIDGenerator';
+import { generateUUID } from 'manxia_core/src/main/ets/Framework/Utils/UUIDGenerator';
 import { ComicInfoParser, ComicInfo } from 'manxia_core/src/main/ets/Utils/ComicInfoParser';
 
 const TAG = 'PdfToMangaImporter';

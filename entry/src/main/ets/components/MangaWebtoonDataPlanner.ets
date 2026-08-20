@@ -1,6 +1,6 @@
 // 职责: 规划条漫多章节数据，不接触 UI、LazyForEach 数据源和滚动器。
 
-import { MangaChapter, MangaPage } from '../Models/MangaModels';
+import { MangaChapter, MangaPage } from 'manxia_core/src/main/ets/Models/MangaModels';
 import { ChapterBoundary, WebtoonDataItem } from './MangaWebtoonTypes';
 
 export enum MangaWebtoonDataPlanKind {

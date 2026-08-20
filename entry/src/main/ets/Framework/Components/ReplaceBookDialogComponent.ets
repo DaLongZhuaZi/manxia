@@ -5,7 +5,7 @@
 
 import { ThemeAwareState, ThemeAwareHelper } from 'manxia_theme/src/main/ets/Framework/Components/ThemeAware';
 import { SourceDialogScaffold } from './SourceDialogScaffold';
-import { OriginalBookInfo } from '../../Models/UnifiedContentModels';
+import { OriginalBookInfo } from 'manxia_core/src/main/ets/Models/UnifiedContentModels';
 
 @Component
 export struct ReplaceBookDialogComponent {

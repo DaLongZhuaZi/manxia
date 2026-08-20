@@ -8,7 +8,7 @@
  *      不支持 PDF 格式
  */
 
-import { EBook, EBookFormat, EBookMetadata, EBookChapter, EBookStatus } from '../../Models/EBookModels';
+import { EBook, EBookFormat, EBookMetadata, EBookChapter, EBookStatus } from 'manxia_core/src/main/ets/Models/EBookModels';
 import { logger } from 'manxia_core/src/main/ets/Utils/Logger';
 import { fileIo } from '@kit.CoreFileKit';
 import { isReaderKitEnabled } from '../Initialization/ReaderKitFeatureGate';

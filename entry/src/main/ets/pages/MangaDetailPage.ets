@@ -22,8 +22,8 @@ import {
   ReadingDirection,
   MangaPage,
   MangaImageRequestHeader
-} from '../Models/MangaModels';
-import { DEFAULT_READING_SETTINGS, ReadingSettings } from '../Models/MangaModels';
+} from 'manxia_core/src/main/ets/Models/MangaModels';
+import { DEFAULT_READING_SETTINGS, ReadingSettings } from 'manxia_core/src/main/ets/Models/MangaModels';
 import { DownloadStatus, MangaStatus, ReadingStatus, StatusConverter } from 'manxia_core/src/main/ets/Framework/Types/StatusEnums';
 import { ComicConverter } from '../Framework/Utils/ComicConverter';
 import { DataManager, ComicInfo, ComicInfoInput, ChapterInfo as DataChapterInfo, ChapterInfoInput, PageInfo, PageInfoInput, ReadHistory, OnlineChapterInfoInput, OnlinePageInfoInput, OnlineComicInfo, OnlineComicSourceSaveInput } from '../Framework/Data/DataManager';
@@ -37,7 +37,7 @@ import { GlobalSearchPageParams } from './GlobalSearchPage';
 import { startBookOpenTransition, startBookOpenTransitionWithComponentId, setReaderReady } from '../components/BookTransitionOverlay';
 import { CoverPosition } from '../components/BookOpenTransition';
 import { DeviceAdaptationManager, DeviceInfo, DeviceChangeListener, Breakpoint } from 'manxia_theme/src/main/ets/Framework/Managers/DeviceAdaptationManager';
-import { ResponsiveLayoutHelper } from '../Framework/Utils/ResponsiveLayout';
+import { ResponsiveLayoutHelper } from 'manxia_core/src/main/ets/Framework/Utils/ResponsiveLayout';
 import { WebViewSourceManager } from '../Framework/WebView/WebViewSourceManager';
 import { MangaSourceEngine, EngineResult, MangaDetailWithChapters } from '../Framework/WebView/MangaSourceEngine';
 import { MangaInfo, ChapterInfo as WebViewChapterInfo, PageInfo as SourcePageInfo, PageRequestHeader } from 'manxia_source_engine/src/main/ets/Framework/WebView/MangaSourceTypes';

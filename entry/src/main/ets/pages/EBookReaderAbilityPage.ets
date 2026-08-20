@@ -14,7 +14,7 @@ import {
   EBookChapter,
   EBookFormat,
   EBookReaderEngine
-} from '../Models/EBookModels';
+} from 'manxia_core/src/main/ets/Models/EBookModels';
 import { createUserManualEBookFromRawFile, isUserManualId } from '../Data/UserManualData';
 import { READER_ABILITY_HOST_MULTITON } from '../Framework/Reader/MangaReaderAbilityConstants';
 import { RemoteControlSocketChannel, RemoteFileRequestOptions } from '../Framework/Distributed/RemoteControlSocketChannel';

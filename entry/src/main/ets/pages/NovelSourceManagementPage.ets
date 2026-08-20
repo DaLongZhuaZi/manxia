@@ -18,7 +18,7 @@ import { getNovelSourceManager, NovelSourceManager } from '../Framework/Novel/No
 import { getNovelInitializer } from '../Framework/Novel/NovelInitializer';
 import { getNovelDataManager } from '../Framework/Novel/NovelDataManager';
 import { getNovelSourceValidator, ValidationConfig, NovelSourceValidator, SourceValidationResult, SPECIAL_GROUP_NAMES } from '../Framework/Novel/NovelSourceValidator';
-import { NovelSourceInfo } from '../Models/NovelModels';
+import { NovelSourceInfo } from 'manxia_core/src/main/ets/Models/NovelModels';
 import { LegadoSourceImportResult, LegadoBookSource, LegadoBookSourceType } from 'manxia_novel/src/main/ets/Framework/Novel/LegadoSourceTypes';
 import { ThemeAwareState, ThemeAwareHelper } from 'manxia_theme/src/main/ets/Framework/Components/ThemeAware';
 import { ThemeManager, ThemeType } from 'manxia_theme/src/main/ets/Framework/Managers/ThemeManager';

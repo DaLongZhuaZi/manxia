@@ -11,7 +11,7 @@ import {
   EBookChapter,
   EBookFormat,
   EBookReaderEngine
-} from '../Models/EBookModels';
+} from 'manxia_core/src/main/ets/Models/EBookModels';
 
 const TAG = 'EBookReaderRoutePage';
 

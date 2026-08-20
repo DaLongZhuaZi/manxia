@@ -4,14 +4,14 @@
  */
 import { common } from '@kit.AbilityKit';
 import { ComicInfo } from '../Framework/Data/DataManager';
-import { EBook } from '../Models/EBookModels';
-import { NovelBook, NovelSearchResult, NovelSourceInfo } from '../Models/NovelModels';
+import { EBook } from 'manxia_core/src/main/ets/Models/EBookModels';
+import { NovelBook, NovelSearchResult, NovelSourceInfo } from 'manxia_core/src/main/ets/Models/NovelModels';
 import { ThemeAwareState, ThemeAwareHelper } from 'manxia_theme/src/main/ets/Framework/Components/ThemeAware';
 import { ThemeManager, ThemeType } from 'manxia_theme/src/main/ets/Framework/Managers/ThemeManager';
 import { SettingsManager, SettingKeys } from '../Framework/Managers/SettingsManager';
 import { FontAwareHelper, FontAwareState } from '../Framework/Components/FontAware';
 import { DeviceAdaptationManager, DeviceInfo, DeviceChangeListener, Breakpoint } from 'manxia_theme/src/main/ets/Framework/Managers/DeviceAdaptationManager';
-import { ResponsiveLayoutHelper } from '../Framework/Utils/ResponsiveLayout';
+import { ResponsiveLayoutHelper } from 'manxia_core/src/main/ets/Framework/Utils/ResponsiveLayout';
 import { logger } from 'manxia_core/src/main/ets/Utils/Logger';
 import { SafeUtils } from 'manxia_core/src/main/ets/Utils/SafeUtils';
 import { PageLifecycleManager } from 'manxia_core/src/main/ets/Framework/Lifecycle/index';
@@ -28,7 +28,7 @@ import {
 } from '../Framework/Services/GlobalSearchService';
 import { SourceInfo } from '../Framework/Source/SourceManager';
 import { PageSettingsHelper, DetailPageType, SceneType } from './settings/PageSettingsSubPage';
-import { UnifiedDetailPageParams, UnifiedContentType } from '../Models/UnifiedContentModels';
+import { UnifiedDetailPageParams, UnifiedContentType } from 'manxia_core/src/main/ets/Models/UnifiedContentModels';
 
 import { HdsNavDestination, HdsNavDestinationAttribute, ScrollEffectType } from '@kit.UIDesignKit';
 import { LengthMetrics } from '@kit.ArkUI';

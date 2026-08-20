@@ -16,14 +16,14 @@ import {
   UnifiedChapter,
   UnifiedContentType,
   UnifiedDetailPageParams
-} from '../../Models/UnifiedContentModels';
+} from 'manxia_core/src/main/ets/Models/UnifiedContentModels';
 import { EBookAdapter, NovelAdapter } from '../Adapters/UnifiedContentAdapter';
 import { buildLocalTextNovelBookId } from '../Adapters/LocalTextNovelAdapter';
 import { getNovelTxtTocRuleManager, TxtTocRule } from '../Novel/NovelTxtTocRuleManager';
 import { NovelReplaceRuleManager, ReplaceScope, ReplaceRule } from '../Novel/NovelReplaceRuleManager';
 import { getNovelContentProcessor } from '../Novel/NovelContentProcessor';
 import { getNovelChapterCacheManager } from '../Novel/NovelChapterCacheManager';
-import { EBook, EBookMetadata, EBookFormat } from '../../Models/EBookModels';
+import { EBook, EBookMetadata, EBookFormat } from 'manxia_core/src/main/ets/Models/EBookModels';
 import { EBookDataManager } from '../Data/EBookDataManager';
 import { getNovelDataManager } from '../Novel/NovelDataManager';
 import { ScraperDialog, ScraperDialogConfig, ScraperDialogResult } from './ScraperDialog';

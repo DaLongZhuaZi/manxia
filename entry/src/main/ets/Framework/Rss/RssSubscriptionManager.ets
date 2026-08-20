@@ -8,7 +8,7 @@ import {
   RssFetchResult,
   RssRefreshProgress,
   RssSubscriptionSource
-} from '../../Models/RssSubscriptionModels';
+} from 'manxia_core/src/main/ets/Models/RssSubscriptionModels';
 import {
   getRssSubscriptionDataManager,
   RssItemQueryOptions,

@@ -20,7 +20,7 @@ import {
   NETWORK_FOLDER_FONT_EXTENSIONS,
   NETWORK_FOLDER_IMAGE_EXTENSIONS,
   NETWORK_FOLDER_JSON_EXTENSIONS
-} from '../Models/NetworkFolderModels';
+} from 'manxia_core/src/main/ets/Models/NetworkFolderModels';
 
 const TAG = 'ShareExtAbility';
 // 应用包名（与AppScope/app.json5中的bundleName保持一致）

@@ -21,15 +21,15 @@ import {
   DEFAULT_EBOOK_READING_SETTINGS,
   EBOOK_THEME_PRESETS,
   EBookThemePreset
-} from '../../Models/EBookModels';
+} from 'manxia_core/src/main/ets/Models/EBookModels';
 import {
   ReadingSettings as ImageReaderSettings,
   DEFAULT_READING_SETTINGS as DEFAULT_IMAGE_READING_SETTINGS
-} from '../../Models/MangaModels';
+} from 'manxia_core/src/main/ets/Models/MangaModels';
 import { logger } from 'manxia_core/src/main/ets/Utils/Logger';
 import { SettingsManager, SettingKeys } from '../Managers/SettingsManager';
 import { getUnifiedAnnotationManager } from '../Annotations/UnifiedAnnotationManager';
-import { UnifiedContentType } from '../../Models/UnifiedContentModels';
+import { UnifiedContentType } from 'manxia_core/src/main/ets/Models/UnifiedContentModels';
 import { fileIo as fs } from '@kit.CoreFileKit';
 import DownloadDirManager from '../Storage/DownloadDirManager';
 import { DataManager } from './DataManager';

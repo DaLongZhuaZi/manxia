@@ -27,7 +27,7 @@ import {
   PageTurnAnimationType,
   DoublePagePortraitLayout,
   DoublePageVerticalDirection
-} from '../Models/MangaModels';
+} from 'manxia_core/src/main/ets/Models/MangaModels';
 import {
   curves,
   UIContext,

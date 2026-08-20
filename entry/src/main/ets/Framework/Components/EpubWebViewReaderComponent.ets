@@ -17,7 +17,7 @@ import { logger } from 'manxia_core/src/main/ets/Utils/Logger';
 import {
   EBookReadingSettings,
   DEFAULT_EBOOK_READING_SETTINGS
-} from '../../Models/EBookModels';
+} from 'manxia_core/src/main/ets/Models/EBookModels';
 import {
   ReadingSettings as MangaReadingSettings,
   ReadingMode,
@@ -25,8 +25,8 @@ import {
   DoublePagePortraitLayout,
   DEFAULT_READING_SETTINGS,
   PageTurnAnimationType
-} from '../../Models/MangaModels';
-import { HighlightLineType } from '../../Models/AnnotationModels';
+} from 'manxia_core/src/main/ets/Models/MangaModels';
+import { HighlightLineType } from 'manxia_core/src/main/ets/Models/AnnotationModels';
 import { DialogSurfaceStyleHelper } from './DialogSurfaceStyleHelper';
 import { SettingsGlassStyleHelper } from '../../pages/settings/SettingsGlassStyleHelper';
 import {

@@ -3,7 +3,7 @@
 import {
   ReadingDirection,
   ReadingMode
-} from '../Models/MangaModels';
+} from 'manxia_core/src/main/ets/Models/MangaModels';
 
 export type MangaPlannedPageTurnDirection = 'left' | 'right' | 'up' | 'down';
 export type MangaPlannedChapterDirection = 'prev' | 'next' | '';

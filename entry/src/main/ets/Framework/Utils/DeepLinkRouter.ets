@@ -23,7 +23,7 @@
 import { logger } from 'manxia_core/src/main/ets/Utils/Logger';
 import { SourceManager, SourceInfo } from '../Source/SourceManager';
 import { NovelSourceManager } from '../Novel/NovelSourceManager';
-import { NovelSourceInfo } from '../../Models/NovelModels';
+import { NovelSourceInfo } from 'manxia_core/src/main/ets/Models/NovelModels';
 
 const TAG = 'DeepLinkRouter';
 

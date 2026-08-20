@@ -15,7 +15,7 @@ import { getNovelSourceManager, NovelSourceManager } from '../Novel/NovelSourceM
 import { getNovelSettingsManager, NovelSettingsManager } from '../Novel/NovelSettingsManager';
 import { SettingsManager, SettingKeys } from './SettingsManager';
 import { AppInfoManager } from './AppInfoManager';
-import { getTarPackager, TarPackager } from '../Utils/TarPackager';
+import { getTarPackager, TarPackager } from 'manxia_core/src/main/ets/Framework/Utils/TarPackager';
 import { preferences } from '@kit.ArkData';
 import { getContext as getGlobalContext } from 'manxia_theme/src/main/ets/GlobalContext';
 import {
@@ -75,12 +75,12 @@ import {
   KomgaInstanceConfigBackup,
   FTPConnectionsBackup,
   FTPConnectionBackup
-} from '../../Models/BackupModels';
+} from 'manxia_core/src/main/ets/Models/BackupModels';
 import { MetadataXmlGenerator, MangaMetadata, EBookMetadata, NovelMetadata } from 'manxia_core/src/main/ets/Utils/MetadataXmlGenerator';
 import { KomgaAuthMode, KomgaConfig, KomgaInstanceConfig } from '../Source/KomgaModels';
 import { loadKomgaConfig, saveKomgaConfig } from '../Source/KomgaConfigStore';
 
-import { NovelBook, NovelSourceInfo, NovelReadStatus } from '../../Models/NovelModels';
+import { NovelBook, NovelSourceInfo, NovelReadStatus } from 'manxia_core/src/main/ets/Models/NovelModels';
 import { LegadoBookSource, LegadoSourceImportResult } from 'manxia_novel/src/main/ets/Framework/Novel/LegadoSourceTypes';
 import { BrowseHistoryInput, BrowseHistoryItem } from '../Novel/NovelSettingsManager';
 import { fileIo as fs } from '@kit.CoreFileKit';

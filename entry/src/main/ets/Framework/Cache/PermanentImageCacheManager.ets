@@ -11,7 +11,7 @@ import fs from '@ohos.file.fs';
 import http from '@ohos.net.http';
 import { BusinessError } from '@ohos.base';
 import { DataManager } from '../Data/DataManager';
-import { MangaPage } from '../../Models/MangaModels';
+import { MangaPage } from 'manxia_core/src/main/ets/Models/MangaModels';
 import { DatabaseManager } from 'manxia_core/src/main/ets/Framework/Database/DatabaseManager';
 import { DownloadCacheFlowMonitor, getDownloadCacheFlowMonitor } from 'manxia_network/src/main/ets/Framework/Download/DownloadCacheFlowMonitor';
 import { eventBus, GameEvent, MangaCacheUpdatedPayload } from '../EventBus';

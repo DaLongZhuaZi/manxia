@@ -36,7 +36,7 @@ import {
   NetworkScanHost,
   NetworkScanProgress,
   ProtocolPort
-} from '../Models/NetworkFolderModels';
+} from 'manxia_core/src/main/ets/Models/NetworkFolderModels';
 import { NetworkScannerAdapter } from '../Framework/Network/NetworkScannerAdapter';
 import { openExternalFileTaskInIsolatedAbility } from 'manxia_network/src/main/ets/Framework/ExternalFile/ExternalFileTaskLauncher';
 import {

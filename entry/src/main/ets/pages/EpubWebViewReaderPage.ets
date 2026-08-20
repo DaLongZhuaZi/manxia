@@ -29,7 +29,7 @@ import {
   EBookReadingProgress,
   EBookReadingSettings,
   DEFAULT_EBOOK_READING_SETTINGS
-} from '../Models/EBookModels';
+} from 'manxia_core/src/main/ets/Models/EBookModels';
 import {
   ReadingSettings as MangaReadingSettings,
   DEFAULT_READING_SETTINGS,
@@ -37,7 +37,7 @@ import {
   ReadingDirection,
   DoublePagePortraitLayout,
   PageTurnAnimationType
-} from '../Models/MangaModels';
+} from 'manxia_core/src/main/ets/Models/MangaModels';
 import {
   EpubWebViewReaderComponent,
   EpubWebViewReaderController,
@@ -52,7 +52,7 @@ import {
   EpubWebComponentFlowEvent,
   EpubWebComponentFlowEventName
 } from '../Framework/Components/EpubWebViewReaderComponent';
-import { UnifiedContentType } from '../Models/UnifiedContentModels';
+import { UnifiedContentType } from 'manxia_core/src/main/ets/Models/UnifiedContentModels';
 import {
   AnnotationAnchor,
   CreateThoughtInput,
@@ -60,7 +60,7 @@ import {
   HighlightStyle,
   UnifiedAnnotationRecord,
   UnifiedAnnotationType
-} from '../Models/AnnotationModels';
+} from 'manxia_core/src/main/ets/Models/AnnotationModels';
 import { getUnifiedAnnotationManager } from '../Framework/Annotations/UnifiedAnnotationManager';
 import { SettingsManager } from '../Framework/Managers/SettingsManager';
 import { AddRuleParams, NovelReplaceRuleManager, ReplaceRule, ReplaceScope } from '../Framework/Novel/NovelReplaceRuleManager';
@@ -70,7 +70,7 @@ import {
   ReadAloudSettings,
   mergeRemoteReadAloudSettings,
   normalizeReadAloudSettings
-} from '../Models/TextReaderModels';
+} from 'manxia_core/src/main/ets/Models/TextReaderModels';
 import { ReadAloudController } from '../Framework/ReadAloud/ReadAloudController';
 import { ReadAloudPlaybackState, ReadAloudVoiceOption } from '../Framework/ReadAloud/ReadAloudTypes';
 import { ReadAloudAvailability, ReadAloudEngineAvailabilityMap } from '../Framework/ReadAloud/ReadAloudAvailability';

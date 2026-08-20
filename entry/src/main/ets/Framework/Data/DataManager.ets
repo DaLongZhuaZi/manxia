@@ -8,7 +8,7 @@ import { SafeUtils } from 'manxia_core/src/main/ets/Utils/SafeUtils';
 
 import { logger } from 'manxia_core/src/main/ets/Utils/Logger';
 import { DatabaseManager } from 'manxia_core/src/main/ets/Framework/Database/DatabaseManager';
-import { UUIDGenerator, generateUUID, generateDbId, convertLegacyId, isValidId } from '../Utils/UUIDGenerator';
+import { UUIDGenerator, generateUUID, generateDbId, convertLegacyId, isValidId } from 'manxia_core/src/main/ets/Framework/Utils/UUIDGenerator';
 import { OnlineComicConverter } from '../Utils/OnlineComicConverter';
 import { MangaStatus, DownloadStatus } from 'manxia_core/src/main/ets/Framework/Types/StatusEnums';
 import { 
@@ -44,7 +44,7 @@ import {
   RemotePageMetadata,
   MangaChapterPagesEntry
 } from '../Distributed/MangaTransferTypes';
-import { UnifiedContentType } from '../../Models/UnifiedContentModels';
+import { UnifiedContentType } from 'manxia_core/src/main/ets/Models/UnifiedContentModels';
 import { BusinessError } from '@kit.BasicServicesKit';
 import { common } from '@kit.AbilityKit';
 import { image } from '@kit.ImageKit';

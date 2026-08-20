@@ -68,8 +68,8 @@ import {
   createDefaultTransferConfig,
   parseTransferNativeRtcCandidateSignalPayload,
   parseTransferNativeRtcSdpSignalPayload
-} from '../Models/TransferModels';
-import type { NetworkFolderImportCategory } from '../Models/NetworkFolderModels';
+} from 'manxia_core/src/main/ets/Models/TransferModels';
+import type { NetworkFolderImportCategory } from 'manxia_core/src/main/ets/Models/NetworkFolderModels';
 import { openExternalFileTaskInIsolatedAbility } from 'manxia_network/src/main/ets/Framework/ExternalFile/ExternalFileTaskLauncher';
 
 const TAG = 'TransferPage';

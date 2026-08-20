@@ -4,7 +4,7 @@ import {
   DEFAULT_EBOOK_READING_SETTINGS,
   EBOOK_THEME_PRESETS,
   EBookThemePreset
-} from '../Models/EBookModels';
+} from 'manxia_core/src/main/ets/Models/EBookModels';
 import {
   ReadingSettings as MangaReadingSettings,
   DEFAULT_READING_SETTINGS,
@@ -13,7 +13,7 @@ import {
   DoublePagePortraitLayout,
   DoublePageVerticalDirection,
   PageTurnAnimationType
-} from '../Models/MangaModels';
+} from 'manxia_core/src/main/ets/Models/MangaModels';
 import { getFontManager, SystemFont, CustomFont } from '../Framework/Managers/FontManager';
 import { UIContext, display } from '@kit.ArkUI';
 

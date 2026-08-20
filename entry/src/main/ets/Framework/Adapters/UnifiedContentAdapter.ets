@@ -12,9 +12,9 @@ import {
   UnifiedReadStatus,
   UnifiedDetailPageParams,
   UnifiedReaderParams
-} from '../../Models/UnifiedContentModels';
-import { Manga, MangaChapter } from '../../Models/MangaModels';
-import { EBook, EBookChapter, EBookStatus } from '../../Models/EBookModels';
+} from 'manxia_core/src/main/ets/Models/UnifiedContentModels';
+import { Manga, MangaChapter } from 'manxia_core/src/main/ets/Models/MangaModels';
+import { EBook, EBookChapter, EBookStatus } from 'manxia_core/src/main/ets/Models/EBookModels';
 import { LegadoBook, LegadoChapter } from 'manxia_novel/src/main/ets/Framework/Novel/LegadoSourceTypes';
 import { logger } from 'manxia_core/src/main/ets/Utils/Logger';
 

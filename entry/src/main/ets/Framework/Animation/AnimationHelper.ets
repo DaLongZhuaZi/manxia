@@ -4,9 +4,9 @@
 import { logger } from 'manxia_core/src/main/ets/Utils/Logger';
 import { ItemPosition, AnimationType } from './ItemTransitionAnimator';
 import { AnimatedItem, GridLayoutConfig } from './AnimatedGridState';
-import { Manga } from '../../Models/MangaModels';
-import { EBook } from '../../Models/EBookModels';
-import { NovelBook } from '../../Models/NovelModels';
+import { Manga } from 'manxia_core/src/main/ets/Models/MangaModels';
+import { EBook } from 'manxia_core/src/main/ets/Models/EBookModels';
+import { NovelBook } from 'manxia_core/src/main/ets/Models/NovelModels';
 
 const TAG = 'AnimationHelper';
 

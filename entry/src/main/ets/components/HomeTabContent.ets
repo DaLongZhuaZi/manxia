@@ -6,14 +6,14 @@
 import { logger } from 'manxia_core/src/main/ets/Utils/Logger';
 import { ThemeAwareState, ThemeAwareHelper } from 'manxia_theme/src/main/ets/Framework/Components/ThemeAware';
 import { ThemeType } from 'manxia_theme/src/main/ets/Framework/Managers/ThemeManager';
-import { Manga } from '../Models/MangaModels';
-import { EBook } from '../Models/EBookModels';
-import { NovelBook } from '../Models/NovelModels';
+import { Manga } from 'manxia_core/src/main/ets/Models/MangaModels';
+import { EBook } from 'manxia_core/src/main/ets/Models/EBookModels';
+import { NovelBook } from 'manxia_core/src/main/ets/Models/NovelModels';
 import { AppColors } from 'manxia_theme/src/main/ets/Framework/Theme/AppColors';
 import { AvifImage } from './AvifImage';
 import { getSuwayomiTracker } from '../Framework/Tracking/trackers/SuwayomiTracker';
 import { getKomgaTracker } from '../Framework/Tracking/trackers/KomgaTracker';
-import { UnifiedDetailPageParams, UnifiedContentType } from '../Models/UnifiedContentModels';
+import { UnifiedDetailPageParams, UnifiedContentType } from 'manxia_core/src/main/ets/Models/UnifiedContentModels';
 import { PageSettingsHelper, DetailPageType } from '../pages/settings/PageSettingsSubPage';
 import { EBookDetailPageParams } from '../pages/EBookDetailPage';
 import { NovelDetailPageParams } from '../pages/NovelBookshelfPage';

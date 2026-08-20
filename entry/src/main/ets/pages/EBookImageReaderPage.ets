@@ -17,8 +17,8 @@ import { getFontManager, FontScene } from '../Framework/Managers/FontManager';
 import { EBookDataManager } from '../Framework/Data/EBookDataManager';
 import { EBookParserFactory } from '../Framework/Parsers/EBookParser';
 import { getUnifiedAnnotationManager } from '../Framework/Annotations/UnifiedAnnotationManager';
-import { UnifiedContentType } from '../Models/UnifiedContentModels';
-import { AnnotationAnchor, UnifiedAnnotationType } from '../Models/AnnotationModels';
+import { UnifiedContentType } from 'manxia_core/src/main/ets/Models/UnifiedContentModels';
+import { AnnotationAnchor, UnifiedAnnotationType } from 'manxia_core/src/main/ets/Models/AnnotationModels';
 import { AnnotationCenterPageParams } from './AnnotationCenterPage';
 import {
   EBook,
@@ -27,7 +27,7 @@ import {
   EBookFormat,
   EBookReaderEngine,
   EBookReadingProgress
-} from '../Models/EBookModels';
+} from 'manxia_core/src/main/ets/Models/EBookModels';
 import {
   ReadingSettings as MangaReadingSettings,
   DEFAULT_READING_SETTINGS,
@@ -35,12 +35,12 @@ import {
   ReadingDirection,
   PageTurnAnimationType,
   MangaChapter
-} from '../Models/MangaModels';
+} from 'manxia_core/src/main/ets/Models/MangaModels';
 import {
   AutoPageTurnController,
   AutoPageTurnConfig,
   AutoPageTurnState
-} from '../Framework/Utils/AutoPageTurnController';
+} from 'manxia_core/src/main/ets/Framework/Utils/AutoPageTurnController';
 import { MangaViewer } from '../components/MangaViewer';
 import { MangaQuickSettings } from '../components/MangaQuickSettings';
 import { MangaReaderSettings } from '../components/MangaReaderSettings';

@@ -13,7 +13,7 @@ import {
   cloneTransferLocalAddress,
   cloneTransferUploadProgressSnapshot,
   createEmptyTransferUploadProgressSnapshot
-} from '../Models/TransferModels';
+} from 'manxia_core/src/main/ets/Models/TransferModels';
 
 const TAG: string = 'TransferFloatingWindowPage';
 const REFRESH_INTERVAL_MS: number = 900;

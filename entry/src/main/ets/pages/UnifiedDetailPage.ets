@@ -25,7 +25,7 @@ import { ThemeAwareState, ThemeAwareHelper } from 'manxia_theme/src/main/ets/Fra
 import { ThemeManager, ThemeType } from 'manxia_theme/src/main/ets/Framework/Managers/ThemeManager';
 import { FontAwareHelper, FontAwareState } from '../Framework/Components/FontAware';
 import { DeviceAdaptationManager, DeviceInfo, DeviceChangeListener, Breakpoint } from 'manxia_theme/src/main/ets/Framework/Managers/DeviceAdaptationManager';
-import { ResponsiveLayoutHelper } from '../Framework/Utils/ResponsiveLayout';
+import { ResponsiveLayoutHelper } from 'manxia_core/src/main/ets/Framework/Utils/ResponsiveLayout';
 import { ContentFilterManager } from '../Framework/Managers/ContentFilterManager';
 import { SettingsManager, SettingKeys } from '../Framework/Managers/SettingsManager';
 import CookieManager from '../Framework/Managers/CookieManager';
@@ -53,7 +53,7 @@ import {
   ChapterDisplayMode,
   OriginalBookInfo,
   ChapterOrderPersistResult
-} from '../Models/UnifiedContentModels';
+} from 'manxia_core/src/main/ets/Models/UnifiedContentModels';
 
 import {
   UnifiedContentAdapterFactory,
@@ -176,14 +176,14 @@ import {
   toggleRemoteReadAloudStylePrompt,
   XIAOMI_MIMO_REMOTE_READ_ALOUD_STYLE_CATEGORIES,
   XIAOMI_MIMO_REMOTE_READ_ALOUD_VOICE_OPTIONS
-} from '../Models/TextReaderModels';
+} from 'manxia_core/src/main/ets/Models/TextReaderModels';
 
 // 模型导入
-import { Manga, MangaChapter, MangaPage, ReadingProgress, ReadingSettings, MangaBookmark, MangaMetadata, ImageSourceType, DEFAULT_READING_SETTINGS } from '../Models/MangaModels';
+import { Manga, MangaChapter, MangaPage, ReadingProgress, ReadingSettings, MangaBookmark, MangaMetadata, ImageSourceType, DEFAULT_READING_SETTINGS } from 'manxia_core/src/main/ets/Models/MangaModels';
 import { DownloadStatus, MangaStatus, ReadingStatus } from 'manxia_core/src/main/ets/Framework/Types/StatusEnums';
-import { EBook, EBookChapter, EBookFormat, EBookStatus, EBookMetadata } from '../Models/EBookModels';
+import { EBook, EBookChapter, EBookFormat, EBookStatus, EBookMetadata } from 'manxia_core/src/main/ets/Models/EBookModels';
 import { LegadoBook, LegadoChapter, LegadoBookSource, LegadoBookSourceType } from 'manxia_novel/src/main/ets/Framework/Novel/LegadoSourceTypes';
-import { NovelBook, NovelReadStatus, NovelSearchResult } from '../Models/NovelModels';
+import { NovelBook, NovelReadStatus, NovelSearchResult } from 'manxia_core/src/main/ets/Models/NovelModels';
 
 // 阅读器参数导入
 import { MangaReaderPageParams, MangaReaderContentType } from './MangaReaderPage';

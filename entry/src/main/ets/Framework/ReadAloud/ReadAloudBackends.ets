@@ -11,7 +11,7 @@ import {
   RemoteReadAloudSettings,
   normalizeReadAloudSettings,
   normalizeRemoteReadAloudSettings
-} from '../../Models/TextReaderModels';
+} from 'manxia_core/src/main/ets/Models/TextReaderModels';
 import { ReadAloudProgressSnapshot, ReadAloudSessionContext, ReadAloudVoiceOption } from './ReadAloudTypes';
 import { ReadAloudRequestIdGenerator } from 'manxia_novel/src/main/ets/Framework/ReadAloud/ReadAloudRequestIdGenerator';
 import { textToSpeech } from '@kit.CoreSpeechKit';

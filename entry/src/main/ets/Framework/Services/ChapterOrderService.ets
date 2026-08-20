@@ -8,9 +8,9 @@ import {
   UnifiedChapter,
   UnifiedContent,
   UnifiedContentType
-} from '../../Models/UnifiedContentModels';
-import { MangaChapter } from '../../Models/MangaModels';
-import { EBookChapter, EBookFormat } from '../../Models/EBookModels';
+} from 'manxia_core/src/main/ets/Models/UnifiedContentModels';
+import { MangaChapter } from 'manxia_core/src/main/ets/Models/MangaModels';
+import { EBookChapter, EBookFormat } from 'manxia_core/src/main/ets/Models/EBookModels';
 import { LegadoChapter } from 'manxia_novel/src/main/ets/Framework/Novel/LegadoSourceTypes';
 import { MangaAdapter, EBookAdapter, NovelAdapter } from '../Adapters/UnifiedContentAdapter';
 import { buildLocalTextNovelBookId } from '../Adapters/LocalTextNovelAdapter';

@@ -4,7 +4,7 @@
  * 支持URL模板变量替换和动态域名切换
  */
 
-import { logger } from 'manxia_core/src/main/ets/Utils/Logger';
+import { logger } from '../../Utils/Logger';
 
 const TAG = 'DynamicUrlResolver';
 

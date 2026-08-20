@@ -12,7 +12,7 @@ import { LengthMetrics } from '@kit.ArkUI';
 import { logger } from 'manxia_core/src/main/ets/Utils/Logger';
 import { getBackupManager } from '../Framework/Managers/BackupManager';
 import { getEnhancedBackupManager, RestoreOptions } from '../Framework/Managers/EnhancedBackupManager';
-import { BackupData, BackupMetadata, BackupOptions, DEFAULT_BACKUP_OPTIONS } from '../Models/BackupModels';
+import { BackupData, BackupMetadata, BackupOptions, DEFAULT_BACKUP_OPTIONS } from 'manxia_core/src/main/ets/Models/BackupModels';
 import { ThemeAwareHelper } from 'manxia_theme/src/main/ets/Framework/Components/ThemeAware';
 import { ThemeManager, ThemeType } from 'manxia_theme/src/main/ets/Framework/Managers/ThemeManager';
 import { FontAwareHelper, FontAwareState } from '../Framework/Components/FontAware';
@@ -26,13 +26,13 @@ import { util } from '@kit.ArkTS';
 import { common } from '@kit.AbilityKit';
 import { Want } from '@kit.AbilityKit';
 import { getWebDAVBackupManager, RemoteBackupInfo, WebDAVSyncStatus } from '../Framework/WebDAV/WebDAVBackupManager';
-import { WebDAVSettings, DEFAULT_WEBDAV_SETTINGS } from '../Models/WebDAVModels';
+import { WebDAVSettings, DEFAULT_WEBDAV_SETTINGS } from 'manxia_core/src/main/ets/Models/WebDAVModels';
 import { WebDAVClient, WebDAVConfig, WebDAVTestResult } from 'manxia_network/src/main/ets/Framework/WebDAV/WebDAVClient';
 import { quickTestWebDAVNative } from 'manxia_network/src/main/ets/Framework/WebDAV/WebDAVNativeTest';
 import { WebDAVNativeConfig, WebDAVNativeClient, isNativeModuleAvailable } from 'manxia_network/src/main/ets/Framework/WebDAV/WebDAVNativeClient';
 import { WebDAVErrorAnalyzer, analyzeWebDAVError } from 'manxia_network/src/main/ets/Framework/WebDAV/WebDAVErrorAnalyzer';
 import { FTPConfig, FTPNativeClient, FTPFileInfo, isFTPNativeAvailable } from 'manxia_network/src/main/ets/Framework/FTP/FTPNativeClient';
-import { SavedFTPConnection, DEFAULT_FTP_CONNECTION, createFTPConnection } from '../Models/FTPModels';
+import { SavedFTPConnection, DEFAULT_FTP_CONNECTION, createFTPConnection } from 'manxia_core/src/main/ets/Models/FTPModels';
 import { getHelpPanelManagerV2 } from '../Framework/Components/HelpPanelV2';
 import { preferences } from '@kit.ArkData';
 import { promptAction } from '@kit.ArkUI';
@@ -1705,7 +1705,7 @@ struct BackupPage {
         await sandboxManager.createDirectory(tempDir);
       }
 
-      const tarPackager = await import('../Framework/Utils/TarPackager').then(m => m.getTarPackager());
+      const tarPackager = await import('manxia_core/src/main/ets/Framework/Utils/TarPackager').then(m => m.getTarPackager());
       await tarPackager.extractTarArchive(backupInfo.filePath, tempDir);
 
       const jsonPath = `${tempDir}/backup.json`;

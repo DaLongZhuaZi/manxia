@@ -14,7 +14,7 @@ import { ThemeManager, ThemeType } from 'manxia_theme/src/main/ets/Framework/Man
 import { FontAwareHelper, FontAwareState } from '../../Framework/Components/FontAware';
 import { DataManager } from '../../Framework/Data/DataManager';
 import { DeviceAdaptationManager, DeviceInfo, DeviceChangeListener, Breakpoint } from 'manxia_theme/src/main/ets/Framework/Managers/DeviceAdaptationManager';
-import { ResponsiveLayoutHelper } from '../../Framework/Utils/ResponsiveLayout';
+import { ResponsiveLayoutHelper } from 'manxia_core/src/main/ets/Framework/Utils/ResponsiveLayout';
 import { SettingsManager, SettingKeys } from '../../Framework/Managers/SettingsManager';
 import {
   AnimationSettingsManager,

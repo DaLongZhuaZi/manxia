@@ -15,7 +15,7 @@ import { LegadoBook, LegadoBookSourceType, LegadoChapter } from 'manxia_novel/sr
 import {
   DEFAULT_READ_ALOUD_SETTINGS,
   ReadAloudSettings
-} from '../Models/TextReaderModels';
+} from 'manxia_core/src/main/ets/Models/TextReaderModels';
 import { SettingsManager } from '../Framework/Managers/SettingsManager';
 import { ReadAloudController } from '../Framework/ReadAloud/ReadAloudController';
 import { ReadAloudPlaybackState } from '../Framework/ReadAloud/ReadAloudTypes';

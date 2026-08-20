@@ -7,7 +7,7 @@
 import { logger } from 'manxia_core/src/main/ets/Utils/Logger';
 import { DatabaseManager } from 'manxia_core/src/main/ets/Framework/Database/DatabaseManager';
 import { DatabaseRecord, DatabaseValue, TrackRecordDatabaseRecord } from 'manxia_core/src/main/ets/Framework/Database/DatabaseTypes';
-import { generateUUID } from '../Utils/UUIDGenerator';
+import { generateUUID } from 'manxia_core/src/main/ets/Framework/Utils/UUIDGenerator';
 import {
   TrackRecord,
   TrackerId,

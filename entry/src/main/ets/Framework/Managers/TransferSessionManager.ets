@@ -6,7 +6,7 @@ import { logger } from 'manxia_core/src/main/ets/Utils/Logger';
 import {
   TransferSessionInfo,
   cloneTransferSessionInfo
-} from '../../Models/TransferModels';
+} from 'manxia_core/src/main/ets/Models/TransferModels';
 
 const TAG = 'TransferSessionManager';
 const DEFAULT_TTL_MINUTES = 10;

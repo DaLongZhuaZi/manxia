@@ -1,4 +1,4 @@
-import { UnifiedChapter } from '../../Models/UnifiedContentModels';
+import { UnifiedChapter } from 'manxia_core/src/main/ets/Models/UnifiedContentModels';
 import { TxtTocRule } from '../Novel/NovelTxtTocRuleManager';
 
 const UNRESOLVED_ORDER_VALUE: number = 9000000;

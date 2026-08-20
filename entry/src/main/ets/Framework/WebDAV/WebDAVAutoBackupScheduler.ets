@@ -10,7 +10,7 @@ import { preferences } from '@kit.ArkData';
 import { common } from '@kit.AbilityKit';
 import { getWebDAVBackupManager } from './WebDAVBackupManager';
 import { getEnhancedBackupManager } from '../Managers/EnhancedBackupManager';
-import { WebDAVSettings } from '../../Models/WebDAVModels';
+import { WebDAVSettings } from 'manxia_core/src/main/ets/Models/WebDAVModels';
 
 const TAG = 'WebDAVAutoBackupScheduler';
 

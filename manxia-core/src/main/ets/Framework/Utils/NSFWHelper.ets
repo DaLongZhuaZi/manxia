@@ -3,7 +3,7 @@
  * 提供NSFW内容判断和管理的辅助方法
  */
 
-import { logger } from 'manxia_core/src/main/ets/Utils/Logger';
+import { logger } from '../../Utils/Logger';
 
 const TAG = 'NSFWHelper';
 

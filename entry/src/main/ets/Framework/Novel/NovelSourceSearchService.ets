@@ -8,7 +8,7 @@
 
 import { logger } from 'manxia_core/src/main/ets/Utils/Logger';
 import { getNovelSourceManager, NovelSourceManager } from './NovelSourceManager';
-import { NovelSearchResult, NovelSourceInfo } from '../../Models/NovelModels';
+import { NovelSearchResult, NovelSourceInfo } from 'manxia_core/src/main/ets/Models/NovelModels';
 
 const TAG = 'NovelSourceSearchService';
 

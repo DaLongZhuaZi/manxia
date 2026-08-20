@@ -23,7 +23,7 @@ import { eventBus, GameEvent, MangaImportCompletedPayload } from '../Framework/E
 import fs from '@ohos.file.fs';
 import { fileUri } from '@kit.CoreFileKit';
 import { EBookDataManager } from '../Framework/Data/EBookDataManager';
-import { generateUUID } from '../Framework/Utils/UUIDGenerator';
+import { generateUUID } from 'manxia_core/src/main/ets/Framework/Utils/UUIDGenerator';
 import { createLocalMangaChapterExternalId } from 'manxia_core/src/main/ets/Utils/LocalMangaImportIdentity';
 import { PdfImportDialog, PdfImportDialogResult } from '../Framework/Components/PdfImportDialog';
 import { MangaImportDialog, MangaImportDialogResult, MangaImportMode, ChapterInfo, ParsedArchiveStructure, ExistingMangaCandidate, PrefilledComicInfo } from '../Framework/Components/MangaImportDialog';
@@ -31,13 +31,13 @@ import { BatchMangaImportDialog, BatchMangaImportDialogResult, MangaGroupResult,
 import { showArchivePasswordDialog } from '../Framework/Components/ArchivePasswordDialog';
 import { ParsedArchiveStructure as CompressionParsedStructure } from 'manxia_core/src/main/ets/Utils/CompressionUtils';
 import { DeviceAdaptationManager, DeviceChangeListener, DeviceInfo, Breakpoint } from 'manxia_theme/src/main/ets/Framework/Managers/DeviceAdaptationManager';
-import { ResponsiveLayoutHelper } from '../Framework/Utils/ResponsiveLayout';
+import { ResponsiveLayoutHelper } from 'manxia_core/src/main/ets/Framework/Utils/ResponsiveLayout';
 import { EBookParserFactory, EBookCoverExtractor } from '../Framework/Parsers/EBookParser';
 import { getHelpPanelManagerV2 } from '../Framework/Components/HelpPanelV2';
 import { SettingsManager, SettingKeys } from '../Framework/Managers/SettingsManager';
 import { NovelImportDialog, NovelImportDialogResult, TextEncoding } from '../Framework/Components/NovelImportDialog';
 import { EBookMetadataDialog, EBookMetadataDialogResult } from '../Framework/Components/EBookMetadataDialog';
-import { EBookMetadata, EBookChapter, EBook } from '../Models/EBookModels';
+import { EBookMetadata, EBookChapter, EBook } from 'manxia_core/src/main/ets/Models/EBookModels';
 import { fileIo } from '@kit.CoreFileKit';
 import { util } from '@kit.ArkTS';
 import { image } from '@kit.ImageKit';

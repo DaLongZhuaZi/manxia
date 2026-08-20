@@ -5,7 +5,7 @@
  * 文件路径: entry/src/main/ets/components/backup/BackupOptionsDialog.ets
  */
 
-import { BackupOptions } from '../../Models/BackupModels';
+import { BackupOptions } from 'manxia_core/src/main/ets/Models/BackupModels';
 import { ThemeAwareHelper } from 'manxia_theme/src/main/ets/Framework/Components/ThemeAware';
 import { ThemeType } from 'manxia_theme/src/main/ets/Framework/Managers/ThemeManager';
 

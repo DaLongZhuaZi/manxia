@@ -28,8 +28,8 @@ import {
   cloneTransferSignalRuntime,
   createEmptyTransferSignalRuntime,
   normalizeTransferSignalOrigin
-} from '../../Models/TransferModels';
-import { generateSimpleId } from '../Utils/UUIDGenerator';
+} from 'manxia_core/src/main/ets/Models/TransferModels';
+import { generateSimpleId } from 'manxia_core/src/main/ets/Framework/Utils/UUIDGenerator';
 
 const TAG = 'TransferSignalClient';
 const DEFAULT_SIGNAL_ORIGIN: string = 'https://manxia.top';

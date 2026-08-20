@@ -1,6 +1,6 @@
 import { image } from '@kit.ImageKit';
 import { logger } from 'manxia_core/src/main/ets/Utils/Logger';
-import { ImageSourceType } from '../../Models/MangaModels';
+import { ImageSourceType } from 'manxia_core/src/main/ets/Models/MangaModels';
 import {
   ImageCacheManager,
   RequestHeaderEntry as ImageRequestHeaderEntry,

@@ -4,7 +4,7 @@ import { image } from '@kit.ImageKit';
 import {
   ImageSourceType,
   MangaPage
-} from '../Models/MangaModels';
+} from 'manxia_core/src/main/ets/Models/MangaModels';
 
 export type MangaDisplayInputValue = Resource | string | image.PixelMap;
 

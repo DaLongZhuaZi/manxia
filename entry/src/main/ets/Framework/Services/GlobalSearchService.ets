@@ -15,8 +15,8 @@ import { getNovelSourceManager, NovelSourceManager } from '../Novel/NovelSourceM
 import { SearchParseOptions } from '../Novel/NovelSourceExecutor';
 import { SourceManager, SourceInfo } from '../Source/SourceManager';
 import { SuwayomiSourceExecutor, SuwayomiExtensionSource } from '../Source/SuwayomiSourceExecutor';
-import { EBook } from '../../Models/EBookModels';
-import { NovelBook, NovelSearchResult, NovelSourceInfo } from '../../Models/NovelModels';
+import { EBook } from 'manxia_core/src/main/ets/Models/EBookModels';
+import { NovelBook, NovelSearchResult, NovelSourceInfo } from 'manxia_core/src/main/ets/Models/NovelModels';
 import { WebViewSourceManager } from '../WebView/WebViewSourceManager';
 import { SourceDetailSearchExecutor, SourceDetailSearchResult, getSourceDetailSearchExecutor } from './SourceDetailSearchExecutor';
 import { LegadoBookSourceType } from 'manxia_novel/src/main/ets/Framework/Novel/LegadoSourceTypes';

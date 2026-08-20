@@ -33,8 +33,8 @@ import {
   HistoryBackupSection,
   DEFAULT_BACKUP_OPTIONS,
   UnifiedAnnotationBackupItem
-} from '../../Models/BackupModels';
-import { NovelBook, NovelSourceInfo, NovelReadStatus } from '../../Models/NovelModels';
+} from 'manxia_core/src/main/ets/Models/BackupModels';
+import { NovelBook, NovelSourceInfo, NovelReadStatus } from 'manxia_core/src/main/ets/Models/NovelModels';
 import { BrowseHistoryInput, BrowseHistoryItem } from '../Novel/NovelSettingsManager';
 import { fileIo as fs } from '@kit.CoreFileKit';
 import { deviceInfo } from '@kit.BasicServicesKit';

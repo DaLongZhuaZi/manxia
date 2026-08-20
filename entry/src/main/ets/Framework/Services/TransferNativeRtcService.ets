@@ -23,8 +23,8 @@ import {
   createEmptyTransferNativeRtcCapabilities,
   createEmptyTransferNativeRtcRuntime,
   normalizeTransferNativeRtcBackend
-} from '../../Models/TransferModels';
-import { generateSimpleId } from '../Utils/UUIDGenerator';
+} from 'manxia_core/src/main/ets/Models/TransferModels';
+import { generateSimpleId } from 'manxia_core/src/main/ets/Framework/Utils/UUIDGenerator';
 
 const TAG = 'TransferNativeRtc';
 const STUB_UNAVAILABLE_MESSAGE: string = 'Native RTC 外壳已接入，真实 DataChannel 后端尚未接入 libdatachannel。';

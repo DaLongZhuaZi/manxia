@@ -4,7 +4,7 @@
  * 支持offset、page、cursor三种分页方式
  */
 
-import { logger } from 'manxia_core/src/main/ets/Utils/Logger';
+import { logger } from '../../Utils/Logger';
 
 const TAG = 'PaginationHandler';
 

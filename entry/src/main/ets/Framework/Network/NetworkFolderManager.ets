@@ -44,7 +44,7 @@ import {
   joinRelativeNetworkFolderPath,
   normalizeConnectionBasePath,
   normalizeRelativeNetworkFolderPath
-} from '../../Models/NetworkFolderModels';
+} from 'manxia_core/src/main/ets/Models/NetworkFolderModels';
 
 const TAG = 'NetworkFolderManager';
 

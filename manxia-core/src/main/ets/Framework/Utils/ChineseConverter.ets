@@ -4,7 +4,7 @@
  * 支持简体转繁体、繁体转简体、自动检测转换
  */
 
-import { logger } from 'manxia_core/src/main/ets/Utils/Logger';
+import { logger } from '../../Utils/Logger';
 
 const TAG = 'ChineseConverter';
 

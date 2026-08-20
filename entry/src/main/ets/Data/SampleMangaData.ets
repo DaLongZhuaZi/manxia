@@ -5,7 +5,7 @@
  * 保留此文件以避免其他地方的引用错误
  */
 
-import { Manga } from '../Models/MangaModels';
+import { Manga } from 'manxia_core/src/main/ets/Models/MangaModels';
 
 /**
  * 示例漫画数据（已弃用，返回空）

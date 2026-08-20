@@ -18,12 +18,12 @@ import {
   cloneTransferUploadRecord,
   cloneTransferUploadRecords,
   isTransferAcceptedImportCategory
-} from '../../Models/TransferModels';
+} from 'manxia_core/src/main/ets/Models/TransferModels';
 import {
   getNetworkFolderFileExtension,
   inferNetworkFolderImportCategory,
   NetworkFolderImportCategory
-} from '../../Models/NetworkFolderModels';
+} from 'manxia_core/src/main/ets/Models/NetworkFolderModels';
 import {
   ExternalFileTaskFactory,
   ExternalFileTaskKind,

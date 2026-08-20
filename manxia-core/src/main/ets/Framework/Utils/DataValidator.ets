@@ -4,8 +4,8 @@
  * 提供类型安全的数据验证功能，确保数据的完整性和正确性
  */
 
-import { logger } from 'manxia_core/src/main/ets/Utils/Logger';
-import { MangaStatus, DownloadStatus } from 'manxia_core/src/main/ets/Framework/Types/StatusEnums';
+import { logger } from '../../Utils/Logger';
+import { MangaStatus, DownloadStatus } from '../Types/StatusEnums';
 
 const TAG = 'DataValidator';
 

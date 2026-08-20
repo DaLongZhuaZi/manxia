@@ -14,7 +14,7 @@ import {
   DoublePagePortraitLayout,
   DoublePageVerticalDirection,
   DEFAULT_READING_SETTINGS
-} from '../../Models/MangaModels';
+} from 'manxia_core/src/main/ets/Models/MangaModels';
 import { ComicInfo, ReadHistory, OnlineComicInfo, UserSettingsDatabaseRecord } from '../Data/DataManager';
 import { ComicSourceDatabaseRecord } from 'manxia_core/src/main/ets/Framework/Database/DatabaseTypes';
 import { MangaStatus, ReadingStatus, StatusConverter } from 'manxia_core/src/main/ets/Framework/Types/StatusEnums';

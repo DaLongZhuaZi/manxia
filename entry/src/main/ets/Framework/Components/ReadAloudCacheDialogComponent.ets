@@ -13,7 +13,7 @@ import {
   UnifiedContent,
   UnifiedContentType,
   UnifiedReadStatus
-} from '../../Models/UnifiedContentModels';
+} from 'manxia_core/src/main/ets/Models/UnifiedContentModels';
 import { EBookAdapter } from '../Adapters/UnifiedContentAdapter';
 import { buildLocalTextNovelBookId } from '../Adapters/LocalTextNovelAdapter';
 import {
@@ -46,8 +46,8 @@ import {
   toggleRemoteReadAloudStylePrompt,
   XIAOMI_MIMO_REMOTE_READ_ALOUD_STYLE_CATEGORIES,
   XIAOMI_MIMO_REMOTE_READ_ALOUD_VOICE_OPTIONS
-} from '../../Models/TextReaderModels';
-import { EBookFormat } from '../../Models/EBookModels';
+} from 'manxia_core/src/main/ets/Models/TextReaderModels';
+import { EBookFormat } from 'manxia_core/src/main/ets/Models/EBookModels';
 import { AppGuideStep } from '../Managers/AppGuideManager';
 import { GuideHighlightRect } from './AppGuideOverlay';
 

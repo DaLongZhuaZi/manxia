@@ -20,7 +20,7 @@ import {
   OnlineMangaArchivePathRequest
 } from '../Storage/DownloadDirManager';
 import { PermanentImageCacheManager } from '../Cache/PermanentImageCacheManager';
-import { generateDbId } from '../Utils/UUIDGenerator';
+import { generateDbId } from 'manxia_core/src/main/ets/Framework/Utils/UUIDGenerator';
 import { eventBus, GameEvent, MangaCacheUpdatedPayload } from '../EventBus';
 
 const TAG = 'OnlineMangaArchiveService';

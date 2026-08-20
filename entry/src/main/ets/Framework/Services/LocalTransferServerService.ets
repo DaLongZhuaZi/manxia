@@ -29,7 +29,7 @@ import {
   cloneTransferServerRuntime,
   createEmptyTransferUploadProgressSnapshot,
   createEmptyTransferServerRuntime
-} from '../../Models/TransferModels';
+} from 'manxia_core/src/main/ets/Models/TransferModels';
 import { getTransferConfigManager, TransferConfigManager } from '../Managers/TransferConfigManager';
 import { AppNotificationManager } from '../Managers/NotificationManager';
 import { getTransferSessionManager, TransferSessionManager } from '../Managers/TransferSessionManager';

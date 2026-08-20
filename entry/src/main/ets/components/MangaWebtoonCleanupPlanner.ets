@@ -1,6 +1,6 @@
 // 职责: 规划条漫资源清理范围，不释放 PixelMap，也不操作缓存实例。
 
-import { MangaPage } from '../Models/MangaModels';
+import { MangaPage } from 'manxia_core/src/main/ets/Models/MangaModels';
 import { ChapterBoundary, WebtoonDataItem } from './MangaWebtoonTypes';
 
 export class MangaWebtoonChapterCleanupRange {

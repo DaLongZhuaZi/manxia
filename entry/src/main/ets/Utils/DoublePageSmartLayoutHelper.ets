@@ -1,4 +1,4 @@
-import { MangaPage } from '../Models/MangaModels';
+import { MangaPage } from 'manxia_core/src/main/ets/Models/MangaModels';
 
 export interface PageDimensionsInfo {
   width: number;

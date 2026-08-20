@@ -1,5 +1,5 @@
 import { logger } from 'manxia_core/src/main/ets/Utils/Logger';
-import { TextReadingDirection, TextReadingMode } from '../Models/TextReaderModels';
+import { TextReadingDirection, TextReadingMode } from 'manxia_core/src/main/ets/Models/TextReaderModels';
 
 const TAG = 'TextReaderInteractionOverlay';
 const OVERLAY_FADE_IN_DELAY_MS: number = 50;

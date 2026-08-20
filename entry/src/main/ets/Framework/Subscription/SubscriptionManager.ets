@@ -29,7 +29,7 @@ import {
   SubscriptionTargetPreviewCandidate,
   SubscriptionTargetPreviewCounter,
   SubscriptionTargetType
-} from '../../Models/SubscriptionModels';
+} from 'manxia_core/src/main/ets/Models/SubscriptionModels';
 import { getSubscriptionDataManager, SubscriptionDataManager } from './SubscriptionDataManager';
 import { getNovelInitializer } from '../Novel/NovelInitializer';
 import { getNovelDataManager, NovelBook } from '../Novel/NovelDataManager';
@@ -42,14 +42,14 @@ import {
   MangaBatchDownloadResult
 } from '../Download/UnifiedDownloadManager';
 import { AppNotificationManager, NotificationType } from '../Managers/NotificationManager';
-import { Manga, MangaChapter, MangaPage } from '../../Models/MangaModels';
+import { Manga, MangaChapter, MangaPage } from 'manxia_core/src/main/ets/Models/MangaModels';
 import { ParsedRemoteMangaId, RemoteLibraryMangaBridge } from '../Source/RemoteLibraryMangaBridge';
 import { BookshelfCategoryManager, CategoryItem, ContentType } from '../Data/BookshelfCategoryManager';
 import { DynamicMatchItem, DynamicShelfFilter, getTypeShelfManager, matchesDynamicFilter, ShelfContentType, ShelfType, TypeShelf, TypeShelfManager } from '../Data/TypeShelfManager';
 import { SettingsManager } from '../Managers/SettingsManager';
 import { ComicInfo, DataManager, FavoriteInfo, OnlineChapterInfoInput } from '../Data/DataManager';
 import { EBookDataManager } from '../Data/EBookDataManager';
-import { EBook } from '../../Models/EBookModels';
+import { EBook } from 'manxia_core/src/main/ets/Models/EBookModels';
 import { WebViewSourceManager } from '../WebView/WebViewSourceManager';
 import { MangaSourceEngine } from '../WebView/MangaSourceEngine';
 import { ChapterInfo as WebViewChapterInfo, PageInfo as WebViewPageInfo } from 'manxia_source_engine/src/main/ets/Framework/WebView/MangaSourceTypes';

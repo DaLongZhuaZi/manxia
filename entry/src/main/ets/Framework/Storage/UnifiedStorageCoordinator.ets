@@ -15,7 +15,7 @@ import { WebViewDataCacheManager } from 'manxia_network/src/main/ets/Framework/C
 import { DatabaseManager } from 'manxia_core/src/main/ets/Framework/Database/DatabaseManager';
 import DownloadDirManager from './DownloadDirManager';
 import { getNetworkFolderManager } from '../Network/NetworkFolderManager';
-import { NetworkFolderCacheStats } from '../../Models/NetworkFolderModels';
+import { NetworkFolderCacheStats } from 'manxia_core/src/main/ets/Models/NetworkFolderModels';
 import { CacheContentType, getCacheStatusService } from '../Services/CacheStatusService';
 
 const TAG = 'UnifiedStorageCoordinator';

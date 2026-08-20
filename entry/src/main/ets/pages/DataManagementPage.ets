@@ -21,7 +21,7 @@ import { common, abilityAccessCtrl, bundleManager, Permissions } from '@kit.Abil
 import { DataManager, ComicInfoInput, ChapterInfoInput, ChapterInfoCreationResult, PageInfoInput, ComicInfo as ComicRecord, ChapterInfo as ChapterRecord, PageInfo as PageRecord, FavoriteInfoInput } from '../Framework/Data/DataManager';
 import { DataService } from '../Framework/Services/DataService';
 import { DownloadStatus, MangaStatus, StatusConverter } from 'manxia_core/src/main/ets/Framework/Types/StatusEnums';
-import { Manga, MangaChapter } from '../Models/MangaModels';
+import { Manga, MangaChapter } from 'manxia_core/src/main/ets/Models/MangaModels';
 import { CompressionUtils, ExtractionResult, RecursiveExtractionResult } from 'manxia_core/src/main/ets/Utils/CompressionUtils';
 import { ComicInfoParser, ComicInfo } from 'manxia_core/src/main/ets/Utils/ComicInfoParser';
 import { SandboxManager } from 'manxia_core/src/main/ets/Framework/Storage/SandboxManager';
@@ -34,9 +34,9 @@ import { fileIo, fileUri } from '@kit.CoreFileKit';
 
 import { UpdateRecordData } from 'manxia_core/src/main/ets/Framework/Database/DatabaseTypes';
 import { UniversalDialogManager, ButtonStyle, DialogButton, UniversalDialogOptions, UniversalDialogCustomContentParam } from '../Framework/Components/UniversalDialog';
-import { EBook, EBookMetadata } from '../Models/EBookModels';
+import { EBook, EBookMetadata } from 'manxia_core/src/main/ets/Models/EBookModels';
 import { EBookParserFactory, EBookCoverExtractor } from '../Framework/Parsers/EBookParser';
-import { generateUUID } from '../Framework/Utils/UUIDGenerator';
+import { generateUUID } from 'manxia_core/src/main/ets/Framework/Utils/UUIDGenerator';
 import { createLocalMangaChapterExternalId, createPickedImageGroupUri } from 'manxia_core/src/main/ets/Utils/LocalMangaImportIdentity';
 import { EBookDataManager } from '../Framework/Data/EBookDataManager';
 import { EBookMetadataDialog, EBookMetadataDialogResult } from '../Framework/Components/EBookMetadataDialog';
@@ -44,7 +44,7 @@ import { PdfImportResult, PdfContentType, PdfImportMode } from '../Framework/Par
 import { PdfImportService } from '../Framework/Services/PdfImportService';
 import { DeviceAdaptationManager, DeviceInfo, DeviceChangeListener, Breakpoint,
   DeviceType } from 'manxia_theme/src/main/ets/Framework/Managers/DeviceAdaptationManager';
-import { ResponsiveLayoutHelper } from '../Framework/Utils/ResponsiveLayout';
+import { ResponsiveLayoutHelper } from 'manxia_core/src/main/ets/Framework/Utils/ResponsiveLayout';
 import { image } from '@kit.ImageKit';
 import { AvifTranscoder, AvifTranscodeResult } from 'manxia_core/src/main/ets/Utils/AvifTranscoder';
 import { BackgroundTaskManager, TaskType, TaskStatus, TaskNotificationScene, BackgroundTask, TaskCancelSignal } from '../Framework/Task/BackgroundTaskManager';

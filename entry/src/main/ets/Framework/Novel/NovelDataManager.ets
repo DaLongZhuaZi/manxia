@@ -24,12 +24,12 @@ import {
   LegadoTransportKind,
   LegadoWorkflowKind
 } from 'manxia_novel/src/main/ets/Framework/Novel/LegadoCompatibilityTypes';
-import { NovelBook, NovelChapter, NovelReadProgress, NovelReaderSettings, DEFAULT_NOVEL_READER_SETTINGS, NovelReadStatus } from '../../Models/NovelModels';
+import { NovelBook, NovelChapter, NovelReadProgress, NovelReaderSettings, DEFAULT_NOVEL_READER_SETTINGS, NovelReadStatus } from 'manxia_core/src/main/ets/Models/NovelModels';
 import { getNovelLoginManager } from './NovelLoginManager';
 import { getNovelCoverGenerator } from 'manxia_novel/src/main/ets/Framework/Novel/NovelCoverGenerator';
 import { LibraryCoverManager } from 'manxia_core/src/main/ets/Framework/Storage/LibraryCoverManager';
 import { getUnifiedAnnotationManager } from '../Annotations/UnifiedAnnotationManager';
-import { UnifiedContentType } from '../../Models/UnifiedContentModels';
+import { UnifiedContentType } from 'manxia_core/src/main/ets/Models/UnifiedContentModels';
 
 const TAG = 'NovelDataManager';
 

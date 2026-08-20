@@ -1,5 +1,5 @@
 import { image } from '@kit.ImageKit';
-import { ImageSourceType } from '../../Models/MangaModels';
+import { ImageSourceType } from 'manxia_core/src/main/ets/Models/MangaModels';
 import { LoadOptions } from '../Cache/ImageCacheManager';
 
 export enum MangaAssetLoadReason {

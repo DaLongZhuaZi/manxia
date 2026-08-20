@@ -192,7 +192,7 @@ import { ShortcutSettingsSubPage } from './settings/ShortcutSettingsSubPage';
 import { MainMenuSettingsSubPage } from './settings/MainMenuSettingsSubPage';
 import { SourceFeatureSettingsSubPage } from './settings/SourceFeatureSettingsSubPage';
 import { SettingsPageSurfaceManager } from './settings/SettingsPageSurfaceManager';
-import { UnifiedDetailPageParams, UnifiedContentType } from '../Models/UnifiedContentModels';
+import { UnifiedDetailPageParams, UnifiedContentType } from 'manxia_core/src/main/ets/Models/UnifiedContentModels';
 import { FontAwareHelper, FontAwareState } from '../Framework/Components/FontAware';
 import { UnifiedDetailPage } from './UnifiedDetailPage';
 import { AnnotationCenterPage, AnnotationCenterPageParams } from './AnnotationCenterPage';
@@ -232,7 +232,7 @@ import { distributedPermissionManager } from '../Framework/Distributed/Distribut
 import { Manga, MangaChapter, MangaMetadata, ReadingProgress, ReadingSettings, FilterSettings, ImageSourceType,
   ReadingMode,
   ReadingDirection,
-  DEFAULT_READING_SETTINGS} from '../Models/MangaModels';
+  DEFAULT_READING_SETTINGS} from 'manxia_core/src/main/ets/Models/MangaModels';
 import { MangaStatus, ReadingStatus, StatusConverter, DownloadStatus } from 'manxia_core/src/main/ets/Framework/Types/StatusEnums';
 import { isOnlineManga, isLocalManga, MangaSourceType } from 'manxia_core/src/main/ets/Framework/Types/MangaTypes';
 
@@ -255,13 +255,13 @@ import { EBookDataManager } from '../Framework/Data/EBookDataManager';
 import { EBookCoverExtractionResult, EBookCoverExtractor } from '../Framework/Parsers/EBookParser';
 
 // 导入电子书相关模型
-import { EBook, EBookStatus, EBookFormat } from '../Models/EBookModels';
+import { EBook, EBookStatus, EBookFormat } from 'manxia_core/src/main/ets/Models/EBookModels';
 import { EBookDetailPage, EBookDetailPageParams, EBookSettingsPageParams } from './EBookDetailPage';
 import { OnlineEBookDetailPage } from './OnlineEBookDetailPage';
 import { EBookSettingsPage } from './EBookSettingsPage';
 
 // 导入小说相关模型
-import { NovelBook, NovelReadStatus, NovelSearchResult, NovelSourceInfo } from '../Models/NovelModels';
+import { NovelBook, NovelReadStatus, NovelSearchResult, NovelSourceInfo } from 'manxia_core/src/main/ets/Models/NovelModels';
 import { getNovelDataManager, NovelDataManager } from '../Framework/Novel/NovelDataManager';
 import { RemoteControlSocketChannel } from '../Framework/Distributed/RemoteControlSocketChannel';
 import { getNovelSourceManager, NovelSourceManager } from '../Framework/Novel/NovelSourceManager';
@@ -302,7 +302,7 @@ import { TypeShelfManager, TypeShelf, ShelfType, ShelfContentType, CreateShelfPa
 // 导入响应式布局
 import { DeviceAdaptationManager, DeviceInfo, DeviceChangeListener,
   Breakpoint, FoldStatus } from 'manxia_theme/src/main/ets/Framework/Managers/DeviceAdaptationManager';
-import { ResponsiveLayoutHelper } from '../Framework/Utils/ResponsiveLayout';
+import { ResponsiveLayoutHelper } from 'manxia_core/src/main/ets/Framework/Utils/ResponsiveLayout';
 import { util } from '@kit.ArkTS';
 
 

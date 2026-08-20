@@ -10,7 +10,7 @@ import {
   DeviceChangeListener,
   Breakpoint
 } from 'manxia_theme/src/main/ets/Framework/Managers/DeviceAdaptationManager';
-import { ResponsiveLayoutHelper } from '../../Framework/Utils/ResponsiveLayout';
+import { ResponsiveLayoutHelper } from 'manxia_core/src/main/ets/Framework/Utils/ResponsiveLayout';
 import {
   VisualEffectsManager,
   VisualEffectsMaterialMode,

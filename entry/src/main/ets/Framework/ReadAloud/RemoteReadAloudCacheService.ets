@@ -11,7 +11,7 @@ import {
   UnifiedChapter,
   UnifiedContent,
   UnifiedContentType
-} from '../../Models/UnifiedContentModels';
+} from 'manxia_core/src/main/ets/Models/UnifiedContentModels';
 import {
   DEFAULT_REMOTE_READ_ALOUD_SETTINGS,
   DEFAULT_TEXT_READER_SETTINGS,
@@ -21,7 +21,7 @@ import {
   TextReaderSettings,
   mergeRemoteReadAloudSettings,
   normalizeReadAloudSettings
-} from '../../Models/TextReaderModels';
+} from 'manxia_core/src/main/ets/Models/TextReaderModels';
 import { SettingKeys, SettingsManager } from '../Managers/SettingsManager';
 import { loadGlobalReadAloudSettings, persistGlobalReadAloudSettings } from './ReadAloudSettingsStore';
 import { ReadAloudBackendFactory, ReadAloudPrecacheProgressSnapshot } from './ReadAloudBackends';
@@ -31,7 +31,7 @@ import { getNovelSourceManager } from '../Novel/NovelSourceManager';
 import { getNovelChapterCacheManager } from '../Novel/NovelChapterCacheManager';
 import { getNovelContentProcessor, ContentProcessConfig } from '../Novel/NovelContentProcessor';
 import { LegadoChapter } from 'manxia_novel/src/main/ets/Framework/Novel/LegadoSourceTypes';
-import { EBook, EBookFormat } from '../../Models/EBookModels';
+import { EBook, EBookFormat } from 'manxia_core/src/main/ets/Models/EBookModels';
 import { EBookDataManager } from '../Data/EBookDataManager';
 import { EBookAdapter, NovelAdapter } from '../Adapters/UnifiedContentAdapter';
 import { processReadAloudNovelContentByBook } from './ReadAloudTextProcessing';

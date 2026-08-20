@@ -3,7 +3,7 @@ import {
   ChapterOrderPersistResult,
   UnifiedChapter,
   UnifiedContent
-} from '../../Models/UnifiedContentModels';
+} from 'manxia_core/src/main/ets/Models/UnifiedContentModels';
 import { getNovelTxtTocRuleManager, TxtTocRule } from '../Novel/NovelTxtTocRuleManager';
 import {
   ChapterOrderRuleSorter,

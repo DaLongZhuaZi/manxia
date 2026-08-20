@@ -30,7 +30,7 @@ import { RemoteLibraryMangaBridge } from '../Framework/Source/RemoteLibraryManga
 import { getSuwayomiSourceExecutor, SuwayomiSourceExecutor } from '../Framework/Source/SuwayomiSourceExecutor';
 import { ComicConverter } from '../Framework/Utils/ComicConverter';
 import { DeviceAdaptationManager, DeviceInfo, DeviceChangeListener } from 'manxia_theme/src/main/ets/Framework/Managers/DeviceAdaptationManager';
-import { ResponsiveLayoutHelper } from '../Framework/Utils/ResponsiveLayout';
+import { ResponsiveLayoutHelper } from 'manxia_core/src/main/ets/Framework/Utils/ResponsiveLayout';
 import { 
   Manga, 
   MangaChapter, 
@@ -45,7 +45,7 @@ import {
   MangaImageRequestHeader,
   DoublePagePortraitLayout,
   DoublePageVerticalDirection
-} from '../Models/MangaModels';
+} from 'manxia_core/src/main/ets/Models/MangaModels';
 import { MangaViewer } from '../components/MangaViewer';
 import { MangaReaderSettings } from '../components/MangaReaderSettings';
 import { ImageCacheManager, RequestHeaderEntry, RequestHeaders } from '../Framework/Cache/ImageCacheManager';
@@ -64,8 +64,8 @@ import { MangaInteractionOverlay, MangaInteractionOverlayParams } from '../compo
 import { setReaderReady, setReaderLoadingProgress, startBookCloseTransitionWithComponentId, CoverPosition, cancelTransition } from '../components/BookTransitionOverlay';
 import { MangaDetailPageParams } from './MangaDetailPage';
 import { DownloadStatus, ReadingStatus } from 'manxia_core/src/main/ets/Framework/Types/StatusEnums';
-import { AutoPageTurnController, AutoPageTurnState, AutoPageTurnConfig } from '../Framework/Utils/AutoPageTurnController';
-import { PageTurnAnimationType } from '../Models/MangaModels';
+import { AutoPageTurnController, AutoPageTurnState, AutoPageTurnConfig } from 'manxia_core/src/main/ets/Framework/Utils/AutoPageTurnController';
+import { PageTurnAnimationType } from 'manxia_core/src/main/ets/Models/MangaModels';
 import { WebViewSourceManager } from '../Framework/WebView/WebViewSourceManager';
 import { MangaSourceEngine, EngineResult } from '../Framework/WebView/MangaSourceEngine';
 import {
@@ -100,9 +100,9 @@ import { TrackContentType } from '../Framework/Tracking/TrackingModels';
 import { window } from '@kit.ArkUI';
 import { eventBus, GameEvent, BasePayload } from '../Framework/EventBus';
 import { PageLifecycleManager, CancellationError } from 'manxia_core/src/main/ets/Framework/Lifecycle/index';
-import { UnifiedContentType } from '../Models/UnifiedContentModels';
+import { UnifiedContentType } from 'manxia_core/src/main/ets/Models/UnifiedContentModels';
 import { getUnifiedAnnotationManager } from '../Framework/Annotations/UnifiedAnnotationManager';
-import { AnnotationAnchor, UnifiedAnnotationType } from '../Models/AnnotationModels';
+import { AnnotationAnchor, UnifiedAnnotationType } from 'manxia_core/src/main/ets/Models/AnnotationModels';
 import { AnnotationCenterPageParams } from './AnnotationCenterPage';
 import { AppGuideOverlay, GuideHighlightRect } from '../Framework/Components/AppGuideOverlay';
 import { resolveGuideHighlightRectInRoot } from '../Framework/Components/AppGuideSupport';

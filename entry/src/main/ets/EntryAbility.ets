@@ -47,7 +47,7 @@ import {
   NETWORK_FOLDER_FONT_EXTENSIONS,
   NETWORK_FOLDER_IMAGE_EXTENSIONS,
   NETWORK_FOLDER_JSON_EXTENSIONS
-} from './Models/NetworkFolderModels';
+} from 'manxia_core/src/main/ets/Models/NetworkFolderModels';
 import {
   ngfContentSourceIntegrationFacade,
   ngfContentWorkflowIntegrationFacade,

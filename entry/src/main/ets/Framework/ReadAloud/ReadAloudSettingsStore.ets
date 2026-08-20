@@ -5,7 +5,7 @@ import {
   RemoteReadAloudPreset,
   ReadAloudSettings,
   normalizeReadAloudSettings
-} from '../../Models/TextReaderModels';
+} from 'manxia_core/src/main/ets/Models/TextReaderModels';
 import { SettingKeys, SettingsManager } from '../Managers/SettingsManager';
 
 let globalReadAloudPersistQueue: Promise<void> = Promise.resolve();

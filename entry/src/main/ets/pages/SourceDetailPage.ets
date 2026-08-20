@@ -38,7 +38,7 @@ import { CredentialLoginDialog } from '../Framework/Components/CredentialLoginDi
 import { SourceCredentials } from '../Framework/Data/DataManager';
 import { ProxyManager } from '../Framework/Network/ProxyManager';
 import { PageSettingsHelper, DetailPageType } from './settings/PageSettingsSubPage';
-import { UnifiedDetailPageParams, UnifiedContentType } from '../Models/UnifiedContentModels';
+import { UnifiedDetailPageParams, UnifiedContentType } from 'manxia_core/src/main/ets/Models/UnifiedContentModels';
 import { SourceContentCache, SourceContentCacheFreshness, SourceContentCacheSnapshot } from '../Framework/Cache/SourceContentCache';
 import { SettingsImmersiveTitleBar } from './settings/SettingsImmersiveTitleBar';
 import { SettingsImmersiveTitleActionItem, SettingsPageTitleBarManager } from './settings/SettingsPageTitleBarManager';

@@ -21,7 +21,7 @@ import {
   DoublePagePortraitLayout,
   DEFAULT_READING_SETTINGS,
   DEFAULT_FILTER_SETTINGS
-} from '../Models/MangaModels';
+} from 'manxia_core/src/main/ets/Models/MangaModels';
 import { curves, UIContext, display } from '@kit.ArkUI';
 import { ThemeAwareState, ThemeAwareHelper } from 'manxia_theme/src/main/ets/Framework/Components/ThemeAware';
 import { ThemeType } from 'manxia_theme/src/main/ets/Framework/Managers/ThemeManager';

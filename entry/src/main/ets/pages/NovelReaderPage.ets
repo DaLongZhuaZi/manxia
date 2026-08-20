@@ -23,7 +23,7 @@ import {
   LegadoWorkflowOutputKind
 } from 'manxia_novel/src/main/ets/Framework/Novel/LegadoCompatibilityTypes';
 import { NovelReaderPageParams } from './NovelBookshelfPage';
-import { NovelBook, NovelReadStatus } from '../Models/NovelModels';
+import { NovelBook, NovelReadStatus } from 'manxia_core/src/main/ets/Models/NovelModels';
 import {
   TextReaderComponent,
   PaginationMode,
@@ -49,9 +49,9 @@ import {
   SavedBackgroundImage,
   normalizeReadAloudSettings,
   clampTextReaderFontSize
-} from '../Models/TextReaderModels';
-import { NovelReadProgress } from '../Models/NovelModels';
-import { UnifiedContentType } from '../Models/UnifiedContentModels';
+} from 'manxia_core/src/main/ets/Models/TextReaderModels';
+import { NovelReadProgress } from 'manxia_core/src/main/ets/Models/NovelModels';
+import { UnifiedContentType } from 'manxia_core/src/main/ets/Models/UnifiedContentModels';
 import {
   AnnotationAnchor,
   HighlightLineType,
@@ -59,7 +59,7 @@ import {
   UnifiedAnnotationType,
   UnifiedAnnotationRecord,
   CreateThoughtInput
-} from '../Models/AnnotationModels';
+} from 'manxia_core/src/main/ets/Models/AnnotationModels';
 import { SettingsManager, SettingKeys } from '../Framework/Managers/SettingsManager';
 import { getNovelSettingsManager, BrowseHistoryInput } from '../Framework/Novel/NovelSettingsManager';
 import { ThemeManager, ThemeType } from 'manxia_theme/src/main/ets/Framework/Managers/ThemeManager';
@@ -80,7 +80,7 @@ import { ReadAloudPlaybackState } from '../Framework/ReadAloud/ReadAloudTypes';
 import { eventBus, GameEvent, IEventPayload, ReadAloudStatePayload } from '../Framework/EventBus';
 import { getUnifiedAnnotationManager } from '../Framework/Annotations/UnifiedAnnotationManager';
 import { AnnotationCenterPageParams } from './AnnotationCenterPage';
-import { EBook, EBookReadingProgress } from '../Models/EBookModels';
+import { EBook, EBookReadingProgress } from 'manxia_core/src/main/ets/Models/EBookModels';
 import { EBookDataManager } from '../Framework/Data/EBookDataManager';
 import {
   buildLocalTextNovelBookId,

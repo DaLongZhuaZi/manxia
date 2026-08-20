@@ -15,8 +15,8 @@ import {
   ImageSourceType,
   MangaMetadata,
   MangaImageRequestHeader
-} from '../../Models/MangaModels';
-import { DEFAULT_READING_SETTINGS, ReadingSettings } from '../../Models/MangaModels';
+} from 'manxia_core/src/main/ets/Models/MangaModels';
+import { DEFAULT_READING_SETTINGS, ReadingSettings } from 'manxia_core/src/main/ets/Models/MangaModels';
 import { DownloadStatus, MangaStatus, ReadingStatus } from 'manxia_core/src/main/ets/Framework/Types/StatusEnums';
 import { ComicConverter } from '../Utils/ComicConverter';
 import { 

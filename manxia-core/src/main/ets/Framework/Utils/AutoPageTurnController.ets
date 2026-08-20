@@ -4,7 +4,7 @@
  * 负责管理漫画的自动翻页功能
  */
 
-import { logger } from 'manxia_core/src/main/ets/Utils/Logger';
+import { logger } from '../../Utils/Logger';
 
 const TAG = 'AutoPageTurnController';
 

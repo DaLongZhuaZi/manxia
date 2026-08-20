@@ -6,7 +6,7 @@ import { fileIo } from '@kit.CoreFileKit';
 import wantAgent, { WantAgent } from '@ohos.app.ability.wantAgent';
 import { logger } from 'manxia_core/src/main/ets/Utils/Logger';
 import { getContext, isInitialized } from 'manxia_theme/src/main/ets/GlobalContext';
-import { ReadAloudSettings } from '../../Models/TextReaderModels';
+import { ReadAloudSettings } from 'manxia_core/src/main/ets/Models/TextReaderModels';
 import { ReadAloudPlaybackState, ReadAloudSessionContext, ReadAloudStateSnapshot } from './ReadAloudTypes';
 
 const TAG = 'ReadAloudMediaSession';

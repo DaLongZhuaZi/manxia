@@ -5,9 +5,9 @@
  */
 
 import { logger } from 'manxia_core/src/main/ets/Utils/Logger';
-import DynamicUrlResolver, { type UrlResolverConfig } from '../Utils/DynamicUrlResolver';
-import ChineseConverter, { type ChineseConversionConfig } from '../Utils/ChineseConverter';
-import PaginationHandler, { type PaginationConfig, type PaginationResult } from '../Utils/PaginationHandler';
+import DynamicUrlResolver, { type UrlResolverConfig } from 'manxia_core/src/main/ets/Framework/Utils/DynamicUrlResolver';
+import ChineseConverter, { type ChineseConversionConfig } from 'manxia_core/src/main/ets/Framework/Utils/ChineseConverter';
+import PaginationHandler, { type PaginationConfig, type PaginationResult } from 'manxia_core/src/main/ets/Framework/Utils/PaginationHandler';
 import UserAgentManager, { type UserAgentRotationConfig } from '../Network/UserAgentManager';
 import ErrorHandler, { type RetryConfig } from '../Network/ErrorHandler';
 import SessionManager, { type SessionRefreshConfig } from '../Managers/SessionManager';

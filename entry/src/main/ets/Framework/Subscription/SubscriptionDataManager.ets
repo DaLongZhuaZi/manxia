@@ -14,7 +14,7 @@ import {
   SubscriptionProviderType,
   SubscriptionRule,
   SubscriptionTargetType
-} from '../../Models/SubscriptionModels';
+} from 'manxia_core/src/main/ets/Models/SubscriptionModels';
 import {
   SUBSCRIPTION_CREATE_INDEX_SQL,
   SUBSCRIPTION_CREATE_TABLE_SQL

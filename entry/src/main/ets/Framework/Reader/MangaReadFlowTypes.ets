@@ -1,4 +1,4 @@
-import { ReadingMode } from '../../Models/MangaModels';
+import { ReadingMode } from 'manxia_core/src/main/ets/Models/MangaModels';
 
 export enum MangaReadFlowEventType {
   SESSION_START = 'session_start',

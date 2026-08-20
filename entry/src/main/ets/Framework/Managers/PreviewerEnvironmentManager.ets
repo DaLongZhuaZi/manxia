@@ -18,7 +18,7 @@ import {
   FilterSettings,
   DEFAULT_READING_SETTINGS,
   DEFAULT_FILTER_SETTINGS
-} from '../../Models/MangaModels';
+} from 'manxia_core/src/main/ets/Models/MangaModels';
 import { curves, UIContext } from '@kit.ArkUI';
 
 const TAG = 'MangaReaderSettings';

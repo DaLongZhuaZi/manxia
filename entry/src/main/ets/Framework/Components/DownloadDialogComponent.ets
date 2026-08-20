@@ -3,7 +3,7 @@
 
 import { ThemeAwareState, ThemeAwareHelper } from 'manxia_theme/src/main/ets/Framework/Components/ThemeAware';
 import { SourceDialogScaffold } from './SourceDialogScaffold';
-import { UnifiedContent, UnifiedChapter, UnifiedContentType } from '../../Models/UnifiedContentModels';
+import { UnifiedContent, UnifiedChapter, UnifiedContentType } from 'manxia_core/src/main/ets/Models/UnifiedContentModels';
 
 @Component
 export struct DownloadDialogComponent {

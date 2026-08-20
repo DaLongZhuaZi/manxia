@@ -17,7 +17,7 @@ import {
   LegadoWorkflowKind
 } from 'manxia_novel/src/main/ets/Framework/Novel/LegadoCompatibilityTypes';
 import { getNovelInitializer } from '../Novel/NovelInitializer';
-import { NovelBook, NovelReadStatus, NovelSearchResult, NovelSourceInfo } from '../../Models/NovelModels';
+import { NovelBook, NovelReadStatus, NovelSearchResult, NovelSourceInfo } from 'manxia_core/src/main/ets/Models/NovelModels';
 import { NovelSearchPageParams } from '../../pages/NovelBookshelfPage';
 import {
   LegadoExploreDetailOpenResult,

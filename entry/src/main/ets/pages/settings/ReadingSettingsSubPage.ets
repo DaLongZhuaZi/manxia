@@ -23,8 +23,8 @@ import {
   PageTurnAnimationType,
   DoublePagePortraitLayout,
   DoublePageVerticalDirection
-} from '../../Models/MangaModels';
-import { EBookPageMode, EBOOK_THEME_PRESETS, EBookThemePreset, DEFAULT_EBOOK_READING_SETTINGS } from '../../Models/EBookModels';
+} from 'manxia_core/src/main/ets/Models/MangaModels';
+import { EBookPageMode, EBOOK_THEME_PRESETS, EBookThemePreset, DEFAULT_EBOOK_READING_SETTINGS } from 'manxia_core/src/main/ets/Models/EBookModels';
 import { DeviceAdaptationManager, DeviceInfo, DeviceChangeListener, Breakpoint } from 'manxia_theme/src/main/ets/Framework/Managers/DeviceAdaptationManager';
 import {
   TextPageTurnAnimation,
@@ -45,8 +45,8 @@ import {
   TEXT_READER_FONT_SIZE_MIN,
   TEXT_READER_FONT_SIZE_MAX,
   clampTextReaderFontSize
-} from '../../Models/TextReaderModels';
-import { ResponsiveLayoutHelper } from '../../Framework/Utils/ResponsiveLayout';
+} from 'manxia_core/src/main/ets/Models/TextReaderModels';
+import { ResponsiveLayoutHelper } from 'manxia_core/src/main/ets/Framework/Utils/ResponsiveLayout';
 import { EBookDataManager, BackgroundImageInfo } from '../../Framework/Data/EBookDataManager';
 import { fileIo } from '@kit.CoreFileKit';
 import { ReadAloudAvailability, ReadAloudEngineAvailabilityMap } from '../../Framework/ReadAloud/ReadAloudAvailability';

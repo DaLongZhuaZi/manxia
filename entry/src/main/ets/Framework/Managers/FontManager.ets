@@ -12,7 +12,7 @@ import { logger } from 'manxia_core/src/main/ets/Utils/Logger';
 import { preferences } from '@kit.ArkData';
 import { common } from '@kit.AbilityKit';
 import { fileIo } from '@kit.CoreFileKit';
-import { parseFontName, extractFileNameWithoutExt, FontNameInfo } from '../Utils/FontNameParser';
+import { parseFontName, extractFileNameWithoutExt, FontNameInfo } from 'manxia_core/src/main/ets/Framework/Utils/FontNameParser';
 import { uiContextManager } from './UIContextManager';
 
 const TAG = 'FontManager';

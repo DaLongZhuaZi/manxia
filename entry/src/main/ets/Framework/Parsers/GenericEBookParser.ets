@@ -3,7 +3,7 @@
 // 职责: 通用电子书解析器（用于MOBI、AZW、AZW3等格式的占位符实现）
 
 import { EBookParser } from './EBookParser';
-import { EBook, EBookFormat, EBookMetadata, EBookChapter, EBookStatus } from '../../Models/EBookModels';
+import { EBook, EBookFormat, EBookMetadata, EBookChapter, EBookStatus } from 'manxia_core/src/main/ets/Models/EBookModels';
 import { logger } from 'manxia_core/src/main/ets/Utils/Logger';
 import { fileIo } from '@kit.CoreFileKit';
 

@@ -1,4 +1,4 @@
-﻿import { SafeFileUtils } from 'manxia_core/src/main/ets/Utils/SafeFileUtils';
+﻿import { SafeFileUtils } from '../../Utils/SafeFileUtils';
 /**
  * Tar 打包工具
  * 用于将备份数据和媒体文件打包成 .mxbackup 文件
@@ -7,7 +7,7 @@
  */
 
 import { fileIo as fs } from '@kit.CoreFileKit';
-import { logger } from 'manxia_core/src/main/ets/Utils/Logger';
+import { logger } from '../../Utils/Logger';
 import { zlib } from '@kit.BasicServicesKit';
 import { util } from '@kit.ArkTS';
 

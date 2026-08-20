@@ -3,7 +3,7 @@
 // 职责: EPUB格式电子书解析器
 
 import { EBookParser } from './EBookParser';
-import { EBook, EBookFormat, EBookMetadata, EBookChapter, EBookStatus } from '../../Models/EBookModels';
+import { EBook, EBookFormat, EBookMetadata, EBookChapter, EBookStatus } from 'manxia_core/src/main/ets/Models/EBookModels';
 import { logger } from 'manxia_core/src/main/ets/Utils/Logger';
 import { zlib } from '@kit.BasicServicesKit';
 import { fileIo } from '@kit.CoreFileKit';

@@ -1,7 +1,7 @@
 // 职责: 管理漫画阅读器的条漫位置缓存与高度估算，不接触 UI 状态和加载器。
 
 import { logger } from 'manxia_core/src/main/ets/Utils/Logger';
-import { MangaPage } from '../Models/MangaModels';
+import { MangaPage } from 'manxia_core/src/main/ets/Models/MangaModels';
 import { ChapterBoundary, WebtoonDataItem } from './MangaWebtoonTypes';
 
 const TAG = 'MangaWebtoonPositionManager';

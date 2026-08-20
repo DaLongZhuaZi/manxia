@@ -4,7 +4,7 @@ import {
   DoublePageVerticalDirection,
   ReadingDirection,
   ReadingMode
-} from '../Models/MangaModels';
+} from 'manxia_core/src/main/ets/Models/MangaModels';
 
 const TAG = 'MangaInteractionOverlay';
 const OVERLAY_FADE_IN_DELAY_MS: number = 50;

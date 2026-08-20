@@ -5,7 +5,7 @@
  * 支持：元数据编辑、自定义封面、章节列表预览
  */
 
-import { EBookMetadata, EBookChapter } from '../../Models/EBookModels';
+import { EBookMetadata, EBookChapter } from 'manxia_core/src/main/ets/Models/EBookModels';
 import { ThemeAwareState, ThemeAwareHelper } from 'manxia_theme/src/main/ets/Framework/Components/ThemeAware';
 import { FontAwareHelper, FontAwareState } from './FontAware';
 import { DialogSurfaceStyleHelper } from './DialogSurfaceStyleHelper';

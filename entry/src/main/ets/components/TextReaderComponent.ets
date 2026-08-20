@@ -37,8 +37,8 @@ import {
   BackgroundType,
   DEFAULT_TEXT_READER_SETTINGS,
   clampTextReaderFontSize
-} from '../Models/TextReaderModels';
-import { HighlightLineType } from '../Models/AnnotationModels';
+} from 'manxia_core/src/main/ets/Models/TextReaderModels';
+import { HighlightLineType } from 'manxia_core/src/main/ets/Models/AnnotationModels';
 import { PageCurlEffectV2, PageCurlConfigV2, CurlStartPosition } from './PageCurlEffectV2';
 import { DualPageCurlEffect } from './DualPageCurlEffect';
 import { InteractionManager, VibrationScene } from '../Framework/Managers/InteractionManager';

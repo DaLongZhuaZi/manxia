@@ -29,7 +29,7 @@ import {
   TEXT_READER_FONT_SIZE_MIN,
   TEXT_READER_FONT_SIZE_MAX,
   clampTextReaderFontSize
-} from '../Models/TextReaderModels';
+} from 'manxia_core/src/main/ets/Models/TextReaderModels';
 import { photoAccessHelper } from '@kit.MediaLibraryKit';
 import fs from '@ohos.file.fs';
 import { logger } from 'manxia_core/src/main/ets/Utils/Logger';

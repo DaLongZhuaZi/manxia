@@ -5,7 +5,7 @@
 
 import { util } from '@kit.ArkTS';
 import { getContext } from 'manxia_theme/src/main/ets/GlobalContext';
-import { EBook, EBookFormat, EBookStatus, EBookChapter, EBookMetadata, DEFAULT_EBOOK_READING_SETTINGS, EBookReaderEngine } from '../Models/EBookModels';
+import { EBook, EBookFormat, EBookStatus, EBookChapter, EBookMetadata, DEFAULT_EBOOK_READING_SETTINGS, EBookReaderEngine } from 'manxia_core/src/main/ets/Models/EBookModels';
 
 const USER_MANUAL_ID = 'user_manual_006';
 const USER_MANUAL_RAWFILE_PATH = 'user_manual.md';

@@ -26,9 +26,9 @@ import {
   resolveRuntimePageIndexFromLegacyAnchor
 } from '../Framework/Adapters/EBookImageReaderAdapter';
 import { buildNovelReaderParamsFromTxtEBook } from '../Framework/Adapters/LocalTextNovelAdapter';
-import { UnifiedContentType } from '../Models/UnifiedContentModels';
-import { UnifiedAnnotationRecord, UnifiedAnnotationType, HighlightLineType, AnnotationAnchor } from '../Models/AnnotationModels';
-import { EBookFormat, EBookReadingProgress } from '../Models/EBookModels';
+import { UnifiedContentType } from 'manxia_core/src/main/ets/Models/UnifiedContentModels';
+import { UnifiedAnnotationRecord, UnifiedAnnotationType, HighlightLineType, AnnotationAnchor } from 'manxia_core/src/main/ets/Models/AnnotationModels';
+import { EBookFormat, EBookReadingProgress } from 'manxia_core/src/main/ets/Models/EBookModels';
 import { AppGuideOverlay, GuideHighlightRect } from '../Framework/Components/AppGuideOverlay';
 import { ensureGuideAnchorVisibleInScroller, resolveGuideHighlightRectInRoot } from '../Framework/Components/AppGuideSupport';
 import { AppGuideManager, AppGuidePageId, AppGuideStep } from '../Framework/Managers/AppGuideManager';

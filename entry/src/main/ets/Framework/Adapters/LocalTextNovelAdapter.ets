@@ -1,4 +1,4 @@
-import { EBook, EBookReadingSettings, DEFAULT_EBOOK_READING_SETTINGS, EBookPageMode } from '../../Models/EBookModels';
+import { EBook, EBookReadingSettings, DEFAULT_EBOOK_READING_SETTINGS, EBookPageMode } from 'manxia_core/src/main/ets/Models/EBookModels';
 import {
   TextReaderSettings,
   DEFAULT_TEXT_READER_SETTINGS,
@@ -8,7 +8,7 @@ import {
   TextAlignment,
   SavedBackgroundImage,
   clampTextReaderFontSize
-} from '../../Models/TextReaderModels';
+} from 'manxia_core/src/main/ets/Models/TextReaderModels';
 import { NovelReaderPageParams } from '../../pages/NovelBookshelfPage';
 
 export const LOCAL_TXT_NOVEL_SOURCE_ID: string = 'local_txt_ebook';

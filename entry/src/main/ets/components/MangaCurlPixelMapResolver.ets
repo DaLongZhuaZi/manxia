@@ -1,6 +1,6 @@
 // Responsibility: resolve curl PixelMap slots and readiness without owning PixelMap objects.
 
-import { ReadingDirection } from '../Models/MangaModels';
+import { ReadingDirection } from 'manxia_core/src/main/ets/Models/MangaModels';
 
 export enum MangaCurlPixelMapSlot {
   CURRENT = 'current',

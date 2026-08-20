@@ -17,14 +17,14 @@ import { getNovelSettingsManager, BrowseHistoryInput } from '../Framework/Novel/
 import { getNovelCoverGenerator, NovelCoverGenerator } from 'manxia_novel/src/main/ets/Framework/Novel/NovelCoverGenerator';
 import { getNovelSourceSearchService, SourceSearchResult, SearchTaskHandle } from '../Framework/Novel/NovelSourceSearchService';
 import { LegadoBook, LegadoChapter } from 'manxia_novel/src/main/ets/Framework/Novel/LegadoSourceTypes';
-import { NovelBook, NovelReadStatus, NovelSearchResult } from '../Models/NovelModels';
+import { NovelBook, NovelReadStatus, NovelSearchResult } from 'manxia_core/src/main/ets/Models/NovelModels';
 import { ThemeAwareState, ThemeAwareHelper } from 'manxia_theme/src/main/ets/Framework/Components/ThemeAware';
 import { ThemeManager, ThemeType } from 'manxia_theme/src/main/ets/Framework/Managers/ThemeManager';
 import { FontAwareHelper, FontAwareState } from '../Framework/Components/FontAware';
 import { NovelDetailPageParams, NovelReaderPageParams } from './NovelBookshelfPage';
 import { startBookOpenTransitionWithComponentId } from '../components/BookTransitionOverlay';
 import { openNovelReaderInIsolatedAbility } from '../Framework/Reader/NovelReaderAbilityLauncher';
-import { TextReaderSettings, DEFAULT_TEXT_READER_SETTINGS, BackgroundType, DEFAULT_TEXT_STYLE, TextAlignment } from '../Models/TextReaderModels';
+import { TextReaderSettings, DEFAULT_TEXT_READER_SETTINGS, BackgroundType, DEFAULT_TEXT_STYLE, TextAlignment } from 'manxia_core/src/main/ets/Models/TextReaderModels';
 import { TextReaderSettingsPanel } from '../components/TextReaderSettingsPanel';
 import { SettingsManager, SettingKeys } from '../Framework/Managers/SettingsManager';
 import { SymbolGlyphModifier } from '@kit.ArkUI';

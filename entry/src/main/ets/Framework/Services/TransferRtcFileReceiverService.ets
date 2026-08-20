@@ -23,7 +23,7 @@ import {
   cloneTransferRtcFileReceiverRuntime,
   createEmptyTransferRtcFileReceiverRuntime,
   parseTransferDataChannelFileMessage
-} from '../../Models/TransferModels';
+} from 'manxia_core/src/main/ets/Models/TransferModels';
 
 const TAG = 'TransferRtcFileReceiver';
 

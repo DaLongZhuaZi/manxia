@@ -8,7 +8,7 @@
 
 import { logger } from 'manxia_core/src/main/ets/Utils/Logger';
 import { preferences } from '@kit.ArkData';
-import { ValidationResult } from '../Utils/DataValidator';
+import { ValidationResult } from 'manxia_core/src/main/ets/Framework/Utils/DataValidator';
 
 const TAG = 'CacheConfigManager';
 

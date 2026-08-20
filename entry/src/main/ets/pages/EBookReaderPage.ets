@@ -25,7 +25,7 @@ import {
   EBookFormat,
   EBookContentMode,
   DEFAULT_EBOOK_READING_SETTINGS
-} from '../Models/EBookModels';
+} from 'manxia_core/src/main/ets/Models/EBookModels';
 import { SettingsManager, SettingKeys } from '../Framework/Managers/SettingsManager';
 import { EBookDataManager } from '../Framework/Data/EBookDataManager';
 import { PdfViewerComponent } from '../Framework/Components/PdfViewerComponent';
@@ -57,7 +57,7 @@ import {
   ImageSourceType,
   ReadingSettings as MangaReadingSettings,
   DEFAULT_READING_SETTINGS
-} from '../Models/MangaModels';
+} from 'manxia_core/src/main/ets/Models/MangaModels';
 import { DownloadStatus } from 'manxia_core/src/main/ets/Framework/Types/StatusEnums';
 import {
   TextReaderSettings,
@@ -80,7 +80,7 @@ import {
   TextChapter,
   PRESET_BACKGROUNDS,
   PresetBackground
-} from '../Models/TextReaderModels';
+} from 'manxia_core/src/main/ets/Models/TextReaderModels';
 import { eventBus, GameEvent, BasePayload, IEventPayload, ReadAloudStatePayload } from '../Framework/EventBus';
 import { KeyCode, inputConsumer } from '@kit.InputKit';
 import type { KeyEvent as InputKeyEvent } from '@kit.InputKit';
@@ -93,9 +93,9 @@ import {
   persistGlobalReadAloudSettings as persistStoredGlobalReadAloudSettings
 } from '../Framework/ReadAloud/ReadAloudSettingsStore';
 import { ReadAloudSettingsInfoPanel } from '../components/ReadAloudSettingsInfoPanel';
-import { UnifiedContentType } from '../Models/UnifiedContentModels';
+import { UnifiedContentType } from 'manxia_core/src/main/ets/Models/UnifiedContentModels';
 import { getUnifiedAnnotationManager } from '../Framework/Annotations/UnifiedAnnotationManager';
-import { AnnotationAnchor, UnifiedAnnotationType } from '../Models/AnnotationModels';
+import { AnnotationAnchor, UnifiedAnnotationType } from 'manxia_core/src/main/ets/Models/AnnotationModels';
 import { MangaReadFlowMonitor } from '../Framework/Reader/MangaReadFlowMonitor';
 import {
   MangaReadFlowEvent,

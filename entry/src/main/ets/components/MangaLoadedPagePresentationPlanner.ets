@@ -1,6 +1,6 @@
 // 职责: 规划 PixelMap 加载完成后的展示刷新动作，不直接执行 UI 操作。
 
-import { ReadingMode } from '../Models/MangaModels';
+import { ReadingMode } from 'manxia_core/src/main/ets/Models/MangaModels';
 
 export class MangaLoadedPagePresentationContext {
   public readingMode: ReadingMode = ReadingMode.SINGLE_PAGE;

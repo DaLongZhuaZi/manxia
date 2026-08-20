@@ -4,7 +4,7 @@ import {
   NetworkFolderConnection,
   normalizeConnectionBasePath,
   normalizeRelativeNetworkFolderPath
-} from '../../Models/NetworkFolderModels';
+} from 'manxia_core/src/main/ets/Models/NetworkFolderModels';
 import webdavNativeModuleImport from 'libwebdav_native.so';
 
 const TAG = 'SMBClientAdapter';

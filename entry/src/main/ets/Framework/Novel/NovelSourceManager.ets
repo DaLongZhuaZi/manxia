@@ -35,7 +35,7 @@ import {
   LegadoWorkflowOutputKind,
   LegadoWorkflowTocResult
 } from 'manxia_novel/src/main/ets/Framework/Novel/LegadoCompatibilityTypes';
-import { NovelSourceInfo, NovelSearchResult } from '../../Models/NovelModels';
+import { NovelSourceInfo, NovelSearchResult } from 'manxia_core/src/main/ets/Models/NovelModels';
 import { getNovelDataManager } from './NovelDataManager';
 import { getLegadoMangaSourceBridge } from './LegadoMangaSourceBridge';
 import { LargeFileJSONParser, ParseProgressCallback, ParseConfig } from 'manxia_novel/src/main/ets/Framework/Novel/LargeFileJSONParser';

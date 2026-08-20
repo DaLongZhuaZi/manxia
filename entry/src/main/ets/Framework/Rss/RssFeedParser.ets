@@ -1,4 +1,4 @@
-﻿import { RssFeedFormat, RssFeedItem, RssSubscriptionSource } from '../../Models/RssSubscriptionModels';
+﻿import { RssFeedFormat, RssFeedItem, RssSubscriptionSource } from 'manxia_core/src/main/ets/Models/RssSubscriptionModels';
 import { logger } from 'manxia_core/src/main/ets/Utils/Logger';
 import { LegadoRuleAnalyzer } from '../Novel/LegadoRuleAnalyzer';
 

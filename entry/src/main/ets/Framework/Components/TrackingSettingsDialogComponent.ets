@@ -37,10 +37,10 @@ import {
 import {
   UnifiedContent,
   UnifiedContentType
-} from '../../Models/UnifiedContentModels';
+} from 'manxia_core/src/main/ets/Models/UnifiedContentModels';
 import { MangaAdapter, NovelAdapter } from '../Adapters/UnifiedContentAdapter';
-import { Manga } from '../../Models/MangaModels';
-import { NovelBook, NovelReadStatus } from '../../Models/NovelModels';
+import { Manga } from 'manxia_core/src/main/ets/Models/MangaModels';
+import { NovelBook, NovelReadStatus } from 'manxia_core/src/main/ets/Models/NovelModels';
 import { RemoteLibraryMangaBridge } from '../Source/RemoteLibraryMangaBridge';
 import { getNovelDataManager } from '../Novel/NovelDataManager';
 

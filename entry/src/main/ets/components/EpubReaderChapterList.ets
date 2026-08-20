@@ -1,6 +1,6 @@
 ﻿import { logger } from 'manxia_core/src/main/ets/Utils/Logger';
 import { ThemeManager } from 'manxia_theme/src/main/ets/Framework/Managers/ThemeManager';
-import { EBookChapter } from '../Models/EBookModels';
+import { EBookChapter } from 'manxia_core/src/main/ets/Models/EBookModels';
 import { UIContext, display } from '@kit.ArkUI';
 
 const TAG = 'EpubReaderChapterList';

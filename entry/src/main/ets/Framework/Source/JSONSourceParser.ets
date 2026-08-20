@@ -5,8 +5,8 @@ import { SafeUtils } from 'manxia_core/src/main/ets/Utils/SafeUtils';
  */
 
 import { logger } from 'manxia_core/src/main/ets/Utils/Logger';
-import { JSONPathParser } from '../Utils/JSONPathParser';
-import { VariableReplacer, VariableContext } from '../Utils/VariableReplacer';
+import { JSONPathParser } from 'manxia_core/src/main/ets/Framework/Utils/JSONPathParser';
+import { VariableReplacer, VariableContext } from 'manxia_core/src/main/ets/Framework/Utils/VariableReplacer';
 
 const TAG = 'JSONSourceParser';
 

@@ -16,9 +16,9 @@ import {
   MangaMetadata,
   MangaPage,
   ReadingProgress
-} from '../../Models/MangaModels';
-import { DEFAULT_READING_SETTINGS } from '../../Models/MangaModels';
-import { NovelSearchResult } from '../../Models/NovelModels';
+} from 'manxia_core/src/main/ets/Models/MangaModels';
+import { DEFAULT_READING_SETTINGS } from 'manxia_core/src/main/ets/Models/MangaModels';
+import { NovelSearchResult } from 'manxia_core/src/main/ets/Models/NovelModels';
 import { PageInfo as SourcePageInfo, PageRequestHeader } from 'manxia_source_engine/src/main/ets/Framework/WebView/MangaSourceTypes';
 import { SafeUtils } from 'manxia_core/src/main/ets/Utils/SafeUtils';
 import {

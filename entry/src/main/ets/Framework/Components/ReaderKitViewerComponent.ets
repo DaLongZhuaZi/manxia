@@ -8,7 +8,7 @@ import { SafeUtils } from 'manxia_core/src/main/ets/Utils/SafeUtils';
  */
 
 import { logger } from 'manxia_core/src/main/ets/Utils/Logger';
-import { EBook, EBookChapter, EBookReadingSettings, EBookPageMode, DEFAULT_EBOOK_READING_SETTINGS } from '../../Models/EBookModels';
+import { EBook, EBookChapter, EBookReadingSettings, EBookPageMode, DEFAULT_EBOOK_READING_SETTINGS } from 'manxia_core/src/main/ets/Models/EBookModels';
 import { fileIo } from '@kit.CoreFileKit';
 import { bookParser, readerCore, ReadPageComponent } from '@kit.ReaderKit';
 import { common } from '@kit.AbilityKit';

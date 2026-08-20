@@ -1,6 +1,6 @@
 import { logger } from 'manxia_core/src/main/ets/Utils/Logger';
-import { NovelSearchResult } from '../../Models/NovelModels';
-import { UnifiedContentType, UnifiedDetailPageParams } from '../../Models/UnifiedContentModels';
+import { NovelSearchResult } from 'manxia_core/src/main/ets/Models/NovelModels';
+import { UnifiedContentType, UnifiedDetailPageParams } from 'manxia_core/src/main/ets/Models/UnifiedContentModels';
 import { MangaDetailPageParams } from '../../pages/MangaDetailPage';
 import { NovelDetailPageParams } from '../../pages/NovelBookshelfPage';
 import { DetailPageType, PageSettingsHelper } from '../../pages/settings/PageSettingsSubPage';

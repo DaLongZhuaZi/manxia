@@ -1,4 +1,4 @@
-import { ImageSourceType, MangaPage } from '../../Models/MangaModels';
+import { ImageSourceType, MangaPage } from 'manxia_core/src/main/ets/Models/MangaModels';
 import { LoadOptions, RequestHeaders } from '../Cache/ImageCacheManager';
 import {
   MangaAssetLoadReason,

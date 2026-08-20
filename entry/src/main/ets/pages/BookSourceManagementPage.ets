@@ -11,7 +11,7 @@ import { SourceDialogScaffold } from '../Framework/Components/SourceDialogScaffo
 import { ThemeManager } from 'manxia_theme/src/main/ets/Framework/Managers/ThemeManager';
 import { getNovelSourceManager, NovelSourceManager } from '../Framework/Novel/NovelSourceManager';
 import { getNovelDataManager } from '../Framework/Novel/NovelDataManager';
-import { NovelSourceInfo } from '../Models/NovelModels';
+import { NovelSourceInfo } from 'manxia_core/src/main/ets/Models/NovelModels';
 import { promptAction } from '@kit.ArkUI';
 import { picker } from '@kit.CoreFileKit';
 import { pasteboard } from '@kit.BasicServicesKit';

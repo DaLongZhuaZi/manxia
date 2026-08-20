@@ -5,7 +5,7 @@ import {
   ReadAloudSettings,
   isRemoteReadAloudPresetConfigEqual,
   normalizeReadAloudSettings
-} from '../../Models/TextReaderModels';
+} from 'manxia_core/src/main/ets/Models/TextReaderModels';
 import { eventBus, GameEvent, ReadAloudStatePayload } from '../EventBus';
 import {
   ReadAloudPlaybackState,

@@ -15,7 +15,7 @@ import {
   EBookPageMode,
   EBookContentMode,
   EBookReaderEngine
-} from '../../Models/EBookModels';
+} from 'manxia_core/src/main/ets/Models/EBookModels';
 import { logger } from 'manxia_core/src/main/ets/Utils/Logger';
 import { fileIo } from '@kit.CoreFileKit';
 import { util } from '@kit.ArkTS';

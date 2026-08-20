@@ -5,7 +5,7 @@
 
 import { logger } from 'manxia_core/src/main/ets/Utils/Logger';
 import { ThemeManager } from 'manxia_theme/src/main/ets/Framework/Managers/ThemeManager';
-import { MangaChapter } from '../Models/MangaModels';
+import { MangaChapter } from 'manxia_core/src/main/ets/Models/MangaModels';
 import { curves, UIContext, display } from '@kit.ArkUI';
 import { ThemeAwareState, ThemeAwareHelper } from 'manxia_theme/src/main/ets/Framework/Components/ThemeAware';
 import { ThemeType } from 'manxia_theme/src/main/ets/Framework/Managers/ThemeManager';

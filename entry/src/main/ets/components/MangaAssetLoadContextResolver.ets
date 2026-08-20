@@ -5,7 +5,7 @@ import {
   MangaChapter,
   MangaImageRequestHeader,
   MangaPage
-} from '../Models/MangaModels';
+} from 'manxia_core/src/main/ets/Models/MangaModels';
 import { RequestHeaders } from '../Framework/Cache/ImageCacheManager';
 import { MangaAssetRequestContext } from '../Framework/Reader/MangaAssetRequestFactory';
 import { MangaAssetLoadReason } from '../Framework/Reader/MangaAssetTypes';
