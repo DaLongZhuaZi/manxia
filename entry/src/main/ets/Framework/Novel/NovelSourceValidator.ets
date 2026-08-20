@@ -15,7 +15,7 @@ import { LegadoExecutionErrorCode, LegadoV2ExecutionPolicy } from 'manxia_novel/
 import { LegadoExecutionCancellationToken } from 'manxia_novel/src/main/ets/Framework/Novel/LegadoExecutionCancellation';
 import { awaitNovelSourceValidationTask } from 'manxia_novel/src/main/ets/Framework/Novel/NovelSourceValidationDeadline';
 import { NovelSearchResult } from 'manxia_core/src/main/ets/Models/NovelModels';
-import { AppNotificationManager } from '../Managers/NotificationManager';
+import { AppNotificationManager } from 'manxia_core/src/main/ets/Framework/Managers/NotificationManager';
 import { SettingKeys, SettingsManager } from '../Managers/SettingsManager';
 import { BackgroundTaskHelper } from 'manxia_network/src/main/ets/Framework/Task/BackgroundTaskHelper';
 import { common } from '@kit.AbilityKit';

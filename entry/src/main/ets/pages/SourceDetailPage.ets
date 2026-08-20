@@ -33,7 +33,7 @@ import { image } from '@kit.ImageKit';
 import { ImageCacheManager, LoadOptions, RequestHeaderEntry, RequestHeaders } from '../Framework/Cache/ImageCacheManager';
 import { CoverCacheManager } from '../Framework/Cache/CoverCacheManager';
 import { DeviceAdaptationManager, DeviceInfo, DeviceChangeListener, Breakpoint } from 'manxia_theme/src/main/ets/Framework/Managers/DeviceAdaptationManager';
-import { AppNotificationManager } from '../Framework/Managers/NotificationManager';
+import { AppNotificationManager } from 'manxia_core/src/main/ets/Framework/Managers/NotificationManager';
 import { CredentialLoginDialog } from '../Framework/Components/CredentialLoginDialog';
 import { SourceCredentials } from '../Framework/Data/DataManager';
 import { ProxyManager } from '../Framework/Network/ProxyManager';

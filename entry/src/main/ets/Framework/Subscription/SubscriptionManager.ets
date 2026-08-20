@@ -41,7 +41,7 @@ import {
   MangaChapterDownloadItem,
   MangaBatchDownloadResult
 } from '../Download/UnifiedDownloadManager';
-import { AppNotificationManager, NotificationType } from '../Managers/NotificationManager';
+import { AppNotificationManager, NotificationType } from 'manxia_core/src/main/ets/Framework/Managers/NotificationManager';
 import { Manga, MangaChapter, MangaPage } from 'manxia_core/src/main/ets/Models/MangaModels';
 import { ParsedRemoteMangaId, RemoteLibraryMangaBridge } from '../Source/RemoteLibraryMangaBridge';
 import { BookshelfCategoryManager, CategoryItem, ContentType } from '../Data/BookshelfCategoryManager';

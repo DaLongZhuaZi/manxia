@@ -27,7 +27,7 @@ import { UniversalDialogManager, ButtonStyle } from '../Framework/Components/Uni
 import { DeepLinkRouter, DeepLinkResult, DeepLinkSearchResult, DeepLinkSourceResult, DeepLinkNovelSearchResult, DeepLinkNovelSourceResult, DeepLinkNovelDetailResult } from '../Framework/Utils/DeepLinkRouter';
 import { GlobalBackgroundLayer, GlobalBackgroundLayerMode } from 'manxia_theme/src/main/ets/Framework/Components/GlobalBackgroundLayer';
 import { SharedPageBackgroundLayer } from '../Framework/Components/SharedPageBackgroundLayer';
-import { AppNotificationManager } from '../Framework/Managers/NotificationManager';
+import { AppNotificationManager } from 'manxia_core/src/main/ets/Framework/Managers/NotificationManager';
 import { AppGuideOverlay, GuideHighlightRect } from '../Framework/Components/AppGuideOverlay';
 import { ensureGuideAnchorVisibleInScroller, resolveGuideHighlightRectInRoot } from '../Framework/Components/AppGuideSupport';
 import {

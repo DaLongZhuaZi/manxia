@@ -12,7 +12,7 @@ import { FontAwareHelper, FontAwareState } from 'manxia_theme/src/main/ets/Frame
 import { WelcomeGuideManager, GuideStep, GuideFlowMode } from '../Framework/Managers/WelcomeGuideManager';
 import { SettingsManager, SettingKeys } from '../Framework/Managers/SettingsManager';
 import { DataManager } from '../Framework/Data/DataManager';
-import { AppNotificationManager } from '../Framework/Managers/NotificationManager';
+import { AppNotificationManager } from 'manxia_core/src/main/ets/Framework/Managers/NotificationManager';
 import { InteractionManager } from 'manxia_core/src/main/ets/Framework/Managers/InteractionManager';
 import { ContentFilterManager } from 'manxia_core/src/main/ets/Framework/Managers/ContentFilterManager';
 import {

@@ -11,7 +11,7 @@ import fs from '@ohos.file.fs';
 import { DownloadDirManager } from '../Storage/DownloadDirManager';
 import http from '@ohos.net.http';
 import { BusinessError } from '@kit.BasicServicesKit';
-import { AppNotificationManager, NotificationType } from '../Managers/NotificationManager';
+import { AppNotificationManager, NotificationType } from 'manxia_core/src/main/ets/Framework/Managers/NotificationManager';
 import { DataManager, DownloadTask, DownloadTaskInput, DownloadTaskUpdate, OnlineComicInfo, OnlineChapterInfo } from '../Data/DataManager';
 import { DatabaseManager } from 'manxia_core/src/main/ets/Framework/Database/DatabaseManager';
 import { ComicSourceDatabaseRecord, GenericQueryRecord, UpdateRecordData } from 'manxia_core/src/main/ets/Framework/Database/DatabaseTypes';

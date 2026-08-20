@@ -22,7 +22,7 @@ import { getNovelSourceManager } from './NovelSourceManager';
 import { LegadoChapter, LegadoBookSourceType } from 'manxia_novel/src/main/ets/Framework/Novel/LegadoSourceTypes';
 import { NovelDownloadTask, NovelCacheInfo, BookMetadata } from 'manxia_core/src/main/ets/Models/NovelModels';
 import { ChapterOrderCacheRemapResult, ChapterOrderIndexRemap } from 'manxia_core/src/main/ets/Models/UnifiedContentModels';
-import { AppNotificationManager } from '../Managers/NotificationManager';
+import { AppNotificationManager } from 'manxia_core/src/main/ets/Framework/Managers/NotificationManager';
 import { SandboxManager } from 'manxia_core/src/main/ets/Framework/Storage/SandboxManager';
 import { fileIo } from '@kit.CoreFileKit';
 import { http } from '@kit.NetworkKit';

@@ -5,7 +5,7 @@
  */
 
 import { common } from '@kit.AbilityKit';
-import { AppNotificationManager } from '../Managers/NotificationManager';
+import { AppNotificationManager } from 'manxia_core/src/main/ets/Framework/Managers/NotificationManager';
 import { logger } from 'manxia_core/src/main/ets/Utils/Logger';
 import { generateUUID } from 'manxia_core/src/main/ets/Framework/Utils/UUIDGenerator';
 import { BackgroundTaskHelper } from 'manxia_network/src/main/ets/Framework/Task/BackgroundTaskHelper';

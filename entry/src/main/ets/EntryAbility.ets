@@ -20,7 +20,7 @@ import { DeviceAdaptationManager } from 'manxia_theme/src/main/ets/Framework/Man
 import { SettingsManager, SettingKeys } from './Framework/Managers/SettingsManager';
 import { AnimationSettingsManager } from './Framework/Animation/AnimationSettingsManager';
 import { VisualEffectsManager } from './Framework/Managers/VisualEffectsManager';
-import { AppNotificationManager } from './Framework/Managers/NotificationManager';
+import { AppNotificationManager } from 'manxia_core/src/main/ets/Framework/Managers/NotificationManager';
 import { MangaDownloadManager } from './Framework/Download/DownloadManager';
 import { getNovelSourceValidator } from './Framework/Novel/NovelSourceValidator';
 import { uiContextManager } from 'manxia_theme/src/main/ets/Framework/Managers/UIContextManager';
