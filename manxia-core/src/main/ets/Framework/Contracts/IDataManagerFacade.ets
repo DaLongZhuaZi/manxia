@@ -15,6 +15,7 @@ export interface IDataManagerFacade {
   updateComicSourceCookies(sourceId: number, cookiesJson: string): Promise<void>;
   clearComicSourceCookies(sourceId: number): Promise<void>;
   getUserSetting(userId: string, key: string): Promise<string | null>;
+  saveUserSetting(userId: string, key: string, value: string): Promise<void>;
   getAllSettings(): Promise<UserSettingsDatabaseRecord[]>;
   saveSetting(key: string, value: string, type: string): Promise<void>;
   deleteSetting(key: string): Promise<void>;

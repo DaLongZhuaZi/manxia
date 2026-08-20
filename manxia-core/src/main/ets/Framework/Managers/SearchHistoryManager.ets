@@ -1,7 +1,7 @@
 // 文件路径: entry/src/main/ets/Framework/Managers/SearchHistoryManager.ets
 // 职责: 提供搜索历史在应用内数据库的读取、保存、添加与清空方法，避免使用系统级存储
 
-import { DataManager } from '../Data/DataManager';
+import { IDataManagerFacade } from 'manxia_core/src/main/ets/Framework/Contracts/IDataManagerFacade';
 import { logger } from 'manxia_core/src/main/ets/Utils/Logger';
 
 // 明确的管理器接口，确保类型安全
@@ -12,9 +12,9 @@ const TAG: string = 'SearchHistoryManager';
 
 // 具体实现，使用应用内数据库的 user_settings 表进行持久化
 export class SearchHistoryManager implements ISearchHistoryManager {
-  private dataManager: DataManager;
+  private dataManager: IDataManagerFacade;
 
-  constructor(dataManager: DataManager) {
+  constructor(dataManager: IDataManagerFacade) {
     this.dataManager = dataManager;
   }
 
