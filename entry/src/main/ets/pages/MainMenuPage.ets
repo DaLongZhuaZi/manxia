@@ -39,7 +39,7 @@ import {
   HoldingAwarenessSide,
   HoldingAwarenessSource,
   HoldingUiAnchor
-} from '../Framework/Managers/HoldingAwarenessManager';
+} from 'manxia_core/src/main/ets/Framework/Managers/HoldingAwarenessManager';
 import { uiContextManager } from 'manxia_theme/src/main/ets/Framework/Managers/UIContextManager';
 
 // 导入页面组件

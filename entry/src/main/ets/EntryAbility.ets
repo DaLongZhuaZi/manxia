@@ -35,7 +35,7 @@ import { InitPhase } from 'manxia_core/src/main/ets/Framework/Managers/AppInitia
 import { getCrashRecorderService } from './Framework/Debug/CrashRecorderService';
 import { getErrorMonitorService } from './Framework/Debug/ErrorMonitorService';
 import { getErrorRecordManager } from './Framework/Debug/ErrorRecordManager';
-import { getHoldingAwarenessManager } from './Framework/Managers/HoldingAwarenessManager';
+import { getHoldingAwarenessManager } from 'manxia_core/src/main/ets/Framework/Managers/HoldingAwarenessManager';
 import { initializeReaderKitRuntimeGate } from './Framework/Initialization/ReaderKitFeatureGate';
 import { ReaderHostWindowRestoreCoordinator } from 'manxia_reader_ui/src/main/ets/Framework/Reader/ReaderHostWindowRestoreCoordinator';
 import {

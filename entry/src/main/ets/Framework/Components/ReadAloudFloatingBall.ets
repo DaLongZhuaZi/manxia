@@ -15,7 +15,7 @@ import {
   HoldingAwarenessFeature,
   HoldingAwarenessManager,
   HoldingUiAnchor
-} from '../Managers/HoldingAwarenessManager';
+} from 'manxia_core/src/main/ets/Framework/Managers/HoldingAwarenessManager';
 
 const TAG = 'ReadAloudFloatingBall';
 const FLOATING_BALL_REFRESH_INTERVAL_MS: number = 400;

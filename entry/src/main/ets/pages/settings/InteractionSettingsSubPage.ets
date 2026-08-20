@@ -29,7 +29,7 @@ import {
   HoldingAwarenessSide,
   HoldingAwarenessSnapshot,
   HoldingAwarenessSource
-} from '../../Framework/Managers/HoldingAwarenessManager';
+} from 'manxia_core/src/main/ets/Framework/Managers/HoldingAwarenessManager';
 
 const TAG = 'InteractionSettingsSubPage';
 const TITLE_BAR_HEIGHT_MINI: number = 56;

@@ -2,7 +2,8 @@ import { abilityAccessCtrl, bundleManager, common, Permissions } from '@kit.Abil
 import motion from '@ohos.multimodalAwareness.motion';
 import { logger } from 'manxia_core/src/main/ets/Utils/Logger';
 import { getContext, isInitialized as isGlobalContextInitialized } from 'manxia_theme/src/main/ets/GlobalContext';
-import { SettingsManager, SettingKeys } from './SettingsManager';
+import { ISettingsManagerFacade, SettingsManagerHolder } from 'manxia_core/src/main/ets/Framework/Contracts/ISettingsManagerFacade';
+import { SettingKeys } from 'manxia_core/src/main/ets/Framework/Contracts/SettingKeys';
 
 const TAG = 'HoldingAwarenessManager';
 
@@ -120,7 +121,7 @@ export class HoldingAwarenessManager {
   private selfTokenId: number = -1;
   private holdingSubscribed: boolean = false;
   private operatingSubscribed: boolean = false;
-  private settingsManager: SettingsManager = SettingsManager.getInstance();
+  private get settingsManager(): ISettingsManagerFacade { return SettingsManagerHolder.get(); }
   private detectGestureGranted: boolean = false;
   private activityMotionGranted: boolean = false;
   private latestHoldingStatus: motion.HoldingHandStatus = motion.HoldingHandStatus.UNKNOWN_STATUS;

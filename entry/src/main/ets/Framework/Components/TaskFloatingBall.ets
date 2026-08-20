@@ -13,7 +13,7 @@ import {
   HoldingAwarenessFeature,
   HoldingAwarenessManager,
   HoldingUiAnchor
-} from '../Managers/HoldingAwarenessManager';
+} from 'manxia_core/src/main/ets/Framework/Managers/HoldingAwarenessManager';
 
 const TAG = 'TaskFloatingBall';
 const TASK_FLOATING_BALL_DEFAULT_LEFT_X: number = 20;

@@ -10,7 +10,7 @@ import {
   HoldingAwarenessFeature,
   HoldingAwarenessManager,
   HoldingUiAnchor
-} from '../Framework/Managers/HoldingAwarenessManager';
+} from 'manxia_core/src/main/ets/Framework/Managers/HoldingAwarenessManager';
 import {
   GlobalAnimationManager,
   AnimationType,
