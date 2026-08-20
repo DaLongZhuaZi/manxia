@@ -14,7 +14,7 @@ import { getNovelDataManager, NovelDataManager } from '../Novel/NovelDataManager
 import { getNovelSourceManager, NovelSourceManager } from '../Novel/NovelSourceManager';
 import { getNovelSettingsManager, NovelSettingsManager } from '../Novel/NovelSettingsManager';
 import { SettingsManager, SettingKeys } from './SettingsManager';
-import { AppInfoManager } from './AppInfoManager';
+import { AppInfoManager } from 'manxia_core/src/main/ets/Framework/Managers/AppInfoManager';
 import { getTarPackager, TarPackager } from 'manxia_core/src/main/ets/Framework/Utils/TarPackager';
 import { preferences } from '@kit.ArkData';
 import { getContext as getGlobalContext } from 'manxia_theme/src/main/ets/GlobalContext';

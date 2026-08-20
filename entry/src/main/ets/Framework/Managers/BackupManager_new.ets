@@ -11,7 +11,7 @@ import { getNovelDataManager, NovelDataManager } from '../Novel/NovelDataManager
 import { getNovelSourceManager, NovelSourceManager } from '../Novel/NovelSourceManager';
 import { getNovelSettingsManager, NovelSettingsManager } from '../Novel/NovelSettingsManager';
 import { SettingsManager } from './SettingsManager';
-import { AppInfoManager } from './AppInfoManager';
+import { AppInfoManager } from 'manxia_core/src/main/ets/Framework/Managers/AppInfoManager';
 import {
   BackupData,
   BackupMetadata,

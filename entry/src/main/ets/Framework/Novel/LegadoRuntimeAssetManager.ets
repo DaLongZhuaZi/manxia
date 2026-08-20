@@ -9,7 +9,7 @@ import {
   VersionHistoryManager,
   VersionRepositoryVersionMarker
 } from '../Managers/VersionHistoryManager';
-import { AppInfoManager } from '../Managers/AppInfoManager';
+import { AppInfoManager } from 'manxia_core/src/main/ets/Framework/Managers/AppInfoManager';
 import {
   LegadoCloudLogLevel,
   LegadoCloudUpdateUtils,
