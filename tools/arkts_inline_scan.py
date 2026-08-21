@@ -9,6 +9,7 @@ patterns = {
     'destruct_decl': re.compile(r'\b(?:const|let)\s+\{[^}]+\}\s*=\s*'),
     'obj_spread': re.compile(r'\.\.\.\w+[,;}]\s*$'),
     'dataReceiveErr': re.compile(r"['\"]dataReceiveErr['\"]"),
+    'for_in': re.compile(r'\bfor\s*\(\s*(?:const|let|var)?\s*\w+\s+in\b'),
 }
 
 hits = {k: [] for k in patterns}

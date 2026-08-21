@@ -185,7 +185,9 @@ export class StreamDownloader {
         'User-Agent': 'Mozilla/5.0 (Linux; Android 13; Pixel 7) AppleWebKit/537.36'
       };
       if (extraHeaders) {
-        for (const key in extraHeaders) {
+        const headerKeys = Object.keys(extraHeaders);
+        for (let i = 0; i < headerKeys.length; i++) {
+          const key = headerKeys[i];
           requestHeaders[key] = extraHeaders[key];
         }
       }
