@@ -1,6 +1,6 @@
 # 漫匣项目 HAR 模块化拆分 — 实时进度台账（PROGRESS / 唯一真相源）
 
-> 最后更新：2026-08-21 13:45（release 门禁反馈 9 处 ArkTS 编译错误，已修 ec3826cf；根因：c48f819b 传书鉴权日志嵌 logger 嵌套断裂 + StreamDownloader/SourceVerifier 既有非标准 ArkTS 模式此前未被沙箱 ArkTS 阶段暴露；待用户复跑 release 验证）
+> 最后更新：2026-08-21 14:15（release 门禁第 2 轮：1 处 arkts-no-for-in（StreamDownloader headers 合并残余）→ 已修 02d4ced0；并预防性消除 core/entry 双 JWTUtils 的 for..in；全仓仅剩 5 处在反引号 JS 注入字符串内；待用户复跑 release 验证）
 > 规则（对齐 PLAN P6）：每完成/中断/失败一个工作包，**立即**在本文件追加时间戳条目；
 > 阶段门禁等待用户验收时，对应阶段状态置 ⏸ 待验证，并把"建议验证命令+用例"写全；
 > 用户回填验收结果后，由执行方核验并推进到下一阶段。
@@ -12,7 +12,7 @@
 
 | 项 | 值 |
 |---|---|
-| 当前阶段 | **R5 收尾复核：静态全绿，release 门禁反馈的 9 处 ArkTS 错误已修复（ec3826cf）；待用户再跑 release 编译+回归** |
+| 当前阶段 | **R5 收尾复核：静态全绿，release 门禁修复第 2 轮（02d4ced0：for..in 清零）；待用户再跑 release 编译+回归** |
 | 总体进度 | barrel 版 M2 首编报 468 错（日志10505001/10605150：Utils/Logger 与 NamingConventions 重名 LogLevel 被 barrel 合并冲突）→ 改为深路径导入（manxia_core/src/main/ets/...，符号保持原文件身份，index.ets 最小化）重做：525+ 文件、996+ 处改写
 | 上次变更 | 2026-08-20 05:05：深路径 pivot 完成并通过静态校验 |
 | 当前阻塞 | 等待用户：全权限终端 release 复编译 + 关键回归（启动/设置/主题/代理/通知/传书/划线/MOBI）；若编过，可选打标签 |
@@ -108,6 +108,12 @@
 | R12 | 500+ 处 import 一次性改写 | 🟡 未触发 | 机器改写 + 全量静态复扫 + 一次 M2 编译集中收口 |
 
 ## 7. 详细日志（按时间倒序）
+
+### 2026-08-21 14:15 — release 门禁第 2 轮：for..in 清零（执行方）
+- 用户复跑报 1 处 `arkts-no-for-in`：`StreamDownloader.ets:188`（上轮 headers spread→for..in 引入的新违规）→ 改 `Object.keys` + 索引循环。
+- 预防随扫（tools/arkts_inline_scan.py 新增 for_in 模式）发现并修复真 ArkTS `for..in` 另 2 处：`core/Utils/JWTUtils.ets:164` + `entry/Utils/JWTUtils.ets:164`（双副本，extractUserInfo payload 遍历）。
+- 全仓剩余 5 处 for..in 经反引号边界验证全部位于模板字符串内（LegadoJsEngine 注入 JS×4 / RhinoWasmExecutor 注入 JS×1），非 ArkTS 代码，编译器不检查。
+- 提交 02d4ced0；静态断言保持全绿。
 
 ### 2026-08-21 13:45 — release 门禁修复：9 处 ArkTS 编译错误（执行方）
 - 用户全权限终端 release 编译反馈 9 错，集中于 manxia-network 3 文件：
