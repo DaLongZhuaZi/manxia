@@ -17,7 +17,7 @@ import CookieManager from 'manxia_core/src/main/ets/Framework/Managers/CookieMan
 import { cryptoFramework } from '@kit.CryptoArchitectureKit';
 import { DiskCacheManager } from 'manxia_network/src/main/ets/Framework/Cache/DiskCacheManager';
 import { DataManager, PageCacheUpdate } from '../Data/DataManager';
-import { JinmantiantangDescrambler, JinmantiantangParameters } from 'manxia_core/src/main/ets/Framework/ImageProcessing/JinmantiantangDescrambler';
+import { JinmantiantangDescrambler, JinmantiantangParameters } from '../ImageProcessing/JinmantiantangDescrambler';
 import { UserAgentManager } from 'manxia_core/src/main/ets/Framework/Managers/UserAgentManager';
 import { AvifDecoder, isAvifFormat } from '../Image/AvifDecoder';
 import { GlobalWebViewContainer, WebViewEventCallbacks } from 'manxia_source_engine/src/main/ets/Framework/WebView/WebViewContainerPage';
