@@ -2,15 +2,16 @@
 
 > 以磁盘实测为准。上一版 v1 已过时（反映 Stage6 早期）。
 
-## 当前各模块 ets 数（不含 .bak）
-- entry: 585（最初 810）
-- manxia-core: 139
+## 当前各模块 ets 数（git tracked，排除 oh_modules/build）
+- entry: 591（最初 810）
+- manxia-core: 135
 - manxia-theme: 30
 - manxia-novel: 28
 - manxia-network: 33
 - manxia-source-engine: 34
 - manxia-reader-ui: 18
 - manxia-features-ui: 17
+- 合计: 886
 
 ## 阶段达成
 - 契约化三件套：SettingsManager / ProxyManager / DataManager（类型+接口+Holder）。
@@ -26,6 +27,12 @@
 - Legado 运行时 18 件（Rhino/Wasm/JS 引擎等原生承载）
 - Abilities / 入口壳 / pages（assembly 层）
 
+## 阶段状态
+- **M7 收尾完成**（2026-08-21）：release 编译通过，标签 harmod-wave0-w2
+- 3 轮 release 门禁修复：ArkTS 编译错误(9) → for..in(1+2) → intra-module 深路径(151)+孤儿文件(6)+INTERNET 权限
+- .bak_harmod 备份与 .bak 孤儿目录已清理
+
 ## 校验口径
 - core 出边（对上层模块 import）= 0（脚本断言）
 - residual=0 / dangling=0 / 深路径目标存在 / 无反向依赖 / 无重名；每批门禁后提交
+- intra-module 深路径自引用=0（151 处已改相对路径）
