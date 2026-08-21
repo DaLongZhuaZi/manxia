@@ -1,0 +1,47 @@
+{
+  "schemaVersion": 1,
+  "contract": "legado_jsoup_attribute_and_tag_token_context",
+  "issueId": "ISSUE-COMPAT-243-JSOUP-STANDARD-CSS-PSEUDO-SELECTORS",
+  "baseline": {
+    "sourceCount": 458,
+    "sourcePackageSha256": "473048A191DE4749FA9C15E0A2F2328A3E86B385A5FCE23EA30432D598D03A67",
+    "legadoCommit": "95973d186b147fb9ab43a9240021d688e4304fbd"
+  },
+  "cases": [
+    {
+      "id": "tag-selector-ignores-quoted-opening",
+      "html": "<article><div data-note=\"<div>\">inner</div><p>after</p></article>",
+      "rule": "tag.div",
+      "expectedCount": 1,
+      "expectedContains": ["data-note=\"<div>\"", "inner"],
+      "semantics": "tag_selection_must_not_return_a_second_element_from_markup_like_text_inside_a_quoted_attribute"
+    },
+    {
+      "id": "class-selector-ignores-quoted-token",
+      "html": "<article><div data-note=\"class='target'\">inner</div><p class=\"target\">after</p></article>",
+      "rule": ".target",
+      "expectedCount": 1,
+      "expectedContains": ["<p class=\"target\">after</p>"],
+      "semantics": "class_selection_must_not_treat_class_assignment_text_inside_a_quoted_attribute_as_a_real_attribute"
+    },
+    {
+      "id": "id-selector-ignores-quoted-token",
+      "html": "<article><div data-note=\"id='target'\">inner</div><p id=\"target\">after</p></article>",
+      "rule": "#target",
+      "expectedCount": 1,
+      "expectedContains": ["<p id=\"target\">after</p>"],
+      "semantics": "id_selection_must_not_treat_id_assignment_text_inside_a_quoted_attribute_as_a_real_attribute"
+    }
+  ],
+  "selectionPaths": [
+    "LegadoRuleAnalyzer.findElementsByTag -> findTagStartByName -> extractElement",
+    "LegadoRuleAnalyzer.findElementsByClass -> findClassAttrIndex -> extractClassValueFromTag",
+    "LegadoRuleAnalyzer.findElementsById -> findIdAttrIndex -> extractIdValueFromTag"
+  ],
+  "legadoSemantics": {
+    "implementation": "AnalyzeByJSoup delegates CSS tag, class and id selection to Jsoup elements and attributes; quoted attribute data is never reparsed as a node or attribute.",
+    "nodeBoundary": "A tag scanner advances past a complete quote-aware start tag before searching for the next node.",
+    "attributeBoundary": "Attribute names are read from parsed attribute nodes, not from text nested inside another quoted attribute value."
+  },
+  "failureCondition": "The V2 string fallback searches raw '<', class= and id= tokens without a parsed tag/attribute context. Markup-like or attribute-like text inside quoted values can therefore create false tag, class or id matches."
+}

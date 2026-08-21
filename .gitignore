@@ -139,6 +139,8 @@ extensions-source
 /.lingma/
 /.reasonix/
 /.dsh-filess/
+/memory/
+/reasonix.toml
 
 # Local machine-specific & scratch
 /feedback-center/

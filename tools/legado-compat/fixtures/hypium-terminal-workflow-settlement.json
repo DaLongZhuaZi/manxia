@@ -1,0 +1,21 @@
+{
+  "schemaVersion": 1,
+  "contract": "full_workflow_no_search_explore_failure_terminal_settlement",
+  "dependentWorkflows": [
+    "bookInfo",
+    "toc",
+    "content"
+  ],
+  "terminalStatus": "blocked",
+  "terminalOutcome": "explore_book_target_not_selected",
+  "scenarios": [
+    {
+      "name": "planned_dependents",
+      "initialStatus": "planned"
+    },
+    {
+      "name": "running_dependents",
+      "initialStatus": "running"
+    }
+  ]
+}

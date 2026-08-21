@@ -1,0 +1,163 @@
+{
+  "schemaVersion": 1,
+  "fixtureKind": "legado_jsoup_standard_pseudo_combination_r4_source_node_fixture",
+  "issueId": "ISSUE-COMPAT-243-JSOUP-STANDARD-CSS-PSEUDO-SELECTORS",
+  "status": "registered_static_only",
+  "generatedAt": "2026-08-10T06:43:35.4575443+00:00",
+  "baseline": {
+    "sourceCount": 458,
+    "sourcePackageSha256": "473048A191DE4749FA9C15E0A2F2328A3E86B385A5FCE23EA30432D598D03A67",
+    "legadoCommit": "95973d186b147fb9ab43a9240021d688e4304fbd"
+  },
+  "sourceOrdinals": [
+    357,
+    402
+  ],
+  "sourceOccurrenceCount": 5,
+  "requiredCombinationSet": [
+    "standard-only-child",
+    "has-relative-selector",
+    "text-matches-own",
+    "not-selector",
+    "regex-attribute",
+    "direct-child-or-sibling"
+  ],
+  "sourceOccurrences": [
+    {
+      "ordinal": 357,
+      "path": "$[357].ruleBookInfo.name",
+      "occurrenceOffset": 4823,
+      "ruleSha256": "374FBFB874D2BE21B08A327CF38A749541F56342C7FB618158EC4D6071E8BACE",
+      "context": "1)m=java.ajax(baseUrl); java.setContent(m,baseUrl);  if(正){ zl=java.getStringList(\"[property$=latest_chapter_url]@content||:matches(^最新章节)>a:only-child:not([href~=^$|#|javascript:])@href||a:matches(^正文\\\\s*[\\\\d第一二三四五六七八九十〇零百千]|^[【《]?(\"+n+\")?[\\\\s》】（\\\\u0028:：＿_－-]*(第[\\\\s0〇零]*[一1]\\\\s*[\\\\u4e00-\\\\u9fa5]|([\\\\u4e00-\\\\u9fa5]{2}阅读[（\\\\u0028:：＿_－-]?)?(0*1([）\\\\u0029.、:：_",
+      "requiredCombinations": [
+        "standard-only-child",
+        "has-relative-selector",
+        "text-matches-own",
+        "not-selector",
+        "regex-attribute",
+        "direct-child-or-sibling"
+      ]
+    },
+    {
+      "ordinal": 357,
+      "path": "$[357].ruleContent.content",
+      "occurrenceOffset": 2711,
+      "ruleSha256": "CBA2896C8B0DEB2BDB74E2824CB5060FA5B7E3AFF923AF7AADE7A2B18C2F84EA",
+      "context": ":matchesOwn(\\\\S):has(br))\" ,\":matchesOwn(\\\\S):has(br)\" ,\":has(>:matchesOwn(\\\\S):not(:has(*))+:matchesOwn(\\\\S):not(:has(*)))\" ,\":has(>:has(>p:only-child:matchesOwn(\\\\S):not(:has(*)))+:has(>p:only-child:matchesOwn(\\\\S):not(:has(*))))\" ,\"img\" ,\":matchesOwn(\\\\S)\"];  try{for(查=i!=''?i:java.get(\"元\");c;c--){  if(!(c>1&&(String(r.text()).length<400||r.select(':match",
+      "requiredCombinations": [
+        "standard-only-child",
+        "has-relative-selector",
+        "text-matches-own",
+        "not-selector",
+        "regex-attribute",
+        "direct-child-or-sibling"
+      ]
+    },
+    {
+      "ordinal": 357,
+      "path": "$[357].ruleContent.content",
+      "occurrenceOffset": 2760,
+      "ruleSha256": "CBA2896C8B0DEB2BDB74E2824CB5060FA5B7E3AFF923AF7AADE7A2B18C2F84EA",
+      "context": "(br)\" ,\":has(>:matchesOwn(\\\\S):not(:has(*))+:matchesOwn(\\\\S):not(:has(*)))\" ,\":has(>:has(>p:only-child:matchesOwn(\\\\S):not(:has(*)))+:has(>p:only-child:matchesOwn(\\\\S):not(:has(*))))\" ,\"img\" ,\":matchesOwn(\\\\S)\"];  try{for(查=i!=''?i:java.get(\"元\");c;c--){  if(!(c>1&&(String(r.text()).length<400||r.select(':matchesOwn(内容未加载完成|关闭(阅读|小说)模式)').size()))){ r.select(",
+      "requiredCombinations": [
+        "standard-only-child",
+        "has-relative-selector",
+        "text-matches-own",
+        "not-selector",
+        "regex-attribute",
+        "direct-child-or-sibling"
+      ]
+    },
+    {
+      "ordinal": 402,
+      "path": "$[402].ruleContent.content",
+      "occurrenceOffset": 2711,
+      "ruleSha256": "2E582F5BE9C2CCD0A319464C2249E301BFE972792A6D61E6EAAF067D9D0AC6E4",
+      "context": ":matchesOwn(\\\\S):has(br))\" ,\":matchesOwn(\\\\S):has(br)\" ,\":has(>:matchesOwn(\\\\S):not(:has(*))+:matchesOwn(\\\\S):not(:has(*)))\" ,\":has(>:has(>p:only-child:matchesOwn(\\\\S):not(:has(*)))+:has(>p:only-child:matchesOwn(\\\\S):not(:has(*))))\" ,\"img\" ,\":matchesOwn(\\\\S)\"];  try{for(查=i!=''?i:java.get(\"元\");c;c--){  if(!(c>1&&(String(r.text()).length<400||r.select(':match",
+      "requiredCombinations": [
+        "standard-only-child",
+        "has-relative-selector",
+        "text-matches-own",
+        "not-selector",
+        "regex-attribute",
+        "direct-child-or-sibling"
+      ]
+    },
+    {
+      "ordinal": 402,
+      "path": "$[402].ruleContent.content",
+      "occurrenceOffset": 2760,
+      "ruleSha256": "2E582F5BE9C2CCD0A319464C2249E301BFE972792A6D61E6EAAF067D9D0AC6E4",
+      "context": "(br)\" ,\":has(>:matchesOwn(\\\\S):not(:has(*))+:matchesOwn(\\\\S):not(:has(*)))\" ,\":has(>:has(>p:only-child:matchesOwn(\\\\S):not(:has(*)))+:has(>p:only-child:matchesOwn(\\\\S):not(:has(*))))\" ,\"img\" ,\":matchesOwn(\\\\S)\"];  try{for(查=i!=''?i:java.get(\"元\");c;c--){  if(!(c>1&&(String(r.text()).length<400||r.select(':matchesOwn(内容未加载完成|关闭(阅读|小说)模式)').size()))){ r.select(",
+      "requiredCombinations": [
+        "standard-only-child",
+        "has-relative-selector",
+        "text-matches-own",
+        "not-selector",
+        "regex-attribute",
+        "direct-child-or-sibling"
+      ]
+    }
+  ],
+  "cases": [
+    {
+      "id": "ordinal-357-nested-occurrence-1",
+      "sourceOrdinal": 357,
+      "sourcePath": "$[357].ruleBookInfo.name",
+      "occurrenceOffset": 4823,
+      "ruleSha256": "374FBFB874D2BE21B08A327CF38A749541F56342C7FB618158EC4D6071E8BACE",
+      "selectorContext": "1)m=java.ajax(baseUrl); java.setContent(m,baseUrl);  if(正){ zl=java.getStringList(\"[property$=latest_chapter_url]@content||:matches(^最新章节)>a:only-child:not([href~=^$|#|javascript:])@href||a:matches(^正文\\\\s*[\\\\d第一二三四五六七八九十〇零百千]|^[【《]?(\"+n+\")?[\\\\s》】（\\\\u0028:：＿_－-]*(第[\\\\s0〇零]*[一1]\\\\s*[\\\\u4e00-\\\\u9fa5]|([\\\\u4e00-\\\\u9fa5]{2}阅读[（\\\\u0028:：＿_－-]?)?(0*1([）\\\\u0029.、:：_",
+      "expectedStatus": "deferred_to_r4_legado_runtime_diff",
+      "expected": null,
+      "semantics": "Exact frozen source-node conjunction; do not infer runtime output from this static fixture."
+    },
+    {
+      "id": "ordinal-357-nested-occurrence-2",
+      "sourceOrdinal": 357,
+      "sourcePath": "$[357].ruleContent.content",
+      "occurrenceOffset": 2711,
+      "ruleSha256": "CBA2896C8B0DEB2BDB74E2824CB5060FA5B7E3AFF923AF7AADE7A2B18C2F84EA",
+      "selectorContext": ":matchesOwn(\\\\S):has(br))\" ,\":matchesOwn(\\\\S):has(br)\" ,\":has(>:matchesOwn(\\\\S):not(:has(*))+:matchesOwn(\\\\S):not(:has(*)))\" ,\":has(>:has(>p:only-child:matchesOwn(\\\\S):not(:has(*)))+:has(>p:only-child:matchesOwn(\\\\S):not(:has(*))))\" ,\"img\" ,\":matchesOwn(\\\\S)\"];  try{for(查=i!=''?i:java.get(\"元\");c;c--){  if(!(c>1&&(String(r.text()).length<400||r.select(':match",
+      "expectedStatus": "deferred_to_r4_legado_runtime_diff",
+      "expected": null,
+      "semantics": "Exact frozen source-node conjunction; do not infer runtime output from this static fixture."
+    },
+    {
+      "id": "ordinal-357-nested-occurrence-3",
+      "sourceOrdinal": 357,
+      "sourcePath": "$[357].ruleContent.content",
+      "occurrenceOffset": 2760,
+      "ruleSha256": "CBA2896C8B0DEB2BDB74E2824CB5060FA5B7E3AFF923AF7AADE7A2B18C2F84EA",
+      "selectorContext": "(br)\" ,\":has(>:matchesOwn(\\\\S):not(:has(*))+:matchesOwn(\\\\S):not(:has(*)))\" ,\":has(>:has(>p:only-child:matchesOwn(\\\\S):not(:has(*)))+:has(>p:only-child:matchesOwn(\\\\S):not(:has(*))))\" ,\"img\" ,\":matchesOwn(\\\\S)\"];  try{for(查=i!=''?i:java.get(\"元\");c;c--){  if(!(c>1&&(String(r.text()).length<400||r.select(':matchesOwn(内容未加载完成|关闭(阅读|小说)模式)').size()))){ r.select(",
+      "expectedStatus": "deferred_to_r4_legado_runtime_diff",
+      "expected": null,
+      "semantics": "Exact frozen source-node conjunction; do not infer runtime output from this static fixture."
+    },
+    {
+      "id": "ordinal-402-nested-occurrence-4",
+      "sourceOrdinal": 402,
+      "sourcePath": "$[402].ruleContent.content",
+      "occurrenceOffset": 2711,
+      "ruleSha256": "2E582F5BE9C2CCD0A319464C2249E301BFE972792A6D61E6EAAF067D9D0AC6E4",
+      "selectorContext": ":matchesOwn(\\\\S):has(br))\" ,\":matchesOwn(\\\\S):has(br)\" ,\":has(>:matchesOwn(\\\\S):not(:has(*))+:matchesOwn(\\\\S):not(:has(*)))\" ,\":has(>:has(>p:only-child:matchesOwn(\\\\S):not(:has(*)))+:has(>p:only-child:matchesOwn(\\\\S):not(:has(*))))\" ,\"img\" ,\":matchesOwn(\\\\S)\"];  try{for(查=i!=''?i:java.get(\"元\");c;c--){  if(!(c>1&&(String(r.text()).length<400||r.select(':match",
+      "expectedStatus": "deferred_to_r4_legado_runtime_diff",
+      "expected": null,
+      "semantics": "Exact frozen source-node conjunction; do not infer runtime output from this static fixture."
+    },
+    {
+      "id": "ordinal-402-nested-occurrence-5",
+      "sourceOrdinal": 402,
+      "sourcePath": "$[402].ruleContent.content",
+      "occurrenceOffset": 2760,
+      "ruleSha256": "2E582F5BE9C2CCD0A319464C2249E301BFE972792A6D61E6EAAF067D9D0AC6E4",
+      "selectorContext": "(br)\" ,\":has(>:matchesOwn(\\\\S):not(:has(*))+:matchesOwn(\\\\S):not(:has(*)))\" ,\":has(>:has(>p:only-child:matchesOwn(\\\\S):not(:has(*)))+:has(>p:only-child:matchesOwn(\\\\S):not(:has(*))))\" ,\"img\" ,\":matchesOwn(\\\\S)\"];  try{for(查=i!=''?i:java.get(\"元\");c;c--){  if(!(c>1&&(String(r.text()).length<400||r.select(':matchesOwn(内容未加载完成|关闭(阅读|小说)模式)').size()))){ r.select(",
+      "expectedStatus": "deferred_to_r4_legado_runtime_diff",
+      "expected": null,
+      "semantics": "Exact frozen source-node conjunction; do not infer runtime output from this static fixture."
+    }
+  ],
+  "qualificationPolicy": "source_node_exactness_only;expected_outputs_and_cross_engine_equivalence_deferred_to_R4",
+  "runtimeActionsPerformed": [],
+  "semanticMatchAllowed": false,
+  "nextAction": "Use these frozen source-node cases to construct the R4 Legado/V2 runtime differential; no production patch is justified by this registration alone."
+}

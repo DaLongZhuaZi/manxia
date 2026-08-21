@@ -1,0 +1,33 @@
+{
+  "schemaVersion": 1,
+  "contract": "current_static_candidate_evidence_reader",
+  "issueId": "ISSUE-AUTO-044-EVIDENCE-READER-UTF8",
+  "baseline": {
+    "sourceCount": 458,
+    "sourcePackageSha256": "473048A191DE4749FA9C15E0A2F2328A3E86B385A5FCE23EA30432D598D03A67",
+    "legadoCommit": "95973d186b147fb9ab43a9240021d688e4304fbd"
+  },
+  "preFix": {
+    "failureCode": "EVIDENCE_UTF8_BOM_REJECTED",
+    "sourceSha256": "F3DE7C0D1707DCA5C8F785009011C267847E54B8BF3D0288609437A8B8CFABD5",
+    "observed": [
+      "BOM-bearing ArkTS source evidence is classified as unreadable_evidence_file",
+      "binary screenshot evidence is sent through a strict UTF-8 decoder"
+    ]
+  },
+  "postFix": {
+    "requiredMarkers": [
+      "function Read-EvidenceFile",
+      "utf8_bom_text",
+      "binary_evidence_file",
+      "Read-EvidenceFile -Path $path"
+    ],
+    "expectedKinds": [
+      "utf8_text",
+      "utf8_bom_text",
+      "binary"
+    ],
+    "runtimeActionsPerformed": [],
+    "semanticMatchAllowed": false
+  }
+}

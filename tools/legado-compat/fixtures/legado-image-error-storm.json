@@ -1,0 +1,51 @@
+{
+  "schemaVersion": 1,
+  "contract": "legado_image_error_storm",
+  "issueId": "ISSUE-COMPAT-014",
+  "baseline": {
+    "sourceCount": 458,
+    "sourcePackageSha256": "473048A191DE4749FA9C15E0A2F2328A3E86B385A5FCE23EA30432D598D03A67",
+    "legadoCommit": "95973d186b147fb9ab43a9240021d688e4304fbd"
+  },
+  "observedEvidence": {
+    "path": "tools/legado-compat/evidence/harmony-image-transport-summary-20260731.json",
+    "traceCount": 224,
+    "uniqueTraceIds": 28,
+    "dnsOutcomeCount": 112,
+    "errorLedgerDnsRecords": 100,
+    "errorFiles": 78,
+    "minimumObservedErrorRecords": 180,
+    "runtimeValidation": "historical_device_evidence_only"
+  },
+  "errorFileBudget": {
+    "maxRetainedFiles": 20,
+    "filePrefix": "error_",
+    "fileSuffix": ".txt",
+    "cleanupPolicy": "delete_oldest_when_count_exceeds_budget"
+  },
+  "failureScenarios": [
+    {
+      "name": "final_failure_log_bare_fingerprint",
+      "message": "请求最终失败（已按传输根因聚合）: fingerprint=network_transport|dns|cdn.example.test|2300006, background=true",
+      "expectedFingerprint": "network_transport|dns|cdn.example.test|2300006",
+      "ledgerClaims": [true, false]
+    },
+    {
+      "name": "canonical_message_with_marker",
+      "message": "DNS resolution failed (host=cdn.example.test, code=2300006) [transport-fingerprint=network_transport|dns|cdn.example.test|2300006]",
+      "expectedFingerprint": "network_transport|dns|cdn.example.test|2300006",
+      "ledgerClaims": [true, false]
+    }
+  ],
+  "requiredSourcePaths": [
+    "entry/src/main/ets/Framework/Network/NetworkTransportFailureCoordinator.ets",
+    "entry/src/main/ets/Framework/Cache/OnlineImageLoader.ets",
+    "entry/src/main/ets/Framework/Debug/ErrorMonitorService.ets",
+    "entry/src/main/ets/Framework/Debug/ErrorRecordManager.ets",
+    "entry/src/main/ets/Framework/Download/DownloadCacheFlowMonitor.ets",
+    "entry/src/main/ets/Framework/Reader/MangaReadFlowMonitor.ets",
+    "entry/src/main/ets/components/MangaViewer.ets"
+  ],
+  "primaryCause": "cross_layer_fingerprint_projection",
+  "closeCondition": "A bare network_transport fingerprint emitted by any transport or flow log is normalized to the same URL-free fingerprint as the canonical marker; the persistent ledger and diagnostic window deduplicate it, same-host background DNS/TLS requests are circuit-suppressed, visible and manual requests bypass suppression, and no URL/query/cookie/header value enters the fingerprint."
+}

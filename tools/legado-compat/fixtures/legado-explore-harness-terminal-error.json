@@ -1,0 +1,8 @@
+{
+  "schemaVersion": 1,
+  "contract": "legado_explore_harness_observes_terminal_error_without_serial_timeout",
+  "terminalErrorId": "novel_book_source_explore_error",
+  "kindIdPattern": "novel_book_source_explore_kind_0",
+  "maxPollIntervalSeconds": 0.4,
+  "requiredOutcome": "no_executable_kind"
+}

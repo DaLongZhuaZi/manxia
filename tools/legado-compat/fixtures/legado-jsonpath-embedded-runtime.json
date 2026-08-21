@@ -1,0 +1,32 @@
+{
+  "contract": "legado_jsonpath_embedded_runtime",
+  "source": {
+    "items": [
+      { "id": "zero", "meta": { "name": "root", "url": "root-url" } },
+      { "id": "one", "meta": { "name": "leaf", "url": "leaf-url" } },
+      { "id": "two", "meta": { "name": "tail", "url": "tail-url" } }
+    ],
+    "nested": {
+      "child": { "name": "nested-leaf", "url": "nested-url" }
+    }
+  },
+  "cases": [
+    {
+      "rule": "$.items[*].id",
+      "expected": ["zero", "one", "two"]
+    },
+    {
+      "rule": "$.items[:2].id",
+      "expected": ["zero", "one"]
+    },
+    {
+      "rule": "$.nested..url",
+      "expected": ["nested-url"]
+    },
+    {
+      "rule": "$..name",
+      "expected": ["root", "leaf", "tail", "nested-leaf"]
+    }
+  ],
+  "requiredPaths": ["buildScript", "buildNativeScript"]
+}

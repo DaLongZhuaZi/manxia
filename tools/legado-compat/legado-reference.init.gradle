@@ -1,0 +1,20 @@
+// Test-harness-only plugin resolution for the pinned Legado reference project.
+// This file is supplied through --init-script; it never changes the reference
+// project or its production sources.
+settingsEvaluated { settings ->
+    settings.pluginManagement.resolutionStrategy.eachPlugin {
+        if (requested.id.id == 'com.android.application' ||
+            requested.id.id == 'com.android.library' ||
+            requested.id.id == 'com.android.test') {
+            useModule("com.android.tools.build:gradle:${requested.version}")
+        } else if (requested.id.id.startsWith('org.jetbrains.kotlin.')) {
+            useModule("org.jetbrains.kotlin:kotlin-gradle-plugin:${requested.version}")
+        } else if (requested.id.id == 'com.google.devtools.ksp') {
+            useModule("com.google.devtools.ksp:symbol-processing-gradle-plugin:${requested.version}")
+        } else if (requested.id.id == 'androidx.room') {
+            useModule("androidx.room:room-gradle-plugin:${requested.version}")
+        } else if (requested.id.id == 'com.google.gms.google-services') {
+            useModule("com.google.gms:google-services:${requested.version}")
+        }
+    }
+}

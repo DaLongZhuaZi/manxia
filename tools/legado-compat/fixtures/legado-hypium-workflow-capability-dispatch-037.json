@@ -1,0 +1,169 @@
+{
+  "schemaVersion": 1,
+  "kind": "legado_hypium_workflow_capability_dispatch_fixture",
+  "issueId": "ISSUE-COMPAT-HYPIUM-WORKFLOW-CAPABILITY-DISPATCH",
+  "baseline": {
+    "sourceCount": 458,
+    "sourcePackageSha256": "473048A191DE4749FA9C15E0A2F2328A3E86B385A5FCE23EA30432D598D03A67",
+    "legadoCommit": "95973d186b147fb9ab43a9240021d688e4304fbd"
+  },
+  "contract": "capability_presence_dispatch_and_terminal_settlement_are_independent",
+  "cases": [
+    {
+      "id": "safe_read_search_and_explore",
+      "executionProfile": "safe_read_path",
+      "sourceType": 0,
+      "searchUrlPresent": true,
+      "exploreUrlPresent": true,
+      "capabilities": {
+        "explore": true,
+        "bookInfo": true,
+        "toc": true,
+        "content": true,
+        "download": false,
+        "review": false
+      },
+      "expected": {
+        "entryWorkflow": "search",
+        "explore": "policy_blocked:profile_safe_read_path_explore_deferred",
+        "search": "running:request_started",
+        "bookInfo": "running:safe_read_path_requested",
+        "toc": "running:safe_read_path_requested",
+        "content": "running:safe_read_path_requested",
+        "file": "policy_blocked:profile_safe_read_path_file_not_declared",
+        "review": "policy_blocked:profile_safe_read_path_review_not_declared",
+        "earlyReturn": false
+      }
+    },
+    {
+      "id": "safe_read_explore_only",
+      "executionProfile": "safe_read_path",
+      "sourceType": 0,
+      "searchUrlPresent": false,
+      "exploreUrlPresent": true,
+      "capabilities": {
+        "explore": true,
+        "bookInfo": true,
+        "toc": true,
+        "content": true,
+        "download": false,
+        "review": false
+      },
+      "expected": {
+        "entryWorkflow": "explore",
+        "explore": "running:safe_read_path_explore_requested",
+        "search": "policy_blocked:search_workflow_missing",
+        "bookInfo": "running:safe_read_path_explore_read_requested",
+        "toc": "running:safe_read_path_explore_read_requested",
+        "content": "running:safe_read_path_explore_read_requested",
+        "file": "policy_blocked:safe_read_path_file_not_declared",
+        "review": "policy_blocked:safe_read_path_review_not_declared",
+        "continueReadPath": true,
+        "earlyReturn": false
+      }
+    },
+    {
+      "id": "safe_read_without_entry_url",
+      "executionProfile": "safe_read_path",
+      "sourceType": 0,
+      "searchUrlPresent": false,
+      "exploreUrlPresent": false,
+      "capabilities": {
+        "explore": false,
+        "bookInfo": true,
+        "toc": true,
+        "content": true,
+        "download": false,
+        "review": false
+      },
+      "expected": {
+        "entryWorkflow": "none",
+        "search": "policy_blocked:search_workflow_missing",
+        "explore": "policy_blocked:explore_workflow_missing",
+        "bookInfo": "policy_blocked:safe_read_path_entry_workflow_missing",
+        "toc": "policy_blocked:safe_read_path_entry_workflow_missing",
+        "content": "policy_blocked:safe_read_path_entry_workflow_missing",
+        "earlyReturn": false
+      }
+    },
+    {
+      "id": "safe_read_explore_only_missing_book_info",
+      "executionProfile": "safe_read_path",
+      "sourceType": 0,
+      "searchUrlPresent": false,
+      "exploreUrlPresent": true,
+      "capabilities": {
+        "explore": true,
+        "bookInfo": false,
+        "toc": true,
+        "content": true,
+        "download": false,
+        "review": false
+      },
+      "expected": {
+        "entryWorkflow": "explore",
+        "explore": "running:safe_read_path_explore_requested",
+        "search": "policy_blocked:search_workflow_missing",
+        "bookInfo": "policy_blocked:bookInfo_workflow_missing",
+        "toc": "blocked:safe_read_path_read_chain_capability_dependency_missing",
+        "content": "blocked:safe_read_path_read_chain_capability_dependency_missing",
+        "continueReadPath": false,
+        "earlyReturn": false
+      }
+    },
+    {
+      "id": "safe_read_explore_only_missing_toc",
+      "executionProfile": "safe_read_path",
+      "sourceType": 0,
+      "searchUrlPresent": false,
+      "exploreUrlPresent": true,
+      "capabilities": {
+        "explore": true,
+        "bookInfo": true,
+        "toc": false,
+        "content": true,
+        "download": false,
+        "review": false
+      },
+      "expected": {
+        "entryWorkflow": "explore",
+        "explore": "running:safe_read_path_explore_requested",
+        "search": "policy_blocked:search_workflow_missing",
+        "bookInfo": "blocked:safe_read_path_read_chain_capability_dependency_missing",
+        "toc": "policy_blocked:toc_workflow_missing",
+        "content": "blocked:safe_read_path_read_chain_capability_dependency_missing",
+        "continueReadPath": false,
+        "earlyReturn": false
+      }
+    },
+    {
+      "id": "safe_read_explore_only_missing_content",
+      "executionProfile": "safe_read_path",
+      "sourceType": 0,
+      "searchUrlPresent": false,
+      "exploreUrlPresent": true,
+      "capabilities": {
+        "explore": true,
+        "bookInfo": true,
+        "toc": true,
+        "content": false,
+        "download": false,
+        "review": false
+      },
+      "expected": {
+        "entryWorkflow": "explore",
+        "explore": "running:safe_read_path_explore_requested",
+        "search": "policy_blocked:search_workflow_missing",
+        "bookInfo": "blocked:safe_read_path_read_chain_capability_dependency_missing",
+        "toc": "blocked:safe_read_path_read_chain_capability_dependency_missing",
+        "content": "policy_blocked:content_workflow_missing",
+        "continueReadPath": false,
+        "earlyReturn": false
+      }
+    }
+  ],
+  "expectedInvariant": "A missing Search URL prevents only Search dispatch. It must not prevent an independently declared Explore path or cause an early batch return. Explore-only read continuation requires the complete BookInfo/Toc/Content capability set; each missing capability and each dependent read workflow must settle independently.",
+  "runtimeActionsPerformed": [],
+  "semanticMatchAllowed": false,
+  "verificationPolicy": "r3_static_failure_contract_only;runtime_and_R4_deferred"
+}

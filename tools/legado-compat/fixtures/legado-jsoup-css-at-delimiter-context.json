@@ -1,0 +1,41 @@
+{
+  "schemaVersion": 1,
+  "contract": "legado_jsoup_css_at_delimiter_context",
+  "issueId": "ISSUE-COMPAT-243-JSOUP-STANDARD-CSS-PSEUDO-SELECTORS",
+  "baseline": {
+    "sourceCount": 458,
+    "sourcePackageSha256": "473048A191DE4749FA9C15E0A2F2328A3E86B385A5FCE23EA30432D598D03A67",
+    "legadoCommit": "95973d186b147fb9ab43a9240021d688e4304fbd"
+  },
+  "largeDocumentThreshold": 50000,
+  "html": "<div class=\"root\"><p class=\"marker\">alpha @needle</p><p class=\"other\">beta</p><section data-rule=\"a@b\"><p class=\"nested\">gamma @needle</p></section></div>",
+  "padding": {
+    "kind": "repeat_text_node",
+    "value": "x",
+    "repeat": 51000,
+    "placement": "inside-root-after-cases"
+  },
+  "cases": [
+    {
+      "id": "contains-at-sign",
+      "selector": "p:contains(@needle)@text",
+      "semantics": "@ inside a pseudo argument is not a Legado chain delimiter",
+      "expected": ["alpha @needle", "gamma @needle"]
+    },
+    {
+      "id": "quoted-attribute-at-sign",
+      "selector": "section[data-rule=\"a@b\"]@text",
+      "semantics": "@ inside a quoted attribute value is not a Legado chain delimiter",
+      "expected": ["gamma @needle"]
+    },
+    {
+      "id": "regex-pseudo-at-sign",
+      "selector": "p:matches(^.*@needle$)@text",
+      "semantics": "@ inside a Jsoup regex pseudo argument is not a Legado chain delimiter",
+      "expected": ["alpha @needle", "gamma @needle"]
+    }
+  ],
+  "selectionPath": "getStringListByCSS -> getElementsByCSSWithBridge -> large-document getElementsByCSSChain -> top-level @ chain split",
+  "failureCondition": "The large-document fallback uses selector.split('@') and splits @ inside pseudo arguments or quoted attribute values. Pinned Legado uses the final @ only for the output attribute and keeps nested @ characters inside the CSS selector passed to Jsoup.",
+  "affectedCapability": "large_document_css_chain_at_delimiter_context"
+}

@@ -1,0 +1,13 @@
+{
+  "schemaVersion": 1,
+  "contract": "legado_explore_lenient_json_controls",
+  "description": "Legado accepts literal line feeds and tabs inside Explore-kind URL option strings through its default Gson parser.",
+  "rawExploreKinds": "[\n  {\"title\":\"分类\",\"url\":\"https://fixture.invalid/list,{\n  \\\"method\\\": \\\"POST\\\",\n  \\\"body\\\": {\\\"catid\\\": 6}\n}\",\"style\":{\"layout_flexGrow\":1,\"layout_flexBasisPercent\":0.25}},\n  {\"title\":\"装饰\",\"url\":\"\",\"style\":{\"layout_flexGrow\":1,\"layout_flexBasisPercent\":1}}\n]",
+  "expected": {
+    "kindCount": 2,
+    "firstTitle": "分类",
+    "firstUrlContains": "\"method\": \"POST\"",
+    "firstStyleFlexGrow": 1,
+    "secondUrl": ""
+  }
+}

@@ -1,0 +1,43 @@
+{
+  "schemaVersion": 1,
+  "contract": "legado_jsoup_element_extraction_quoted_closing_context",
+  "issueId": "ISSUE-COMPAT-243-JSOUP-STANDARD-CSS-PSEUDO-SELECTORS",
+  "baseline": {
+    "sourceCount": 458,
+    "sourcePackageSha256": "473048A191DE4749FA9C15E0A2F2328A3E86B385A5FCE23EA30432D598D03A67",
+    "legadoCommit": "95973d186b147fb9ab43a9240021d688e4304fbd"
+  },
+  "cases": [
+    {
+      "id": "nested-same-tag-quoted-closing",
+      "html": "<div><div data-note=\"</div>\">inner</div><p>after</p></div>",
+      "rule": "tag.div.0@text",
+      "expectedTexts": ["inner after"],
+      "semantics": "same-tag_extraction_must_ignore_a_closing-tag_like_string_inside_a_quoted_attribute"
+    },
+    {
+      "id": "nested-same-tag-quoted-opening",
+      "html": "<section><section data-note=\"<section>\">inner</section><p>after</p></section>",
+      "rule": "section:first-child@text",
+      "expectedTexts": ["inner after"],
+      "semantics": "same-tag_extraction_must_not_count_markup_like_opening_text_inside_a_quoted_attribute"
+    },
+    {
+      "id": "html-terminal-keeps-complete-element",
+      "html": "<article><div data-note=\"</div>\">inner</div><p>after</p></article>",
+      "rule": "article@html",
+      "expectedContains": ["<p>after</p>", "data-note"],
+      "semantics": "html_terminal_receives_the_complete_element_before_script_style_cleanup"
+    }
+  ],
+  "selectionPaths": [
+    "LegadoRuleAnalyzer.findElementsByTag -> extractElement",
+    "LegadoRuleAnalyzer.findElementsBySimpleSelector -> extractElement",
+    "LegadoRuleAnalyzer.extractAttribute(html) -> extractElement -> removeScriptAndStyleElements"
+  ],
+  "legadoSemantics": {
+    "implementation": "AnalyzeByJSoup delegates element boundaries to Jsoup nodes; quoted attribute values are not closing or opening Element nodes.",
+    "nodeBoundary": "A same-tag depth counter changes only for parsed opening/closing tag nodes outside attribute quotes."
+  },
+  "failureCondition": "The V2 extractElement implementation uses getTagRegexPair open/close regular expressions. A literal </div> or <section> inside a quoted attribute changes same-tag depth and truncates or expands the extracted element."
+}

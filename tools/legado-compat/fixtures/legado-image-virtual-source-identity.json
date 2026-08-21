@@ -1,0 +1,108 @@
+{
+  "schemaVersion": 1,
+  "contract": "legado_image_virtual_source_identity",
+  "expected": {
+    "bookSourceUrl": "这是一个图集",
+    "pkg": "legado.image.bbfcb830dee4ce07",
+    "bookSourceType": 2,
+    "adapter": "legado-image"
+  },
+  "cases": [
+    {
+      "name": "exact_record",
+      "expected": "accept",
+      "record": {
+        "pkg": "legado.image.bbfcb830dee4ce07",
+        "config": {
+          "metadata": {
+            "id": "legado.image.bbfcb830dee4ce07",
+            "bookSourceUrl": "这是一个图集",
+            "bookSourceType": 2,
+            "adapter": "legado-image"
+          },
+          "workflows": { "adapter": "legado-image" }
+        }
+      }
+    },
+    {
+      "name": "neighbor_numeric_id_reuse",
+      "expected": "reject",
+      "record": {
+        "pkg": "legado.image.8b7740886d50429b",
+        "config": {
+          "metadata": {
+            "id": "legado.image.8b7740886d50429b",
+            "bookSourceUrl": "https://api.520diandu.com/",
+            "bookSourceType": 2,
+            "adapter": "legado-image"
+          },
+          "workflows": { "adapter": "legado-image" }
+        }
+      }
+    },
+    {
+      "name": "wrong_pkg",
+      "expected": "reject",
+      "record": {
+        "pkg": "legado.image.other",
+        "config": {
+          "metadata": {
+            "id": "legado.image.bbfcb830dee4ce07",
+            "bookSourceUrl": "这是一个图集",
+            "bookSourceType": 2,
+            "adapter": "legado-image"
+          },
+          "workflows": { "adapter": "legado-image" }
+        }
+      }
+    },
+    {
+      "name": "wrong_metadata_url",
+      "expected": "reject",
+      "record": {
+        "pkg": "legado.image.bbfcb830dee4ce07",
+        "config": {
+          "metadata": {
+            "id": "legado.image.bbfcb830dee4ce07",
+            "bookSourceUrl": "https://api.520diandu.com/",
+            "bookSourceType": 2,
+            "adapter": "legado-image"
+          },
+          "workflows": { "adapter": "legado-image" }
+        }
+      }
+    },
+    {
+      "name": "wrong_type",
+      "expected": "reject",
+      "record": {
+        "pkg": "legado.image.bbfcb830dee4ce07",
+        "config": {
+          "metadata": {
+            "id": "legado.image.bbfcb830dee4ce07",
+            "bookSourceUrl": "这是一个图集",
+            "bookSourceType": 0,
+            "adapter": "legado-image"
+          },
+          "workflows": { "adapter": "legado-image" }
+        }
+      }
+    },
+    {
+      "name": "wrong_adapter",
+      "expected": "reject",
+      "record": {
+        "pkg": "legado.image.bbfcb830dee4ce07",
+        "config": {
+          "metadata": {
+            "id": "legado.image.bbfcb830dee4ce07",
+            "bookSourceUrl": "这是一个图集",
+            "bookSourceType": 2,
+            "adapter": "legacy-text"
+          },
+          "workflows": { "adapter": "legacy-text" }
+        }
+      }
+    }
+  ]
+}

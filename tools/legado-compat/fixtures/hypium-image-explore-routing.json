@@ -1,0 +1,12 @@
+{
+  "schemaVersion": 1,
+  "contract": "image_explore_routes_to_manga_reader_and_requires_pipeline_trace",
+  "sourceType": 2,
+  "driverFlag": "--image-workflow",
+  "acceptedReaderRootIds": [
+    "manga_reader_root",
+    "guide_manga_reader_root"
+  ],
+  "rejectedReaderRootId": "novel_reader_root",
+  "requiredTraceEvent": "pipeline_result"
+}

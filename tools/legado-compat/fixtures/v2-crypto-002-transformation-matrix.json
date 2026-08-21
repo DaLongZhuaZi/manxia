@@ -1,0 +1,71 @@
+{
+  "schemaVersion": 1,
+  "issueId": "ISSUE-COMPAT-CRYPTO-002",
+  "verificationPolicy": "static_source_contract_only;runtime_regression_deferred_to_R4",
+  "semanticMatchAllowed": false,
+  "transformations": [
+    {
+      "name": "AES/CBC/PKCS5Padding",
+      "expected": "supported",
+      "algorithm": "AES",
+      "mode": "CBC",
+      "padding": "PKCS7",
+      "keyBytes": 16,
+      "ivBytes": 16
+    },
+    {
+      "name": "AES/ECB/NoPadding",
+      "expected": "supported",
+      "algorithm": "AES",
+      "mode": "ECB",
+      "padding": "NoPadding",
+      "keyBytes": 16,
+      "ivBytes": 0
+    },
+    {
+      "name": "DES/ECB/PKCS5Padding",
+      "expected": "supported",
+      "algorithm": "DES",
+      "mode": "ECB",
+      "padding": "PKCS7",
+      "keyBytes": 8,
+      "ivBytes": 0
+    },
+    {
+      "name": "DESede/CBC/PKCS7Padding",
+      "expected": "supported",
+      "algorithm": "TripleDES",
+      "mode": "CBC",
+      "padding": "PKCS7",
+      "keyBytes": 24,
+      "ivBytes": 8
+    },
+    {
+      "name": "Blowfish/CBC/PKCS5Padding",
+      "expected": "unsupported",
+      "errorCode": "UNSUPPORTED_SYMMETRIC_ALGORITHM"
+    },
+    {
+      "name": "AES/GCM/NoPadding",
+      "expected": "unsupported",
+      "errorCode": "UNSUPPORTED_SYMMETRIC_MODE"
+    },
+    {
+      "name": "AES/CBC/ISO10126Padding",
+      "expected": "unsupported",
+      "errorCode": "UNSUPPORTED_SYMMETRIC_PADDING"
+    },
+    {
+      "name": "AES/CBC/PKCS5Padding/Extra",
+      "expected": "unsupported",
+      "errorCode": "UNSUPPORTED_SYMMETRIC_TRANSFORMATION"
+    }
+  ],
+  "keySemantics": {
+    "stringKeyEncoding": "UTF-8",
+    "hexDetection": "decrypt-string-input-only",
+    "plaintextStringEncoding": "UTF-8",
+    "unknownTransformation": "structured_failure",
+    "plaintextFallback": "forbidden"
+  }
+}

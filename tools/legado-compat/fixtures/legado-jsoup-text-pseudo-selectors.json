@@ -1,0 +1,55 @@
+{
+  "schemaVersion": 1,
+  "contract": "legado_jsoup_text_pseudo_selectors",
+  "html": "<div class=\"book\"><p class=\"meta\">作者：<span>张三</span></p><p class=\"chapter\">Chapter 12</p><p class=\"own\">作者：<em>隐藏文本</em></p><a href=\"/read\">开始阅读</a><p class=\"lower\">CHAPTER 3</p></div>",
+  "cases": [
+    {
+      "id": "contains-descendant-text",
+      "rule": "p:contains(作者：)@text",
+      "semantics": "contains",
+      "expected": ["作者：张三", "作者：隐藏文本"]
+    },
+    {
+      "id": "contains-own-text",
+      "rule": "p:containsOwn(作者：)@text",
+      "semantics": "containsOwn",
+      "expected": ["作者：张三", "作者：隐藏文本"]
+    },
+    {
+      "id": "matches-descendant-text",
+      "rule": "p:matches(^Chapter\\s+12$)@text",
+      "semantics": "matches",
+      "expected": ["Chapter 12"]
+    },
+    {
+      "id": "matches-java-case-insensitive",
+      "rule": "p:matches((?i)^chapter\\s+3$)@text",
+      "semantics": "matches",
+      "expected": ["CHAPTER 3"]
+    },
+    {
+      "id": "matches-own-direct-text",
+      "rule": "p:matchesOwn(^作者：$)@text",
+      "semantics": "matchesOwn",
+      "expected": ["作者：张三", "作者：隐藏文本"]
+    },
+    {
+      "id": "contains-reading-link",
+      "rule": "a:contains(开始阅读)@text",
+      "semantics": "contains",
+      "expected": ["开始阅读"]
+    },
+    {
+      "id": "comma-group-keeps-predicate-scope",
+      "rule": "p:contains(作者：),a:contains(开始阅读)@text",
+      "semantics": "grouped_pseudo",
+      "expected": ["作者：张三", "作者：隐藏文本", "开始阅读"]
+    },
+    {
+      "id": "invalid-pseudo-fails-closed",
+      "rule": "p:unsupportedPseudo(Chapter)@text",
+      "semantics": "unsupported_pseudo",
+      "expected": []
+    }
+  ]
+}

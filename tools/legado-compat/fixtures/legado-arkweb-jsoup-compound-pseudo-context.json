@@ -1,0 +1,50 @@
+{
+  "schemaVersion": 1,
+  "contract": "arkweb_legado_jsoup_compound_pseudo_context",
+  "issueId": "ISSUE-COMPAT-243-JSOUP-STANDARD-CSS-PSEUDO-SELECTORS",
+  "baseline": {
+    "sourceCount": 458,
+    "sourcePackageSha256": "473048A191DE4749FA9C15E0A2F2328A3E86B385A5FCE23EA30432D598D03A67",
+    "legadoCommit": "95973d186b147fb9ab43a9240021d688e4304fbd"
+  },
+  "cases": [
+    {
+      "id": "middle-not-compound",
+      "html": "<div><p class=\"keep\"><a>keep</a></p><p class=\"skip\"><a>skip</a></p></div>",
+      "rule": "div > p:not(.skip) > a@text",
+      "expected": ["keep"],
+      "semantics": "not_is_evaluated_on_the_middle_p_compound"
+    },
+    {
+      "id": "middle-has-compound",
+      "html": "<div><p class=\"with-flag\"><span class=\"flag\">marker</span><a>keep</a></p><p class=\"without-flag\"><a>drop</a></p></div>",
+      "rule": "div > p:has(> span.flag) > a@text",
+      "expected": ["keep"],
+      "semantics": "has_relative_selector_is_evaluated_on_the_middle_p_compound"
+    },
+    {
+      "id": "middle-contains-compound",
+      "html": "<div><p>parent marker<a>keep</a></p><p>other<a>drop</a></p></div>",
+      "rule": "div > p:contains(parent marker) > a@text",
+      "expected": ["keep"],
+      "semantics": "contains_is_evaluated_on_the_middle_p_compound"
+    },
+    {
+      "id": "middle-nth-of-type-compound",
+      "html": "<div><p>first<a>one</a></p><p>second<a>two</a></p></div>",
+      "rule": "div > p:nth-of-type(2) > a@text",
+      "expected": ["two"],
+      "semantics": "nth_of_type_is_evaluated_on_the_middle_p_compound"
+    }
+  ],
+  "affectedSourceOrdinals": [112, 207],
+  "affectedRuleStrings": [
+    ".info_chapters .p2:nth-of-type(2) li:not(.warning)@text",
+    ".plus_l li:not(:has(span))@html"
+  ],
+  "consumerContract": {
+    "holder": "legadoGetStringListSingle creates a detached div and assigns response HTML",
+    "requiredFix": "Every manually evaluated pseudo must retain the compound element it belongs to; descendant candidates are only the terminal projection.",
+    "legadoReference": "AnalyzeByJSoup delegates terminal CSS selection to Jsoup Element.select, which evaluates each compound in the original tree."
+  }
+}

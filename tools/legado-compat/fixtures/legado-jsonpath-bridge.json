@@ -1,0 +1,24 @@
+{
+  "rule": "$.data[*].title",
+  "body": {
+    "code": 200,
+    "data": [
+      { "id": 7, "title": "alpha", "data": [{ "id": 101, "thumb": "https://image.example/alpha.jpg" }] },
+      { "id": 8, "title": "beta", "data": [{ "id": 102, "thumb": "https://image.example/beta.jpg" }] }
+    ],
+    "nested": { "name": "root", "child": { "name": "leaf", "url": "leaf-url" } },
+    "rows": [{ "url": "row-1" }, { "url": "row-2" }],
+    "items": [{ "id": "slice-0" }, { "id": "slice-1" }, { "id": "slice-2" }]
+  },
+  "expected": ["alpha", "beta"],
+  "nestedRule": "$.data[*].data[0].thumb",
+  "nestedExpected": ["https://image.example/alpha.jpg", "https://image.example/beta.jpg"],
+  "expectedOriginal": {
+    "alternative": "alpha",
+    "recursiveNames": ["root", "leaf"],
+    "nestedRecursiveUrls": ["leaf-url"],
+    "alternatives": ["row-1", "row-2"],
+    "regexReplacement": "ALPHA",
+    "sliceIds": ["slice-0", "slice-1"]
+  }
+}

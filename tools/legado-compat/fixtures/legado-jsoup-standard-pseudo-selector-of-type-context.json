@@ -1,0 +1,65 @@
+{
+  "schemaVersion": 1,
+  "contract": "legado_jsoup_standard_pseudo_selector_of_type_context",
+  "issueId": "ISSUE-COMPAT-243-JSOUP-STANDARD-CSS-PSEUDO-SELECTORS",
+  "baseline": {
+    "sourceCount": 458,
+    "sourcePackageSha256": "473048A191DE4749FA9C15E0A2F2328A3E86B385A5FCE23EA30432D598D03A67",
+    "legadoCommit": "95973d186b147fb9ab43a9240021d688e4304fbd"
+  },
+  "largeDocument": {
+    "thresholdBytesExclusive": 50000,
+    "fillerUnit": "<div class=\"filler\">padding</div>",
+    "fillerRepeat": 2000
+  },
+  "html": "<div class=\"root\"><span>span-1</span><p>para-1</p><span>span-2</span><em>em-1</em><span>span-3</span><p>para-2</p></div><article><span>only-span</span><p>other</p></article>",
+  "cases": [
+    {
+      "id": "first-of-type",
+      "rule": "div > span:first-of-type@text",
+      "semantics": "first_same_tag_element_sibling",
+      "expectedTexts": ["span-1"],
+      "expectedCount": 1
+    },
+    {
+      "id": "last-of-type",
+      "rule": "div > span:last-of-type@text",
+      "semantics": "last_same_tag_element_sibling",
+      "expectedTexts": ["span-3"],
+      "expectedCount": 1
+    },
+    {
+      "id": "only-of-type",
+      "rule": "article > span:only-of-type@text",
+      "semantics": "only_same_tag_element_sibling_even_with_other_tags",
+      "expectedTexts": ["only-span"],
+      "expectedCount": 1
+    },
+    {
+      "id": "nth-last-of-type",
+      "rule": "div > span:nth-last-of-type(1)@text",
+      "semantics": "one_based_same_tag_position_from_end",
+      "expectedTexts": ["span-3"],
+      "expectedCount": 1
+    },
+    {
+      "id": "invalid-nth-last-of-type",
+      "rule": "div > span:nth-last-of-type(foo)@text",
+      "semantics": "invalid_type_index_fails_closed",
+      "expectedTexts": [],
+      "expectedCount": 0
+    }
+  ],
+  "legadoSemantics": {
+    "implementation": "AnalyzeByJSoup delegates CSS selection to Jsoup Element.select.",
+    "typePosition": "of-type counts only element siblings with the candidate tag name.",
+    "nthLast": "nth-last-of-type is one-based from the end and supports an+b expressions."
+  },
+  "affectedSourceSet": {
+    "sourceOrdinals": [228],
+    "ruleStringCount": 1,
+    "rulePaths": ["$[227].ruleExplore.bookList"],
+    "binding": "The frozen source at ordinal 228 assigns .container:last-of-type to a selector consumed by its JS getBookList helper."
+  },
+  "verificationPolicy": "static_failure_witness_then_source_fix;runtime_regression_build_device_and_legado_diff_deferred"
+}

@@ -1,0 +1,50 @@
+{
+  "schemaVersion": 1,
+  "issueId": "ISSUE-COMPAT-033-CONTENT-READABILITY-V2",
+  "workflow": "content",
+  "sourceType": 0,
+  "sourceDataCases": [
+    {
+      "name": "persisted_type",
+      "sourceData": {
+        "type": "novel"
+      },
+      "expectedSourceGetType": "novel",
+      "expectedBranch": "novel"
+    },
+    {
+      "name": "empty_type_defaults_to_novel_branch",
+      "sourceData": {},
+      "expectedSourceGetType": "",
+      "expectedBranch": "novel"
+    }
+  ],
+  "ruleShape": {
+    "initialResult": "hex_encoded_item_id",
+    "operations": [
+      "java.hexDecodeToString(result)",
+      "source.get('type')",
+      "conditional_branch(type == 'novel' || type == '')",
+      "let result = java.ajax(url)",
+      "JSON.parse(result).content",
+      "return_last_assignment_completion_value"
+    ]
+  },
+  "bridgeReplay": {
+    "firstPass": "pending_bridge_request",
+    "replay": "state.bridgeResponses[id]",
+    "response": {
+      "success": true,
+      "statusCode": 200,
+      "bodyShape": "json_object_with_content_string",
+      "contentLength": 24
+    },
+    "expectedJsResult": "non_empty_content"
+  },
+  "legadoSemantics": {
+    "sourceGet": "BaseSource.get reads persisted source data; missing type is an empty string",
+    "bookSourceType": "structural field fallback is allowed only for the explicit bookSourceType key",
+    "replay": "a synchronous bridge request is resolved and the same script is replayed with the response",
+    "emptyResult": "must be classified as a runtime/rule failure when the branch was selected, not silently as readable content"
+  }
+}

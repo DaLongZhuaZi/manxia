@@ -1,0 +1,84 @@
+{
+  "schemaVersion": 1,
+  "contract": "legado_v2_output_handoff",
+  "baseline": {
+    "sourceCount": 458,
+    "sourcePackageSha256": "473048A191DE4749FA9C15E0A2F2328A3E86B385A5FCE23EA30432D598D03A67",
+    "legadoCommit": "95973d186b147fb9ab43a9240021d688e4304fbd"
+  },
+  "legadoSemantics": {
+    "bookInfoFile": {
+      "sourceType": 3,
+      "bookType": "webFile",
+      "downloadUrlsRequired": true,
+      "emptyDownloadUrls": "failure"
+    },
+    "contentKinds": ["text", "audio", "image", "file"]
+  },
+  "preFixObserved": {
+    "bookInfo": {
+      "resultType": "LegadoWorkflowBookInfoResult",
+      "downloadCandidatesPresent": true,
+      "managerReturnType": "LegadoBook|null",
+      "managerConsumesDownloadCandidates": false
+    },
+    "content": {
+      "resultType": "LegadoWorkflowContentResult",
+      "payloadTypes": ["string"],
+      "sourceTypeDiscriminatorAtManagerBoundary": false,
+      "audioMediaUrlConsumer": "string_url_guess",
+      "imagePageConsumer": "string_html_extractor",
+      "fileConsumer": "none"
+    },
+    "auxiliaryRules": {
+      "payAction": "assessed_or_blocked_without_typed_handoff",
+      "imageDecode": "policy_blocked_without_typed_handoff"
+    }
+  },
+  "requiredPostFix": {
+    "resultModels": {
+      "bookInfo": "typed_handoff_with_download_candidates",
+      "content": "typed_handoff_with_kind_and_payload",
+      "auxiliaryRules": "typed_outcome_or_structured_refusal"
+    },
+    "kinds": [
+      {
+        "sourceType": 0,
+        "kind": "text",
+        "payloadField": "textContent",
+        "consumer": "NovelReaderPage"
+      },
+      {
+        "sourceType": 1,
+        "kind": "audio",
+        "payloadField": "mediaUrl",
+        "consumer": "NovelReadAloudPage|NovelAudioReadAloudSessionManager"
+      },
+      {
+        "sourceType": 2,
+        "kind": "image",
+        "payloadField": "imageContent",
+        "consumer": "LegadoMangaSourceBridge"
+      },
+      {
+        "sourceType": 3,
+        "kind": "file",
+        "payloadField": "downloadCandidates",
+        "consumer": "explicit_structured_refusal_until_file_downloader_exists"
+      }
+    ],
+    "fileHandoff": {
+      "nonEmptyCandidatesStatus": "missing_consumer",
+      "nonEmptyCandidatesReason": "file_downloader_consumer_missing",
+      "emptyCandidatesStatus": "empty",
+      "emptyCandidatesReason": "file_download_urls_empty"
+    },
+    "forbidden": [
+      "empty_string_as_success",
+      "empty_download_candidates_as_success",
+      "file_to_text_downgrade",
+      "silent_payload_drop",
+      "legacy_executor_fallback"
+    ]
+  }
+}

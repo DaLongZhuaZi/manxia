@@ -1,0 +1,43 @@
+{
+  "schemaVersion": 1,
+  "contract": "legado_jsoup_dom_matcher_selector_group_regex_class_context",
+  "issueId": "ISSUE-COMPAT-243-JSOUP-STANDARD-CSS-PSEUDO-SELECTORS",
+  "baseline": {
+    "sourceCount": 458,
+    "sourcePackageSha256": "473048A191DE4749FA9C15E0A2F2328A3E86B385A5FCE23EA30432D598D03A67",
+    "legadoCommit": "95973d186b147fb9ab43a9240021d688e4304fbd"
+  },
+  "html": "<section><div class=\"card\">needle,alt</div><span class=\"card\">fallback</span></section>",
+  "cases": [
+    {
+      "id": "comma-after-closing-parenthesis-in-regex-class",
+      "selector": "div.card:matches([)]needle,alt), span.card",
+      "expectedGroups": ["div.card:matches([)]needle,alt)", "span.card"],
+      "expectedGroupCount": 2,
+      "semantics": "a_closing_parenthesis_inside_a_regex_character_class_must_not_close_the_outer_pseudo_before_the_inner_comma"
+    },
+    {
+      "id": "nested-not-comma-after-closing-parenthesis-in-regex-class",
+      "selector": "div.card:not(:matches([)]needle,alt)), span.card",
+      "expectedGroups": ["div.card:not(:matches([)]needle,alt))", "span.card"],
+      "expectedGroupCount": 2,
+      "semantics": "nested_jsoup_pseudo_arguments_keep_regex_class_parentheses_and_inner_commas_opaque_to_selector_group_splitting"
+    }
+  ],
+  "selectionPath": [
+    "LegadoRuleAnalyzer.getElementsByCSSWithBridge",
+    "LegadoHtmlBridge.querySelectorAll",
+    "HTMLElement.querySelectorAll -> Matcher.parseSelector -> Matcher.splitByComma"
+  ],
+  "representativeSourceSet": {
+    "sourceOrdinals": [357],
+    "rulePaths": ["$[356].ruleContent.nextContentUrl"],
+    "binding": "The frozen package contains a nested :not(:matches(...), ...) selector at ordinal 357; the exact closing-parenthesis regex-class case is a capability fixture because no frozen rule contains that rarer literal yet."
+  },
+  "legadoSemantics": {
+    "implementation": "AnalyzeByJSoup delegates CSS group selection to Jsoup Element.select and QueryParser.",
+    "groupBoundary": "Only commas outside quoted, escaped, attribute and pseudo-argument contexts split selector groups.",
+    "identity": "Distinct nodes remain distinct even when their outer HTML is equal."
+  },
+  "failureCondition": "Matcher.splitByComma counts every parenthesis and bracket with one integer. A ) inside [)] decrements the outer pseudo depth, so a comma still inside :matches can be emitted as a top-level group boundary."
+}

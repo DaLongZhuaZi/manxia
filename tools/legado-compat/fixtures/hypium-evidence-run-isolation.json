@@ -1,0 +1,30 @@
+{
+  "schemaVersion": 1,
+  "contract": "hypium_evidence_run_isolation",
+  "canonicalDirectoryName": "full-source-v2-hypium-device",
+  "controlDirectoryName": "full-source-v2-hypium-device-control",
+  "runDirectoryPrefix": "full-source-v2-hypium-device-run-",
+  "baselineWritePolicy": "forbidden",
+  "runDirectoryScenarios": [
+    {
+      "token": "fixture-run-a",
+      "expectedDirectory": "full-source-v2-hypium-device-run-fixture-run-a"
+    },
+    {
+      "token": "fixture-run-b",
+      "expectedDirectory": "full-source-v2-hypium-device-run-fixture-run-b"
+    }
+  ],
+  "selectionScenario": {
+    "baselineGeneratedAt": "2026-08-07T23:00:00.0000000Z",
+    "overlayGeneratedAt": "2026-08-08T01:20:00.0000000Z",
+    "selectedEvidenceKind": "overlay",
+    "baselineMustRemainByteIdentical": true
+  },
+  "negativeScenarios": [
+    "canonical baseline directory cannot be supplied to the writer",
+    "a directory below the canonical baseline cannot be supplied to the writer",
+    "two run tokens must produce different sibling directories",
+    "source evidence must be written below the run directory, never beside the baseline"
+  ]
+}

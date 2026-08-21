@@ -1,0 +1,53 @@
+{
+  "schemaVersion": 1,
+  "contract": "legado_java_string_list_analyzer_js",
+  "issueId": "ISSUE-COMPAT-228-JAVA-STRING-LIST-ANALYZER-JS",
+  "sourcePackageSha256": "473048A191DE4749FA9C15E0A2F2328A3E86B385A5FCE23EA30432D598D03A67",
+  "legadoCommit": "95973d186b147fb9ab43a9240021d688e4304fbd",
+  "cases": [
+    {
+      "id": "standalone-js-keeps-boolean-operators",
+      "rule": "<js>var value = flag || 'fallback'; return java.getStringList('class.fixture-list@tag.article@tag.a@text');</js>",
+      "expected": "single_js_program",
+      "forbidden": "generic_or_split"
+    },
+    {
+      "id": "java-list-methods",
+      "api": "java.getStringList",
+      "methods": ["size", "get", "toArray", "isEmpty"],
+      "expected": "list_like"
+    },
+    {
+      "id": "array-projection",
+      "jsResult": "[{\"cn\":\"One\",\"cu\":\"/chapter/one\"},{\"cn\":\"Two\",\"cu\":\"/chapter/two\"}]",
+      "expected": ["{\"cn\":\"One\",\"cu\":\"/chapter/one\"}", "{\"cn\":\"Two\",\"cu\":\"/chapter/two\"}"]
+    },
+    {
+      "id": "empty-array-status",
+      "jsResult": "[]",
+      "expectedStatus": "empty",
+      "expectedElements": 0
+    },
+    {
+      "id": "execution-failure-status",
+      "executeError": "SCRIPT_SYNTAX",
+      "expectedStatusPrefix": "error_",
+      "forbiddenStatus": "not_evaluated"
+    },
+    {
+      "id": "scalar-result-is-rejected",
+      "jsResult": "single-value",
+      "expectedStatus": "error_js_result_not_list",
+      "expectedElements": 0
+    }
+  ],
+  "requiredPaths": [
+    "getElementsAsync",
+    "getElementsSingleAsync",
+    "executeJavaScriptElementsAsync",
+    "LegadoJsEngine.standard",
+    "LegadoJsEngine.native",
+    "legado_runtime.html"
+  ],
+  "verificationPolicy": "static_source_contract_only;runtime_regression_deferred"
+}

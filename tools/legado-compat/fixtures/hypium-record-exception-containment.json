@@ -1,0 +1,54 @@
+{
+  "schemaVersion": 1,
+  "contract": "hypium_record_exception_containment",
+  "trigger": {
+    "sourceOrdinal": 55,
+    "childResultShape": "detailTraceRecords contains a malformed item without statusCode",
+    "strictModeFailure": "PropertyNotFoundStrict"
+  },
+  "beforeFix": {
+    "scope": "batch",
+    "outcome": "outer_runner_catch_aborts_remaining_sources",
+    "sourceEvidence": "missing_or_running"
+  },
+  "afterFix": {
+    "scope": "single_source",
+    "sourceStatus": "failed",
+    "sourceOutcome": "record_harness_exception",
+    "semanticQualification": "harness_or_engine_failure",
+    "workflowStatus": "planned_and_running_workflows_settled_to_failed",
+    "evidence": "seven_workflow_matrix_and_attempt_binding_written",
+    "batchContinuation": true
+  },
+  "fallbackEvidence": {
+    "fileNamePattern": "source-<sourceId>.fallback.json",
+    "evidenceKind": "source_fallback",
+    "reason": "source_evidence_write_failed",
+    "runScoped": true,
+    "atomic": true,
+    "workflowMatrixClosed": true,
+    "activityPathField": "evidencePath",
+    "batchContinuation": true
+  },
+  "primaryWriteFailure": {
+    "operation": "full_source_evidence_writer",
+    "error": "serialization_or_atomic_replace_failure",
+    "fallbackExpected": true,
+    "activityOutcome": "source_evidence_fallback_written"
+  },
+  "activityBindingPersistence": {
+    "fallbackPhase": "source_evidence_fallback_written",
+    "subsequentPhase": "source_settled",
+    "subsequentEvidencePathEmpty": true,
+    "preserveEvidencePath": true
+  },
+  "workflowNames": [
+    "search",
+    "explore",
+    "bookInfo",
+    "toc",
+    "content",
+    "file",
+    "review"
+  ]
+}

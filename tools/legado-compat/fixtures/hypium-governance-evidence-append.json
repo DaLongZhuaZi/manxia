@@ -1,0 +1,33 @@
+{
+  "schemaVersion": 1,
+  "contract": "hypium_governance_evidence_append",
+  "issueId": "V2-HARNESS-023",
+  "baseline": {
+    "sourceCount": 458,
+    "sourcePackageSha256": "473048A191DE4749FA9C15E0A2F2328A3E86B385A5FCE23EA30432D598D03A67",
+    "legadoCommit": "95973d186b147fb9ab43a9240021d688e4304fbd"
+  },
+  "preFix": {
+    "implementationSha256": "9E0EA211CF581170615B5CD13C295D9FD352149A5245D0983D53035FC102D61",
+    "existingEvidencePaths": [
+      "tools/legado-compat/fixtures/hypium-evidence-run-isolation.json",
+      "tools/legado-compat/evidence/v2-harness-023-source-fix-20260808-r2.json"
+    ],
+    "incomingEvidencePaths": [
+      "tools/legado-compat/evidence/r3-static-gate-20260808-run-015/r3-source-closure-static-gate.json"
+    ],
+    "observedEvidencePaths": [
+      "tools/legado-compat/evidence/r3-static-gate-20260808-run-015/r3-source-closure-static-gate.json"
+    ],
+    "failureCode": "EVIDENCE_PATH_HISTORY_REPLACED"
+  },
+  "postFix": {
+    "expectedDistinctEvidencePaths": [
+      "tools/legado-compat/fixtures/hypium-evidence-run-isolation.json",
+      "tools/legado-compat/evidence/v2-harness-023-source-fix-20260808-r2.json",
+      "tools/legado-compat/evidence/r3-static-gate-20260808-run-015/r3-source-closure-static-gate.json"
+    ],
+    "expectedDistinctCount": 3
+  },
+  "sourcePath": "tools/legado-compat/Update-LegadoGovernanceState.ps1"
+}

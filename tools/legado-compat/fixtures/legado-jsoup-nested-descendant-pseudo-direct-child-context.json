@@ -1,0 +1,47 @@
+{
+  "schemaVersion": 1,
+  "contract": "legado_jsoup_nested_descendant_pseudo_direct_child",
+  "issueId": "ISSUE-COMPAT-243-JSOUP-STANDARD-CSS-PSEUDO-SELECTORS",
+  "baseline": {
+    "sourceCount": 458,
+    "sourcePackageSha256": "473048A191DE4749FA9C15E0A2F2328A3E86B385A5FCE23EA30432D598D03A67",
+    "legadoCommit": "95973d186b147fb9ab43a9240021d688e4304fbd"
+  },
+  "html": "<div class=\"grow\"><div><span>first-parent</span></div><div><span>second-parent</span><span>second-last</span></div><div><span>third-parent</span></div><div><span>fourth-parent</span><span>fourth-last</span></div></div><section><div><span>one</span></div><div><span>two</span></div></section>",
+  "selectionPath": "getElementsByCSSWithBridge -> getElementsByCSSChain -> findElementsBySingleSelector -> findElementsByDirectChildSelector",
+  "cases": [
+    {
+      "id": "ancestor_nth_descendant_first",
+      "selector": ".grow>div:nth-child(2) span:first-child",
+      "semantics": "nth-child belongs to the direct-child div segment and first-child belongs to the descendant span segment",
+      "expected": ["<span>second-parent</span>"]
+    },
+    {
+      "id": "ancestor_nth_descendant_last",
+      "selector": ".grow>div:nth-child(4) span:last-child",
+      "semantics": "the descendant pseudo must be evaluated inside the selected fourth direct child",
+      "expected": ["<span>fourth-last</span>"]
+    },
+    {
+      "id": "tag_direct_child_descendant",
+      "selector": "section>div:nth-child(2) span:first-child",
+      "semantics": "the same segmented pseudo semantics apply when the left selector is a tag",
+      "expected": ["<span>two</span>"]
+    },
+    {
+      "id": "frozen_source_rule",
+      "selector": "@css:.grow>div:nth-child(4) span:first-child",
+      "semantics": "ordinal 223 contains a real no-space direct-child followed by a descendant pseudo chain",
+      "expected": ["<span>fourth-parent</span>"]
+    }
+  ],
+  "affectedSourceOrdinals": [223],
+  "affectedRuleStringCount": 1,
+  "representativeSourceRules": ["@css:.grow>div:nth-child(4) span:first-child@text"],
+  "legadoSemantics": {
+    "implementation": "AnalyzeByJSoup delegates the complete selector to Jsoup Element.select",
+    "segmentPolicy": "Each compound selector segment owns its pseudo classes before descendant traversal continues.",
+    "directChildPolicy": "The first segment after > must match a direct child; descendants of that direct child may be returned by the remaining selector segments."
+  },
+  "failureCondition": "The V2 direct-child helper applies findElementsBySimpleSelector to the entire right operand. Pseudos on an ancestor segment are collected globally and applied to the final descendant element, so a valid segmented selector returns empty or an incorrect node."
+}

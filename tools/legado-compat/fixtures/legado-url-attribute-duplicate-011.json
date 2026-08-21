@@ -1,0 +1,28 @@
+{
+  "schemaVersion": 1,
+  "issueId": "ISSUE-COMPAT-011",
+  "contract": "legado_url_attribute_duplicate_resolution",
+  "baseline": {
+    "sourceCount": 458,
+    "sourcePackageSha256": "473048A191DE4749FA9C15E0A2F2328A3E86B385A5FCE23EA30432D598D03A67",
+    "legadoCommit": "95973d186b147fb9ab43a9240021d688e4304fbd"
+  },
+  "html": "<section class=\"primary\"><a href=\"/a\">A1</a><a href=\"/a\">A2</a><a href=\"/b\">B</a></section>",
+  "baseUrl": "https://fixture.invalid/detail/page",
+  "cases": [
+    {
+      "id": "css-attribute-deduplicates-values",
+      "workflow": "Search",
+      "rule": ".primary@a@href",
+      "expectedLegadoSelectorValues": ["/a", "/b"],
+      "expectedLegadoString": "/a\n/b",
+      "expectedV2PreFixSelectorValues": ["/a", "/a", "/b"],
+      "expectedV2PreFixString": "/a\n/a\n/b",
+      "projection": "source-path-determined; runtime execution is deferred",
+      "primaryCause": "v2_getResultByLastRule_does_not_deduplicate_attribute_values"
+    }
+  ],
+  "semanticInvariant": "Legado getResultLast omits blank and repeated Element.attr values before getString joins the list; V2 must preserve the same value-level deduplication.",
+  "runtimeActionsPerformed": [],
+  "semanticMatchAllowed": false
+}

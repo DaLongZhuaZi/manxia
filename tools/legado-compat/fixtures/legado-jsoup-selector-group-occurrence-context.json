@@ -1,0 +1,44 @@
+{
+  "schemaVersion": 1,
+  "contract": "legado_jsoup_selector_group_occurrence_context",
+  "issueId": "ISSUE-COMPAT-243-JSOUP-STANDARD-CSS-PSEUDO-SELECTORS",
+  "baseline": {
+    "sourceCount": 458,
+    "sourcePackageSha256": "473048A191DE4749FA9C15E0A2F2328A3E86B385A5FCE23EA30432D598D03A67",
+    "legadoCommit": "95973d186b147fb9ab43a9240021d688e4304fbd"
+  },
+  "largeDocument": {
+    "thresholdBytesExclusive": 50000,
+    "fillerUnit": "<div class=\"filler\">padding</div>",
+    "fillerRepeat": 2000
+  },
+  "html": "<section><p>same</p><p>same</p></section>",
+  "cases": [
+    {
+      "id": "duplicate-outer-html-group-union",
+      "rule": "section > p:first-child, section > p:last-child@text",
+      "semantics": "comma_groups_union_element_identity_not_outer_html_value",
+      "expectedTexts": ["same", "same"],
+      "expectedCount": 2
+    },
+    {
+      "id": "same-node-group-deduplication",
+      "rule": "section > p:first-child, section > p:nth-child(1)@text",
+      "semantics": "one_element_matching_two_groups_is_returned_once",
+      "expectedTexts": ["same"],
+      "expectedCount": 1
+    }
+  ],
+  "legadoSemantics": {
+    "implementation": "AnalyzeByJSoup delegates comma-separated CSS selection to Jsoup Element.select.",
+    "identity": "Jsoup de-duplicates the same Element node but retains distinct nodes with equal outerHtml().",
+    "ordering": "Union results follow source-document order."
+  },
+  "affectedSourceSet": {
+    "sourceOrdinals": [97],
+    "ruleStringCount": 1,
+    "rulePaths": ["$[96].ruleExplore.kind"],
+    "binding": "The frozen source at ordinal 97 contains .book_other:nth-child(4), .book_other:nth-child(5) in a rule string."
+  },
+  "verificationPolicy": "static_failure_witness_then_source_fix;runtime_regression_build_device_and_legado_diff_deferred"
+}

@@ -1,0 +1,47 @@
+{
+  "schemaVersion": 1,
+  "contract": "arkweb_legado_jsoup_repeated_ancestor_compound_context",
+  "issueId": "ISSUE-COMPAT-243-JSOUP-STANDARD-CSS-PSEUDO-SELECTORS",
+  "baseline": {
+    "sourceCount": 458,
+    "sourcePackageSha256": "473048A191DE4749FA9C15E0A2F2328A3E86B385A5FCE23EA30432D598D03A67",
+    "legadoCommit": "95973d186b147fb9ab43a9240021d688e4304fbd"
+  },
+  "cases": [
+    {
+      "id": "repeated-div-first-child-owner",
+      "html": "<div class=\"outer\"><div class=\"first\"><div><p>slot-one</p></div><div><p>target-first</p></div></div><div><div><p>other</p></div></div></div>",
+      "rule": ".outer > div:first-child div:nth-child(2) > p@text",
+      "expected": ["target-first"],
+      "semantics": "the_first_child_pseudo_belongs_to_the_outer_div_even_when_an_inner_div_has_the_same_target_selector"
+    },
+    {
+      "id": "repeated-div-nth-of-type-owner",
+      "html": "<section><div><div><p>outer-one</p></div></div><div><div><p>target-second</p></div></div></section>",
+      "rule": "section > div:nth-of-type(2) div:nth-of-type(1) > p@text",
+      "expected": ["target-second"],
+      "semantics": "the_outer_nth_of_type_pseudo_must_not_be_evaluated_on_the_nearest_inner_div"
+    },
+    {
+      "id": "repeated-div-last-child-owner",
+      "html": "<main><div><div><p>first-inner</p></div><div><p>target-last</p></div></div><div><div><p>other</p></div></div></main>",
+      "rule": "main > div:last-child div:last-child > p@text",
+      "expected": ["other"],
+      "semantics": "repeated_same_selector_pseudos_keep_distinct_ancestor_owners"
+    }
+  ],
+  "affectedSourceSet": {
+    "sourceOrdinals": [21],
+    "ruleStringCount": 2,
+    "ruleStrings": [
+      "@css:#content table tr:nth-of-type(3) table tr td:nth-of-type(2) img@src",
+      "@css:#content table tr:nth-of-type(3) table tr td:nth-of-type(2)@html##.+内容简介：\\s*(.+)本书公告：.+##$1"
+    ],
+    "binding": "Both frozen ordinal-21 BookInfo rules contain repeated tr compounds; the outer nth-of-type must bind to the outer tr rather than the nearest inner tr."
+  },
+  "consumerContract": {
+    "holder": "legadoGetStringListSingle parses the selector with ArkWeb querySelectorAll and then applies manual Jsoup pseudos to each terminal candidate",
+    "requiredFix": "Every manual pseudo must retain the occurrence of its owning compound among equal selector compounds so duplicate ancestor tags cannot steal the predicate.",
+    "legadoReference": "AnalyzeByJSoup delegates the complete selector to Jsoup Element.select, which retains each Evaluator branch and its element identity."
+  }
+}

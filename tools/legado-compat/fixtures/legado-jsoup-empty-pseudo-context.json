@@ -1,0 +1,75 @@
+{
+  "schemaVersion": 1,
+  "contract": "legado_jsoup_empty_pseudo_context",
+  "issueId": "ISSUE-COMPAT-243-JSOUP-STANDARD-CSS-PSEUDO-SELECTORS",
+  "baseline": {
+    "sourceCount": 458,
+    "sourcePackageSha256": "473048A191DE4749FA9C15E0A2F2328A3E86B385A5FCE23EA30432D598D03A67",
+    "legadoCommit": "95973d186b147fb9ab43a9240021d688e4304fbd"
+  },
+  "sourcePackageScan": {
+    "scannedSourceCount": 458,
+    "emptyRuleStringCount": 0,
+    "affectedSourceOrdinals": []
+  },
+  "cases": [
+    {
+      "id": "no-child",
+      "html": "<main><p id=\"empty\"></p><p id=\"text\">text</p></main>",
+      "selector": "p:empty",
+      "expected": ["empty"],
+      "semantics": "an element with no child nodes matches"
+    },
+    {
+      "id": "blank-text-is-empty",
+      "html": "<main><p id=\"blank\">   </p><p id=\"text\">text</p></main>",
+      "selector": "p:empty",
+      "expected": ["blank"],
+      "semantics": "Jsoup treats a blank TextNode as empty"
+    },
+    {
+      "id": "comment-only-is-empty",
+      "html": "<main><p id=\"comment\"><!-- marker --></p><p id=\"text\">text</p></main>",
+      "selector": "p:empty",
+      "expected": ["comment"],
+      "semantics": "Jsoup ignores Comment nodes when evaluating :empty"
+    },
+    {
+      "id": "text-is-not-empty",
+      "html": "<main><p id=\"text\">text</p></main>",
+      "selector": "p:empty",
+      "expected": [],
+      "semantics": "nonblank text prevents an empty match"
+    },
+    {
+      "id": "element-child-is-not-empty",
+      "html": "<main><p id=\"nested\"><span></span></p></main>",
+      "selector": "p:empty",
+      "expected": [],
+      "semantics": "an element child prevents an empty match"
+    },
+    {
+      "id": "void-element-is-empty",
+      "html": "<main><img id=\"image\" src=\"x\"></main>",
+      "selector": "img:empty",
+      "expected": ["image"],
+      "semantics": "a void element has no child nodes"
+    }
+  ],
+  "legadoSemantics": {
+    "implementation": "AnalyzeByJSoup delegates CSS selection to Jsoup Element.select.",
+    "evaluator": "org.jsoup.select.Evaluator.IsEmpty in jsoup 1.16.2",
+    "referenceSource": "https://raw.githubusercontent.com/jhy/jsoup/jsoup-1.16.2/src/main/java/org/jsoup/select/Evaluator.java",
+    "rules": [
+      "blank TextNode is accepted",
+      "Comment, XmlDeclaration and DocumentType nodes are ignored",
+      "any other child node, including an Element, rejects the match"
+    ]
+  },
+  "consumerContract": {
+    "arkWeb": "Jsoup :empty semantics must be manually evaluated before native CSS selection can be trusted.",
+    "dom": "HTMLElement.matchesPseudoClass must distinguish blank text and comments from element children.",
+    "stringFallback": "LegadoRuleAnalyzer.filterElementsByPseudoClasses must not fail closed for :empty in large documents."
+  },
+  "verificationPolicy": "r3_243_empty_pseudo_failure_witness_then_source_fix_static_only;runtime_build_device_and_legado_diff_deferred_to_R4"
+}

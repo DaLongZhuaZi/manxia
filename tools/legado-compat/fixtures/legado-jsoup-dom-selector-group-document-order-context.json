@@ -1,0 +1,43 @@
+{
+  "schemaVersion": 1,
+  "contract": "legado_jsoup_dom_selector_group_document_order",
+  "issueId": "ISSUE-COMPAT-243-JSOUP-STANDARD-CSS-PSEUDO-SELECTORS",
+  "baseline": {
+    "sourceCount": 458,
+    "sourcePackageSha256": "473048A191DE4749FA9C15E0A2F2328A3E86B385A5FCE23EA30432D598D03A67",
+    "legadoCommit": "95973d186b147fb9ab43a9240021d688e4304fbd"
+  },
+  "html": "<section><p id=\"first\">same</p><p id=\"second\">same</p></section>",
+  "cases": [
+    {
+      "id": "reverse_selector_group_document_order",
+      "selector": "section > p:nth-child(2), section > p:first-child",
+      "expectedIds": ["first", "second"],
+      "expectedCount": 2,
+      "semantics": "Jsoup Element.select unions groups and returns distinct elements in source-document order, independent of group order"
+    },
+    {
+      "id": "same_element_group_deduplication",
+      "selector": "section > p:first-child, section > p:nth-child(1)",
+      "expectedIds": ["first"],
+      "expectedCount": 1,
+      "semantics": "the same element matched by two groups is returned once"
+    }
+  ],
+  "selectionPath": [
+    "LegadoRuleAnalyzer.getElementsByCSSWithBridge",
+    "LegadoHtmlBridge.querySelectorAll",
+    "HTMLElement.querySelectorAll -> Matcher.parseSelector -> selector-group union"
+  ],
+  "representativeSourceSet": {
+    "sourceOrdinals": [97],
+    "rulePaths": ["$[96].ruleExplore.kind", "$[96].ruleSearch.kind"],
+    "binding": "The frozen ordinal 97 rule contains .book_other:nth-child(4), .book_other:nth-child(5), exercising the same standard-pseudo selector-group consumer."
+  },
+  "legadoSemantics": {
+    "implementation": "AnalyzeByJSoup delegates CSS group selection to Jsoup Element.select.",
+    "ordering": "Jsoup returns the selector-group union in source-document order.",
+    "identity": "distinct nodes remain distinct even when their text or outer HTML is equal"
+  },
+  "failureCondition": "HTMLElement.querySelectorAll appends each selector-group result in group order and does not sort the union by document position; the reverse-group case therefore returns second before first."
+}

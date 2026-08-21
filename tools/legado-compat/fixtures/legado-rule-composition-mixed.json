@@ -1,0 +1,42 @@
+{
+  "schemaVersion": 1,
+  "sourcePackageSha256": "473048A191DE4749FA9C15E0A2F2328A3E86B385A5FCE23EA30432D598D03A67",
+  "legadoCommit": "95973d186b147fb9ab43a9240021d688e4304fbd",
+  "cases": [
+    {
+      "id": "mixed-or-then-and",
+      "rule": "bookRecommendWords||bookDesc&&copyright_owner",
+      "allowedFor": ["getString", "getStringList"],
+      "firstOperator": "||",
+      "segments": ["bookRecommendWords", "bookDesc&&copyright_owner"]
+    },
+    {
+      "id": "mixed-and-then-or",
+      "rule": "$.data.result[*]&&$.data.result.live_user[*]&&$.data.result.live_room[*]||$.data.result[*]",
+      "allowedFor": ["getString", "getStringList"],
+      "firstOperator": "&&",
+      "segments": ["$.data.result[*]", "$.data.result.live_user[*]", "$.data.result.live_room[*]||$.data.result[*]"]
+    },
+    {
+      "id": "mixed-json-or-then-and",
+      "rule": "$.txt2||$.singerList[0].name&&$.singerList[1].name",
+      "allowedFor": ["getString", "getStringList"],
+      "firstOperator": "||",
+      "segments": ["$.txt2", "$.singerList[0].name&&$.singerList[1].name"]
+    },
+    {
+      "id": "filter-and-quoted-or-is-not-top-level",
+      "rule": "$.items[?(@.name == \"a||b\")].title&&$.fallback",
+      "allowedFor": ["getString", "getStringList"],
+      "firstOperator": "&&",
+      "segments": ["$.items[?(@.name == \"a||b\")].title", "$.fallback"]
+    },
+    {
+      "id": "get-string-does-not-consume-percent-merge",
+      "rule": "title%%author",
+      "allowedFor": ["getStringList"],
+      "firstOperator": "%%",
+      "segments": ["title", "author"]
+    }
+  ]
+}

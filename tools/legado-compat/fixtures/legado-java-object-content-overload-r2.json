@@ -1,0 +1,75 @@
+{
+  "schemaVersion": 1,
+  "contract": "legado_java_object_content_overload_r2",
+  "issueId": "ISSUE-COMPAT-238-JAVA-OBJECT-CONTENT-OVERLOAD",
+  "baselineSourceCount": 458,
+  "baselineSourcePackageSha256": "473048A191DE4749FA9C15E0A2F2328A3E86B385A5FCE23EA30432D598D03A67",
+  "legadoCommit": "95973d186b147fb9ab43a9240021d688e4304fbd",
+  "cases": [
+    {
+      "id": "webview_object_scalar",
+      "path": "arkweb",
+      "method": "getString",
+      "rule": "name##Object##Record",
+      "expected": "Record title"
+    },
+    {
+      "id": "standard_object_scalar",
+      "path": "standard_jsvm",
+      "method": "getString",
+      "rule": "name##Object##Record",
+      "expected": "Record title"
+    },
+    {
+      "id": "native_object_scalar",
+      "path": "native_jsvm",
+      "method": "getString",
+      "rule": "name##Object##Record",
+      "expected": "Record title"
+    },
+    {
+      "id": "native_composition_replacement",
+      "path": "native_jsvm",
+      "method": "getString",
+      "rule": "name&&zero##0##X",
+      "expected": "Object title\nX"
+    },
+    {
+      "id": "native_jsonpath_replacement",
+      "path": "native_jsvm",
+      "method": "getString",
+      "rule": "$.nested.id##42##ID",
+      "expected": "ID"
+    },
+    {
+      "id": "native_css_list_replacement",
+      "path": "native_jsvm",
+      "method": "getStringList",
+      "rule": "p##old##new",
+      "expected": ["new"]
+    },
+    {
+      "id": "native_helper_copy_is_closed",
+      "path": "standard_jsvm_embedded_native_helpers",
+      "method": "static_contract",
+      "rule": "__nativeGetStringFromContent/__nativeGetStringListFromContent",
+      "expected": "every embedded native helper declares and applies its replacement descriptor"
+    }
+  ],
+  "requiredSemantics": [
+    "NativeObject direct-key lookup precedes CSS coercion",
+    "0 and false remain visible values",
+    "## replacement is applied after object lookup",
+    "composition, JSONPath and CSS list projections use the same replacement descriptor",
+    "standard and native JSVM helpers do not reference an outer or undefined replacement",
+    "ArkWeb, standard JSVM and native JSVM expose the same getString/getStringList consumer contract"
+  ],
+  "originalImplementation": [
+    "legado/app/src/main/java/io/legado/app/model/analyzeRule/AnalyzeRule.kt",
+    "legado/app/src/main/java/io/legado/app/model/analyzeRule/AnalyzeByJSonPath.kt"
+  ],
+  "v2Paths": [
+    "entry/src/main/resources/rawfile/legado_runtime.html",
+    "entry/src/main/ets/Framework/Novel/LegadoJsEngine.ets"
+  ]
+}

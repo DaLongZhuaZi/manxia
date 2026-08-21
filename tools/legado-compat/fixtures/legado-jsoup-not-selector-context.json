@@ -1,0 +1,32 @@
+{
+  "schemaVersion": 1,
+  "contract": "legado_jsoup_not_selector_context",
+  "issueId": "ISSUE-COMPAT-243-JSOUP-STANDARD-CSS-PSEUDO-SELECTORS",
+  "baseline": {
+    "sourceCount": 458,
+    "sourcePackageSha256": "473048A191DE4749FA9C15E0A2F2328A3E86B385A5FCE23EA30432D598D03A67",
+    "legadoCommit": "95973d186b147fb9ab43a9240021d688e4304fbd"
+  },
+  "html": "<section id=\"root\"><div id=\"target\"><span class=\"keep\">保留</span><span class=\"skip\">排除</span></div><div id=\"other\"><span class=\"other\">其他</span></div></section>",
+  "cases": [
+    {
+      "id": "not-complex-descendant",
+      "rule": "span:not(div span)@text",
+      "semantics": "not_must_evaluate_candidate_with_ancestor_context",
+      "expected": []
+    },
+    {
+      "id": "not-complex-child-with-class",
+      "rule": "span:not(div > span.skip)@text",
+      "semantics": "not_must_preserve_parent_and_child_combinator_context",
+      "expected": ["保留", "其他"]
+    },
+    {
+      "id": "not-selector-list",
+      "rule": "span:not(div > span.skip, .other)@text",
+      "semantics": "not_selector_list_is_logical_or_in_jsoup",
+      "expected": ["保留"]
+    }
+  ],
+  "failureCondition": "The pre-fix large-document fallback wrapped only the candidate element before evaluating :not, so ancestor-dependent selectors such as div span could never match the candidate and were incorrectly negated."
+}

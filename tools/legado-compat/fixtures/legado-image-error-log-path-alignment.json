@@ -1,0 +1,28 @@
+{
+  "schemaVersion": 1,
+  "contract": "legado_image_error_log_path_alignment",
+  "issueId": "ISSUE-COMPAT-014",
+  "baseline": {
+    "sourceCount": 458,
+    "sourcePackageSha256": "473048A191DE4749FA9C15E0A2F2328A3E86B385A5FCE23EA30432D598D03A67",
+    "legadoCommit": "95973d186b147fb9ab43a9240021d688e4304fbd"
+  },
+  "producer": {
+    "component": "ErrorMonitorService.tryCopyToDownload",
+    "relativeDirectory": "logs",
+    "pathContract": "DownloadDirManager.getManagedRootPath(false)/logs"
+  },
+  "consumer": {
+    "component": "ErrorManagementSubPage.resolveKnownLogDirs",
+    "requiredPathContract": "DownloadDirManager.getManagedRootPath(false)/logs",
+    "oldIncorrectContract": "DownloadDirManager.getPath()/logs"
+  },
+  "failureScenario": {
+    "boundary": "download_root_path_projection",
+    "producerRoot": "Download/com.dlzz.manxia",
+    "selectedPickerRoot": "Download",
+    "expectedSharedDirectory": "Download/com.dlzz.manxia/logs",
+    "mustNotUseRawPickerRoot": true
+  },
+  "runtimeValidation": "source_contract_only_pending_r4"
+}

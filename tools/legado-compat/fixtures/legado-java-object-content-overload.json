@@ -1,0 +1,82 @@
+{
+  "schemaVersion": 1,
+  "contract": "legado_java_object_content_overload",
+  "baselineSourceCount": 458,
+  "baselineSourcePackageSha256": "473048A191DE4749FA9C15E0A2F2328A3E86B385A5FCE23EA30432D598D03A67",
+  "legadoCommit": "95973d186b147fb9ab43a9240021d688e4304fbd",
+  "content": {
+    "name": "Object title",
+    "zero": 0,
+    "flag": false,
+    "tags": ["alpha", "beta"],
+    "lines": "one\ntwo",
+    "repeated": "foo foo",
+    "nested": {
+      "id": 42
+    }
+  },
+  "cases": [
+    {
+      "id": "scalar",
+      "method": "getString",
+      "rule": "name",
+      "expected": "Object title"
+    },
+    {
+      "id": "numeric-falsy-value",
+      "method": "getString",
+      "rule": "zero",
+      "expected": "0"
+    },
+    {
+      "id": "boolean-falsy-value",
+      "method": "getString",
+      "rule": "flag",
+      "expected": "false"
+    },
+    {
+      "id": "array-list",
+      "method": "getStringList",
+      "rule": "tags",
+      "expected": ["alpha", "beta"]
+    },
+    {
+      "id": "multiline-list",
+      "method": "getStringList",
+      "rule": "lines",
+      "expected": ["one", "two"]
+    },
+    {
+      "id": "replacement-after-object-lookup",
+      "method": "getString",
+      "rule": "name##Object##Record",
+      "expected": "Record title"
+    },
+    {
+      "id": "replace-first-after-object-lookup",
+      "method": "getString",
+      "rule": "repeated##foo##bar##",
+      "expected": "bar foo"
+    },
+    {
+      "id": "missing-key-is-empty",
+      "method": "getString",
+      "rule": "missing",
+      "expected": ""
+    },
+    {
+      "id": "json-path-still-uses-json-bridge",
+      "method": "getString",
+      "rule": "$.nested.id",
+      "expected": "42"
+    }
+  ],
+  "originalImplementation": [
+    "legado/app/src/main/java/io/legado/app/model/analyzeRule/AnalyzeRule.kt",
+    "legado/app/src/main/java/io/legado/app/model/analyzeRule/AnalyzeByJSonPath.kt"
+  ],
+  "v2Paths": [
+    "entry/src/main/resources/rawfile/legado_runtime.html",
+    "entry/src/main/ets/Framework/Novel/LegadoJsEngine.ets"
+  ]
+}

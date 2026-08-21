@@ -1,0 +1,108 @@
+{
+  "schemaVersion": 1,
+  "kind": "legado_jsapi_s2t_default_runtime_failure_fixture",
+  "issueId": "ISSUE-COMPAT-JSAPI-JAVA-S2T-DEFAULT-RUNTIME",
+  "status": "failure_witness",
+  "targetRevision": "2026-08-09-actual-docs-source-refactor-js-api-s2t-default-runtime",
+  "baseline": {
+    "sourceCount": 458,
+    "sourcePackageSha256": "473048A191DE4749FA9C15E0A2F2328A3E86B385A5FCE23EA30432D598D03A67",
+    "legadoCommit": "95973d186b147fb9ab43a9240021d688e4304fbd"
+  },
+  "api": {
+    "name": "java.s2t",
+    "referenceKind": "EXECUTABLE_OR_RULE_FIELD",
+    "callLikeCount": 4,
+    "occurrenceCount": 4,
+    "affectedSourceOrdinals": [9, 10, 202, 226],
+    "affectedSourceHashPrefixes": [
+      "39BCBDB832CAF906",
+      "4FF6D47E7173A708",
+      "84A2CE7F293DF799",
+      "E180504D9DCC741A"
+    ],
+    "ruleFamilies": ["searchUrl"],
+    "sourceFields": ["searchUrl"]
+  },
+  "legadoReference": {
+    "file": "legado/app/src/main/java/io/legado/app/help/JsExtensions.kt",
+    "lines": "547-552",
+    "declaration": "fun s2t(text: String): String",
+    "semantic": "ChineseUtils.s2t(text)",
+    "failureWitness": "fixed Legado exposes a callable java.s2t conversion member"
+  },
+  "v2Observation": {
+    "defaultArkWebRuntime": {
+      "file": "entry/src/main/resources/rawfile/legado_runtime.html",
+      "presentMembers": ["t2s"],
+      "missingMembers": ["s2t"],
+      "observedDisposition": "default java object cannot dispatch java.s2t"
+    },
+    "runtimeLoader": {
+      "file": "entry/src/main/ets/Framework/Novel/LegadoRuntimeV2.ets",
+      "role": "loads legado_runtime.html and owns the default V2 execution path"
+    },
+    "diagnosticNativeJsVm": {
+      "file": "entry/src/main/ets/Framework/Novel/LegadoJsEngine.ets",
+      "presentMember": "s2t",
+      "observedDisposition": "diagnostic shim is not the default ArkWeb execution path"
+    },
+    "registry": {
+      "file": "entry/src/main/ets/Framework/Novel/LegadoJsApiContractRegistry.ets",
+      "presentMembers": ["java.t2s"],
+      "missingMembers": ["java.s2t"]
+    }
+  },
+  "consumerMatrix": [
+    {
+      "layer": "source discovery",
+      "path": "tools/legado-compat/evidence/r3-js-api-capability-settlement-preflight-20260809/reference-mapping.json",
+      "obligation": "bind all four call-like references to the frozen source ordinals and redacted node fingerprints"
+    },
+    {
+      "layer": "Analyzer/compiler",
+      "paths": [
+        "entry/src/main/ets/Framework/Novel/LegadoCompatibilityCompiler.ets",
+        "entry/src/main/ets/Framework/Novel/LegadoRuleAnalyzer.ets"
+      ],
+      "obligation": "preserve java.s2t as an executable JS capability and do not convert its failure into an empty rule result"
+    },
+    {
+      "layer": "default ArkWeb runtime",
+      "paths": [
+        "entry/src/main/resources/rawfile/legado_runtime.html",
+        "entry/src/main/ets/Framework/Novel/LegadoRuntimeV2.ets"
+      ],
+      "obligation": "expose s2t on the injected java object with the same mapping boundary as t2s"
+    },
+    {
+      "layer": "diagnostic Native JSVM",
+      "path": "entry/src/main/ets/Framework/Novel/LegadoJsEngine.ets",
+      "obligation": "remain semantically aligned, but never mask a missing default runtime member"
+    },
+    {
+      "layer": "capability registry",
+      "path": "entry/src/main/ets/Framework/Novel/LegadoJsApiContractRegistry.ets",
+      "obligation": "register java.s2t only after the default runtime implementation and static contract are complete"
+    },
+    {
+      "layer": "workflow/output",
+      "paths": [
+        "entry/src/main/ets/Framework/Novel/LegadoWorkflowOrchestrator.ets",
+        "entry/src/main/ets/Framework/Novel/LegadoCompatibilityTypes.ets"
+      ],
+      "obligation": "retain a typed unsupported_api failure before closure and preserve Search results after the conversion is available"
+    }
+  ],
+  "conversionCases": [
+    {"id": "basic", "input": "繁體書名", "expected": "繁體書名"},
+    {"id": "simplified_input", "input": "简体书名", "expected": "簡體書名"},
+    {"id": "mixed", "input": "简体與繁體", "expected": "簡體與繁體"},
+    {"id": "non_chinese_preserved", "input": "abc-123", "expected": "abc-123"}
+  ],
+  "primaryCause": "default_arkweb_runtime_capability_injection_missing_java_s2t",
+  "classification": "UNSUPPORTED_API",
+  "closeCondition": "Add java.s2t to the default ArkWeb runtime using the frozen Legado ChineseUtils.s2t mapping boundary, register the capability only after a static post-fix contract passes, and retain R4 runtime/Legado differential/device verification as a separate gate.",
+  "runtimeActionsPerformed": [],
+  "semanticMatchAllowed": false
+}

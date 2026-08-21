@@ -1,0 +1,17 @@
+{
+  "schemaVersion": 1,
+  "contract": "legado_url_option_object_body",
+  "sourceSemantics": "AnalyzeUrl.UrlOption.getBody serializes a non-string body through GSON before transport.",
+  "option": {
+    "body": {
+      "catid": 6,
+      "size": 1
+    },
+    "method": "POST"
+  },
+  "expected": {
+    "method": "POST",
+    "body": "{\"catid\":6,\"size\":1}",
+    "contentType": "application/json"
+  }
+}

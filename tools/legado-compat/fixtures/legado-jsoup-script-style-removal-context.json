@@ -1,0 +1,40 @@
+{
+  "schemaVersion": 1,
+  "contract": "legado_jsoup_script_style_removal_context",
+  "issueId": "ISSUE-COMPAT-243-JSOUP-STANDARD-CSS-PSEUDO-SELECTORS",
+  "baseline": {
+    "sourceCount": 458,
+    "sourcePackageSha256": "473048A191DE4749FA9C15E0A2F2328A3E86B385A5FCE23EA30432D598D03A67",
+    "legadoCommit": "95973d186b147fb9ab43a9240021d688e4304fbd"
+  },
+  "cases": [
+    {
+      "id": "script-markup-in-attribute",
+      "html": "<div data-template=\"<script>keep</script>\">visible</div>",
+      "rule": "div@html",
+      "expectedContains": ["data-template", "keep", "visible"],
+      "semantics": "markup_like_text_inside_a_quoted_attribute_is_not_a_script_element"
+    },
+    {
+      "id": "style-markup-in-attribute",
+      "html": "<div data-template=\"<style>keep</style>\">visible</div>",
+      "rule": "div@html",
+      "expectedContains": ["data-template", "keep", "visible"],
+      "semantics": "markup_like_text_inside_a_quoted_attribute_is_not_a_style_element"
+    },
+    {
+      "id": "actual-nested-script-is-removed",
+      "html": "<div><script type=\"text/plain\">hidden</script><p>visible</p></div>",
+      "rule": "div@html",
+      "expectedContains": ["<p>visible</p>"],
+      "expectedNotContains": ["hidden"],
+      "semantics": "only_actual_nested_script_elements_are_removed"
+    }
+  ],
+  "selectionPath": "LegadoRuleAnalyzer.extractAttribute(html) -> removeScriptAndStyleElements",
+  "legadoSemantics": {
+    "implementation": "AnalyzeByJSoup.getResultLast(html) calls elements.select(\"script\").remove() and elements.select(\"style\").remove() on a parsed Jsoup DOM before returning outerHtml.",
+    "nodeBoundary": "Quoted attribute data remains an attribute value and is not selected as a script or style element."
+  },
+  "failureCondition": "The V2 string fallback removes every substring matching <script> or <style> with a global regular expression, including markup-like text inside quoted attributes."
+}

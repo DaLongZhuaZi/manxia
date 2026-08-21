@@ -1,0 +1,64 @@
+{
+  "schemaVersion": 1,
+  "contract": "legado_jsoup_regex_attribute_nested_predicate",
+  "legado": {
+    "implementation": "legado/app/src/main/java/io/legado/app/model/analyzeRule/AnalyzeByJSoup.kt",
+    "jsoupVersion": "1.16.2",
+    "semantics": "Jsoup ~= uses a regular expression; :not accepts a selector list and negates the complete nested selector; missing attributes do not match the nested attribute selector."
+  },
+  "html": "<div id=\"root\"><div id=\"has-a\"><a href=\"/keep/12\">Keep</a><a href=\"/skip\">Skip</a><a>Missing href</a></div><div id=\"has-p\"><p>Paragraph</p></div><img id=\"article-image\" src=\"/article.png\" alt=\"article\"><img id=\"cover-image\" src=\"/cover.png\" alt=\"cover\"><div id=\"kind-foo\" data-kind=\"foo-extra\"><a href=\"/keep\">Nested</a></div></div>",
+  "cases": [
+    {
+      "id": "not-regex-keeps-missing-attribute",
+      "rule": "a:not([href~=^/skip$])@text",
+      "semantics": "jsoup_regex_nested_not",
+      "expected": ["Keep", "Missing href"],
+      "expectedOutcome": "matched"
+    },
+    {
+      "id": "not-regex-excludes-matching-attribute",
+      "rule": "a:not([href~=skip])@text",
+      "semantics": "jsoup_regex_nested_not",
+      "expected": ["Keep", "Missing href"],
+      "expectedOutcome": "matched"
+    },
+    {
+      "id": "regex-and-not-regex-on-image",
+      "rule": "img[src~=(?i)\\.png]:not([src~=(?i)cover])@alt",
+      "semantics": "jsoup_regex_nested_not_inline_flags",
+      "expected": ["article"],
+      "expectedOutcome": "matched"
+    },
+    {
+      "id": "has-child-and-not-has-child",
+      "rule": "div:has(>a):not(:has(>p))@id",
+      "semantics": "jsoup_nested_has_not",
+      "expected": ["has-a", "kind-foo"],
+      "expectedOutcome": "matched"
+    },
+    {
+      "id": "attribute-regex-and-has-child",
+      "rule": "div[data-kind~=foo]:has(>a)@id",
+      "semantics": "jsoup_regex_with_has",
+      "expected": ["kind-foo"],
+      "expectedOutcome": "matched"
+    },
+    {
+      "id": "missing-attribute-in-not",
+      "rule": "a:not([data-missing~=value])@text",
+      "semantics": "jsoup_missing_attribute_nested_not",
+      "expected": ["Keep", "Skip", "Missing href", "Nested"],
+      "expectedOutcome": "matched"
+    },
+    {
+      "id": "invalid-regex-nested-not",
+      "rule": "a:not([href~=([)])@text",
+      "semantics": "jsoup_invalid_regex_nested_not",
+      "expected": [],
+      "expectedOutcome": "selector_error_or_fail_closed"
+    }
+  ],
+  "staticOnly": true,
+  "runtimeActionsPerformed": [],
+  "semanticMatchAllowed": false
+}

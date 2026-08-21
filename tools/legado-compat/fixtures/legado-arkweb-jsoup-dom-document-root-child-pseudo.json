@@ -1,0 +1,97 @@
+{
+  "schemaVersion": 1,
+  "contract": "arkweb_legado_jsoup_dom_document_root_child_pseudo",
+  "issueId": "ISSUE-COMPAT-243-JSOUP-STANDARD-CSS-PSEUDO-SELECTORS",
+  "baseline": {
+    "sourceCount": 458,
+    "sourcePackageSha256": "473048A191DE4749FA9C15E0A2F2328A3E86B385A5FCE23EA30432D598D03A67",
+    "legadoCommit": "95973d186b147fb9ab43a9240021d688e4304fbd"
+  },
+  "htmlCases": [
+    {
+      "id": "top-level-first-child",
+      "html": "<p>top</p><section><p>nested</p></section>",
+      "selector": "p:first-child",
+      "expected": [],
+      "semantics": "ArkWeb holder is a synthetic Document boundary for Jsoup child pseudo evaluation"
+    },
+    {
+      "id": "top-level-nth-child",
+      "html": "<p>one</p><p>two</p>",
+      "selector": "p:nth-child(1)",
+      "expected": [],
+      "semantics": "top-level fragment nodes cannot satisfy nth-child under the Jsoup Document"
+    },
+    {
+      "id": "top-level-only-child",
+      "html": "<p>only</p>",
+      "selector": "p:only-child",
+      "expected": [],
+      "semantics": "a single top-level fragment node is still not a child of Jsoup Document"
+    },
+    {
+      "id": "top-level-first-of-type",
+      "html": "<p>one</p><p>two</p>",
+      "selector": "p:first-of-type",
+      "expected": [],
+      "semantics": "of-type pseudos also fail closed under Jsoup Document"
+    },
+    {
+      "id": "nested-first-child",
+      "html": "<section><p>nested</p><p>second</p></section>",
+      "selector": "section > p:first-child",
+      "expected": ["nested"],
+      "semantics": "real element parents retain standard child semantics"
+    },
+    {
+      "id": "nested-nth-of-type",
+      "html": "<section><p>nested</p><p>second</p></section>",
+      "selector": "section > p:nth-of-type(2)",
+      "expected": ["second"],
+      "semantics": "real element parents retain same-tag type indexing"
+    },
+    {
+      "id": "has-relative-child",
+      "html": "<section><p>nested</p></section><div><span>other</span></div>",
+      "selector": "section:has(> p:first-child)",
+      "expected": ["section"],
+      "semantics": ":has relative selectors use the actual element root, not the synthetic holder"
+    },
+    {
+      "id": "not-top-level-child",
+      "html": "<p>top</p><section><p>nested</p></section>",
+      "selector": "p:not(:first-child)",
+      "expected": ["top"],
+      "semantics": ":not observes the Jsoup Document boundary of its nested selector"
+    },
+    {
+      "id": "top-level-first-child-descendant",
+      "html": "<p><a>top link</a></p><section><p>nested</p></section>",
+      "selector": "p:first-child > a",
+      "expected": [],
+      "semantics": "a standard pseudo on the first compound must be evaluated on its ancestor, not the terminal link"
+    },
+    {
+      "id": "nested-first-child-descendant",
+      "html": "<div class=\"listshadow1\"><div class=\"text-danger\"><h2>name</h2></div></div>",
+      "selector": ".listshadow1 .text-danger:first-child h2",
+      "expected": ["name"],
+      "semantics": "a pseudo in a later compound remains native because its parent is a real element"
+    }
+  ],
+  "affectedSourceOrdinals": [26, 70, 97, 144, 145, 158, 201, 223, 231, 251, 255, 402, 452],
+  "representativeRules": [
+    "div[id = chapterList] >a:last-child@text",
+    "body > table:nth-child(4) > tbody > tr > td > span > a",
+    ".row:nth-child(2) > .col-12:nth-child(n+1)",
+    "#info > p:nth-child(2) > a@text",
+    "#chapterlist>p:nth-child(n+2)>a",
+    ".a_666:nth-child(1) > .a_666@text",
+    "@css:#page>div>ul>li:nth-child(2)>img@src"
+  ],
+  "consumerContract": {
+    "holder": "legadoGetStringListSingle creates a detached div and assigns response HTML",
+    "requiredFix": "Mark the holder as a synthetic Document, extract standard child/of-type pseudos for manual Jsoup evaluation, and keep :has relative selectors rooted at the matched element",
+    "legadoReference": "AnalyzeByJSoup delegates terminal CSS selection to Jsoup Element.select"
+  }
+}

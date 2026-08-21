@@ -1,0 +1,15 @@
+{
+  "schemaVersion": 1,
+  "issueId": "ISSUE-COMPAT-242-TRACE-BRIDGE-PRESERVATION",
+  "contract": "legado_trace_timeout_bridge_preservation",
+  "semantics": {
+    "timeoutMutation": "A timeout trace for the same active workflow must carry bridge requests already observed before the deadline.",
+    "lineageGuard": "A timeout must not copy bridge traces from a previous workflow or an unrelated request.",
+    "immutableProjection": "The timeout projection must copy the preserved bridge trace array instead of sharing mutable storage."
+  },
+  "runtimePath": "entry/src/main/ets/Framework/Novel/LegadoWorkflowOrchestrator.ets",
+  "managerPath": "entry/src/main/ets/Framework/Novel/NovelSourceManager.ets",
+  "timeoutFactoryMethod": "createWorkflowTimeoutTrace",
+  "activeTraceIdField": "activeWorkflowTraceId",
+  "executionMethod": "execute"
+}

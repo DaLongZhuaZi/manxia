@@ -1,0 +1,37 @@
+{
+  "schemaVersion": 1,
+  "contract": "legado_java_string_list_css_composition",
+  "html": "<section class=\"primary\"><a href=\"/a\">A</a><a href=\"/b\">B</a></section><section class=\"secondary\"><a href=\"/c\">C</a></section>",
+  "cases": [
+    {
+      "id": "css-or-fallback",
+      "rule": ".missing@a@text||.primary@a@text",
+      "firstOperator": "||",
+      "expected": ["A", "B"]
+    },
+    {
+      "id": "css-and-concatenation",
+      "rule": ".primary@a@text&&.secondary@a@text",
+      "firstOperator": "&&",
+      "expected": ["A", "B", "C"]
+    },
+    {
+      "id": "css-percent-interleave",
+      "rule": ".primary@a@text%%.secondary@a@text",
+      "firstOperator": "%%",
+      "expected": ["A", "C", "B"]
+    },
+    {
+      "id": "css-prefix",
+      "rule": "@css:.primary@a@href",
+      "firstOperator": "",
+      "expected": ["/a", "/b"]
+    },
+    {
+      "id": "css-replacement",
+      "rule": ".primary@a@text##[AB]##X",
+      "firstOperator": "",
+      "expected": ["X", "X"]
+    }
+  ]
+}

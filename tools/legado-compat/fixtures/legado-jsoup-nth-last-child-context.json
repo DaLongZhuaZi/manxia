@@ -1,0 +1,63 @@
+{
+  "schemaVersion": 1,
+  "contract": "legado_jsoup_nth_last_child_context",
+  "issueId": "ISSUE-COMPAT-243-JSOUP-STANDARD-CSS-PSEUDO-SELECTORS",
+  "baseline": {
+    "sourceCount": 458,
+    "sourcePackageSha256": "473048A191DE4749FA9C15E0A2F2328A3E86B385A5FCE23EA30432D598D03A67",
+    "legadoCommit": "95973d186b147fb9ab43a9240021d688e4304fbd"
+  },
+  "sourcePackageScan": {
+    "scannedSourceCount": 458,
+    "nthLastChildRuleStringCount": 0,
+    "affectedSourceOrdinals": []
+  },
+  "htmlCases": [
+    {
+      "id": "last-element-child",
+      "html": "<main><p id=\"first\">first</p><div>middle</div><p id=\"last\">last</p></main>",
+      "selector": "main > p:nth-last-child(1)",
+      "expected": ["last"],
+      "semantics": "nth-last-child counts every element sibling from the end, not only matching p elements"
+    },
+    {
+      "id": "third-from-end",
+      "html": "<main><p id=\"first\">first</p><div>middle</div><p id=\"last\">last</p></main>",
+      "selector": "main > p:nth-last-child(3)",
+      "expected": ["first"],
+      "semantics": "the first p is the third element child from the end"
+    },
+    {
+      "id": "middle-position-does-not-match-p",
+      "html": "<main><p id=\"first\">first</p><div>middle</div><p id=\"last\">last</p></main>",
+      "selector": "main > p:nth-last-child(2)",
+      "expected": [],
+      "semantics": "the second element child from the end is a div, so the p selector has no result"
+    }
+  ],
+  "syntheticDocumentCases": [
+    {
+      "id": "top-level-document-boundary",
+      "html": "<p>top-one</p><p>top-two</p>",
+      "selector": "p:nth-last-child(1)",
+      "expected": [],
+      "semantics": "top-level fragment elements are children of Jsoup Document only through a synthetic boundary and must fail closed"
+    }
+  ],
+  "affectedSourceSet": {
+    "sourceOrdinals": [],
+    "ruleStringCount": 0,
+    "binding": "The frozen 458-source package contains no nth-last-child rule; this fixture protects the general Legado selector contract without assigning a source failure."
+  },
+  "legadoSemantics": {
+    "implementation": "AnalyzeByJSoup delegates CSS selection to Jsoup Element.select.",
+    "position": "nth-last-child is one-based from the end and counts all element siblings.",
+    "documentBoundary": "A top-level fragment element whose parent is the Jsoup Document does not satisfy child pseudos."
+  },
+  "consumerContract": {
+    "arkWeb": "The synthetic Document path manually evaluates standard pseudos after browser selection.",
+    "dom": "HTMLElement.matchesPseudoClass must use the element sibling count and reverse 1-based position.",
+    "stringFallback": "LegadoRuleAnalyzer.filterElementsByStandardChildPseudo must project the reverse position from StringElementSiblingPosition."
+  },
+  "verificationPolicy": "r3_static_failure_witness_then_source_fix;runtime_build_device_and_legado_diff_deferred_to_R4"
+}

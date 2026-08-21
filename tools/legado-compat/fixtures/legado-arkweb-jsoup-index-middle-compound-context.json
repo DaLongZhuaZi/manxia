@@ -1,0 +1,49 @@
+{
+  "schemaVersion": 1,
+  "contract": "arkweb_legado_jsoup_index_pseudo_middle_compound_context",
+  "issueId": "ISSUE-COMPAT-243-JSOUP-STANDARD-CSS-PSEUDO-SELECTORS",
+  "baseline": {
+    "sourceCount": 458,
+    "sourcePackageSha256": "473048A191DE4749FA9C15E0A2F2328A3E86B385A5FCE23EA30432D598D03A67",
+    "legadoCommit": "95973d186b147fb9ab43a9240021d688e4304fbd"
+  },
+  "html": "<div><p><a>zero-a</a><a>zero-b</a></p><p><a>one-a</a><a>one-b</a></p><p><a>two-a</a><a>two-b</a></p></div>",
+  "cases": [
+    {
+      "id": "middle-eq-owning-compound",
+      "rule": "div > p:eq(1) > a@text",
+      "expected": ["one-a", "one-b"],
+      "semantics": "eq_uses_the_middle_p_compound_element_sibling_index"
+    },
+    {
+      "id": "middle-lt-owning-compound",
+      "rule": "div > p:lt(2) > a@text",
+      "expected": ["zero-a", "zero-b", "one-a", "one-b"],
+      "semantics": "lt_uses_the_middle_p_compound_element_sibling_index"
+    },
+    {
+      "id": "middle-eq-terminal-sibling-trap",
+      "rule": "div > p:eq(2) > a@text",
+      "expected": ["two-a", "two-b"],
+      "semantics": "terminal_a_sibling_position_must_not_replace_the_owning_p_position"
+    },
+    {
+      "id": "middle-lt-terminal-sibling-trap",
+      "rule": "div > p:lt(1) > a@text",
+      "expected": ["zero-a", "zero-b"],
+      "semantics": "lt_must_filter_p_compounds_before_projecting_descendant_a_nodes"
+    }
+  ],
+  "sourcePackageScan": {
+    "scannedSourceCount": 458,
+    "indexPseudoRuleStringCount": 6,
+    "middleCompoundRuleStringCount": 0,
+    "affectedSourceOrdinals": [],
+    "interpretation": "The frozen package currently uses eq/lt only on terminal compounds; these synthetic cases protect general Legado semantics for future and external sources."
+  },
+  "consumerContract": {
+    "holder": "legadoGetStringListSingle creates a detached div and projects the terminal selector result",
+    "requiredFix": "When a manual eq/lt pseudo belongs to an intermediate compound, evaluate its owning predicateNode rather than the terminal candidate node.",
+    "legadoReference": "AnalyzeByJSoup delegates CSS selection to Jsoup Element.select, whose IndexEquals and IndexLessThan evaluators retain each compound element context."
+  }
+}

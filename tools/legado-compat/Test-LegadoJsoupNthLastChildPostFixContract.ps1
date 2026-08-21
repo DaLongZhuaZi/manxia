@@ -1,0 +1,109 @@
+[CmdletBinding()]
+param(
+  [string]$RepositoryRoot = '',
+  [string]$FixturePath = 'tools/legado-compat/fixtures/legado-jsoup-nth-last-child-context.json',
+  [string]$FailureWitnessPath = 'tools/legado-compat/evidence/contract-legado-jsoup-nth-last-child-pre-fix-20260810.json',
+  [string]$OutputPath = 'tools/legado-compat/evidence/contract-legado-jsoup-nth-last-child-post-fix-20260810.json'
+)
+
+Set-StrictMode -Version Latest
+$ErrorActionPreference = 'Stop'
+if ([string]::IsNullOrWhiteSpace($RepositoryRoot)) {
+  $RepositoryRoot = (Resolve-Path -LiteralPath (Join-Path $PSScriptRoot '..\..')).Path
+}
+$RepositoryRoot = (Resolve-Path -LiteralPath $RepositoryRoot).Path
+$strictUtf8 = [System.Text.UTF8Encoding]::new($false, $true)
+$noBomUtf8 = [System.Text.UTF8Encoding]::new($false)
+$issueId = 'ISSUE-COMPAT-243-JSOUP-STANDARD-CSS-PSEUDO-SELECTORS'
+$baselineHash = '473048A191DE4749FA9C15E0A2F2328A3E86B385A5FCE23EA30432D598D03A67'
+$legadoCommit = '95973d186b147fb9ab43a9240021d688e4304fbd'
+$analyzerPath = 'entry/src/main/ets/Framework/Novel/LegadoRuleAnalyzer.ets'
+$elementPath = 'entry/src/main/ets/libs/htmlparser/HTMLElement.ets'
+$runtimePath = 'entry/src/main/resources/rawfile/legado_runtime.html'
+$legadoPath = 'legado/app/src/main/java/io/legado/app/model/analyzeRule/AnalyzeByJSoup.kt'
+$script:assertions = 0
+$script:checks = New-Object 'System.Collections.Generic.List[object]'
+
+function Get-RepoPath {
+  param([Parameter(Mandatory = $true)][string]$Path)
+  if ([System.IO.Path]::IsPathRooted($Path)) { return $Path }
+  return Join-Path $RepositoryRoot ($Path.Replace('/', '\'))
+}
+function Read-StrictText {
+  param([Parameter(Mandatory = $true)][string]$Path)
+  $resolved = Get-RepoPath $Path
+  $bytes = [System.IO.File]::ReadAllBytes($resolved)
+  if ($bytes.Length -ge 3 -and $bytes[0] -eq 0xEF -and $bytes[1] -eq 0xBB -and $bytes[2] -eq 0xBF) {
+    throw "UTF-8 BOM is not allowed: $Path"
+  }
+  return $strictUtf8.GetString($bytes)
+}
+function Read-StrictJson {
+  param([Parameter(Mandatory = $true)][string]$Path)
+  return (Read-StrictText $Path | ConvertFrom-Json -Depth 100)
+}
+function Assert-Contract {
+  param([bool]$Condition, [string]$Id, [string]$Detail, [string[]]$Evidence = @())
+  if (-not $Condition) { throw "243 nth-last-child post-fix contract failed: $Detail" }
+  $script:assertions++
+  [void]$script:checks.Add([pscustomobject][ordered]@{ id = $Id; status = 'passed'; detail = $Detail; evidencePaths = @($Evidence) })
+}
+function Write-AtomicJson {
+  param(
+    [Parameter(Mandatory = $true)][string]$Path,
+    [Parameter(Mandatory = $true)][object]$Value
+  )
+  $resolved = Get-RepoPath $Path
+  $directory = Split-Path -Parent $resolved
+  if (-not (Test-Path -LiteralPath $directory -PathType Container)) {
+    [System.IO.Directory]::CreateDirectory($directory) | Out-Null
+  }
+  $temporary = "$resolved.tmp-$PID-$([DateTimeOffset]::UtcNow.ToUnixTimeMilliseconds())"
+  try {
+    [System.IO.File]::WriteAllText($temporary, ($Value | ConvertTo-Json -Depth 100), $noBomUtf8)
+    Move-Item -LiteralPath $temporary -Destination $resolved -Force
+  } finally {
+    if (Test-Path -LiteralPath $temporary) { [System.IO.File]::Delete($temporary) }
+  }
+}
+
+$state = Read-StrictJson 'tools/legado-compat/state/full-source-validation-state.json'
+$fixture = Read-StrictJson $FixturePath
+$failure = Read-StrictJson $FailureWitnessPath
+$runtime = Read-StrictText $runtimePath
+$element = Read-StrictText $elementPath
+$analyzer = Read-StrictText $analyzerPath
+$legado = Read-StrictText $legadoPath
+
+Assert-Contract ([int]$state.baseline.sourceCount -eq 458 -and [string]$state.baseline.sourcePackageSha256 -eq $baselineHash -and [string]$state.baseline.legadoCommit -eq $legadoCommit) 'baseline' 'frozen machine baseline is unchanged.' @('tools/legado-compat/state/full-source-validation-state.json')
+Assert-Contract ([string]$fixture.issueId -eq $issueId -and [string]$fixture.contract -eq 'legado_jsoup_nth_last_child_context' -and @($fixture.htmlCases).Count -eq 3 -and @($fixture.syntheticDocumentCases).Count -eq 1) 'fixture' 'reverse child-position fixture retains three nested cases and one synthetic Document boundary case.' @($FixturePath)
+Assert-Contract ([int]$fixture.sourcePackageScan.scannedSourceCount -eq 458 -and [int]$fixture.sourcePackageScan.nthLastChildRuleStringCount -eq 0 -and @($fixture.sourcePackageScan.affectedSourceOrdinals).Count -eq 0) 'source_scan' 'the fixed package remains free of nth-last-child rules and no source is falsely marked failed.' @($FixturePath)
+Assert-Contract ([string]$failure.status -eq 'failed' -and @($failure.runtimeActionsPerformed).Count -eq 0 -and -not [bool]$failure.semanticMatchAllowed) 'failure_witness' 'pre-fix witness remains failed and static-only.' @($FailureWitnessPath)
+Assert-Contract ($runtime.Contains("pseudoName === 'nth-last-child'") -and $runtime.Contains('siblingCount - siblingIndexOneBased + 1')) 'arkweb' 'ArkWeb evaluates nth-last-child from the total element sibling count.' @($runtimePath)
+Assert-Contract ($element.Contains("pseudo.name === 'nth-last-child'") -and $element.Contains('const indexFromEnd = parent.children.length - siblingIndex')) 'dom' 'DOM Matcher evaluates the reverse 1-based element-child position.' @($elementPath)
+Assert-Contract ($analyzer.Contains("pseudo.name === 'nth-last-child'") -and $analyzer.Contains('siblingPosition.siblingCount - siblingPosition.siblingIndex')) 'string_fallback' 'large-document string fallback projects reverse element-child position.' @($analyzerPath)
+Assert-Contract ($runtime.Contains("pseudoName === 'nth-last-child'") -and $runtime.Contains('legadoIsSyntheticDocumentRoot')) 'document_boundary' 'ArkWeb retains the existing synthetic Document boundary guard while adding the reverse-position branch.' @($runtimePath)
+Assert-Contract ($legado.Contains('temp.select(ruleStr)') -and $legado.Contains('element.select(ruleStrX.substring(0, lastIndex))')) 'legado_consumer' 'the pinned Legado selector handoff remains the reference.' @($legadoPath)
+
+$result = [pscustomobject][ordered]@{
+  schemaVersion = 1
+  evidenceType = 'post_fix_static_contract'
+  issueId = $issueId
+  status = 'passed'
+  generatedAt = [DateTimeOffset]::UtcNow.ToString('o')
+  baseline = [pscustomobject][ordered]@{ sourceCount = 458; sourcePackageSha256 = $baselineHash; legadoCommit = $legadoCommit }
+  fixturePath = $FixturePath
+  failureWitnessPath = $FailureWitnessPath
+  changedPaths = @($runtimePath, $elementPath, $analyzerPath)
+  affectedSourceOrdinals = @()
+  affectedRuleStringCount = 0
+  syntheticCases = @($fixture.htmlCases).Count + @($fixture.syntheticDocumentCases).Count
+  assertions = $script:assertions
+  checks = $script:checks.ToArray()
+  runtimeActionsPerformed = @()
+  semanticMatchAllowed = $false
+  verificationPolicy = 'r3_243_nth_last_child_post_fix_static_only;runtime_build_device_and_legado_diff_deferred_to_R4'
+  closeCondition = 'R4 must execute all four nth-last-child fixture cases, the existing 243 pseudo equivalence classes, deterministic 458-source Harness, fixed-Legado differential, build and device gates before 243 can leave verifying.'
+}
+Write-AtomicJson $OutputPath $result
+$result | ConvertTo-Json -Depth 100

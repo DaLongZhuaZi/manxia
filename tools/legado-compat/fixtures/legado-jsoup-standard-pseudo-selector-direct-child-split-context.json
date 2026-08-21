@@ -1,0 +1,39 @@
+{
+  "schemaVersion": 1,
+  "contract": "legado_jsoup_standard_css_direct_child_top_level_split_context",
+  "issueId": "ISSUE-COMPAT-243-JSOUP-STANDARD-CSS-PSEUDO-SELECTORS",
+  "baseline": {
+    "sourceCount": 458,
+    "sourcePackageSha256": "473048A191DE4749FA9C15E0A2F2328A3E86B385A5FCE23EA30432D598D03A67",
+    "legadoCommit": "95973d186b147fb9ab43a9240021d688e4304fbd"
+  },
+  "html": "<section data-pattern=\"a>b\"><p class=\"keep\">direct</p></section><section class=\"nested\"><div><p>nested</p></div></section>",
+  "selectionPath": "getElementsByCSSWithBridge -> getElementsByCSSChain -> findElementsBySingleSelector -> findElementsByDirectChildSelector -> splitTopLevelDirectChildSelectors",
+  "cases": [
+    {
+      "id": "has-direct-child-argument",
+      "selector": "section:has(>p)",
+      "semantics": "ignore_child_combinator_inside_pseudo_argument",
+      "expected": ["<section data-pattern=\"a>b\"><p class=\"keep\">direct</p></section>"]
+    },
+    {
+      "id": "not-nested-direct-child-argument",
+      "selector": "section:not(:has(>p)) > p",
+      "semantics": "split_only_outer_direct_child_combinator",
+      "expected": []
+    },
+    {
+      "id": "attribute-value-greater-than",
+      "selector": "section[data-pattern=\"a>b\"] > p",
+      "semantics": "ignore_greater_than_inside_quoted_attribute_value",
+      "expected": ["<p class=\"keep\">direct</p>"]
+    },
+    {
+      "id": "regex-pseudo-greater-than",
+      "selector": "section:matches(^a>b$) > p",
+      "semantics": "ignore_greater_than_inside_pseudo_regex_argument",
+      "expected": []
+    }
+  ],
+  "failureCondition": "Raw selector.split('>') treats nested pseudo, attribute, and quoted-regex greater-than characters as top-level combinators and corrupts the selector parts before direct-child evaluation."
+}

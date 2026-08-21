@@ -1,0 +1,31 @@
+{
+  "schemaVersion": 1,
+  "contract": "legado_java_string_list_css_replacement_order",
+  "html": "<section class=\"primary\"><a>A</a><a>A</a></section><section class=\"secondary\"><a>A</a><a>B</a></section>",
+  "cases": [
+    {
+      "id": "single-replace-first",
+      "rule": ".primary@a@text##A##X##",
+      "expected": ["X", "A"],
+      "replaceFirst": true
+    },
+    {
+      "id": "replacement-hash-is-literal",
+      "rule": ".primary@a@text##A##X#",
+      "expected": ["X#", "X#"],
+      "replaceFirst": false
+    },
+    {
+      "id": "composition-replace-after-merge",
+      "rule": ".primary@a@text&&.secondary@a@text##A##X",
+      "expected": ["X", "X", "X", "B"],
+      "replaceFirst": false
+    },
+    {
+      "id": "composition-replace-first-after-merge",
+      "rule": ".primary@a@text&&.secondary@a@text##A##X##",
+      "expected": ["X", "A", "A", "B"],
+      "replaceFirst": true
+    }
+  ]
+}

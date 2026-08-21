@@ -1,0 +1,61 @@
+{
+  "schemaVersion": 1,
+  "contract": "legado_jsoup_text_whitespace",
+  "html": "<div class=\"root\"><p class=\"collapse\">  A   \t B\n C&nbsp;&nbsp;D  </p><p class=\"own\">  outer \t <span>inner   text</span>  tail&nbsp;&nbsp;end  </p><p class=\"nodes\">one  <span>child</span>  two</p><p class=\"break\">left<br>right</p><pre class=\"pre\">  A   B\n C  </pre><textarea class=\"textarea\">  X   Y\n Z  </textarea></div>",
+  "semantics": {
+    "normalWhitespace": "space, tab, LF, CR, FF and NBSP are collapsed to one ASCII space in ordinary text; leading and trailing ASCII whitespace is trimmed.",
+    "preserveWhitespace": "pre and textarea descendants preserve internal whitespace; outer trim still removes leading and trailing ASCII whitespace.",
+    "ownText": "only direct text nodes participate, but adjacent direct nodes share the same whitespace-normalization state; br contributes a newline.",
+    "text": "descendant text is normalized in document order and block/br boundaries are represented according to Jsoup text accumulation."
+  },
+  "cases": [
+    {
+      "id": "ordinary-text-collapses-ascii-and-nbsp",
+      "selector": "p.collapse",
+      "projection": "text",
+      "expected": "A B C D"
+    },
+    {
+      "id": "ordinary-own-text-collapses-direct-nodes",
+      "selector": "p.own",
+      "projection": "ownText",
+      "expected": "outer tail end"
+    },
+    {
+      "id": "descendant-text-preserves-inline-order",
+      "selector": "p.own",
+      "projection": "text",
+      "expected": "outer inner text tail end"
+    },
+    {
+      "id": "adjacent-text-nodes-share-normalization",
+      "selector": "p.nodes",
+      "projection": "ownText",
+      "expected": "one two"
+    },
+    {
+      "id": "br-adds-own-text-line-break",
+      "selector": "p.break",
+      "projection": "ownText",
+      "expected": "left\nright"
+    },
+    {
+      "id": "pre-preserves-internal-whitespace",
+      "selector": "pre.pre",
+      "projection": "text",
+      "expected": "A   B\n C"
+    },
+    {
+      "id": "textarea-preserves-internal-whitespace",
+      "selector": "textarea.textarea",
+      "projection": "text",
+      "expected": "X   Y\n Z"
+    },
+    {
+      "id": "pseudo-selector-uses-normalized-text",
+      "selector": "p.collapse:contains(A B C D)",
+      "projection": "matched",
+      "expected": true
+    }
+  ]
+}

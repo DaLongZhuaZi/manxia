@@ -1,0 +1,36 @@
+{
+  "schemaVersion": 1,
+  "kind": "legado_governance_queue_audit_evidence_drift",
+  "issueId": "ISSUE-AUTO-052-GOVERNANCE-QUEUE-AUDIT-EVIDENCE-DRIFT",
+  "taskId": "COMPAT-006",
+  "activeIssueId": "ISSUE-COMPAT-243-JSOUP-STANDARD-CSS-PSEUDO-SELECTORS",
+  "baseline": {
+    "sourceCount": 458,
+    "sourcePackageSha256": "473048A191DE4749FA9C15E0A2F2328A3E86B385A5FCE23EA30432D598D03A67",
+    "legadoCommit": "95973d186b147fb9ab43a9240021d688e4304fbd"
+  },
+  "canonicalRevision": "2026-08-10-actual-docs-source-refactor-jsoup-combination-r4-readiness-static-closure",
+  "queueEvidencePathSource": "tools/legado-compat/state/full-source-validation-state.json::governance.queuePreflight.evidencePath",
+  "observedBeforeFix": {
+    "sourceFixEvidencePath": "tools/legado-compat/evidence/v2-jsoup-mixed-descendant-direct-child-source-fix-20260810.json",
+    "transitionEvidencePath": "tools/legado-compat/evidence/r3-issue-011-url-attribute-preflight-20260809/transition-consistency.json",
+    "postRegistrationEvidencePath": "tools/legado-compat/evidence/r3-issue-011-url-attribute-source-fix-registration-20260809/registration.json",
+    "failureWitnessPath": "tools/legado-compat/evidence/contract-legado-jsoup-mixed-descendant-direct-child-pre-fix-20260810.json",
+    "currentHeadEvidencePath": "tools/legado-compat/evidence/v2-jsoup-mixed-descendant-direct-child-current-head-audit-20260810.json",
+    "postFixContractEvidencePath": "tools/legado-compat/evidence/contract-legado-jsoup-mixed-descendant-direct-child-post-fix-20260810.json",
+    "documentConsistencyEvidencePath": "tools/legado-compat/evidence/r3-issue-011-document-consistency-20260809/document-consistency.json",
+    "candidateSourceFixEvidencePath": "tools/legado-compat/evidence/v2-jsoup-mixed-descendant-direct-child-source-fix-20260810.json"
+  },
+  "staleFields": [
+    "sourceFixEvidencePath",
+    "transitionEvidencePath",
+    "postRegistrationEvidencePath",
+    "failureWitnessPath",
+    "currentHeadEvidencePath",
+    "postFixContractEvidencePath",
+    "documentConsistencyEvidencePath",
+    "candidateSourceFixEvidencePath"
+  ],
+  "invariant": "When the current candidate gate has candidateCount=0 and candidateGateStatus=no_candidate_satisfies_evidence_gate, queueAudit candidate evidence fields must be empty; any previous values must be retained only under an explicitly historical projection.",
+  "historyPolicy": "priorActiveIssueId and historicalQueueEvidenceProjection may retain provenance, but they cannot be consumed as current candidate evidence."
+}

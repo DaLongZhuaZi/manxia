@@ -1,0 +1,53 @@
+{
+  "schemaVersion": 1,
+  "contract": "legado_url_option_request_carrier",
+  "baseline": {
+    "sourceCount": 458,
+    "sourcePackageSha256": "473048A191DE4749FA9C15E0A2F2328A3E86B385A5FCE23EA30432D598D03A67",
+    "legadoCommit": "95973d186b147fb9ab43a9240021d688e4304fbd"
+  },
+  "cases": [
+    {
+      "id": "search-post-header-body",
+      "workflow": "search",
+      "kind": "book",
+      "rawRuleValue": "https://fixture.invalid/book/42,{\"method\":\"POST\",\"headers\":{\"X-Legado\":\"signature\"},\"body\":{\"bookId\":\"42\"},\"charset\":\"UTF-8\"}",
+      "identityUrl": "https://fixture.invalid/book/42",
+      "requestUrlTemplate": "https://fixture.invalid/book/42,{\"method\":\"POST\",\"headers\":{\"X-Legado\":\"signature\"},\"body\":{\"bookId\":\"42\"},\"charset\":\"UTF-8\"}",
+      "deferredOptions": ["method", "headers", "body", "charset"]
+    },
+    {
+      "id": "explore-webview-cookie",
+      "workflow": "explore",
+      "kind": "book",
+      "rawRuleValue": "https://fixture.invalid/explore/42,{\"useWebView\":true,\"webJs\":\"document.title\",\"enabledCookieJar\":true}",
+      "identityUrl": "https://fixture.invalid/explore/42",
+      "requestUrlTemplate": "https://fixture.invalid/explore/42,{\"useWebView\":true,\"webJs\":\"document.title\",\"enabledCookieJar\":true}",
+      "deferredOptions": ["useWebView", "webJs", "cookie"]
+    },
+    {
+      "id": "same-identity-distinct-options",
+      "workflow": "search",
+      "kind": "book",
+      "rawRuleValue": "https://fixture.invalid/book/42,{\"headers\":{\"X-Legado\":\"alternate\"}}",
+      "identityUrl": "https://fixture.invalid/book/42",
+      "requestUrlTemplate": "https://fixture.invalid/book/42,{\"headers\":{\"X-Legado\":\"alternate\"}}",
+      "deferredOptions": ["headers"]
+    },
+    {
+      "id": "data-url-payload",
+      "workflow": "search",
+      "kind": "data_url",
+      "rawRuleValue": "data:application/json,{\"bookId\":\"42\"}",
+      "identityUrl": "data:application/json,{\"bookId\":\"42\"}",
+      "requestUrlTemplate": "data:application/json,{\"bookId\":\"42\"}",
+      "deferredOptions": []
+    }
+  ],
+  "rules": {
+    "searchBookIdentityMustBeBare": true,
+    "requestCarrierMustBeInMemory": true,
+    "requestOptionsMustBeParsedAtOwningWorkflow": true,
+    "identityCollisionMustBeRejected": true
+  }
+}

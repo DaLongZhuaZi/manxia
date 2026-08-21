@@ -1,0 +1,37 @@
+{
+  "schemaVersion": 1,
+  "contract": "legado_jsoup_has_pseudo_selector",
+  "html": "<section class=\"card\"><span class=\"icon-eye\"></span><p class=\"summary\">作者：张三</p></section><section class=\"card\"><span class=\"icon-heart\"></span><p>无作者</p></section><section class=\"empty\"><p>空卡片</p></section>",
+  "cases": [
+    {
+      "id": "has-descendant-class",
+      "rule": "section:has(.icon-eye)@text",
+      "semantics": "has_descendant",
+      "expected": ["作者：张三"]
+    },
+    {
+      "id": "has-direct-child-class",
+      "rule": "section:has(>.icon-eye)@text",
+      "semantics": "has_direct_child",
+      "expected": ["作者：张三"]
+    },
+    {
+      "id": "has-nested-text-pseudo",
+      "rule": "section:has(p:contains(作者：))@text",
+      "semantics": "has_nested_pseudo",
+      "expected": ["作者：张三"]
+    },
+    {
+      "id": "has-miss",
+      "rule": "section:has(.missing)@text",
+      "semantics": "has_no_match",
+      "expected": []
+    },
+    {
+      "id": "has-any-element",
+      "rule": "section:has(*)@text",
+      "semantics": "has_wildcard",
+      "expected": ["作者：张三", "无作者", "空卡片"]
+    }
+  ]
+}

@@ -1,0 +1,43 @@
+{
+  "schemaVersion": 1,
+  "contract": "legado_java_string_list_css_composition_embedded_runtime",
+  "html": "<section class=\"primary\"><a href=\"/a\">A</a><a href=\"/b\">B</a></section><section class=\"secondary\"><a href=\"/c\">C</a></section>",
+  "cases": [
+    {
+      "id": "css-or-fallback",
+      "rule": ".missing@a@text||.primary@a@text",
+      "api": "getStringList",
+      "firstOperator": "||",
+      "expected": ["A", "B"]
+    },
+    {
+      "id": "css-and-concatenation",
+      "rule": ".primary@a@text&&.secondary@a@text",
+      "api": "getString",
+      "firstOperator": "&&",
+      "expected": "A\nB\nC"
+    },
+    {
+      "id": "css-percent-interleave",
+      "rule": ".primary@a@text%%.secondary@a@text",
+      "api": "getStringList",
+      "firstOperator": "%%",
+      "expected": ["A", "C", "B"]
+    },
+    {
+      "id": "css-prefix",
+      "rule": "@CSS:.primary@a@href",
+      "api": "getStringList",
+      "firstOperator": "",
+      "expected": ["/a", "/b"]
+    },
+    {
+      "id": "css-replacement",
+      "rule": ".primary@a@text##[AB]##X",
+      "api": "getStringList",
+      "firstOperator": "",
+      "expected": ["X", "X"]
+    }
+  ],
+  "requiredPaths": ["buildScript", "buildNativeScript"]
+}

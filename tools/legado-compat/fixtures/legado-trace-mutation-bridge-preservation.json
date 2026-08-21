@@ -1,0 +1,26 @@
+{
+  "schemaVersion": 1,
+  "issueId": "ISSUE-COMPAT-242-TRACE-BRIDGE-PRESERVATION",
+  "runtimePath": "entry/src/main/ets/Framework/Novel/LegadoWorkflowOrchestrator.ets",
+  "analyzerPath": "entry/src/main/ets/Framework/Novel/LegadoRuleAnalyzer.ets",
+  "semantics": {
+    "bridgeTraces": "A workflow trace mutation must preserve every bridge request witness already collected by the V2 runtime.",
+    "variableMutation": "Updating variableChanges must not clear bridgeTraces.",
+    "outputMutation": "Updating outputSummary must not clear bridgeTraces.",
+    "errorMutation": "Protected-response, rule-failure and workflow-exception rewrites must retain bridgeTraces."
+  },
+  "mutationMethods": [
+    "markWorkflowException",
+    "syncVariables",
+    "refreshTraceOutput",
+    "blockProtectedResponse",
+    "markBookInfoRuleFailure"
+  ],
+  "traceFactoryMethod": "replaceTrace",
+  "bridgeTraceAccessorMethod": "getBridgeTracesSnapshot",
+  "bridgeTraceRecordMethod": "recordBridgeTraces",
+  "bridgeTraceConsumerMethod": "syncVariables",
+  "execution": "static_source_contract_only",
+  "runtimeRegression": "not_run",
+  "deviceRegression": "not_run"
+}

@@ -1,0 +1,18 @@
+{
+  "schemaVersion": 1,
+  "contract": "legado_document_consistency_reproduction_command",
+  "issueId": "ISSUE-AUTO-046-DOCUMENT-ACTIVE-ANCHOR",
+  "baseline": {
+    "sourceCount": 458,
+    "sourcePackageSha256": "473048A191DE4749FA9C15E0A2F2328A3E86B385A5FCE23EA30432D598D03A67",
+    "legadoCommit": "95973d186b147fb9ab43a9240021d688e4304fbd"
+  },
+  "expectedInvocation": {
+    "issueId": "ISSUE-COMPAT-243-JSOUP-STANDARD-CSS-PSEUDO-SELECTORS",
+    "targetRevision": "2026-08-10-actual-docs-source-refactor-jsoup-at-delimiter-static-closure",
+    "continuationMode": "R3_ISSUE_243_STANDARD_CSS_PSEUDO_STATIC_CLOSED_WAIT_R4"
+  },
+  "staleEvidencePath": "tools/legado-compat/evidence/r3-issue-243-document-consistency-20260810/document-consistency.json",
+  "failureCondition": "The generated evidence reproductionCommand says -ExpectedIssueId ISSUE-COMPAT-009 even though the run was invoked with the current 243 issue and revision parameters.",
+  "scope": "static governance/document evidence reproducibility only"
+}

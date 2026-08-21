@@ -1,0 +1,28 @@
+{
+  "schemaVersion": 1,
+  "case": "book_source_selection_race",
+  "description": "A result from the previously selected IMAGE source must never be opened after the picker selects a different source.",
+  "sourceA": {
+    "ordinal": 227,
+    "sourceId": "4B33C6BA1A7DC3AA12EFF8FA54B529A7B6510E692892093A38D98A15544119B1",
+    "name": "美女图站（优++）",
+    "type": 2,
+    "identityMarker": "no_520diandu"
+  },
+  "sourceB": {
+    "ordinal": 228,
+    "sourceId": "C1AD6BE023973A180D6C75C1AE6CAEE743F709690F83936D75391D2CCE24ACEC",
+    "name": "名著阅读（优++）",
+    "type": 2,
+    "identityMarker": "520diandu"
+  },
+  "initialSelectedSourceId": "C1AD6BE023973A180D6C75C1AE6CAEE743F709690F83936D75391D2CCE24ACEC",
+  "selectedSourceIdAtOpen": "4B33C6BA1A7DC3AA12EFF8FA54B529A7B6510E692892093A38D98A15544119B1",
+  "staleResultSourceId": "C1AD6BE023973A180D6C75C1AE6CAEE743F709690F83936D75391D2CCE24ACEC",
+  "staleResultBookUrlMarker": "520diandu",
+  "expected": {
+    "staleResultAccepted": false,
+    "detailRouteAllowed": false,
+    "currentResultSourceId": "4B33C6BA1A7DC3AA12EFF8FA54B529A7B6510E692892093A38D98A15544119B1"
+  }
+}
