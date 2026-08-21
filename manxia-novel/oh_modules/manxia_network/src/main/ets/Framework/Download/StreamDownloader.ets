@@ -21,6 +21,16 @@ import { logger } from 'manxia_core/src/main/ets/Utils/Logger';
 
 const TAG = 'StreamDownloader';
 
+/** 流式下载选项 */
+interface StreamDownloadOptions {
+  /** 进度回调：(已完成数, 总数) */
+  onProgress?: (completed: number, total: number) => void;
+  /** 自定义文件名，默认 page_0000.jpg */
+  fileNameProvider?: (index: number, url: string) => string;
+  /** 请求头，默认含 User-Agent */
+  headers?: Record<string, string>;
+}
+
 /** 进度心跳检测间隔（每分钟检查一次） */
 const HEARTBEAT_CHECK_MS = 60 * 1000;
 /** 触发主动刷新的无进度阈值（8 分钟，系统限制为 10 分钟） */
@@ -87,16 +97,11 @@ export class StreamDownloader {
     context: common.UIAbilityContext,
     urls: string[],
     outputDir: string,
-    options?: {
-      /** 进度回调：(已完成数, 总数) */
-      onProgress?: (completed: number, total: number) => void;
-      /** 自定义文件名，默认 page_0000.jpg */
-      fileNameProvider?: (index: number, url: string) => string;
-      /** 请求头，默认含 User-Agent */
-      headers?: Record<string, string>;
-    }
+    options?: StreamDownloadOptions
   ): Promise<void> {
-    const { onProgress, fileNameProvider, headers } = options ?? {};
+    const onProgress = options?.onProgress;
+    const fileNameProvider = options?.fileNameProvider;
+    const headers = options?.headers;
     const backgroundTaskOwner = `stream_downloader_${Date.now()}_${urls.length}`;
 
     logger.info(TAG, `开始流式下载 ${urls.length} 个文件 -> ${outputDir}`);
@@ -173,21 +178,17 @@ export class StreamDownloader {
         resolve();
       });
 
-      // ── 接收错误 ──────────────────────────────────────────────────────────
-      httpRequest.on('dataReceiveErr', (err: Object) => {
-        if (file) {
-          try { SafeFileUtils.closeSync(file.fd); } catch {}
-          file = null;
-        }
-        httpRequest.destroy();
-        reject(new Error(`数据接收失败: ${String(err)}`));
-      });
-
       // ── 发起流式 HTTP 请求 ─────────────────────────────────────────────────
+      // 网络层错误由 requestInStream(...).catch 统一捕获；
+      // SDK 的 http.on 不支持 dataReceiveErr 事件
       const requestHeaders: Record<string, string> = {
-        'User-Agent': 'Mozilla/5.0 (Linux; Android 13; Pixel 7) AppleWebKit/537.36',
-        ...extraHeaders
+        'User-Agent': 'Mozilla/5.0 (Linux; Android 13; Pixel 7) AppleWebKit/537.36'
       };
+      if (extraHeaders) {
+        for (const key in extraHeaders) {
+          requestHeaders[key] = extraHeaders[key];
+        }
+      }
 
       httpRequest.requestInStream(url, {
         method: http.RequestMethod.GET,

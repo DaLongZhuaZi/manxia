@@ -70,6 +70,16 @@ export interface BatchProbeResult {
 // SourceVerifier 主体
 // ─────────────────────────────────────────────────────────────────────────────
 
+/** 书源校验选项 */
+interface SourceVerifyOptions {
+  /** 单个请求超时（ms），默认 10 秒 */
+  timeout?: number;
+  /** 并发数，默认 5 */
+  concurrency?: number;
+  /** 进度回调：(已完成数, 总数) */
+  onProgress?: (completed: number, total: number) => void;
+}
+
 /**
  * 书源快速可达性校验器
  *
@@ -94,14 +104,7 @@ export class SourceVerifier {
   static async batchVerify(
     context: common.UIAbilityContext,
     sourceUrls: string[],
-    options?: {
-      /** 单个请求超时（ms），默认 10 秒 */
-      timeout?: number;
-      /** 并发数，默认 5 */
-      concurrency?: number;
-      /** 进度回调：(已完成数, 总数) */
-      onProgress?: (completed: number, total: number) => void;
-    }
+    options?: SourceVerifyOptions
   ): Promise<BatchProbeResult> {
     const timeout = options?.timeout ?? 10000;
     const concurrency = options?.concurrency ?? 5;

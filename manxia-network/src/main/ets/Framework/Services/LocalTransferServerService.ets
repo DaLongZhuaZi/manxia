@@ -653,9 +653,7 @@ export class LocalTransferServerService {
 
     const pairCheckPassed = this.validateRequestAuthorization(request, state.remoteAddress);
     if (!pairCheckPassed) {
-      logger.debug(
-  TAG,
-logger.info(TAG, `上传鉴权失败: client=${state.remoteAddress}, file=${this.resolveUploadFileName(request)}`);
+      logger.info(TAG, `上传鉴权失败: client=${state.remoteAddress}, file=${this.resolveUploadFileName(request)}`);
       await this.rejectUploadRequest(clientConnection, state, 403, '配对码或会话令牌无效，请先重新配对');
       return;
     }
