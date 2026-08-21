@@ -1,5 +1,5 @@
-import { SourceIndexItem, SourceRepoIndex, UpdateCheckResult } from 'manxia_core/src/main/ets/Framework/Contracts/SourceUpdateManager';
-﻿import { SafeUtils } from 'manxia_core/src/main/ets/Utils/SafeUtils';
+import { SourceIndexItem, SourceRepoIndex, UpdateCheckResult } from '../Contracts/SourceUpdateManager';
+﻿import { SafeUtils } from '../../Utils/SafeUtils';
 /**
  * 图源更新管理器
  * 负责检查图源仓库更新、管理更新状态
@@ -7,7 +7,7 @@ import { SourceIndexItem, SourceRepoIndex, UpdateCheckResult } from 'manxia_core
 
 import { preferences } from '@kit.ArkData';
 import { http } from '@kit.NetworkKit';
-import { logger } from 'manxia_core/src/main/ets/Utils/Logger';
+import { logger } from '../../Utils/Logger';
 
 export { SourceIndexItem, SourceRepoIndex, UpdateCheckResult };
 const TAG = 'SourceUpdateManager';

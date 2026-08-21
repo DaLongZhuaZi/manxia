@@ -5,8 +5,8 @@
  * 支持自定义背景（纯色/图片）和图标（盾牌/应用logo）
  */
 
-import { ThemeAwareHelper } from 'manxia_theme/src/main/ets/Framework/Components/ThemeAware';
-import { ThemeManager, ThemeType } from 'manxia_theme/src/main/ets/Framework/Managers/ThemeManager';
+import { ThemeAwareHelper } from './ThemeAware';
+import { ThemeManager, ThemeType } from '../Managers/ThemeManager';
 
 // 背景类型枚举
 export enum BackgroundBlurBgType {

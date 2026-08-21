@@ -4,7 +4,7 @@ import { cryptoFramework } from '@kit.CryptoArchitectureKit';
 import { logger } from 'manxia_core/src/main/ets/Utils/Logger';
 import { ISettingsManagerFacade, SettingsManagerHolder } from 'manxia_core/src/main/ets/Framework/Contracts/ISettingsManagerFacade';
 import { SettingKeys } from 'manxia_core/src/main/ets/Framework/Contracts/SettingKeys';
-import { ThemeManager, ThemeType } from 'manxia_theme/src/main/ets/Framework/Managers/ThemeManager';
+import { ThemeManager, ThemeType } from './ThemeManager';
 
 const TAG = 'PrivacyModeManager';
 

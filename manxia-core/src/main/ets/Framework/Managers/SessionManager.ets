@@ -4,8 +4,8 @@
  * 负责会话的自动刷新、过期检测和管理
  */
 
-import { logger } from 'manxia_core/src/main/ets/Utils/Logger';
-import CookieManager from 'manxia_core/src/main/ets/Framework/Managers/CookieManager';
+import { logger } from '../../Utils/Logger';
+import CookieManager from './CookieManager';
 
 const TAG = 'SessionManager';
 

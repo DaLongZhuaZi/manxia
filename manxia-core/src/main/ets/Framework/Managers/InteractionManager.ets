@@ -1,4 +1,4 @@
-import { SafeUtils } from 'manxia_core/src/main/ets/Utils/SafeUtils';
+import { SafeUtils } from '../../Utils/SafeUtils';
 /**
  * 全局交互管理器
  * 管理震动、触觉反馈等交互体验
@@ -6,9 +6,9 @@ import { SafeUtils } from 'manxia_core/src/main/ets/Utils/SafeUtils';
  */
 
 import { vibrator } from '@kit.SensorServiceKit';
-import { logger } from 'manxia_core/src/main/ets/Utils/Logger';
+import { logger } from '../../Utils/Logger';
 import { preferences } from '@kit.ArkData';
-import { getContext } from 'manxia_core/src/main/ets/GlobalContext';
+import { getContext } from '../../GlobalContext';
 
 const TAG = 'InteractionManager';
 

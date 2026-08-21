@@ -5,8 +5,8 @@
  * 文件路径: entry/src/main/ets/Framework/Novel/NovelSettingsManager.ets
  */
 
-import { logger } from 'manxia_core/src/main/ets/Utils/Logger';
-import { SettingsManager } from 'manxia_core/src/main/ets/Framework/Managers/SettingsManager';
+import { logger } from '../../Utils/Logger';
+import { SettingsManager } from '../Managers/SettingsManager';
 
 const TAG = 'NovelSettingsManager';
 

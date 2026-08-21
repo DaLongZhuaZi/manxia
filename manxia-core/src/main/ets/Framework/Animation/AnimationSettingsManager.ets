@@ -1,12 +1,12 @@
-import { AnimationSettings, DEFAULT_ANIMATION_SETTINGS, AnimationSettingsListener } from 'manxia_core/src/main/ets/Framework/Contracts/AnimationSettings';
+import { AnimationSettings, DEFAULT_ANIMATION_SETTINGS, AnimationSettingsListener } from '../Contracts/AnimationSettings';
 /**
  * 动画设置管理器
  * 统一管理APP内所有动画的开关和配置
  * 提供全局访问接口，确保动画设置在各页面间保持一致
  */
 
-import { logger } from 'manxia_core/src/main/ets/Utils/Logger';
-import { SettingsManager, SettingKeys } from 'manxia_core/src/main/ets/Framework/Managers/SettingsManager';
+import { logger } from '../../Utils/Logger';
+import { SettingsManager, SettingKeys } from '../Managers/SettingsManager';
 
 export { AnimationSettings, DEFAULT_ANIMATION_SETTINGS, AnimationSettingsListener };
 const TAG = 'AnimationSettingsManager';

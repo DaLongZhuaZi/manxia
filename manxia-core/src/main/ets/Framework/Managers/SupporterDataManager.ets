@@ -1,9 +1,9 @@
 import { common } from '@kit.AbilityKit';
 import { http } from '@kit.NetworkKit';
-import { IProxyManagerFacade, ProxyManagerHolder } from 'manxia_core/src/main/ets/Framework/Contracts/ProxyManagerFacade';
-import { ISettingsManagerFacade, SettingsManagerHolder } from 'manxia_core/src/main/ets/Framework/Contracts/ISettingsManagerFacade';
-import { SafeUtils } from 'manxia_core/src/main/ets/Utils/SafeUtils';
-import { logger } from 'manxia_core/src/main/ets/Utils/Logger';
+import { IProxyManagerFacade, ProxyManagerHolder } from '../Contracts/ProxyManagerFacade';
+import { ISettingsManagerFacade, SettingsManagerHolder } from '../Contracts/ISettingsManagerFacade';
+import { SafeUtils } from '../../Utils/SafeUtils';
+import { logger } from '../../Utils/Logger';
 import { util } from '@kit.ArkTS';
 
 const TAG: string = 'SupporterDataManager';

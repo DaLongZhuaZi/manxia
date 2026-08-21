@@ -6,8 +6,8 @@
 
 import { preferences } from '@kit.ArkData';
 import { common } from '@kit.AbilityKit';
-import { logger } from 'manxia_core/src/main/ets/Utils/Logger';
-import { getContext } from 'manxia_core/src/main/ets/GlobalContext';
+import { logger } from '../../Utils/Logger';
+import { getContext } from '../../GlobalContext';
 
 const TAG = 'ReadingAnalyticsManager';
 

@@ -5,11 +5,11 @@
  */
 
 import { logger } from 'manxia_core/src/main/ets/Utils/Logger';
-import { ThemeAwareHelper } from 'manxia_theme/src/main/ets/Framework/Components/ThemeAware';
-import { ThemeType } from 'manxia_theme/src/main/ets/Framework/Managers/ThemeManager';
-import { AppColors } from 'manxia_theme/src/main/ets/Framework/Theme/AppColors';
+import { ThemeAwareHelper } from './ThemeAware';
+import { ThemeType } from '../Managers/ThemeManager';
+import { AppColors } from '../Theme/AppColors';
 import { EBookReadingSettings, EBookPageMode, DEFAULT_EBOOK_READING_SETTINGS } from 'manxia_core/src/main/ets/Models/EBookModels';
-import { getFontManager, SystemFont, CustomFont } from 'manxia_theme/src/main/ets/Framework/Managers/FontManager';
+import { getFontManager, SystemFont, CustomFont } from '../Managers/FontManager';
 
 const TAG = 'EBookReadingSettingsPanel';
 

@@ -9,8 +9,8 @@ import { SafeUtils } from 'manxia_core/src/main/ets/Utils/SafeUtils';
  * 文件路径: entry/src/main/ets/Framework/WebDAV/WebDAVBackupManager.ets
  */
 
-import { WebDAVClient, WebDAVConfig, WebDAVFile } from 'manxia_network/src/main/ets/Framework/WebDAV/WebDAVClient';
-import { WebDAVNativeClient, WebDAVNativeConfig, isNativeModuleAvailable, getNativeModuleError } from 'manxia_network/src/main/ets/Framework/WebDAV/WebDAVNativeClient';
+import { WebDAVClient, WebDAVConfig, WebDAVFile } from './WebDAVClient';
+import { WebDAVNativeClient, WebDAVNativeConfig, isNativeModuleAvailable, getNativeModuleError } from './WebDAVNativeClient';
 import { BackupMetadata, BackupOptions, BackupItemCounts } from 'manxia_core/src/main/ets/Models/BackupModels';
 import { SandboxManager } from 'manxia_core/src/main/ets/Framework/Storage/SandboxManager';
 import { logger } from 'manxia_core/src/main/ets/Utils/Logger';

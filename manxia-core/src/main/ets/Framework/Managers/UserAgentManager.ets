@@ -3,11 +3,11 @@
  * 统一管理全局和图源级别的User-Agent设置
  */
 
-import { logger } from 'manxia_core/src/main/ets/Utils/Logger';
-import { SettingKeys } from 'manxia_core/src/main/ets/Framework/Contracts/SettingKeys';
-import { ISettingsManagerFacade, SettingsManagerHolder } from 'manxia_core/src/main/ets/Framework/Contracts/ISettingsManagerFacade';
-import { IDataManagerFacade, DataManagerHolder } from 'manxia_core/src/main/ets/Framework/Contracts/IDataManagerFacade';
-import { UserSettingsDatabaseRecord } from 'manxia_core/src/main/ets/Framework/Database/DatabaseTypes';
+import { logger } from '../../Utils/Logger';
+import { SettingKeys } from '../Contracts/SettingKeys';
+import { ISettingsManagerFacade, SettingsManagerHolder } from '../Contracts/ISettingsManagerFacade';
+import { IDataManagerFacade, DataManagerHolder } from '../Contracts/IDataManagerFacade';
+import { UserSettingsDatabaseRecord } from '../Database/DatabaseTypes';
 
 const TAG = 'UserAgentManager';
 

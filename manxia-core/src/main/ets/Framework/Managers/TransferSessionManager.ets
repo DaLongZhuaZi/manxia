@@ -2,11 +2,11 @@
  * 局域网传书会话管理器
  */
 
-import { logger } from 'manxia_core/src/main/ets/Utils/Logger';
+import { logger } from '../../Utils/Logger';
 import {
   TransferSessionInfo,
   cloneTransferSessionInfo
-} from 'manxia_core/src/main/ets/Models/TransferModels';
+} from '../../Models/TransferModels';
 
 const TAG = 'TransferSessionManager';
 const DEFAULT_TTL_MINUTES = 10;

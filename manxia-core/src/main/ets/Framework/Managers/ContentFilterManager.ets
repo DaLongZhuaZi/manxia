@@ -3,9 +3,9 @@
  * 负责管理SFW/NSFW内容过滤，提供一键SFW模式
  */
 
-import { logger } from 'manxia_core/src/main/ets/Utils/Logger';
-import { SettingKeys } from 'manxia_core/src/main/ets/Framework/Contracts/SettingKeys';
-import { ISettingsManagerFacade, SettingsManagerHolder } from 'manxia_core/src/main/ets/Framework/Contracts/ISettingsManagerFacade';
+import { logger } from '../../Utils/Logger';
+import { SettingKeys } from '../Contracts/SettingKeys';
+import { ISettingsManagerFacade, SettingsManagerHolder } from '../Contracts/ISettingsManagerFacade';
 
 const TAG = 'ContentFilterManager';
 

@@ -9,7 +9,7 @@ import { logger } from 'manxia_core/src/main/ets/Utils/Logger';
 import { SettingsManager } from 'manxia_core/src/main/ets/Framework/Managers/SettingsManager';
 import { http, connection } from '@kit.NetworkKit';
 import { webview } from '@kit.ArkWeb';
-import { LocalProxyBridge, LocalProxyBridgeConfig, LocalProxyBridgeUpstreamProtocol } from 'manxia_network/src/main/ets/Framework/Network/LocalProxyBridge';
+import { LocalProxyBridge, LocalProxyBridgeConfig, LocalProxyBridgeUpstreamProtocol } from './LocalProxyBridge';
 
 const TAG = 'ProxyManager';
 const PROXY_SETTINGS_KEY = 'network_proxy_settings';

@@ -161,7 +161,9 @@ export function extractUserInfo(token: string | JWTToken): ESObject {
     
     // 移除标准JWT字段，只返回自定义字段
     const userInfo: ESObject = {};
-    for (const key in payload) {
+    const payloadKeys = Object.keys(payload);
+    for (let i = 0; i < payloadKeys.length; i++) {
+      const key = payloadKeys[i];
       if (key !== 'exp' && key !== 'iat' && key !== 'nbf' && key !== 'iss' && key !== 'sub' && key !== 'aud') {
         userInfo[key] = payload[key];
       }

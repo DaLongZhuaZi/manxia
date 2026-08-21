@@ -1,4 +1,4 @@
-﻿import { EBookMetadata } from 'manxia_core/src/main/ets/Models/EBookModels';
+﻿import { EBookMetadata } from '../../Models/EBookModels';
 
 export type ImportSuggestedContentKind = 'manga' | 'ebook' | 'unknown';
 

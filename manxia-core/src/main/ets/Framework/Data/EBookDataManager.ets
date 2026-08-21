@@ -1,13 +1,13 @@
-﻿import { SafeFileUtils } from 'manxia_core/src/main/ets/Utils/SafeFileUtils';
-import { SafeUtils } from 'manxia_core/src/main/ets/Utils/SafeUtils';
+﻿import { SafeFileUtils } from '../../Utils/SafeFileUtils';
+import { SafeUtils } from '../../Utils/SafeUtils';
 // 文件路径: entry/src/main/ets/Framework/Data/EBookDataManager.ets
 /**
  * 电子书数据管理器
  * 负责电子书的数据库操作
  */
 
-import { DatabaseManager } from 'manxia_core/src/main/ets/Framework/Database/DatabaseManager';
-import { DatabaseRecord } from 'manxia_core/src/main/ets/Framework/Database/DatabaseTypes';
+import { DatabaseManager } from '../Database/DatabaseManager';
+import { DatabaseRecord } from '../Database/DatabaseTypes';
 import {
   EBook,
   EBookChapter,
@@ -21,19 +21,19 @@ import {
   DEFAULT_EBOOK_READING_SETTINGS,
   EBOOK_THEME_PRESETS,
   EBookThemePreset
-} from 'manxia_core/src/main/ets/Models/EBookModels';
+} from '../../Models/EBookModels';
 import {
   ReadingSettings as ImageReaderSettings,
   DEFAULT_READING_SETTINGS as DEFAULT_IMAGE_READING_SETTINGS
-} from 'manxia_core/src/main/ets/Models/MangaModels';
-import { logger } from 'manxia_core/src/main/ets/Utils/Logger';
-import { ISettingsManagerFacade, SettingsManagerHolder } from 'manxia_core/src/main/ets/Framework/Contracts/ISettingsManagerFacade';
-import { SettingKeys } from 'manxia_core/src/main/ets/Framework/Contracts/SettingKeys';
-import { getUnifiedAnnotationManager } from 'manxia_core/src/main/ets/Framework/Annotations/UnifiedAnnotationManager';
-import { UnifiedContentType } from 'manxia_core/src/main/ets/Models/UnifiedContentModels';
+} from '../../Models/MangaModels';
+import { logger } from '../../Utils/Logger';
+import { ISettingsManagerFacade, SettingsManagerHolder } from '../Contracts/ISettingsManagerFacade';
+import { SettingKeys } from '../Contracts/SettingKeys';
+import { getUnifiedAnnotationManager } from '../Annotations/UnifiedAnnotationManager';
+import { UnifiedContentType } from '../../Models/UnifiedContentModels';
 import { fileIo as fs } from '@kit.CoreFileKit';
-import DownloadDirManager from 'manxia_core/src/main/ets/Framework/Storage/DownloadDirManager';
-import { IDataManagerFacade, DataManagerHolder } from 'manxia_core/src/main/ets/Framework/Contracts/IDataManagerFacade';
+import DownloadDirManager from '../Storage/DownloadDirManager';
+import { IDataManagerFacade, DataManagerHolder } from '../Contracts/IDataManagerFacade';
 
 const TAG = 'EBookDataManager';
 

@@ -3,7 +3,7 @@ import { SafeUtils } from 'manxia_core/src/main/ets/Utils/SafeUtils';
 import {
   getNetworkTransportFailureCoordinator,
   NetworkTransportFailureCoordinator
-} from 'manxia_network/src/main/ets/Framework/Network/NetworkTransportFailureCoordinator';
+} from '../Network/NetworkTransportFailureCoordinator';
 // 文件路径: entry/src/main/ets/Framework/Debug/ErrorRecordManager.ets
 /**
  * 统一错误记录管理器

@@ -6,7 +6,7 @@ import {
   RSS_CREATE_INDEX_SQL,
   RSS_CREATE_TABLE_SQL,
   RSS_SOURCE_MIGRATION_SQL
-} from 'manxia_novel/src/main/ets/Framework/Rss/RssSubscriptionDatabaseSchema';
+} from './RssSubscriptionDatabaseSchema';
 
 const TAG = 'RssSubscriptionDataManager';
 

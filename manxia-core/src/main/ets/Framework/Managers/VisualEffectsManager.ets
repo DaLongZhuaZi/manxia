@@ -7,9 +7,9 @@
 
 import { hdsMaterial } from '@kit.UIDesignKit';
 import { BusinessError } from '@kit.BasicServicesKit';
-import { logger } from 'manxia_core/src/main/ets/Utils/Logger';
-import { ISettingsManagerFacade, SettingsManagerHolder } from 'manxia_core/src/main/ets/Framework/Contracts/ISettingsManagerFacade';
-import { SettingKeys } from 'manxia_core/src/main/ets/Framework/Contracts/SettingKeys';
+import { logger } from '../../Utils/Logger';
+import { ISettingsManagerFacade, SettingsManagerHolder } from '../Contracts/ISettingsManagerFacade';
+import { SettingKeys } from '../Contracts/SettingKeys';
 
 const TAG = 'VisualEffectsManager';
 

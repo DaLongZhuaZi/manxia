@@ -1,4 +1,4 @@
-import { logger } from 'manxia_core/src/main/ets/Utils/Logger';
+import { logger } from '../../Utils/Logger';
 import {
   ImportFlowContentType,
   ImportFlowEntrySource,
@@ -8,7 +8,7 @@ import {
   ImportFlowSeverity,
   ImportFlowSnapshot,
   ImportFlowSummary
-} from 'manxia_core/src/main/ets/Framework/Import/ImportFlowTypes';
+} from './ImportFlowTypes';
 
 const TAG = 'ImportFlowMonitor';
 

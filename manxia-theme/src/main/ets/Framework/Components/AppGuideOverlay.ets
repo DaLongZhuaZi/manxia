@@ -4,8 +4,8 @@
  * 提供全屏遮罩、局部高亮和步骤说明卡片
  */
 
-import { ThemeAwareHelper, ThemeAwareState } from 'manxia_theme/src/main/ets/Framework/Components/ThemeAware';
-import { ThemeType } from 'manxia_theme/src/main/ets/Framework/Managers/ThemeManager';
+import { ThemeAwareHelper, ThemeAwareState } from './ThemeAware';
+import { ThemeType } from '../Managers/ThemeManager';
 
 export interface GuideHighlightRect {
   x: number;

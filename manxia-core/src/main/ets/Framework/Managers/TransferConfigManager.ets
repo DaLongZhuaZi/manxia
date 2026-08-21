@@ -2,15 +2,15 @@
  * 局域网传书配置管理器
  */
 
-import { logger } from 'manxia_core/src/main/ets/Utils/Logger';
-import { ISettingsManagerFacade, SettingsManagerHolder } from 'manxia_core/src/main/ets/Framework/Contracts/ISettingsManagerFacade';
-import { SettingKeys } from 'manxia_core/src/main/ets/Framework/Contracts/SettingKeys';
+import { logger } from '../../Utils/Logger';
+import { ISettingsManagerFacade, SettingsManagerHolder } from '../Contracts/ISettingsManagerFacade';
+import { SettingKeys } from '../Contracts/SettingKeys';
 import {
   TransferConfig,
   cloneTransferConfig,
   createDefaultTransferConfig,
   sanitizeTransferConfig
-} from 'manxia_core/src/main/ets/Models/TransferModels';
+} from '../../Models/TransferModels';
 
 const TAG = 'TransferConfigManager';
 

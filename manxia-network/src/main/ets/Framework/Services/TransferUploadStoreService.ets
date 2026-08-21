@@ -29,7 +29,7 @@ import {
   ExternalFileTaskKind,
   ExternalFileTaskParams,
   ExternalFileTaskSource
-} from 'manxia_network/src/main/ets/Framework/ExternalFile/ExternalFileTaskTypes';
+} from '../ExternalFile/ExternalFileTaskTypes';
 import { ImportFlowMonitor, getImportFlowMonitor } from 'manxia_core/src/main/ets/Framework/Import/ImportFlowMonitor';
 import {
   ImportFlowContentType,

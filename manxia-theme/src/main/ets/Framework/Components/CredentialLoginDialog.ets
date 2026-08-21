@@ -4,8 +4,8 @@
  */
 
 import { logger } from 'manxia_core/src/main/ets/Utils/Logger';
-import { ThemeAwareHelper, ThemeAwareState } from 'manxia_theme/src/main/ets/Framework/Components/ThemeAware';
-import { ThemeType } from 'manxia_theme/src/main/ets/Framework/Managers/ThemeManager';
+import { ThemeAwareHelper, ThemeAwareState } from './ThemeAware';
+import { ThemeType } from '../Managers/ThemeManager';
 
 const TAG = 'CredentialLoginDialog';
 

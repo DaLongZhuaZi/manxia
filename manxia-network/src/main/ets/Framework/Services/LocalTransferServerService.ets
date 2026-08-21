@@ -33,12 +33,12 @@ import {
 import { getTransferConfigManager, TransferConfigManager } from 'manxia_core/src/main/ets/Framework/Managers/TransferConfigManager';
 import { AppNotificationManager } from 'manxia_core/src/main/ets/Framework/Managers/NotificationManager';
 import { getTransferSessionManager, TransferSessionManager } from 'manxia_core/src/main/ets/Framework/Managers/TransferSessionManager';
-import { BackgroundTaskHelper } from 'manxia_network/src/main/ets/Framework/Task/BackgroundTaskHelper';
+import { BackgroundTaskHelper } from '../Task/BackgroundTaskHelper';
 import {
   getTransferUploadStoreService,
   TransferStagedUploadSession,
   TransferUploadStoreService
-} from 'manxia_network/src/main/ets/Framework/Services/TransferUploadStoreService';
+} from './TransferUploadStoreService';
 
 const TAG = 'LocalTransferServer';
 const BACKGROUND_OWNER = 'local_transfer_server';

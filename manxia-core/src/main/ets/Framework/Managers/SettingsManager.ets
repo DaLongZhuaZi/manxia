@@ -1,14 +1,14 @@
-import { SafeUtils } from 'manxia_core/src/main/ets/Utils/SafeUtils';
-import { SettingKeys } from 'manxia_core/src/main/ets/Framework/Contracts/SettingKeys';
-import { ISettingsManagerFacade, SettingsManagerHolder } from 'manxia_core/src/main/ets/Framework/Contracts/ISettingsManagerFacade';
+import { SafeUtils } from '../../Utils/SafeUtils';
+import { SettingKeys } from '../Contracts/SettingKeys';
+import { ISettingsManagerFacade, SettingsManagerHolder } from '../Contracts/ISettingsManagerFacade';
 /**
  * 设置管理器
  * 负责管理应用的所有设置，使用数据库持久化存储
  */
 
-import { logger } from 'manxia_core/src/main/ets/Utils/Logger';
-import { IDataManagerFacade, DataManagerHolder } from 'manxia_core/src/main/ets/Framework/Contracts/IDataManagerFacade';
-import { UserSettingsDatabaseRecord } from 'manxia_core/src/main/ets/Framework/Database/DatabaseTypes';
+import { logger } from '../../Utils/Logger';
+import { IDataManagerFacade, DataManagerHolder } from '../Contracts/IDataManagerFacade';
+import { UserSettingsDatabaseRecord } from '../Database/DatabaseTypes';
 
 const TAG = 'SettingsManager';
 

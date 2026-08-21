@@ -1,4 +1,4 @@
-﻿import { SafeFileUtils } from 'manxia_core/src/main/ets/Utils/SafeFileUtils';
+﻿import { SafeFileUtils } from '../../Utils/SafeFileUtils';
 /**
  * Download目录管理器
  * 管理应用在系统Download文件夹中的专属目录
@@ -8,9 +8,9 @@
 import { picker, fileUri } from '@kit.CoreFileKit';
 import { common } from '@kit.AbilityKit';
 import fs from '@ohos.file.fs';
-import { logger } from 'manxia_core/src/main/ets/Utils/Logger';
-import { ISettingsManagerFacade, SettingsManagerHolder } from 'manxia_core/src/main/ets/Framework/Contracts/ISettingsManagerFacade';
-import { SettingKeys } from 'manxia_core/src/main/ets/Framework/Contracts/SettingKeys';
+import { logger } from '../../Utils/Logger';
+import { ISettingsManagerFacade, SettingsManagerHolder } from '../Contracts/ISettingsManagerFacade';
+import { SettingKeys } from '../Contracts/SettingKeys';
 
 const TAG = 'DownloadDirManager';
 const DOWNLOAD_SYNC_DIR_PATH_KEY = 'downloadSyncDirPath';

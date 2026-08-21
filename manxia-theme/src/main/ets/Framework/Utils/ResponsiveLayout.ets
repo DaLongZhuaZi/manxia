@@ -1,7 +1,7 @@
 // 文件路径: entry/src/main/ets/Framework/Utils/ResponsiveLayout.ets
 // 职责: 响应式布局工具类，提供基于断点的布局参数
 
-import { DeviceAdaptationManager, Breakpoint, DeviceInfo } from 'manxia_theme/src/main/ets/Framework/Managers/DeviceAdaptationManager';
+import { DeviceAdaptationManager, Breakpoint, DeviceInfo } from '../Managers/DeviceAdaptationManager';
 import { logger } from 'manxia_core/src/main/ets/Utils/Logger';
 
 const TAG = 'ResponsiveLayout';

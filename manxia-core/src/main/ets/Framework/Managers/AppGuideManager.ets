@@ -1,4 +1,4 @@
-﻿import { SafeUtils } from 'manxia_core/src/main/ets/Utils/SafeUtils';
+﻿import { SafeUtils } from '../../Utils/SafeUtils';
 // 文件路径: entry/src/main/ets/Framework/Managers/AppGuideManager.ets
 /**
  * 应用内引导管理器
@@ -6,9 +6,9 @@
  */
 
 import { preferences } from '@kit.ArkData';
-import { logger } from 'manxia_core/src/main/ets/Utils/Logger';
-import { getContext } from 'manxia_core/src/main/ets/GlobalContext';
-import { WelcomeGuideManager } from 'manxia_core/src/main/ets/Framework/Managers/WelcomeGuideManager';
+import { logger } from '../../Utils/Logger';
+import { getContext } from '../../GlobalContext';
+import { WelcomeGuideManager } from './WelcomeGuideManager';
 
 const TAG = 'AppGuideManager';
 

@@ -4,7 +4,7 @@
  * 提供可监控的初始化流程，让SplashPage能够感知真实的初始化进度
  */
 
-import { logger } from 'manxia_core/src/main/ets/Utils/Logger';
+import { logger } from '../../Utils/Logger';
 
 const TAG = 'AppInitializationManager';
 

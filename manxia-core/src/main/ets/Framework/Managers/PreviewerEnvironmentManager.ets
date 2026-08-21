@@ -4,7 +4,7 @@
  * 提供阅读模式、阅读方向、亮度调节、滤镜效果、页面间距等配置选项
  */
 
-import { logger } from 'manxia_core/src/main/ets/Utils/Logger';
+import { logger } from '../../Utils/Logger';
 import { 
   GlobalAnimationManager, 
   AnimationType, 
@@ -18,7 +18,7 @@ import {
   FilterSettings,
   DEFAULT_READING_SETTINGS,
   DEFAULT_FILTER_SETTINGS
-} from 'manxia_core/src/main/ets/Models/MangaModels';
+} from '../../Models/MangaModels';
 import { curves, UIContext } from '@kit.ArkUI';
 
 const TAG = 'MangaReaderSettings';

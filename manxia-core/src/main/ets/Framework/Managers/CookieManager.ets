@@ -1,4 +1,4 @@
-﻿import { SafeUtils } from 'manxia_core/src/main/ets/Utils/SafeUtils';
+﻿import { SafeUtils } from '../../Utils/SafeUtils';
 // 文件路径：entry/src/main/ets/Framework/Managers/CookieManager.ets
 /**
  * 全局 Cookie 管理器（与 WebView 配合）
@@ -11,9 +11,9 @@
 
 import { http } from '@kit.NetworkKit';
 import { webview } from '@kit.ArkWeb';
-import { logger } from 'manxia_core/src/main/ets/Utils/Logger';
-import { IDataManagerFacade, DataManagerHolder } from 'manxia_core/src/main/ets/Framework/Contracts/IDataManagerFacade';
-import { RequestHeaderEntry, RequestHeaders } from 'manxia_core/src/main/ets/Framework/Contracts/ImageRequestHeaders';
+import { logger } from '../../Utils/Logger';
+import { IDataManagerFacade, DataManagerHolder } from '../Contracts/IDataManagerFacade';
+import { RequestHeaderEntry, RequestHeaders } from '../Contracts/ImageRequestHeaders';
 
 const TAG: string = 'CookieManager';
 

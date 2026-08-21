@@ -3,7 +3,7 @@ import { cryptoFramework } from '@kit.CryptoArchitectureKit';
 import { fileIo } from '@kit.CoreFileKit';
 import { http } from '@kit.NetworkKit';
 import { util } from '@kit.ArkTS';
-import { FeedbackCenterCacheManager, FeedbackCenterCacheStats } from 'manxia_network/src/main/ets/Framework/Cache/FeedbackCenterCacheManager';
+import { FeedbackCenterCacheManager, FeedbackCenterCacheStats } from '../Cache/FeedbackCenterCacheManager';
 import { logger } from 'manxia_core/src/main/ets/Utils/Logger';
 
 const TAG = 'FeedbackCenterService';

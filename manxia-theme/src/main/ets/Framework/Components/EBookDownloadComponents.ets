@@ -4,10 +4,10 @@
  * 设计原则：声明式配置、事件驱动、易于集成
  */
 
-import { ThemeAwareState, ThemeAwareHelper } from 'manxia_theme/src/main/ets/Framework/Components/ThemeAware';
-import { ThemeType } from 'manxia_theme/src/main/ets/Framework/Managers/ThemeManager';
+import { ThemeAwareState, ThemeAwareHelper } from './ThemeAware';
+import { ThemeType } from '../Managers/ThemeManager';
 import { logger } from 'manxia_core/src/main/ets/Utils/Logger';
-import { AppColors } from 'manxia_theme/src/main/ets/Framework/Theme/AppColors';
+import { AppColors } from '../Theme/AppColors';
 
 const TAG = 'EBookDownloadComponents';
 

@@ -1,8 +1,8 @@
-﻿import { SafeUtils } from 'manxia_core/src/main/ets/Utils/SafeUtils';
-import { logger } from 'manxia_core/src/main/ets/Utils/Logger';
-import { DatabaseManager } from 'manxia_core/src/main/ets/Framework/Database/DatabaseManager';
-import { generateUUID } from 'manxia_core/src/main/ets/Framework/Utils/UUIDGenerator';
-import { UnifiedContentType } from 'manxia_core/src/main/ets/Models/UnifiedContentModels';
+﻿import { SafeUtils } from '../../Utils/SafeUtils';
+import { logger } from '../../Utils/Logger';
+import { DatabaseManager } from '../Database/DatabaseManager';
+import { generateUUID } from '../Utils/UUIDGenerator';
+import { UnifiedContentType } from '../../Models/UnifiedContentModels';
 import {
   UnifiedAnnotationType,
   UnifiedAnnotationRecord,
@@ -11,8 +11,8 @@ import {
   CreateThoughtInput,
   AnnotationAnchor,
   HighlightStyle
-} from 'manxia_core/src/main/ets/Models/AnnotationModels';
-import { DatabaseRecord, DatabaseValue } from 'manxia_core/src/main/ets/Framework/Database/DatabaseTypes';
+} from '../../Models/AnnotationModels';
+import { DatabaseRecord, DatabaseValue } from '../Database/DatabaseTypes';
 
 const TAG = 'UnifiedAnnotationManager';
 

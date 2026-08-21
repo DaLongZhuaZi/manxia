@@ -7,7 +7,7 @@ import { SafeUtils } from 'manxia_core/src/main/ets/Utils/SafeUtils';
 import { http } from '@kit.NetworkKit';
 import { logger } from 'manxia_core/src/main/ets/Utils/Logger';
 import { lang } from '@kit.ArkTS';
-import { ProxyManager } from 'manxia_network/src/main/ets/Framework/Network/ProxyManager';
+import { ProxyManager } from '../Network/ProxyManager';
 
 const TAG = 'MangaSourceAPIEngine';
 
