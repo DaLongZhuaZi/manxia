@@ -1,6 +1,6 @@
 # 漫匣项目 HAR 模块化拆分 — 实时进度台账（PROGRESS / 唯一真相源）
 
-> 最后更新：2026-08-21 20:10（传书鉴权#4✅已提交 c48f819b；Cache 簇评估：依赖横切 DataManager(本体)/Source 子层/native AvifDecoder/Download — 判为边界留守 entry（入 MANIFEST），不硬迁；待用户选：NGF barrel 深项 / R5 收尾(推送+release) / 其它der.get() 禁用于 static/模块级急切初始化，须惰性访问；⏸ 待复检启动）
+> 最后更新：2026-08-21 12:45（R5 静态复核完成：core 出边=0 / dangling=0 / 模块计数与 MANIFEST 一致；远端 origin+nas-backup 均已同步至 315f16a0；rel_build2.log 系沙箱 es2abc 缓存 ENOENT，非代码错误；entry 磁盘 593=git tracked 585+8 .bak 忽略件；待用户全权限终端跑 release 编译+关键回归）
 > 规则（对齐 PLAN P6）：每完成/中断/失败一个工作包，**立即**在本文件追加时间戳条目；
 > 阶段门禁等待用户验收时，对应阶段状态置 ⏸ 待验证，并把"建议验证命令+用例"写全；
 > 用户回填验收结果后，由执行方核验并推进到下一阶段。
@@ -12,10 +12,10 @@
 
 | 项 | 值 |
 |---|---|
-| 当前阶段 | **Stage 6 收口完成：模块抽取 + SettingsManager/ProxyManager/DataManager 契约化（R1/R2 已提交）；文档已同步；待用户推送** |
+| 当前阶段 | **R5 收尾静态复核完成：推送已同步 origin+nas-backup@315f16a0；静态断言全绿（core出边=0/dangling=0/计数一致）；待用户全权限终端 release 编译+回归** |
 | 总体进度 | barrel 版 M2 首编报 468 错（日志10505001/10605150：Utils/Logger 与 NamingConventions 重名 LogLevel 被 barrel 合并冲突）→ 改为深路径导入（manxia_core/src/main/ets/...，符号保持原文件身份，index.ets 最小化）重做：525+ 文件、996+ 处改写
 | 上次变更 | 2026-08-20 05:05：深路径 pivot 完成并通过静态校验 |
-| 当前阻塞 | 等待用户：M2 二次编译（§9 指令不变） |
+| 当前阻塞 | 等待用户：全权限终端 release 编译 + 关键回归（启动/设置/主题/代理/通知/传书/划线/MOBI） |
 | 目标 | 见 PLAN §1（M0→M7） |
 
 ## 2. 阶段状态表
@@ -108,6 +108,17 @@
 | R12 | 500+ 处 import 一次性改写 | 🟡 未触发 | 机器改写 + 全量静态复扫 + 一次 M2 编译集中收口 |
 
 ## 7. 详细日志（按时间倒序）
+
+### 2026-08-21 12:45 — R5 收尾静态复核（执行方，静态全绿，待用户 release 门禁）
+- **远端同步**：`git ls-remote` 确认 origin（GitHub）与 nas-backup 均已同步至 `315f16a0`，与本地 HEAD 一致；交接文档“待推 2 提交”信息已过时（前序会话已完成推送）。当前无 `har-*` 标签。
+- **静态断言三件套**（脚本 `tools/r5_assertions.py`，全仓 892 .ets 文件扫描）：
+  1. core 出边=0（core 139 .ets 文件无任何 import 指向 theme/novel/network/source-engine/reader-ui/features-ui/entry）→ **PASS**
+  2. dangling 深路径=0（全仓 2957 处 deep-path import 全部可解析）→ **PASS**
+  3. 模块计数：entry=585(tracked)/core=139/theme=30/novel=28/network=33/source-engine=34/reader-ui=18/features-ui=17，与 MODULE_MANIFEST v2 一致 → **PASS**
+- **计数差异说明**：磁盘 .ets=593，其中 8 个为 `.bak` 目录下文件（ImageProcessing.bak×4 / Network.bak×4，被 .gitignore `*.bak` 忽略），git tracked=585 与台账一致，无未跟踪需处理。
+- **rel_build2.log 诊断**：该日志（2026-08-21 00:43，1 分 47 秒失败）在受限沙箱中跑出 `CompileArkTS → es2abc ENOENT ~/.hvigor/.../hvigor.js`；全文件 1556 条均 WARN（FileEditorPage try-catch 风格提示），0 个 ArkTS file-level ERROR、0 个 undefined/not-found → 属沙箱 hvigor 缓存失效（已知受限环境问题），**非代码缺陷**。
+- **结论**：R5 静态收尾完成，仅差用户在**全权限终端/DevEco** 跑 release 编译（`-p product=default -p buildMode=release`）+ 关键功能回归。
+- **里程碑标签**：建议用户确认 release 通过后打 `harmod-wave0-w2` 并推送。
 
 ### 2026-08-20 03:40 — 检查点提交与推送（执行方）
 - M1 验收通过（用户确认）；提交前审查：
