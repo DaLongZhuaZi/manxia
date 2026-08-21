@@ -7746,8 +7746,6 @@ export struct UnifiedDetailPage {
 
         this.buildNovelV2TraceDisclosure()
 
-        Blank()
-
         // 操作按钮
         Column({ space: 8 }) {
           // 添加书架/替换原小说按钮
@@ -11395,7 +11393,6 @@ export struct UnifiedDetailPage {
     .borderRadius(30)
     .border({ width: this.getFloatingBorderWidth(), color: this.getFloatingBorderColor() })
     .shadow({ radius: this.getFloatingRadius() + 6, color: this.getFloatingShadowColor(), offsetX: 0, offsetY: 8 })
-    .align(Alignment.BottomEnd)
     .margin({
       left: 24,
       right: 24,
@@ -11492,8 +11489,15 @@ export struct UnifiedDetailPage {
       .width('100%')
       .height('100%')
 
-      // 横屏阅读动作悬浮在屏幕角落，避免占用章节列表高度。
-      this.buildLandscapeReadActions()
+      // 横屏阅读动作悬浮在屏幕右下角，避免占用章节列表高度。
+      Column() {
+        this.buildLandscapeReadActions()
+      }
+      .width('100%')
+      .height('100%')
+      .justifyContent(FlexAlign.End)
+      .alignItems(HorizontalAlign.End)
+      .hitTestBehavior(HitTestMode.Transparent)
     }
     .width('100%')
     .height('100%')

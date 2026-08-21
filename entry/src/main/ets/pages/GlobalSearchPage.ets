@@ -1251,6 +1251,28 @@ export struct GlobalSearchPage {
   }
 
   /**
+   * 删除单条搜索历史
+   */
+  private removeSearchHistory(keyword: string): void {
+    const trimmed: string = keyword.trim();
+    if (trimmed.length === 0) {
+      return;
+    }
+    this.searchHistory = this.searchHistory.filter((item: string) => item.trim() !== trimmed);
+    AppStorage.setOrCreate(SEARCH_HISTORY_PREF_KEY, this.searchHistory);
+    void this.persistSearchHistory(this.searchHistory);
+  }
+
+  /**
+   * 清空全部搜索历史
+   */
+  private clearAllSearchHistory(): void {
+    this.searchHistory = [];
+    AppStorage.setOrCreate(SEARCH_HISTORY_PREF_KEY, []);
+    void this.persistSearchHistory([]);
+  }
+
+  /**
    * 保存搜索历史
    */
   private saveSearchHistory(keyword: string): void {
@@ -2165,12 +2187,53 @@ export struct GlobalSearchPage {
             // 搜索历史
             Column() {
               if (this.searchHistory.length > 0) {
-                Text('搜索历史')
-                  .fontSize(16)
-                  .fontWeight(FontWeight.Medium)
-                  .fontFamily(this.appFontFamily)
-                  .padding(this.responsive_contentPadding)
-                  .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
+                // 标题行 + 清空按钮
+                Row() {
+                  Text('搜索历史')
+                    .fontSize(16)
+                    .fontWeight(FontWeight.Medium)
+                    .fontFamily(this.appFontFamily)
+                    .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
+
+                  Blank()
+
+                  Button({ type: ButtonType.Normal }) {
+                    Row({ space: 4 }) {
+                      SymbolGlyph($r('sys.symbol.trash'))
+                        .fontSize(13)
+                        .fontColor([ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme)])
+                      Text('清空')
+                        .fontSize(13)
+                        .fontFamily(this.appFontFamily)
+                        .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
+                    }
+                  }
+                  .height(30)
+                  .padding({ left: 12, right: 12 })
+                  .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('panel_background', this.themeState.currentTheme))
+                  .borderRadius(15)
+                  .border({
+                    width: 1,
+                    color: ThemeAwareHelper.getTestManagementThemedColor('panel_border', this.themeState.currentTheme)
+                  })
+                  .onClick(() => {
+                    this.getUIContext().showAlertDialog({
+                      title: '清空搜索历史',
+                      message: '确定要清空全部搜索历史吗？',
+                      primaryButton: {
+                        value: '取消',
+                        action: () => {}
+                      },
+                      secondaryButton: {
+                        value: '清空',
+                        action: () => this.clearAllSearchHistory()
+                      }
+                    });
+                  })
+                }
+                .width('100%')
+                .padding({ left: this.responsive_contentPadding, right: this.responsive_contentPadding })
+                .alignItems(VerticalAlign.Center)
 
                 Flex({ wrap: FlexWrap.Wrap }) {
                   ForEach(this.searchHistory, (keyword: string) => {
@@ -2197,7 +2260,13 @@ export struct GlobalSearchPage {
                       this.searchKeyword = keyword;
                       this.performSearch();
                     })
-                  })
+                    .gesture(
+                      LongPressGesture({ repeat: false, duration: 500 })
+                        .onAction(() => {
+                          this.removeSearchHistory(keyword);
+                        })
+                    )
+                  }, (keyword: string) => keyword)
                 }
                 .width('100%')
                 .padding({ left: this.responsive_contentPadding, right: this.responsive_contentPadding })
