@@ -1,6 +1,6 @@
 # 漫匣项目 HAR 模块化拆分 — 实时进度台账（PROGRESS / 唯一真相源）
 
-> 最后更新：2026-08-21 12:45（R5 静态复核完成：core 出边=0 / dangling=0 / 模块计数与 MANIFEST 一致；远端 origin+nas-backup 均已同步至 315f16a0；rel_build2.log 系沙箱 es2abc 缓存 ENOENT，非代码错误；entry 磁盘 593=git tracked 585+8 .bak 忽略件；待用户全权限终端跑 release 编译+关键回归）
+> 最后更新：2026-08-21 13:45（release 门禁反馈 9 处 ArkTS 编译错误，已修 ec3826cf；根因：c48f819b 传书鉴权日志嵌 logger 嵌套断裂 + StreamDownloader/SourceVerifier 既有非标准 ArkTS 模式此前未被沙箱 ArkTS 阶段暴露；待用户复跑 release 验证）
 > 规则（对齐 PLAN P6）：每完成/中断/失败一个工作包，**立即**在本文件追加时间戳条目；
 > 阶段门禁等待用户验收时，对应阶段状态置 ⏸ 待验证，并把"建议验证命令+用例"写全；
 > 用户回填验收结果后，由执行方核验并推进到下一阶段。
@@ -12,10 +12,10 @@
 
 | 项 | 值 |
 |---|---|
-| 当前阶段 | **R5 收尾静态复核完成：推送已同步 origin+nas-backup@315f16a0；静态断言全绿（core出边=0/dangling=0/计数一致）；待用户全权限终端 release 编译+回归** |
+| 当前阶段 | **R5 收尾复核：静态全绿，release 门禁反馈的 9 处 ArkTS 错误已修复（ec3826cf）；待用户再跑 release 编译+回归** |
 | 总体进度 | barrel 版 M2 首编报 468 错（日志10505001/10605150：Utils/Logger 与 NamingConventions 重名 LogLevel 被 barrel 合并冲突）→ 改为深路径导入（manxia_core/src/main/ets/...，符号保持原文件身份，index.ets 最小化）重做：525+ 文件、996+ 处改写
 | 上次变更 | 2026-08-20 05:05：深路径 pivot 完成并通过静态校验 |
-| 当前阻塞 | 等待用户：全权限终端 release 编译 + 关键回归（启动/设置/主题/代理/通知/传书/划线/MOBI） |
+| 当前阻塞 | 等待用户：全权限终端 release 复编译 + 关键回归（启动/设置/主题/代理/通知/传书/划线/MOBI）；若编过，可选打标签 |
 | 目标 | 见 PLAN §1（M0→M7） |
 
 ## 2. 阶段状态表
@@ -108,6 +108,15 @@
 | R12 | 500+ 处 import 一次性改写 | 🟡 未触发 | 机器改写 + 全量静态复扫 + 一次 M2 编译集中收口 |
 
 ## 7. 详细日志（按时间倒序）
+
+### 2026-08-21 13:45 — release 门禁修复：9 处 ArkTS 编译错误（执行方）
+- 用户全权限终端 release 编译反馈 9 错，集中于 manxia-network 3 文件：
+  - `LocalTransferServerService.ets:658` — c48f819b（传书鉴权）遗留：`logger.debug(TAG, logger.info(...))` 嵌入语句断裂（2 错），改为单条 `logger.info`。
+  - `StreamDownloader.ets` — options 内联对象类型 10605040（1）、解构声明 10605074（1）、无类型对象字面量 10605038（1）、headers spread 10605099（1）、SDK 不存在事件 `dataReceiveErr` 10605001（1）：接口抽出 + 逐字段取值 + 错误统一由 `requestInStream().catch` 捕获 + for-in 合并。（流式错误路径复核：open 失败/request 失败/dataEnd 三路均清理 file+destroy，无泄漏）
+  - `SourceVerifier.ets:97` — options 内联对象类型 10605040（1）：抽 SourceVerifyOptions 接口。
+- SDK 实证：`@ohos.net.http.d.ts` 的 on() 仅支持 headerReceive/headersReceive/dataReceive/dataEnd/dataReceiveProgress/dataSendProgress，无 dataReceiveErr。
+- 新增预防性脚本 `tools/arkts_inline_scan.py`（内联对象类型/解构/spread/dataReceiveErr 全仓扫描）：余 2 处内联类型（entry LoadingStateTypes / source-engine AuthenticationHandler）+ core MangaTypeAdapter spread —— 均为旧仓既有、已随此前批次编译通过且本类非同一违规（接口内嵌对象属性/字面量对象 spread 合法），登记不盲改，待用户门禁后视需要处理。
+- 提交 ec3826cf；静态断言保持全绿（core 出边=0 / dangling=0 / 计数一致）。
 
 ### 2026-08-21 12:45 — R5 收尾静态复核（执行方，静态全绿，待用户 release 门禁）
 - **远端同步**：`git ls-remote` 确认 origin（GitHub）与 nas-backup 均已同步至 `315f16a0`，与本地 HEAD 一致；交接文档“待推 2 提交”信息已过时（前序会话已完成推送）。当前无 `har-*` 标签。
