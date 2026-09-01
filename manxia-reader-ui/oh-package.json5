@@ -5,6 +5,10 @@
   "main": "./src/main/ets/index.ets",
   "author": "",
   "license": "",
-  "dependencies": { "manxia_core": "file:../manxia-core", "manxia_theme": "file:../manxia-theme", "manxia_source_engine": "file:../manxia-source-engine" },
+  "dependencies": {
+    "manxia_core": "file:../manxia-core",
+    "manxia_theme": "file:../manxia-theme",
+    "manxia_network": "file:../manxia-network"
+  },
   "devDependencies": {}
 }

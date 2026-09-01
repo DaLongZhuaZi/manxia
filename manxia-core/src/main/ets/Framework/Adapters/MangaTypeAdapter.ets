@@ -36,7 +36,8 @@ export interface LegacyComicInfo {
   updateTime?: number;
   localPath?: string;
   fileSize?: number;
-  [key: string]: any;
+  sourceUrl?: string;
+  lastSyncTime?: number;
 }
 
 /**
@@ -55,7 +56,7 @@ export interface LegacyChapterInfo {
   publishTime?: number;
   createTime?: number;
   localPath?: string;
-  [key: string]: any;
+  url?: string;
 }
 
 /**
@@ -69,7 +70,6 @@ export interface LegacyPageInfo {
   localPath?: string;
   width?: number;
   height?: number;
-  [key: string]: any;
 }
 
 /**
@@ -82,10 +82,10 @@ export class MangaTypeAdapter {
   static convertToManga(legacy: LegacyComicInfo, sourceName?: string): Manga {
     // 判断是本地漫画还是在线漫画
     const isLocal = !legacy.sourceId && !legacy.externalId;
-    
+
     if (isLocal) {
       // 本地漫画
-      return {
+      const localManga: LocalManga = {
         id: legacy.id,
         sourceType: MangaSourceType.LOCAL,
         title: legacy.title,
@@ -93,19 +93,20 @@ export class MangaTypeAdapter {
         description: legacy.description,
         coverUrl: legacy.coverUrl,
         coverLocalPath: legacy.coverLocalPath,
-        tags: this.parseTags(legacy.tags),
+        tags: MangaTypeAdapter.parseTags(legacy.tags),
         createTime: legacy.createTime || Date.now(),
         updateTime: legacy.updateTime || Date.now(),
         localPath: legacy.localPath || '',
         fileSize: legacy.fileSize
-      } as LocalManga;
+      };
+      return localManga;
     } else {
       // 在线漫画
-      const sourceIdNum = typeof legacy.sourceId === 'string' 
-        ? parseInt(legacy.sourceId) 
+      const sourceIdNum = typeof legacy.sourceId === 'string'
+        ? parseInt(legacy.sourceId)
         : (legacy.sourceId || 0);
-      
-      return {
+
+      const onlineManga: OnlineManga = {
         id: legacy.id,
         sourceType: MangaSourceType.ONLINE,
         title: legacy.title,
@@ -113,7 +114,7 @@ export class MangaTypeAdapter {
         description: legacy.description,
         coverUrl: legacy.coverUrl,
         coverLocalPath: legacy.coverLocalPath,
-        tags: this.parseTags(legacy.tags),
+        tags: MangaTypeAdapter.parseTags(legacy.tags),
         createTime: legacy.createTime || Date.now(),
         updateTime: legacy.updateTime || Date.now(),
         sourceName: sourceName || 'unknown',
@@ -122,20 +123,21 @@ export class MangaTypeAdapter {
         sourceUrl: legacy.sourceUrl,
         isInLibrary: true, // 如果在数据库中，说明已加入书库
         lastSyncTime: legacy.lastSyncTime || legacy.updateTime
-      } as OnlineManga;
+      };
+      return onlineManga;
     }
   }
-  
+
   /**
    * 将旧的ChapterInfo转换为新的Chapter类型
    */
   static convertToChapter(legacy: LegacyChapterInfo): Chapter {
     // 判断是本地章节还是在线章节
     const isLocal = !legacy.externalId;
-    
+
     if (isLocal) {
       // 本地章节
-      return {
+      const localChapter: LocalChapter = {
         id: legacy.id,
         mangaId: legacy.comicId,
         title: legacy.title,
@@ -143,12 +145,13 @@ export class MangaTypeAdapter {
         pageCount: legacy.pageCount || 0,
         createTime: legacy.createTime || Date.now(),
         localPath: legacy.localPath || legacy.downloadPath || ''
-      } as LocalChapter;
+      };
+      return localChapter;
     } else {
       // 在线章节
-      const downloadStatus = this.getDownloadStatus(legacy.isDownloaded, legacy.downloadPath);
-      
-      return {
+      const downloadStatus = MangaTypeAdapter.getDownloadStatus(legacy.isDownloaded, legacy.downloadPath);
+
+      const onlineChapter: OnlineChapter = {
         id: legacy.id,
         mangaId: legacy.comicId,
         title: legacy.title,
@@ -160,10 +163,11 @@ export class MangaTypeAdapter {
         downloadStatus,
         downloadPath: legacy.downloadPath,
         publishTime: legacy.publishTime
-      } as OnlineChapter;
+      };
+      return onlineChapter;
     }
   }
-  
+
   /**
    * 将旧的PageInfo转换为新的PageInfo类型
    */
@@ -178,30 +182,30 @@ export class MangaTypeAdapter {
       height: legacy.height
     };
   }
-  
+
   /**
    * 批量转换章节
    */
   static convertToChapters(legacyChapters: LegacyChapterInfo[]): Chapter[] {
-    return legacyChapters.map(ch => this.convertToChapter(ch));
+    return legacyChapters.map(ch => MangaTypeAdapter.convertToChapter(ch));
   }
-  
+
   /**
    * 批量转换页面
    */
   static convertToPages(legacyPages: LegacyPageInfo[]): PageInfo[] {
-    return legacyPages.map(p => this.convertToPageInfo(p));
+    return legacyPages.map(p => MangaTypeAdapter.convertToPageInfo(p));
   }
-  
+
   /**
    * 解析标签字符串
    */
   private static parseTags(tagsStr?: string): string[] | undefined {
     if (!tagsStr) return undefined;
-    
+
     try {
       // 尝试解析JSON数组
-      const parsed = SafeUtils.parseObj(tagsStr);
+      const parsed = SafeUtils.parseObj<string[]>(tagsStr);
       if (Array.isArray(parsed)) {
         return parsed;
       }
@@ -211,10 +215,10 @@ export class MangaTypeAdapter {
         return tagsStr.split(',').map(t => t.trim()).filter(t => t.length > 0);
       }
     }
-    
+
     return [tagsStr];
   }
-  
+
   /**
    * 获取下载状态
    */
@@ -227,7 +231,7 @@ export class MangaTypeAdapter {
     }
     return OnlineChapterDownloadStatus.NOT_DOWNLOADED;
   }
-  
+
   /**
    * 将新的Manga类型转换回旧的ComicInfo（用于数据库保存）
    */
@@ -243,26 +247,21 @@ export class MangaTypeAdapter {
       createTime: manga.createTime,
       updateTime: manga.updateTime
     };
-    
+
     if (manga.sourceType === MangaSourceType.LOCAL) {
       const localManga = manga as LocalManga;
-      return {
-        ...base,
-        localPath: localManga.localPath,
-        fileSize: localManga.fileSize
-      };
+      base.localPath = localManga.localPath;
+      base.fileSize = localManga.fileSize;
     } else {
       const onlineManga = manga as OnlineManga;
-      return {
-        ...base,
-        sourceId: onlineManga.sourceId,
-        externalId: onlineManga.externalId,
-        sourceUrl: onlineManga.sourceUrl,
-        lastSyncTime: onlineManga.lastSyncTime
-      };
+      base.sourceId = onlineManga.sourceId;
+      base.externalId = onlineManga.externalId;
+      base.sourceUrl = onlineManga.sourceUrl;
+      base.lastSyncTime = onlineManga.lastSyncTime;
     }
+    return base;
   }
-  
+
   /**
    * 将新的Chapter类型转换回旧的ChapterInfo
    */
@@ -275,25 +274,21 @@ export class MangaTypeAdapter {
       pageCount: chapter.pageCount,
       createTime: chapter.createTime
     };
-    
-    if ('localPath' in chapter && !('externalId' in chapter)) {
+
+    if (!((chapter as OnlineChapter).externalId !== undefined &&
+      (chapter as OnlineChapter).downloadStatus !== undefined)) {
       // 本地章节
       const localChapter = chapter as LocalChapter;
-      return {
-        ...base,
-        localPath: localChapter.localPath
-      };
+      base.localPath = localChapter.localPath;
     } else {
       // 在线章节
       const onlineChapter = chapter as OnlineChapter;
-      return {
-        ...base,
-        externalId: onlineChapter.externalId,
-        url: onlineChapter.sourceUrl,
-        isDownloaded: onlineChapter.downloadStatus === OnlineChapterDownloadStatus.DOWNLOADED,
-        downloadPath: onlineChapter.downloadPath,
-        publishTime: onlineChapter.publishTime
-      };
+      base.externalId = onlineChapter.externalId;
+      base.url = onlineChapter.sourceUrl;
+      base.isDownloaded = onlineChapter.downloadStatus === OnlineChapterDownloadStatus.DOWNLOADED;
+      base.downloadPath = onlineChapter.downloadPath;
+      base.publishTime = onlineChapter.publishTime;
     }
+    return base;
   }
 }

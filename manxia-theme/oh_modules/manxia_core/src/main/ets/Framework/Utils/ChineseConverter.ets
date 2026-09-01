@@ -29,17 +29,25 @@ export interface ChineseConversionConfig {
 }
 
 /**
+ * 映射表大小信息
+ */
+export interface MappingSizeInfo {
+  s2t: number;
+  t2s: number;
+}
+
+/**
  * 简繁体中文转换器（单例）
  */
 export class ChineseConverter {
   private static instance: ChineseConverter | null = null;
   private static initialized: boolean = false;
-  
+
   // 简体到繁体映射表（常用字）
-  private static s2tMap: Map<string, string> = new Map();
-  
+  private static s2tMap: Map<string, string> = new Map<string, string>();
+
   // 繁体到简体映射表（常用字）
-  private static t2sMap: Map<string, string> = new Map();
+  private static t2sMap: Map<string, string> = new Map<string, string>();
 
   private constructor() {
     ChineseConverter.initialize();
@@ -56,12 +64,12 @@ export class ChineseConverter {
    * 初始化转换映射表
    */
   private static initialize(): void {
-    if (this.initialized) {
+    if (ChineseConverter.initialized) {
       return;
     }
 
     // 常用简繁对照表（部分示例，实际应用中需要完整的映射表）
-    const commonPairs: [string, string][] = [
+    const commonPairs: string[][] = [
       // 常用字
       ['万', '萬'], ['与', '與'], ['专', '專'], ['业', '業'], ['丛', '叢'],
       ['东', '東'], ['丝', '絲'], ['丢', '丟'], ['两', '兩'], ['严', '嚴'],
@@ -80,7 +88,7 @@ export class ChineseConverter {
       ['俦', '儔'], ['俨', '儼'], ['俩', '倆'], ['俪', '儷'], ['俭', '儉'],
       ['债', '債'], ['倾', '傾'], ['偬', '傯'], ['偻', '僂'], ['偾', '僨'],
       ['偿', '償'], ['傥', '儻'], ['储', '儲'], ['催', '催'], ['傲', '傲'],
-      
+
       // 漫画相关常用词
       ['漫画', '漫畫'], ['连载', '連載'], ['单行本', '單行本'], ['卷', '卷'],
       ['话', '話'], ['集', '集'], ['章', '章'], ['回', '回'], ['篇', '篇'],
@@ -89,7 +97,7 @@ export class ChineseConverter {
       ['评分', '評分'], ['评论', '評論'], ['标签', '標籤'], ['类型', '類型'],
       ['搜索', '搜尋'], ['查找', '查找'], ['阅读', '閱讀'], ['下载', '下載'],
       ['设置', '設置'], ['账号', '賬號'], ['登录', '登錄'], ['注册', '註冊'],
-      
+
       // 数字
       ['零', '零'], ['一', '一'], ['二', '二'], ['三', '三'], ['四', '四'],
       ['五', '五'], ['六', '六'], ['七', '七'], ['八', '八'], ['九', '九'],
@@ -97,13 +105,16 @@ export class ChineseConverter {
     ];
 
     // 构建映射表
-    commonPairs.forEach(([simplified, traditional]) => {
-      this.s2tMap.set(simplified, traditional);
-      this.t2sMap.set(traditional, simplified);
-    });
+    for (let i = 0; i < commonPairs.length; i++) {
+      const pair = commonPairs[i];
+      const simplified = pair[0];
+      const traditional = pair[1];
+      ChineseConverter.s2tMap.set(simplified, traditional);
+      ChineseConverter.t2sMap.set(traditional, simplified);
+    }
 
-    this.initialized = true;
-    logger.info(TAG, `简繁转换映射表初始化完成: ${this.s2tMap.size}个字符对`);
+    ChineseConverter.initialized = true;
+    logger.info(TAG, `简繁转换映射表初始化完成: ${ChineseConverter.s2tMap.size}个字符对`);
   }
 
   /**
@@ -115,7 +126,7 @@ export class ChineseConverter {
     }
 
     let result = text;
-    ChineseConverter.s2tMap.forEach((traditional, simplified) => {
+    ChineseConverter.s2tMap.forEach((traditional: string, simplified: string) => {
       if (result.includes(simplified)) {
         result = result.replace(new RegExp(simplified, 'g'), traditional);
       }
@@ -133,7 +144,7 @@ export class ChineseConverter {
     }
 
     let result = text;
-    ChineseConverter.t2sMap.forEach((simplified, traditional) => {
+    ChineseConverter.t2sMap.forEach((simplified: string, traditional: string) => {
       if (result.includes(traditional)) {
         result = result.replace(new RegExp(traditional, 'g'), simplified);
       }
@@ -191,7 +202,7 @@ export class ChineseConverter {
     }
 
     const simplifiedRatio = simplifiedCount / total;
-    
+
     if (simplifiedRatio > 0.7) {
       return 'simplified';
     } else if (simplifiedRatio < 0.3) {
@@ -204,36 +215,43 @@ export class ChineseConverter {
   /**
    * 转换对象中的文本字段
    */
-  convertObject(obj: Record<string, any>, config: ChineseConversionConfig): Record<string, any> {
+  convertObject(obj: Record<string, Object>, config: ChineseConversionConfig): Record<string, Object> {
     if (!config.enabled) {
       return obj;
     }
 
-    const result: Record<string, any> = {};
+    const result: Record<string, Object> = {};
 
-    Object.keys(obj).forEach(key => {
+    const keys = Object.keys(obj);
+    for (let i = 0; i < keys.length; i++) {
+      const key = keys[i];
       const value = obj[key];
 
       // 检查是否需要转换此字段
       if (config.applyTo.includes(key) && typeof value === 'string') {
-        result[key] = this.convert(value, config);
+        result[key] = this.convert(value as string, config);
       } else if (typeof value === 'object' && value !== null && !Array.isArray(value)) {
         // 递归处理嵌套对象
-        result[key] = this.convertObject(value, config);
+        result[key] = this.convertObject(value as Record<string, Object>, config);
       } else if (Array.isArray(value)) {
         // 处理数组
-        result[key] = value.map(item => {
+        const arr = value as Object[];
+        const convertedArr: Object[] = [];
+        for (let j = 0; j < arr.length; j++) {
+          const item = arr[j];
           if (typeof item === 'string') {
-            return this.convert(item, config);
+            convertedArr.push(this.convert(item as string, config));
           } else if (typeof item === 'object' && item !== null) {
-            return this.convertObject(item, config);
+            convertedArr.push(this.convertObject(item as Record<string, Object>, config));
+          } else {
+            convertedArr.push(item);
           }
-          return item;
-        });
+        }
+        result[key] = convertedArr;
       } else {
         result[key] = value;
       }
-    });
+    }
 
     return result;
   }
@@ -280,17 +298,18 @@ export class ChineseConverter {
   /**
    * 批量添加自定义映射
    */
-  addCustomMappings(mappings: [string, string][]): void {
-    mappings.forEach(([simplified, traditional]) => {
-      this.addCustomMapping(simplified, traditional);
-    });
+  addCustomMappings(mappings: string[][]): void {
+    for (let i = 0; i < mappings.length; i++) {
+      const pair = mappings[i];
+      this.addCustomMapping(pair[0], pair[1]);
+    }
     logger.info(TAG, `批量添加自定义映射: ${mappings.length}个`);
   }
 
   /**
    * 获取映射表大小
    */
-  getMappingSize(): { s2t: number; t2s: number } {
+  getMappingSize(): MappingSizeInfo {
     return {
       s2t: ChineseConverter.s2tMap.size,
       t2s: ChineseConverter.t2sMap.size

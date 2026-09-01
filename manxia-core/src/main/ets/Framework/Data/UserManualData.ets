@@ -119,7 +119,7 @@ function createUserManualMetadata(): EBookMetadata {
     isbn: '',
     language: 'zh-CN',
     description: '面向当前版本漫匣的内置使用说明，覆盖本地导入、书库整理、统一详情页、阅读器、缓存同步与常见问题。',
-    coverImagePath: 'app.media.mangabook',
+    coverImagePath: 'app.media.ui_default_manga_cover',
     tags: ['使用手册', '帮助', '教程', '内置指南'],
     rating: 5
   };

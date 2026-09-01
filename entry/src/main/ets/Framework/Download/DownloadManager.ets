@@ -2226,7 +2226,7 @@ export class MangaDownloadManager {
 
       // 解码 base64 并写入文件
       const base64Helper: util.Base64Helper = new util.Base64Helper();
-      const fileBytes: Uint8Array = base64Helper.decodeSync(base64Data);
+      const fileBytes: Uint8Array = await base64Helper.decode(base64Data);
       await this.writeArrayBufferToFile(filePath, fileBytes.buffer as ArrayBuffer);
 
       logger.info(TAG, `WebView 数据下载完成: ${filePath}, 大小: ${fileBytes.length} bytes`);

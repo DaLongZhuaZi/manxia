@@ -8,11 +8,10 @@ import { logger } from 'manxia_core/src/main/ets/Utils/Logger';
 import { DataService } from '../Services/DataService';
 import { BusinessError } from '@kit.BasicServicesKit';
 import { common } from '@kit.AbilityKit';
-import { initializeNovelModule } from '../Novel/NovelInitializer';
+import { initializeNovelModuleForStartup } from '../Novel/NovelInitializer';
 import { DiskCacheManager } from 'manxia_network/src/main/ets/Framework/Cache/DiskCacheManager';
 import { SandboxManager } from 'manxia_core/src/main/ets/Framework/Storage/SandboxManager';
 import { DataManager } from '../Data/DataManager';
-import { getSubscriptionInitializer } from '../Subscription/SubscriptionInitializer';
 
 const TAG = 'DataInitializer';
 
@@ -216,9 +215,9 @@ export class DataInitializer {
 
       // 第六步半：初始化小说模块
       try {
-        const novelResult = await initializeNovelModule(context);
+        const novelResult = await initializeNovelModuleForStartup(context);
         if (novelResult.success) {
-          logger.info(TAG, `小说模块初始化完成，耗时: ${novelResult.duration}ms`);
+          logger.info(TAG, `小说基础模块初始化完成，耗时: ${novelResult.duration}ms，V2 恢复已转入后台`);
         } else {
           const warningMsg = `小说模块初始化部分失败: ${novelResult.errors.join(', ')}`;
           warnings.push(warningMsg);
@@ -227,16 +226,6 @@ export class DataInitializer {
       } catch (error) {
         const warningMsg = `小说模块初始化失败: ${error}`;
         warnings.push(warningMsg); // 小说模块初始化失败不影响核心功能
-        logger.warn(TAG, warningMsg + String(error));
-      }
-
-      // 第六步三刻：初始化统一内容跟踪模块
-      try {
-        await getSubscriptionInitializer().initialize(context);
-        logger.info(TAG, '统一内容跟踪模块初始化完成');
-      } catch (error) {
-        const warningMsg = `统一内容跟踪模块初始化失败: ${error}`;
-        warnings.push(warningMsg);
         logger.warn(TAG, warningMsg + String(error));
       }
 

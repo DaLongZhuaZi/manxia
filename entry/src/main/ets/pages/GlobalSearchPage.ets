@@ -34,6 +34,7 @@ import { UnifiedDetailPageParams, UnifiedContentType } from 'manxia_core/src/mai
 
 import { HdsNavDestination, HdsNavDestinationAttribute, ScrollEffectType } from '@kit.UIDesignKit';
 import { LengthMetrics } from '@kit.ArkUI';
+import { resolveMedia } from 'manxia_ui_resources/src/main/ets/ResourceCatalog';
 import { preferences } from '@kit.ArkData';
 import { webview } from '@kit.ArkWeb';
 import { WindowManager, DisplayMode } from 'manxia_theme/src/main/ets/Utils/WindowManager';
@@ -3029,12 +3030,7 @@ export struct GlobalSearchPage {
     }
 
     if (coverUrl.startsWith('app.media.')) {
-      const resourceName = coverUrl.substring('app.media.'.length);
-      if (resourceName === 'mangabook') return $r('app.media.mangabook');
-      if (resourceName === 'ebook') return $r('app.media.ebook');
-      if (resourceName === 'ic_ebook') return $r('app.media.ic_ebook');
-      if (resourceName === 'ic_novel') return $r('app.media.ebook');
-      return $r('app.media.mangabook');
+      return resolveMedia(coverUrl);
     }
 
     if (coverUrl.startsWith('/')) {

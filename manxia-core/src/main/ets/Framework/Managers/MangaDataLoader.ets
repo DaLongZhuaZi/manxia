@@ -16,7 +16,14 @@ import {
   hasLocalImage,
   OnlineChapterDownloadStatus
 } from '../Types/MangaTypes';
-import { MangaTypeAdapter } from '../Adapters/MangaTypeAdapter';
+import {
+  MangaTypeAdapter,
+  LegacyComicInfo,
+  LegacyChapterInfo,
+  LegacyPageInfo
+} from '../Adapters/MangaTypeAdapter';
+import { ComicInfo, ChapterInfo, PageInfo as LegacyPageInfoRecord } from '../Contracts/DataContracts';
+import { ComicSourceDatabaseRecord } from '../Database/DatabaseTypes';
 
 const TAG = 'MangaDataLoader';
 
@@ -71,6 +78,54 @@ export class MangaDataLoader {
     }
     return MangaDataLoader.instance;
   }
+
+  private toLegacyComicInfo(record: ComicInfo): LegacyComicInfo {
+    const legacy: LegacyComicInfo = {
+      id: record.id,
+      sourceId: record.sourceId,
+      externalId: record.externalId,
+      title: record.title,
+      author: record.author,
+      description: record.description,
+      coverUrl: record.coverUrl,
+      coverLocalPath: record.coverLocalPath,
+      tags: record.tags.length > 0 ? JSON.stringify(record.tags) : undefined,
+      createTime: record.addTime,
+      updateTime: record.lastUpdateTime
+    };
+    return legacy;
+  }
+
+  private toLegacyChapterInfo(record: ChapterInfo): LegacyChapterInfo {
+    const legacy: LegacyChapterInfo = {
+      id: record.id,
+      comicId: record.comicId,
+      externalId: record.externalId,
+      title: record.title,
+      chapterNumber: record.index,
+      index: record.index,
+      pageCount: record.pageCount,
+      isDownloaded: record.isDownloaded,
+      downloadPath: record.downloadPath,
+      publishTime: record.publishTime,
+      createTime: record.addTime,
+      localPath: record.externalId ? undefined : record.downloadPath
+    };
+    return legacy;
+  }
+
+  private toLegacyPageInfo(record: LegacyPageInfoRecord): LegacyPageInfo {
+    const legacy: LegacyPageInfo = {
+      id: record.id,
+      chapterId: record.chapterId,
+      pageNumber: record.index,
+      imageUrl: record.imageUrl,
+      localPath: record.localPath,
+      width: record.width,
+      height: record.height
+    };
+    return legacy;
+  }
   
   /**
    * 加载漫画详情和章节列表
@@ -103,18 +158,23 @@ export class MangaDataLoader {
       }
       
       // 转换为新类型
-      const manga = MangaTypeAdapter.convertToManga(legacyManga as any, sourceName || undefined);
+      const manga = MangaTypeAdapter.convertToManga(this.toLegacyComicInfo(legacyManga), sourceName);
       
       // 2. 从数据库加载章节列表
       const legacyChapters = await this.dataManager.getChaptersByMangaId(mangaId);
-      const cachedChapters = MangaTypeAdapter.convertToChapters(legacyChapters as any[]);
+      const legacyChapterRecords: LegacyChapterInfo[] = [];
+      for (let i = 0; i < legacyChapters.length; i++) {
+        legacyChapterRecords.push(this.toLegacyChapterInfo(legacyChapters[i]));
+      }
+      const cachedChapters = MangaTypeAdapter.convertToChapters(legacyChapterRecords);
       
       // 3. 判断是否需要从网络加载
       const needsNetworkLoad = this.shouldLoadFromNetwork(manga, cachedChapters, forceRefresh);
       
       if (needsNetworkLoad && isOnlineManga(manga)) {
         logger.info(TAG, `从网络加载在线漫画数据: ${manga.title}`);
-        return await this.loadOnlineMangaFromNetwork(manga, cachedChapters);
+        const onlineManga: OnlineManga = manga as OnlineManga;
+        return await this.loadOnlineMangaFromNetwork(onlineManga, cachedChapters);
       } else {
         logger.info(TAG, `使用缓存数据: ${manga.title}`);
         return {
@@ -125,8 +185,9 @@ export class MangaDataLoader {
         };
       }
     } catch (error) {
-      logger.error(TAG, `加载漫画详情失败: ${error}`);
-      throw error;
+      const normalizedError: Error = error instanceof Error ? error : new Error(String(error));
+      logger.error(TAG, `加载漫画详情失败: ${normalizedError.message}`);
+      throw normalizedError;
     }
   }
   
@@ -158,7 +219,8 @@ export class MangaDataLoader {
     
     // 检查缓存是否过期
     const now = Date.now();
-    const lastSyncTime = manga.lastSyncTime || 0;
+    const onlineManga: OnlineManga = manga as OnlineManga;
+    const lastSyncTime = onlineManga.lastSyncTime || 0;
     const cacheAge = now - lastSyncTime;
     
     if (cacheAge > this.CACHE_EXPIRE_TIME) {
@@ -217,15 +279,21 @@ export class MangaDataLoader {
       }
       
       // 转换为新类型
-      const chapter = MangaTypeAdapter.convertToChapter(legacyChapter as any);
+      const chapter = MangaTypeAdapter.convertToChapter(this.toLegacyChapterInfo(legacyChapter));
       
       // 2. 从数据库加载页面列表
       const legacyPages = await this.dataManager.getPagesByChapterId(chapterId);
-      const cachedPages = MangaTypeAdapter.convertToPages(legacyPages as any[]);
+      const legacyPageRecords: LegacyPageInfo[] = [];
+      for (let i = 0; i < legacyPages.length; i++) {
+        legacyPageRecords.push(this.toLegacyPageInfo(legacyPages[i]));
+      }
+      const cachedPages = MangaTypeAdapter.convertToPages(legacyPageRecords);
       
       // 3. 判断数据来源
       if (isOnlineChapter(chapter)) {
-        return await this.loadOnlineChapterPages(chapter, manga as OnlineManga, cachedPages);
+        const onlineChapter: OnlineChapter = chapter as OnlineChapter;
+        const onlineManga: OnlineManga = manga as OnlineManga;
+        return await this.loadOnlineChapterPages(onlineChapter, onlineManga, cachedPages);
       } else {
         // 本地章节，直接使用缓存
         logger.info(TAG, `本地章节，使用缓存数据: ${cachedPages.length}页`);
@@ -235,8 +303,9 @@ export class MangaDataLoader {
         };
       }
     } catch (error) {
-      logger.error(TAG, `加载章节页面失败: ${error}`);
-      throw error;
+      const normalizedError: Error = error instanceof Error ? error : new Error(String(error));
+      logger.error(TAG, `加载章节页面失败: ${normalizedError.message}`);
+      throw normalizedError;
     }
   }
   
@@ -308,12 +377,21 @@ export class MangaDataLoader {
   async getSourceIdByName(sourceName: string): Promise<number | null> {
     try {
       const sources = await this.dataManager.getAllComicSources();
-      const source = sources.find(s => {
-        const name = s.name;
-        return typeof name === 'string' && name === sourceName;
-      });
-      if (source && source.id !== undefined) {
-        return typeof source.id === 'number' ? source.id : parseInt(String(source.id));
+      let source: ComicSourceDatabaseRecord | null = null;
+      for (let i = 0; i < sources.length; i++) {
+        const candidate = sources[i];
+        const candidateKeys: string[] = Object.keys(candidate);
+        if (!candidateKeys.includes('name') || !candidateKeys.includes('baseUrl')) {
+          continue;
+        }
+        const sourceRecord: ComicSourceDatabaseRecord = candidate as ComicSourceDatabaseRecord;
+        if (sourceRecord.name === sourceName) {
+          source = sourceRecord;
+          break;
+        }
+      }
+      if (source !== null) {
+        return parseInt(source.id);
       }
       return null;
     } catch (error) {

@@ -16,6 +16,9 @@ import { getCookieStore } from './LegadoCookieStore';
 import { getWebViewExecutor } from './LegadoWebViewExecutor';
 
 const TAG = 'LegadoJsExtensions';
+const DEFAULT_USER_AGENT = 'Mozilla/5.0 (Linux; Android 11; Pixel 5) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/90.0.4430.91 Mobile Safari/537.36';
+
+type JsExtensionValue = string | number | boolean | Object | null | undefined;
 
 /**
  * 网络请求响应
@@ -50,6 +53,30 @@ export class LegadoJsExtensions {
    */
   setCacheDir(dir: string): void {
     this.cacheDir = dir;
+  }
+
+  /**
+   * 构造 HTTP 请求头。
+   * 使用显式逐项复制保留自定义请求头，同时保持调用方覆盖默认值的行为。
+   */
+  private buildRequestHeaders(
+    headers: Record<string, string> | undefined,
+    contentType: string | undefined
+  ): Record<string, string> {
+    const requestHeaders: Record<string, string> = new Object() as Record<string, string>;
+    requestHeaders['User-Agent'] = DEFAULT_USER_AGENT;
+    if (contentType !== undefined) {
+      requestHeaders['Content-Type'] = contentType;
+    }
+
+    if (headers !== undefined) {
+      const headerKeys: string[] = Object.keys(headers);
+      for (let index = 0; index < headerKeys.length; index++) {
+        const headerKey: string = headerKeys[index];
+        requestHeaders[headerKey] = headers[headerKey];
+      }
+    }
+    return requestHeaders;
   }
 
   // ==================== 网络请求 ====================
@@ -108,10 +135,7 @@ export class LegadoJsExtensions {
   async head(url: string, headers?: Record<string, string>): Promise<JsResponse> {
     try {
       const httpRequest = http.createHttp();
-      const requestHeaders: Record<string, string> = {
-        'User-Agent': 'Mozilla/5.0 (Linux; Android 11; Pixel 5) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/90.0.4430.91 Mobile Safari/537.36',
-        ...headers
-      };
+      const requestHeaders: Record<string, string> = this.buildRequestHeaders(headers, undefined);
       
       const response = await httpRequest.request(url, {
         method: http.RequestMethod.HEAD,
@@ -155,10 +179,7 @@ export class LegadoJsExtensions {
   async connect(url: string, headers?: Record<string, string>): Promise<JsResponse> {
     try {
       const httpRequest = http.createHttp();
-      const requestHeaders: Record<string, string> = {
-        'User-Agent': 'Mozilla/5.0 (Linux; Android 11; Pixel 5) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/90.0.4430.91 Mobile Safari/537.36',
-        ...headers
-      };
+      const requestHeaders: Record<string, string> = this.buildRequestHeaders(headers, undefined);
       
       const response = await httpRequest.request(url, {
         method: http.RequestMethod.GET,
@@ -185,11 +206,10 @@ export class LegadoJsExtensions {
   async post(url: string, body: string, headers?: Record<string, string>): Promise<JsResponse> {
     try {
       const httpRequest = http.createHttp();
-      const requestHeaders: Record<string, string> = {
-        'User-Agent': 'Mozilla/5.0 (Linux; Android 11; Pixel 5) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/90.0.4430.91 Mobile Safari/537.36',
-        'Content-Type': 'application/x-www-form-urlencoded',
-        ...headers
-      };
+      const requestHeaders: Record<string, string> = this.buildRequestHeaders(
+        headers,
+        'application/x-www-form-urlencoded'
+      );
       
       const response = await httpRequest.request(url, {
         method: http.RequestMethod.POST,
@@ -782,7 +802,7 @@ export class LegadoJsExtensions {
   /**
    * 日志输出
    */
-  log(msg: any): any {
+  log(msg: JsExtensionValue): JsExtensionValue {
     logger.debug(TAG, `[JS] ${String(msg)}`);
     return msg;
   }
@@ -790,25 +810,25 @@ export class LegadoJsExtensions {
   /**
    * 输出对象类型
    */
-  logType(any: any): void {
-    if (any === null || any === undefined) {
+  logType(value: JsExtensionValue): void {
+    if (value === null || value === undefined) {
       this.log('null');
     } else {
-      this.log(typeof any);
+      this.log(typeof value);
     }
   }
 
   /**
    * 弹窗提示（简化实现，仅记录日志）
    */
-  toast(msg: any): void {
+  toast(msg: JsExtensionValue): void {
     logger.info(TAG, `[Toast] ${String(msg)}`);
   }
 
   /**
    * 长时间弹窗提示
    */
-  longToast(msg: any): void {
+  longToast(msg: JsExtensionValue): void {
     logger.info(TAG, `[LongToast] ${String(msg)}`);
   }
 
@@ -1244,7 +1264,7 @@ const T2S_MAP: Record<string, string> = {
   '開': '开', '關': '关', '門': '门', '問': '问', '間': '间',
   '時': '时', '機': '机', '會': '会', '見': '见', '觀': '观',
   '視': '视', '聽': '听', '聲': '声', '響': '响', '電': '电',
-  '話': '话', '報': '报', '紙': '纸', '張': '张', '頁': '页',
+  '報': '报', '紙': '纸', '張': '张', '頁': '页',
   '網': '网', '絡': '络', '線': '线', '連': '连', '結': '结',
   '節': '节', '點': '点', '數': '数', '計': '计', '統': '统',
   '圖': '图', '畫': '画', '藝': '艺', '術': '术', '設': '设',
@@ -1255,20 +1275,20 @@ const T2S_MAP: Record<string, string> = {
   '長': '长', '短': '短', '高': '高', '低': '低', '大': '大',
   '國': '国', '際': '际', '內': '内', '外': '外', '東': '东',
   '西': '西', '南': '南', '北': '北', '中': '中', '華': '华',
-  '發': '发', '現': '现', '實': '实', '際': '际', '確': '确',
+  '發': '发', '現': '现', '實': '实', '確': '确',
   '決': '决', '選': '选', '擇': '择', '採': '采', '取': '取',
   '給': '给', '與': '与', '為': '为', '無': '无', '從': '从',
   '來': '来', '後': '后', '頭': '头', '體': '体', '個': '个',
   '這': '这', '那': '那', '裡': '里', '邊': '边', '處': '处',
   '種': '种', '樣': '样', '條': '条', '塊': '块', '隻': '只',
-  '雙': '双', '對': '对', '組': '组', '套': '套', '份': '份',
+  '雙': '双', '組': '组', '套': '套', '份': '份',
   '愛': '爱', '戀': '恋', '親': '亲', '歡': '欢', '樂': '乐',
   '傷': '伤', '痛': '痛', '淚': '泪', '淒': '凄', '慘': '惨',
   '驚': '惊', '險': '险', '戰': '战', '鬥': '斗', '勝': '胜',
   '敗': '败', '輸': '输', '贏': '赢', '強': '强', '弱': '弱',
   '飛': '飞', '風': '风', '雲': '云', '雨': '雨', '雪': '雪',
   '龍': '龙', '鳳': '凤', '獸': '兽', '鳥': '鸟', '魚': '鱼',
-  '馬': '马', '車': '车', '船': '船', '飛': '飞', '機': '机'
+  '馬': '马', '車': '车', '船': '船'
 };
 
 const S2T_MAP: Record<string, string> = {};

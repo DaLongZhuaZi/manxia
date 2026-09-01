@@ -374,7 +374,7 @@ export struct KomgaReaderPage {
 
   private async restoreReadingProgress(): Promise<void> {
     try {
-      const store = preferences.getPreferencesSync(this.getHostContext(), { name: READING_PROGRESS_STORE });
+      const store = await preferences.getPreferences(this.getHostContext(), { name: READING_PROGRESS_STORE });
       const rawText = store.getSync(this.getProgressKey(), '') as string;
       if (!rawText) {
         this.currentPage = 0;
@@ -398,7 +398,7 @@ export struct KomgaReaderPage {
       return;
     }
     try {
-      const store = preferences.getPreferencesSync(this.getHostContext(), { name: READING_PROGRESS_STORE });
+      const store = await preferences.getPreferences(this.getHostContext(), { name: READING_PROGRESS_STORE });
       const payload: KomgaReaderProgress = {
         itemKey: this.getProgressKey(),
         bookId: this.chapterId,

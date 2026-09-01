@@ -28,6 +28,7 @@ import { UniversalDialogManager, ButtonStyle } from '../Framework/Components/Uni
 import { DeepLinkRouter, DeepLinkResult, DeepLinkSearchResult, DeepLinkSourceResult, DeepLinkNovelSearchResult, DeepLinkNovelSourceResult, DeepLinkNovelDetailResult } from '../Framework/Utils/DeepLinkRouter';
 import { GlobalBackgroundLayer, GlobalBackgroundLayerMode } from 'manxia_theme/src/main/ets/Framework/Components/GlobalBackgroundLayer';
 import { SharedPageBackgroundLayer } from 'manxia_theme/src/main/ets/Framework/Components/SharedPageBackgroundLayer';
+import { resolveMedia } from 'manxia_ui_resources/src/main/ets/ResourceCatalog';
 import { AppNotificationManager } from 'manxia_core/src/main/ets/Framework/Managers/NotificationManager';
 import { AppGuideOverlay, GuideHighlightRect } from 'manxia_theme/src/main/ets/Framework/Components/AppGuideOverlay';
 import { ensureGuideAnchorVisibleInScroller, resolveGuideHighlightRectInRoot } from '../Framework/Components/AppGuideSupport';
@@ -11091,7 +11092,8 @@ struct MainMenuPage {
   }
   
   private getDefaultVisibleTabIndices(): number[] {
-    return [TabIndex.LIBRARY, TabIndex.SOURCE, TabIndex.BOOK_SOURCE, TabIndex.SUWAYOMI, TabIndex.KOMGA, TabIndex.SETTINGS]
+    // Suwayomi 与 Komga 默认不在底栏显示，可在对应设置页或欢迎引导中开启
+    return [TabIndex.LIBRARY, TabIndex.SOURCE, TabIndex.BOOK_SOURCE, TabIndex.SETTINGS]
       .filter((index: number) => {
         const config = this.tabConfigs.find((item: TabConfig) => item.index === index);
         return config ? this.shouldDisplayTabConfig(config) : false;
@@ -14877,23 +14879,7 @@ struct MainMenuPage {
   }
 
   private resolveAppMediaCoverResource(raw: string, fallback: ResourceStr): ResourceStr {
-    const resourceName = raw.substring('app.media.'.length);
-    if (resourceName === 'mangabook') {
-      return $r('app.media.mangabook');
-    }
-    if (resourceName === 'ebook') {
-      return $r('app.media.ebook');
-    }
-    if (resourceName === 'ic_ebook') {
-      return $r('app.media.ic_ebook');
-    }
-    if (resourceName === 'icon') {
-      return $r('app.media.icon');
-    }
-    if (resourceName === 'ic_source_novel' || resourceName === 'ic_novel') {
-      return $r('app.media.ic_source_novel');
-    }
-    return fallback;
+    return resolveMedia(raw);
   }
 
   private normalizeDisplayPathForEBook(ebook: EBook): string {

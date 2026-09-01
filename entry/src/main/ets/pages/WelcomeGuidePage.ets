@@ -28,6 +28,10 @@ import { distributedPermissionManager } from '../Framework/Distributed/Distribut
 
 const TAG = 'WelcomeGuidePage';
 const SOURCE_REPO_URL = 'https://raw.githubusercontent.com/DaLongZhuaZi/manxia-extensions-source/master/index.main.json';
+// 主页面底栏标签索引（与 MainMenuPage 的 TabIndex 保持一致）
+const SUWAYOMI_TAB_INDEX: number = 5;
+const SETTINGS_TAB_INDEX: number = 6;
+const KOMGA_TAB_INDEX: number = 7;
 
 /**
  * 引导步骤内容接口
@@ -102,11 +106,20 @@ struct WelcomeGuidePage {
   @State private customExperienceHintText: string = '继续后会应用这些体验设置。';
   @State private customExperienceSettingsReady: boolean = false;
   @State private singleGuidePreviewEnabled: boolean = false;
+  // 远程书库引导页：Suwayomi / Komga 底栏入口开关
+  @State private guideSuwayomiBottomBarEnabled: boolean = false;
+  @State private guideKomgaBottomBarEnabled: boolean = false;
+  // 引导完成退出动画：整页上滑并淡出
+  @State private pageExitOpacity: number = 1.0;
+  @State private pageExitTranslateY: number = 0;
 
   private uiContext: UIContext | undefined = undefined;
   private notificationPermissionAutoRequested: boolean = false;
   private distributedPermissionAutoRequested: boolean = false;
   private customExperienceSettingsInitialized: boolean = false;
+  private remoteLibraryTogglesInitialized: boolean = false;
+  private isGuideExiting: boolean = false;
+  private guideExitNavigationTriggered: boolean = false;
   private readerKitEmulatorGuardChecked: boolean = false;
 
   /**
@@ -172,7 +185,7 @@ struct WelcomeGuidePage {
     const remoteLibraryGuideContent: GuideStepContent = {
       title: '远程书库',
       subtitle: '接入 Suwayomi 与 Komga',
-      description: '如果您已经有 Suwayomi 或 Komga 服务端，可以在漫匣中连接实例、浏览服务端书库、查看详情并继续阅读。首次使用建议先完成服务器地址与账号配置，之后可从底栏入口或管理页快速进入。',
+      description: '如果您已经有 Suwayomi 或 Komga 服务端，可以在漫匣中连接实例、浏览服务端书库、查看详情并继续阅读。首次使用建议先完成服务器地址与账号配置；两者默认不在底栏显示，可通过下方开关分别开启，之后可从底栏入口或管理页快速进入。',
       icon: $r('sys.symbol.computer_host_fill'),
       buttonText: '继续下一步',
       showSkip: false
@@ -278,6 +291,11 @@ struct WelcomeGuidePage {
   private async handleStepEntered(step: GuideStep): Promise<void> {
     if (!this.isSingleGuidePreview()) {
       this.guideFlowMode = this.welcomeGuideManager.getActiveGuideFlow();
+    }
+
+    if (step === GuideStep.REMOTE_LIBRARY_GUIDE) {
+      await this.initializeRemoteLibraryTogglesIfNeeded();
+      return;
     }
 
     if (step === GuideStep.CUSTOM_EXPERIENCE) {
@@ -947,9 +965,14 @@ struct WelcomeGuidePage {
    * 完成引导
    */
   private async completeGuide(): Promise<void> {
+    if (this.isGuideExiting || this.guideExitNavigationTriggered) {
+      return;
+    }
+    this.isGuideExiting = true;
     logger.info(TAG, '引导流程完成');
     await this.welcomeGuideManager.markGuideCompleted();
-    this.navigateToMainMenu();
+    // 完成后播放整页上滑+淡出过渡，再进入主页面
+    this.navigateToMainMenuWithExitAnimation();
   }
 
   private async finishSourceFeatureGuideAndExit(): Promise<void> {
@@ -1060,6 +1083,130 @@ struct WelcomeGuidePage {
     } catch (error) {
       logger.error(TAG, `导航到远程书库设置异常: ${targetPage}, error=${String(error)}`);
     }
+  }
+
+  /**
+   * 远程书库引导页：加载 Suwayomi / Komga 底栏入口开关状态
+   * 两者默认均不在底栏显示，仅当用户在设置页或本引导页开启后才出现
+   */
+  private async initializeRemoteLibraryTogglesIfNeeded(): Promise<void> {
+    if (this.remoteLibraryTogglesInitialized) {
+      return;
+    }
+    try {
+      if (!this.settingsManager.isInitialized()) {
+        await this.settingsManager.initialize();
+      }
+      const visibleTabs = await this.settingsManager.getVisibleTabs();
+      this.guideSuwayomiBottomBarEnabled = visibleTabs.includes(SUWAYOMI_TAB_INDEX);
+      this.guideKomgaBottomBarEnabled = visibleTabs.includes(KOMGA_TAB_INDEX);
+      this.remoteLibraryTogglesInitialized = true;
+      logger.info(TAG, `远程书库底栏开关加载完成: Suwayomi=${this.guideSuwayomiBottomBarEnabled}, Komga=${this.guideKomgaBottomBarEnabled}`);
+    } catch (error) {
+      logger.error(TAG, `加载远程书库底栏开关失败: ${String(error)}`);
+      this.guideSuwayomiBottomBarEnabled = false;
+      this.guideKomgaBottomBarEnabled = false;
+    }
+  }
+
+  /**
+   * 将底栏标签插入到「管理」标签之前，保持底栏顺序稳定
+   */
+  private buildVisibleTabsWithTarget(currentTabs: number[], targetIndex: number, visible: boolean): number[] {
+    const nextTabs: number[] = [];
+    for (let index = 0; index < currentTabs.length; index++) {
+      const tabIndex = currentTabs[index];
+      if (tabIndex !== targetIndex && !nextTabs.includes(tabIndex)) {
+        nextTabs.push(tabIndex);
+      }
+    }
+
+    if (!visible) {
+      return nextTabs;
+    }
+
+    const settingsIndex = nextTabs.indexOf(SETTINGS_TAB_INDEX);
+    if (settingsIndex >= 0) {
+      nextTabs.splice(settingsIndex, 0, targetIndex);
+    } else {
+      nextTabs.push(targetIndex);
+    }
+    return nextTabs;
+  }
+
+  /**
+   * 保存 Suwayomi / Komga 底栏入口开关
+   */
+  private async setRemoteLibraryBottomBarEnabled(target: 'suwayomi' | 'komga', enabled: boolean): Promise<void> {
+    const targetIndex: number = target === 'suwayomi' ? SUWAYOMI_TAB_INDEX : KOMGA_TAB_INDEX;
+    const previousSuwayomi: boolean = this.guideSuwayomiBottomBarEnabled;
+    const previousKomga: boolean = this.guideKomgaBottomBarEnabled;
+    try {
+      if (target === 'suwayomi') {
+        this.guideSuwayomiBottomBarEnabled = enabled;
+      } else {
+        this.guideKomgaBottomBarEnabled = enabled;
+      }
+
+      if (!this.settingsManager.isInitialized()) {
+        await this.settingsManager.initialize();
+      }
+      const currentTabs = await this.settingsManager.getVisibleTabs();
+      const nextTabs = this.buildVisibleTabsWithTarget(currentTabs, targetIndex, enabled);
+      await this.settingsManager.setVisibleTabs(nextTabs);
+      AppStorage.setOrCreate('visible_tabs', nextTabs);
+      logger.info(TAG, `远程书库底栏入口已保存: target=${target}, visible=${enabled}, tabs=${JSON.stringify(nextTabs)}`);
+      this.customExperienceHintText = enabled
+        ? '已开启底栏入口，重新进入主页面时即可看到对应标签。'
+        : '已关闭底栏入口，可随时在对应设置页重新开启。';
+    } catch (error) {
+      this.guideSuwayomiBottomBarEnabled = previousSuwayomi;
+      this.guideKomgaBottomBarEnabled = previousKomga;
+      logger.error(TAG, `保存远程书库底栏入口失败: target=${target}, error=${String(error)}`);
+      this.getUIContext().getPromptAction().showToast({ message: '保存底栏入口设置失败', duration: 1500 });
+    }
+  }
+
+  /**
+   * 引导完成后的整页退出动画：上滑 + 淡出，动画结束后再进入主页面
+   */
+  private playGuideExitAnimation(onExitFinished: () => void): void {
+    const finish = (): void => {
+      onExitFinished();
+    };
+
+    if (!this.uiContext) {
+      finish();
+      return;
+    }
+
+    const exitOptions: AnimateParam = {
+      duration: 320,
+      curve: Curve.EaseIn,
+      iterations: 1,
+      playMode: PlayMode.Normal,
+      onFinish: (): void => {
+        finish();
+      }
+    };
+
+    this.uiContext.animateTo(exitOptions, () => {
+      this.pageExitOpacity = 0;
+      this.pageExitTranslateY = -120;
+    });
+  }
+
+  /**
+   * 引导完成后导航到主页面（带退出动画，且保证只触发一次）
+   */
+  private navigateToMainMenuWithExitAnimation(): void {
+    if (this.guideExitNavigationTriggered) {
+      return;
+    }
+    this.guideExitNavigationTriggered = true;
+    this.playGuideExitAnimation(() => {
+      this.navigateToMainMenu();
+    });
   }
 
   /**
@@ -1350,7 +1497,8 @@ struct WelcomeGuidePage {
     title: string,
     description: string,
     isOn: boolean,
-    onToggle: (value: boolean) => void
+    onToggle: (value: boolean) => void,
+    showCardBackground: boolean
   ) {
     Row() {
       Column({ space: 4 }) {
@@ -1380,7 +1528,9 @@ struct WelcomeGuidePage {
     }
     .width('100%')
     .padding({ left: 14, right: 14, top: 12, bottom: 12 })
-    .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('background_secondary', this.themeState.currentTheme))
+    .backgroundColor(showCardBackground
+      ? ThemeAwareHelper.getTestManagementThemedColor('background_secondary', this.themeState.currentTheme)
+      : Color.Transparent)
     .borderRadius(14)
   }
 
@@ -1642,90 +1792,111 @@ struct WelcomeGuidePage {
   }
 
   @Builder
+  private buildRemoteLibraryGuideToggleCard(
+    icon: ResourceStr,
+    title: string,
+    description: string,
+    isOn: boolean,
+    onToggle: (value: boolean) => void,
+    onConfigure: () => void,
+    showCardBackground: boolean
+  ) {
+    Column({ space: 10 }) {
+      Row({ space: 10 }) {
+        Image(icon)
+          .width(22)
+          .height(22)
+          .borderRadius(6)
+
+        Column({ space: 2 }) {
+          Text(title)
+            .fontSize(14)
+            .fontWeight(FontWeight.Medium)
+            .fontFamily(this.appFontFamily)
+            .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
+            .width('100%')
+            .textAlign(TextAlign.Start)
+
+          Text(description)
+            .fontSize(12)
+            .fontFamily(this.appFontFamily)
+            .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_muted', this.themeState.currentTheme))
+            .width('100%')
+            .textAlign(TextAlign.Start)
+        }
+        .layoutWeight(1)
+        .alignItems(HorizontalAlign.Start)
+
+        Toggle({ type: ToggleType.Switch, isOn: isOn })
+          .selectedColor(ThemeAwareHelper.getTestManagementThemedColor('accent_blue', this.themeState.currentTheme))
+          .enabled(!this.isAnimating && !this.isGuideExiting)
+          .onChange((value: boolean) => {
+            onToggle(value);
+          })
+      }
+      .width('100%')
+      .alignItems(VerticalAlign.Center)
+
+      Button('配置服务')
+        .fontSize(12)
+        .fontFamily(this.appFontFamily)
+        .height(32)
+        .width('100%')
+        .fontColor(ThemeAwareHelper.getTestManagementThemedColor('accent_blue', this.themeState.currentTheme))
+        .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('background_secondary', this.themeState.currentTheme))
+        .borderRadius(16)
+        .border({
+          width: 1,
+          color: ThemeAwareHelper.getTestManagementThemedColor('accent_blue', this.themeState.currentTheme)
+        })
+        .enabled(!this.isAnimating && !this.isGuideExiting)
+        .opacity(this.isAnimating ? 0.6 : 1.0)
+        .onClick(() => {
+          onConfigure();
+        })
+    }
+    .width('100%')
+    .padding(14)
+    .backgroundColor(showCardBackground
+      ? ThemeAwareHelper.getTestManagementThemedColor('background_secondary', this.themeState.currentTheme)
+      : Color.Transparent)
+    .borderRadius(16)
+  }
+
+  @Builder
   private buildRemoteLibraryGuideActionSection() {
     Column({ space: 12 }) {
-      Row({ space: 10 }) {
-        SymbolGlyph($r('sys.symbol.computer_host_fill'))
-          .fontSize(18)
-          .fontColor([ThemeAwareHelper.getTestManagementThemedColor('accent_blue', this.themeState.currentTheme)])
-        Text('Suwayomi 适合连接漫画服务器，Komga 适合连接自建漫画库和阅读列表。配置完成后，它们会出现在主页面入口中。')
-          .fontSize(13)
-          .fontFamily(this.appFontFamily)
-          .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
-          .layoutWeight(1)
-          .textAlign(TextAlign.Start)
-      }
-      .width('100%')
-      .padding(16)
-      .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('background_secondary', this.themeState.currentTheme))
-      .borderRadius(16)
+      this.buildRemoteLibraryGuideToggleCard(
+        $r('app.media.suwayomi_icon'),
+        'Suwayomi 底栏入口',
+        '开启后在主页面底栏显示 Suwayomi 标签',
+        this.guideSuwayomiBottomBarEnabled,
+        (value: boolean) => {
+          void this.setRemoteLibraryBottomBarEnabled('suwayomi', value);
+        },
+        () => {
+          this.navigateToRemoteLibrarySettings('SuwayomiSettingsPage');
+        },
+        true
+      )
 
-      Row({ space: 12 }) {
-        Button() {
-          Row({ space: 8 }) {
-            SymbolGlyph($r('sys.symbol.computer_host_fill'))
-              .fontSize(15)
-              .fontColor([ThemeAwareHelper.getTestManagementThemedColor('text_white', this.themeState.currentTheme)])
-
-            Text('配置 Suwayomi')
-              .fontSize(13)
-              .fontWeight(FontWeight.Medium)
-              .fontFamily(this.appFontFamily)
-              .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_white', this.themeState.currentTheme))
-              .maxLines(1)
-              .textOverflow({ overflow: TextOverflow.Ellipsis })
-          }
-          .justifyContent(FlexAlign.Center)
-          .width('100%')
-        }
-        .height(42)
-        .layoutWeight(1)
-        .padding({ left: 10, right: 10 })
-        .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('accent_blue', this.themeState.currentTheme))
-        .borderRadius(21)
-        .enabled(!this.isAnimating)
-        .opacity(this.isAnimating ? 0.6 : 1.0)
-        .onClick(() => {
-          if (!this.isAnimating) {
-            this.navigateToRemoteLibrarySettings('SuwayomiSettingsPage');
-          }
-        })
-
-        Button() {
-          Row({ space: 8 }) {
-            Image($r('app.media.komga_icon'))
-              .width(16)
-              .height(16)
-
-            Text('配置 Komga')
-              .fontSize(13)
-              .fontWeight(FontWeight.Medium)
-              .fontFamily(this.appFontFamily)
-              .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_white', this.themeState.currentTheme))
-              .maxLines(1)
-              .textOverflow({ overflow: TextOverflow.Ellipsis })
-          }
-          .justifyContent(FlexAlign.Center)
-          .width('100%')
-        }
-        .height(42)
-        .layoutWeight(1)
-        .padding({ left: 10, right: 10 })
-        .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('accent_blue', this.themeState.currentTheme))
-        .borderRadius(21)
-        .enabled(!this.isAnimating)
-        .opacity(this.isAnimating ? 0.6 : 1.0)
-        .onClick(() => {
-          if (!this.isAnimating) {
-            this.navigateToRemoteLibrarySettings('KomgaSettingsPage');
-          }
-        })
-      }
-      .width('100%')
+      this.buildRemoteLibraryGuideToggleCard(
+        $r('app.media.komga_icon'),
+        'Komga 底栏入口',
+        '开启后在主页面底栏显示 Komga 标签',
+        this.guideKomgaBottomBarEnabled,
+        (value: boolean) => {
+          void this.setRemoteLibraryBottomBarEnabled('komga', value);
+        },
+        () => {
+          this.navigateToRemoteLibrarySettings('KomgaSettingsPage');
+        },
+        true
+      )
     }
     .width('100%')
     .padding({ left: 32, right: 32 })
-    .margin({ bottom: 28 })
+    .margin({ bottom: 24 })
   }
 
   @Builder
@@ -1997,7 +2168,8 @@ struct WelcomeGuidePage {
               this.guideGlobalBackgroundEnabled,
               (value: boolean) => {
                 void this.setGuideGlobalBackgroundEnabled(value);
-              }
+              },
+              true
             )
             this.buildGuideToggleRow(
               '后台隐私遮罩',
@@ -2005,7 +2177,8 @@ struct WelcomeGuidePage {
               this.guideBackgroundBlurEnabled,
               (value: boolean) => {
                 void this.setGuideBackgroundBlurEnabled(value);
-              }
+              },
+              true
             )
             this.buildGuideToggleRow(
               '震动反馈',
@@ -2013,7 +2186,8 @@ struct WelcomeGuidePage {
               this.guideVibrationEnabled,
               (value: boolean) => {
                 void this.setGuideVibrationEnabled(value);
-              }
+              },
+              true
             )
             this.buildGuideToggleRow(
               '内容重复检测',
@@ -2021,7 +2195,8 @@ struct WelcomeGuidePage {
               this.guideDuplicateDetectionEnabled,
               (value: boolean) => {
                 void this.setGuideDuplicateDetectionEnabled(value);
-              }
+              },
+              true
             )
           }
           .width('100%')
@@ -2041,10 +2216,10 @@ struct WelcomeGuidePage {
       .padding({ left: 32, right: 32, bottom: 8 })
     }
     .width('100%')
-    .height('38%')
+    .layoutWeight(1)
     .scrollBar(BarState.Off)
     .edgeEffect(EdgeEffect.Spring)
-    .margin({ bottom: 24 })
+    .margin({ bottom: 8 })
   }
 
   private lifecycle = new PageLifecycleManager('WelcomeGuidePage', { enableDebug: true });
@@ -2401,6 +2576,8 @@ struct WelcomeGuidePage {
         top: this.statusBarHeight,
         bottom: this.navigationBarHeight
       })
+      .opacity(this.pageExitOpacity)
+      .translate({ y: this.pageExitTranslateY })
     }
     .width('100%')
     .height('100%')

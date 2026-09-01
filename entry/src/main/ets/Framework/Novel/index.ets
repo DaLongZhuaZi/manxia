@@ -64,7 +64,13 @@ export { NOVEL_CREATE_TABLE_SQL, NOVEL_CREATE_INDEX_SQL } from 'manxia_novel/src
 export { NovelDataManager, getNovelDataManager } from './NovelDataManager';
 
 // 初始化器
-export { NovelInitializer, getNovelInitializer, initializeNovelModule, NovelInitResult } from './NovelInitializer';
+export {
+  NovelInitializer,
+  getNovelInitializer,
+  initializeNovelModule,
+  initializeNovelModuleForStartup,
+  NovelInitResult
+} from './NovelInitializer';
 
 // JS引擎
 export { LegadoJsEngine, getLegadoJsEngine, JsExecuteResult, JsContext } from './LegadoJsEngine';

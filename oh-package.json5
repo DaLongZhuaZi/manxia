@@ -7,6 +7,7 @@
     "buffer": "^6.0.3",
     "manxia_native": "file:./manxia-native",
     "manxia_core": "file:./manxia-core",
+    "manxia_ui_resources": "file:./manxia-ui-resources",
     "manxia_source_engine": "file:./manxia-source-engine",
     "manxia_network": "file:./manxia-network",
     "manxia_novel": "file:./manxia-novel",

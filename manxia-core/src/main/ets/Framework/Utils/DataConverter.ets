@@ -6,7 +6,7 @@
  */
 
 import { logger } from '../../Utils/Logger';
-import { TimeUtils } from 'TimeUtils';
+import { TimeUtils } from './TimeUtils';
 import { MangaStatus, DownloadStatus } from '../Types/StatusEnums';
 
 const TAG = 'DataConverter';

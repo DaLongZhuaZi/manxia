@@ -244,7 +244,7 @@ export struct MainMenuKomgaTabContent {
 
   private async loadPreferences(): Promise<void> {
     try {
-      const store = preferences.getPreferencesSync(this.getHostContext(), { name: this.prefsName });
+      const store = await preferences.getPreferences(this.getHostContext(), { name: this.prefsName });
       const savedDisplayMode = store.getSync('displayMode', 'grid') as string;
       const savedBrowseMode = store.getSync('browseMode', 'library') as string;
       const savedContentType = store.getSync('contentType', 'SERIES') as string;
@@ -268,7 +268,7 @@ export struct MainMenuKomgaTabContent {
 
   private async savePreferences(): Promise<void> {
     try {
-      const store = preferences.getPreferencesSync(this.getHostContext(), { name: this.prefsName });
+      const store = await preferences.getPreferences(this.getHostContext(), { name: this.prefsName });
       store.putSync('displayMode', this.displayMode);
       store.putSync('browseMode', this.browseMode);
       store.putSync('contentType', this.contentType);

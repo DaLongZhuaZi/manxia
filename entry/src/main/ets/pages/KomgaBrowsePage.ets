@@ -252,7 +252,7 @@ export struct KomgaBrowsePage {
 
   private async loadPreferences(): Promise<void> {
     try {
-      const store = preferences.getPreferencesSync(this.getHostContext(), { name: this.prefsName });
+      const store = await preferences.getPreferences(this.getHostContext(), { name: this.prefsName });
       const savedDisplayMode: string = store.getSync('displayMode', 'grid') as string;
       const savedBrowseMode: string = store.getSync('browseMode', 'library') as string;
       const savedContentType: string = store.getSync('contentType', 'SERIES') as string;
@@ -282,7 +282,7 @@ export struct KomgaBrowsePage {
 
   private async savePreferences(): Promise<void> {
     try {
-      const store = preferences.getPreferencesSync(this.getHostContext(), { name: this.prefsName });
+      const store = await preferences.getPreferences(this.getHostContext(), { name: this.prefsName });
       store.putSync('displayMode', this.displayMode);
       store.putSync('browseMode', this.browseMode);
       store.putSync('contentType', this.contentType);

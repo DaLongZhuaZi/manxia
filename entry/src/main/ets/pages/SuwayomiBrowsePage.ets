@@ -219,7 +219,7 @@ export struct SuwayomiBrowsePage {
 
   private async loadPreferences(): Promise<void> {
     try {
-      const store = preferences.getPreferencesSync((this.getUIContext().getHostContext() as common.UIAbilityContext), { name: this.PREFS_NAME });
+      const store = await preferences.getPreferences((this.getUIContext().getHostContext() as common.UIAbilityContext), { name: this.PREFS_NAME });
       this.displayMode = (store.getSync('displayMode', 'grid') as string) === 'list' ? 'list' : 'grid';
       const pinnedStr = store.getSync('pinnedSourceIds', '[]') as string;
       this.pinnedSourceIds = SafeUtils.parseArr(pinnedStr) as string[];
@@ -236,7 +236,7 @@ export struct SuwayomiBrowsePage {
 
   private async savePreferences(): Promise<void> {
     try {
-      const store = preferences.getPreferencesSync((this.getUIContext().getHostContext() as common.UIAbilityContext), { name: this.PREFS_NAME });
+      const store = await preferences.getPreferences((this.getUIContext().getHostContext() as common.UIAbilityContext), { name: this.PREFS_NAME });
       store.putSync('displayMode', this.displayMode);
       store.putSync('pinnedSourceIds', JSON.stringify(this.pinnedSourceIds));
       store.putSync('selectedLanguage', this.selectedLanguage);

@@ -26,6 +26,7 @@ import { GlobalSearchPageParams } from './GlobalSearchPage';
 import { startBookOpenTransition, startBookOpenTransitionWithComponentId, CoverPosition, EBookBackgroundSettings } from '../components/BookTransitionOverlay';
 import { ContentFilterManager } from 'manxia_core/src/main/ets/Framework/Managers/ContentFilterManager';
 import { buildNovelReaderParamsFromTxtEBook } from '../Framework/Adapters/LocalTextNovelAdapter';
+import { resolveMedia } from 'manxia_ui_resources/src/main/ets/ResourceCatalog';
 
 const TAG = 'EBookDetailPage';
 const TITLE_BAR_HEIGHT = 56;
@@ -196,17 +197,7 @@ export struct EBookDetailPage {
     
     // 检查是否为应用资源路径 (app.media.xxx)
     if (raw.startsWith('app.media.')) {
-      const resourceName = raw.substring('app.media.'.length);
-      if (resourceName === 'mangabook') {
-        return $r('app.media.mangabook');
-      } else if (resourceName === 'ebook') {
-        return $r('app.media.ebook');
-      } else if (resourceName === 'ic_ebook') {
-        return $r('app.media.ic_ebook');
-      } else if (resourceName === 'icon') {
-        return $r('app.media.icon');
-      }
-      return $r('app.media.ebook');
+      return resolveMedia(raw);
     }
     
     // 本地文件路径

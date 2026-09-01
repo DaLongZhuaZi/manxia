@@ -8,6 +8,16 @@ import { logger } from '../../Utils/Logger';
 const TAG = 'NSFWHelper';
 
 /**
+ * NSFW内容判断参数
+ */
+export interface NSFWCheckParams {
+  tags?: string[];
+  categories?: string[];
+  title?: string;
+  description?: string;
+}
+
+/**
  * NSFW关键词列表
  */
 export const NSFW_KEYWORDS = [
@@ -59,16 +69,11 @@ export class NSFWHelper {
   /**
    * 综合判断是否为NSFW内容
    */
-  public static isNSFWContent(params: {
-    tags?: string[];
-    categories?: string[];
-    title?: string;
-    description?: string;
-  }): boolean {
-    return this.isNSFWByTags(params.tags || []) ||
-           this.isNSFWByCategories(params.categories || []) ||
-           this.isNSFWByText(params.title || '') ||
-           this.isNSFWByText(params.description || '');
+  public static isNSFWContent(params: NSFWCheckParams): boolean {
+    return NSFWHelper.isNSFWByTags(params.tags || []) ||
+           NSFWHelper.isNSFWByCategories(params.categories || []) ||
+           NSFWHelper.isNSFWByText(params.title || '') ||
+           NSFWHelper.isNSFWByText(params.description || '');
   }
 
   /**

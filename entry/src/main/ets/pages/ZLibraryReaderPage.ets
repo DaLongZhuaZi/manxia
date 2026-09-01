@@ -158,7 +158,7 @@ export struct ZLibraryReaderPage {
           Column() {
             Row() {
               Button() {
-                Image($r('app.media.ic_back'))
+                Image($r('app.media.ic_arrow_back'))
                   .width(24)
                   .height(24)
                   .fillColor(Color.White)

@@ -1,4 +1,9 @@
 import { SourceDiagnosticEvent } from '../SourceEditor/SourceDiagnosticTypes';
+import { MangaInfo, ChapterInfo } from 'manxia_core/src/main/ets/Models/WebViewSourceTypes';
+
+// 漫画/章节数据类型已下沉至 manxia_core 统一维护（HSP 迁移 P0 依赖解耦，见 docs/HSP_MIGRATION_PLAN.md），
+// 此处重导出以保持原有导入路径兼容，本文件内部引用不受影响
+export { MangaInfo, ChapterInfo };
 
 /**
  * 漫画图源引擎类型定义
@@ -922,50 +927,8 @@ export interface WorkflowResult {
 }
 
 // ==================== 漫画数据类型 ====================
-
-/**
- * 漫画信息
- */
-export interface MangaInfo {
-  /** 漫画ID */
-  id?: string;
-  /** 标题 */
-  title: string;
-  /** URL */
-  url: string;
-  /** 封面图 */
-  cover: string;
-  /** 作者 */
-  author?: string;
-  /** 状态 */
-  status?: string;
-  /** 描述 */
-  description?: string;
-  /** 类型标签 */
-  genres?: string[];
-  /** 更新时间 */
-  updated?: string;
-}
-
-/**
- * 章节信息
- */
-export interface ChapterInfo {
-  /** 章节ID */
-  id?: string;
-  /** 外部章节ID（从API获取的原始ID，用于构造请求URL和Referer） */
-  externalId?: string;
-  /** 标题 */
-  title: string;
-  /** URL */
-  url: string;
-  /** 章节号 */
-  number?: number;
-  /** 发布时间 */
-  publishTime?: string;
-  /** 页数 */
-  pageCount?: number;
-}
+// MangaInfo 与 ChapterInfo 已下沉至 manxia_core/src/main/ets/Models/WebViewSourceTypes.ets，
+// 文件顶部已重导出，原有导入路径不受影响。
 
 /**
  * 页面信息

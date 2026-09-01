@@ -8,7 +8,6 @@ import { ThemeAwareHelper, ThemeAwareState } from 'manxia_theme/src/main/ets/Fra
 import { WelcomeGuideManager } from 'manxia_core/src/main/ets/Framework/Managers/WelcomeGuideManager';
 import { WindowManager, DisplayMode } from 'manxia_theme/src/main/ets/Utils/WindowManager';
 import { common } from '@kit.AbilityKit';
-import { colorMap } from 'manxia_core/src/main/ets/Data/ResourceMap';
 import { BuiltInThemeResources } from 'manxia_theme/src/main/ets/Framework/Theme/BuiltInThemeResources';
 import { getAppInitializationManager, InitializationState, InitPhase, InitProgressCallback } from 'manxia_core/src/main/ets/Framework/Managers/AppInitializationManager';
 import { ngfEventBusFacade, NGFEventPayload, NGFInitializationEventName } from '../Framework/NGF';

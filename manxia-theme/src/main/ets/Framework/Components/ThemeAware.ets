@@ -10,6 +10,7 @@
 import { ThemeManager, ThemeType } from '../Managers/ThemeManager';
 import { logger } from 'manxia_core/src/main/ets/Utils/Logger';
 import { AppColors, ColorRole } from '../Theme/AppColors';
+import { resolveColor } from 'manxia_ui_resources/src/main/ets/ResourceCatalog';
 
 // 定义类型
 interface AnimateParam {
@@ -158,8 +159,8 @@ export class ThemeAwareHelper {
     theme: ThemeType
   ): Resource {
     return theme === ThemeType.LIGHT
-      ? $r(`app.color.${lightColorKey}`)
-      : $r(`app.color.${darkColorKey}`);
+      ? resolveColor(`app.color.${lightColorKey}`)
+      : resolveColor(`app.color.${darkColorKey}`);
   }
 
   /**
@@ -489,7 +490,7 @@ export class ThemeAwareHelper {
     }
 
     const colorName = theme === ThemeType.LIGHT ? mapping.light : mapping.dark;
-    return $r(`app.color.${colorName}`);
+    return resolveColor(`app.color.${colorName}`);
   }
 
   /**

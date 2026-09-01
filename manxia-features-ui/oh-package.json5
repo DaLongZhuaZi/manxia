@@ -7,10 +7,7 @@
   "license": "",
   "dependencies": {
     "manxia_core": "file:../manxia-core",
-    "manxia_theme": "file:../manxia-theme",
-    "manxia_network": "file:../manxia-network",
-    "manxia_novel": "file:../manxia-novel",
-    "manxia_source_engine": "file:../manxia-source-engine"
+    "manxia_theme": "file:../manxia-theme"
   },
   "devDependencies": {}
 }

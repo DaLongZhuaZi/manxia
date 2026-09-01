@@ -20,6 +20,7 @@ import {
 import { NovelReaderPageParams } from './NovelBookshelfPage';
 import { ReadAloudPlayerAbilityParams } from '../Framework/ReadAloud/ReadAloudPlayerAbilityParamStore';
 import { READ_ALOUD_PLAYER_ABILITY_HOST_SINGLETON } from 'manxia_novel/src/main/ets/Framework/ReadAloud/ReadAloudPlayerAbilityConstants';
+import { resolveMedia } from 'manxia_ui_resources/src/main/ets/ResourceCatalog';
 
 const TAG = 'ReadAloudPlayerPage';
 const PLAYER_SKIP_CHARS: number = 420;
@@ -566,17 +567,7 @@ export struct ReadAloudPlayerPage {
       return raw;
     }
     if (raw.startsWith('app.media.')) {
-      const resourceName = raw.substring('app.media.'.length);
-      if (resourceName === 'mangabook') {
-        return $r('app.media.mangabook');
-      }
-      if (resourceName === 'ic_ebook') {
-        return $r('app.media.ic_ebook');
-      }
-      if (resourceName === 'icon') {
-        return $r('app.media.icon');
-      }
-      return $r('app.media.ic_ebook');
+      return resolveMedia(raw);
     }
     if (raw.startsWith('/')) {
       return `file://${raw}`;

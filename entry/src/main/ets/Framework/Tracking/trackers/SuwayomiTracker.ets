@@ -216,7 +216,7 @@ export class SuwayomiTracker extends BaseTracker {
    */
   private async loadConfig(): Promise<void> {
     try {
-      const store = preferences.getPreferencesSync(this.getAbilityContext(), { name: 'suwayomi_config' });
+      const store = await preferences.getPreferences(this.getAbilityContext(), { name: 'suwayomi_config' });
       const serverUrl = store.getSync('serverUrl', '') as string;
       const username = store.getSync('username', '') as string;
       const password = store.getSync('password', '') as string;
@@ -242,7 +242,7 @@ export class SuwayomiTracker extends BaseTracker {
    */
   public async saveConfig(config: SuwayomiConfig): Promise<boolean> {
     try {
-      const store = preferences.getPreferencesSync(this.getAbilityContext(), { name: 'suwayomi_config' });
+      const store = await preferences.getPreferences(this.getAbilityContext(), { name: 'suwayomi_config' });
       store.putSync('serverUrl', config.serverUrl);
       store.putSync('username', config.username);
       store.putSync('password', config.password);

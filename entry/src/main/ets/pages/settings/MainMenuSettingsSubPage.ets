@@ -182,12 +182,11 @@ export struct MainMenuSettingsSubPage {
   }
 
   private getDefaultTabIndices(): number[] {
+    // Suwayomi 与 Komga 默认不在底栏显示，可在对应设置页或欢迎引导中开启
     const preferredOrder: number[] = [
       TabIndex.LIBRARY,
       TabIndex.SOURCE,
       TabIndex.BOOK_SOURCE,
-      TabIndex.SUWAYOMI,
-      TabIndex.KOMGA,
       TabIndex.SETTINGS
     ];
     const availableIndices = this.getAvailableTabConfigs().map((cfg: TabConfig) => cfg.index);

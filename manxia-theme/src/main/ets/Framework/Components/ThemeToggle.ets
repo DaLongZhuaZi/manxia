@@ -6,6 +6,7 @@
 
 import { ThemeManager, ThemeType, THEME_CONFIGS } from '../Managers/ThemeManager';
 import { logger } from 'manxia_core/src/main/ets/Utils/Logger';
+import { resolveColor } from 'manxia_ui_resources/src/main/ets/ResourceCatalog';
 
 
 // 主题切换组件状态
@@ -120,7 +121,7 @@ export struct ThemeToggle {
     }
     
     const suffix = effectiveTheme === ThemeType.LIGHT ? '_light' : '_dark';
-    return $r(`app.color.test_management_${colorType}${suffix}`);
+    return resolveColor(`app.color.test_management_${colorType}${suffix}`);
   }
 
   build() {

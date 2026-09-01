@@ -68,6 +68,20 @@ export interface WebViewTestResult {
 }
 
 /**
+ * 页面信息（JS脚本返回解析后的结构）
+ */
+export interface PageInfo {
+  url: string;
+  title: string;
+  userAgent: string;
+  cookieCount: number;
+  hasCloudflare: boolean;
+  domElementCount: number;
+  bodyLength: number;
+  contentPreview: string;
+}
+
+/**
  * 完整测试报告
  */
 export interface TestReport {
@@ -113,7 +127,7 @@ export class WebViewNetworkTester {
     try {
       const httpRequest = http.createHttp();
       
-      // 构建请求头
+      // 构建请求头（显式赋值，避免对象扩展运算符）
       const headers: Record<string, string> = {
         'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
         'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8',
@@ -124,9 +138,17 @@ export class WebViewNetworkTester {
         'Sec-Fetch-Dest': 'document',
         'Sec-Fetch-Mode': 'navigate',
         'Sec-Fetch-Site': 'none',
-        'Cache-Control': 'max-age=0',
-        ...customHeaders
+        'Cache-Control': 'max-age=0'
       };
+
+      // 合并自定义头（显式赋值，不使用扩展运算符）
+      if (customHeaders) {
+        const customKeys = Object.keys(customHeaders);
+        for (let i = 0; i < customKeys.length; i++) {
+          const key = customKeys[i];
+          headers[key] = customHeaders[key];
+        }
+      }
 
       result.requestHeaders = headers;
 
@@ -147,10 +169,12 @@ export class WebViewNetworkTester {
       // 解析响应头
       const responseHeaders: Record<string, string> = {};
       if (response.header) {
-        Object.keys(response.header).forEach(key => {
-          const value = response.header[key];
+        const headerKeys = Object.keys(response.header);
+        for (let i = 0; i < headerKeys.length; i++) {
+          const key = headerKeys[i];
+          const value: string | string[] = response.header[key];
           responseHeaders[key] = Array.isArray(value) ? value.join(', ') : String(value);
-        });
+        }
       }
       result.responseHeaders = responseHeaders;
       result.contentType = responseHeaders['content-type'] || responseHeaders['Content-Type'];
@@ -253,7 +277,7 @@ export class WebViewNetworkTester {
         });
       });
 
-      const pageInfo = SafeUtils.parseObj(scriptResult);
+      const pageInfo: PageInfo = SafeUtils.parseObj<PageInfo>(scriptResult);
       result.title = pageInfo.title;
       result.userAgent = pageInfo.userAgent;
       result.cookieCount = pageInfo.cookieCount;
@@ -299,7 +323,8 @@ export class WebViewNetworkTester {
 
     // 如果提供了WebView控制器，执行WebView测试
     if (controller) {
-      report.webViewTest = await this.testWebViewConnection(url, controller, customHeaders?.['User-Agent']);
+      const userAgent = customHeaders ? customHeaders['User-Agent'] : undefined;
+      report.webViewTest = await this.testWebViewConnection(url, controller, userAgent);
     }
 
     // 生成诊断建议

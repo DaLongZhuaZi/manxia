@@ -329,7 +329,7 @@ export struct NovelSourceLoginPage {
   @Builder
   buildTopBar() {
     Row() {
-      Image($r('app.media.ic_back'))
+      Image($r('app.media.ic_arrow_back'))
         .width(24)
         .height(24)
         .margin({ left: 16 })

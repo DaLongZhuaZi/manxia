@@ -29,8 +29,11 @@ export interface NovelInitResult {
 export class NovelInitializer {
   private static instance: NovelInitializer | null = null;
   private isInitialized: boolean = false;
+  private baseInitialized: boolean = false;
+  private baseInitializationResult: NovelInitResult | null = null;
   private context: common.UIAbilityContext | null = null;
   private initializationPromise: Promise<NovelInitResult> | null = null;
+  private baseInitializationPromise: Promise<NovelInitResult> | null = null;
 
   private constructor() {}
 
@@ -42,25 +45,18 @@ export class NovelInitializer {
   }
 
   /**
-   * 初始化小说模块
+   * 初始化小说模块并等待完整的 V2 兼容性屏障。
+   * 书源管理、搜索和阅读入口继续使用此方法，避免在兼容状态尚未恢复时执行。
    */
   async initialize(context: common.UIAbilityContext): Promise<NovelInitResult> {
     if (this.isInitialized) {
-      return {
-        success: true,
-        duration: 0,
-        databaseInitialized: true,
-        sourceManagerInitialized: true,
-        errors: []
-      };
+      return this.createSuccessResult(0);
     }
-    // The bookshelf, source management and search routes can become visible
-    // during the same cold start. They must observe one complete restore, not
-    // race independent database/source-map hydration passes.
     if (this.initializationPromise !== null) {
       return await this.initializationPromise;
     }
-    const initialization = this.initializeInternal(context);
+
+    const initialization = this.initializeFully(context);
     this.initializationPromise = initialization;
     try {
       return await initialization;
@@ -71,7 +67,69 @@ export class NovelInitializer {
     }
   }
 
-  private async initializeInternal(context: common.UIAbilityContext): Promise<NovelInitResult> {
+  /**
+   * 只初始化首屏所需的数据库和基础书源索引。
+   * V2 原始记录编译及 IMAGE 虚拟图源同步由 startDeferredRestore 调度。
+   */
+  async initializeForStartup(context: common.UIAbilityContext): Promise<NovelInitResult> {
+    if (this.baseInitialized && this.baseInitializationResult !== null) {
+      return this.createSuccessResult(0);
+    }
+    if (this.baseInitializationPromise !== null) {
+      return await this.baseInitializationPromise;
+    }
+
+    const initialization = this.initializeBaseInternal(context);
+    this.baseInitializationPromise = initialization;
+    try {
+      const result = await initialization;
+      if (result.success) {
+        this.baseInitialized = true;
+        this.baseInitializationResult = result;
+      }
+      return result;
+    } finally {
+      if (this.baseInitializationPromise === initialization) {
+        this.baseInitializationPromise = null;
+      }
+    }
+  }
+
+  /**
+   * 在应用关键路径完成后启动低优先级兼容性恢复。
+   * 该方法幂等，且不会绕过 initialize() 的完整屏障。
+   */
+  public startDeferredRestore(): void {
+    if (!this.baseInitialized) {
+      logger.debug(TAG, '基础小说模块尚未就绪，跳过后台兼容性恢复调度');
+      return;
+    }
+    getNovelSourceManager().startCompatibilityRestoreInBackground();
+  }
+
+  private async initializeFully(context: common.UIAbilityContext): Promise<NovelInitResult> {
+    const startTime = Date.now();
+    const baseResult = await this.initializeForStartup(context);
+    if (!baseResult.success) {
+      return baseResult;
+    }
+
+    this.startDeferredRestore();
+    await getNovelSourceManager().waitForCompatibilityRestore();
+    this.isInitialized = true;
+
+    const duration = Date.now() - startTime;
+    logger.info(TAG, `小说模块初始化完成，耗时: ${duration}ms`);
+    return {
+      success: true,
+      duration,
+      databaseInitialized: true,
+      sourceManagerInitialized: true,
+      errors: []
+    };
+  }
+
+  private async initializeBaseInternal(context: common.UIAbilityContext): Promise<NovelInitResult> {
     const startTime = Date.now();
     const errors: string[] = [];
     let databaseInitialized = false;
@@ -111,8 +169,7 @@ export class NovelInitializer {
     const success = errors.length === 0;
 
     if (success) {
-      this.isInitialized = true;
-      logger.info(TAG, `小说模块初始化完成，耗时: ${duration}ms`);
+      logger.info(TAG, `小说基础模块初始化完成，耗时: ${duration}ms，V2 兼容状态将在后台恢复`);
     } else {
       logger.warn(TAG, `小说模块初始化部分失败，错误数: ${errors.length}`);
     }
@@ -147,19 +204,21 @@ export class NovelInitializer {
         }
       }
       const compatibilityRecords = await dataManager.getAllCompatibilityRecords();
-      await sourceManager.restoreCompatibilityRecords(compatibilityRecords);
       const verificationRecords = await dataManager.getAllCompatibilityVerifications();
-      await sourceManager.restoreCompatibilityVerifications(verificationRecords);
       const traceSummaries = await dataManager.getAllCompatibilityTraceSummaries();
-      sourceManager.restoreExecutionTraceSummaries(traceSummaries);
       const workflowTraceSummaries = await dataManager.getAllCompatibilityTraceWorkflowSummaries();
-      sourceManager.restoreExecutionTraceWorkflowSummaries(workflowTraceSummaries);
+
+      sourceManager.prepareCompatibilityRestore(
+        compatibilityRecords,
+        verificationRecords,
+        traceSummaries,
+        workflowTraceSummaries
+      );
       
       logger.info(
         TAG,
-        `已加载 ${savedSources.length} 个书源，恢复 ${compatibilityRecords.length} 条 V2 兼容记录、` +
-        `${verificationRecords.length} 条工作流验证记录、${traceSummaries.length} 条最新脱敏 V2 trace 摘要和 ` +
-        `${workflowTraceSummaries.length} 条按工作流脱敏 V2 trace 摘要`
+        `已加载 ${savedSources.length} 个书源，登记 ${compatibilityRecords.length} 条 V2 兼容记录、` +
+        `${verificationRecords.length} 条工作流验证记录；兼容编译和 IMAGE 同步转入后台`
       );
     } catch (error) {
       logger.error(TAG, `加载已保存书源失败: ${String(error)}`);
@@ -195,8 +254,20 @@ export class NovelInitializer {
    */
   reset(): void {
     this.isInitialized = false;
+    this.baseInitialized = false;
+    this.baseInitializationResult = null;
     this.context = null;
     logger.info(TAG, '小说模块初始化状态已重置');
+  }
+
+  private createSuccessResult(duration: number): NovelInitResult {
+    return {
+      success: true,
+      duration,
+      databaseInitialized: true,
+      sourceManagerInitialized: true,
+      errors: []
+    };
   }
 }
 
@@ -212,4 +283,11 @@ export function getNovelInitializer(): NovelInitializer {
  */
 export async function initializeNovelModule(context: common.UIAbilityContext): Promise<NovelInitResult> {
   return getNovelInitializer().initialize(context);
+}
+
+/**
+ * 启动关键路径入口：只等待数据库和基础书源索引，完整 V2 恢复由应用启动完成后调度。
+ */
+export async function initializeNovelModuleForStartup(context: common.UIAbilityContext): Promise<NovelInitResult> {
+  return getNovelInitializer().initializeForStartup(context);
 }

@@ -89,6 +89,23 @@ function getRecordValue(record: DatabaseRecord, fieldName: string, defaultValue:
 }
 
 /**
+ * Normalize persisted built-in cover keys without introducing a dependency on
+ * the UI resource module. File paths and remote URLs are returned unchanged.
+ */
+function normalizePersistedResourcePath(path: string): string {
+  switch (path) {
+    case 'app.media.logo':
+      return 'app.media.ui_logo';
+    case 'app.media.mangabook':
+      return 'app.media.ui_default_manga_cover';
+    case 'app.media.ebook':
+      return 'app.media.ui_default_ebook_cover';
+    default:
+      return path;
+  }
+}
+
+/**
  * 电子书数据管理器单例
  */
 export class EBookDataManager {
@@ -217,7 +234,11 @@ export class EBookDataManager {
       rating: 0
     };
 
-    logger.info(TAG, `[封面诊断] saveEBookInfo: id=${ebook.id}, coverImagePath='${metadata.coverImagePath}'`);
+    const normalizedCoverImagePath = normalizePersistedResourcePath(metadata.coverImagePath);
+    if (normalizedCoverImagePath !== metadata.coverImagePath) {
+      metadata.coverImagePath = normalizedCoverImagePath;
+    }
+    logger.info(TAG, `[封面诊断] saveEBookInfo: id=${ebook.id}, coverImagePath='${normalizedCoverImagePath}'`);
 
     const existingRecords = await this.dbManager.querySql('SELECT id, extractedRootPath FROM ebook_info WHERE id = ? LIMIT 1', [ebook.id]);
 
@@ -244,7 +265,7 @@ export class EBookDataManager {
       metadata.isbn,
       metadata.language,
       metadata.description,
-      metadata.coverImagePath,
+      normalizedCoverImagePath,
       JSON.stringify(metadata.tags || []),
       metadata.rating,
       ebook.status,
@@ -1624,8 +1645,9 @@ export class EBookDataManager {
     try {
       const sql = `UPDATE ebook_info SET coverImagePath = ?, lastUpdateTime = ? WHERE id = ?`;
       const now = Date.now();
-      await this.dbManager.executeSql(sql, [coverPath, now, bookId]);
-      logger.info(TAG, `电子书封面已更新: ${bookId} -> ${coverPath}`);
+      const normalizedCoverPath = normalizePersistedResourcePath(coverPath);
+      await this.dbManager.executeSql(sql, [normalizedCoverPath, now, bookId]);
+      logger.info(TAG, `电子书封面已更新: ${bookId} -> ${normalizedCoverPath}`);
     } catch (error) {
       logger.error(TAG, `更新电子书封面失败: ${String(error)}`);
       throw error as Error;
@@ -1827,7 +1849,7 @@ export class EBookDataManager {
     const isbn = String(getRecordValue(record, 'isbn', ''));
     const language = String(getRecordValue(record, 'language', ''));
     const description = String(getRecordValue(record, 'description', ''));
-    const coverImagePath = String(getRecordValue(record, 'coverImagePath', ''));
+    const coverImagePath = normalizePersistedResourcePath(String(getRecordValue(record, 'coverImagePath', '')));
     const tagsJson = String(getRecordValue(record, 'tags', '[]'));
     const rating = Number(getRecordValue(record, 'rating', 0));
     const status = String(getRecordValue(record, 'status', 'UNREAD')) as EBookStatus;

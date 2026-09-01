@@ -21,6 +21,7 @@ import { isReaderKitEnabled } from '../Framework/Initialization/ReaderKitFeature
 import { EBookReadingSettingsPanel } from 'manxia_theme/src/main/ets/Framework/Components/EBookReadingSettingsPanel';
 import { curves, UIContext } from '@kit.ArkUI';
 import { display } from '@kit.ArkUI';
+import { resolveMedia } from 'manxia_ui_resources/src/main/ets/ResourceCatalog';
 import { TextReaderComponent } from '../components/TextReaderComponent';
 import { TextReaderSettingsPanel } from '../components/TextReaderSettingsPanel';
 import {
@@ -1745,15 +1746,7 @@ struct EBookReaderPage {
     
     // 检查是否为应用资源路径 (app.media.xxx)
     if (raw.startsWith('app.media.')) {
-      const resourceName = raw.substring('app.media.'.length);
-      if (resourceName === 'mangabook') {
-        return $r('app.media.mangabook');
-      } else if (resourceName === 'ic_ebook') {
-        return $r('app.media.ic_ebook');
-      } else if (resourceName === 'icon') {
-        return $r('app.media.icon');
-      }
-      return $r('app.media.ic_ebook');
+      return resolveMedia(raw);
     }
     
     // 本地文件路径

@@ -6,8 +6,7 @@
   "author": "",
   "license": "",
   "dependencies": {
-    "manxia_core": "file:../manxia-core",
-    "manxia_network": "file:../manxia-network"
+    "manxia_core": "file:../manxia-core"
   },
   "devDependencies": {}
 }

@@ -84,6 +84,7 @@ import { NovelBook, NovelSourceInfo, NovelReadStatus } from 'manxia_core/src/mai
 import { LegadoBookSource, LegadoSourceImportResult } from 'manxia_novel/src/main/ets/Framework/Novel/LegadoSourceTypes';
 import { BrowseHistoryInput, BrowseHistoryItem } from 'manxia_core/src/main/ets/Framework/Novel/NovelSettingsManager';
 import { fileIo as fs } from '@kit.CoreFileKit';
+import { serializeAsync } from 'manxia_core/src/main/ets/Utils/JsonSerializeUtils';
 import { deviceInfo } from '@kit.BasicServicesKit';
 import { DatabaseRecord, DatabaseValue } from 'manxia_core/src/main/ets/Framework/Database/DatabaseTypes';
 
@@ -5796,7 +5797,7 @@ export class EnhancedBackupManager {
   }
 
   private async saveJSON(path: string, data: BackupData): Promise<void> {
-    const jsonStr = JSON.stringify(data, null, 2);
+    const jsonStr = await serializeAsync(data);
     await this.sandboxManager.writeFile(path, jsonStr);
   }
 

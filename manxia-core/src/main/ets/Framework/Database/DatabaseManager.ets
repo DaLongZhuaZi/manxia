@@ -1079,7 +1079,7 @@ export class DatabaseManager {
           return null;
       }
       
-      await this.fillRecordFromResultSet(record, resultSet);
+      this.fillRecordFromResultSetSync(record, resultSet);
       return record;
     } catch (error) {
       logger.error(TAG, `从ResultSet创建记录失败: ${String(error)}`);
@@ -1715,14 +1715,14 @@ export class DatabaseManager {
   /**
    * 从ResultSet填充记录对象
    */
-  private async fillRecordFromResultSet(record: DatabaseRecord, resultSet: relationalStore.ResultSet): Promise<void> {
+  private fillRecordFromResultSetSync(record: DatabaseRecord, resultSet: relationalStore.ResultSet): void {
     const columnNames = resultSet.columnNames;
-    
+
     for (let i = 0; i < columnNames.length; i++) {
       const columnName = columnNames[i];
-      const columnType = await resultSet.getColumnType(i);
+      const columnType = resultSet.getColumnTypeSync(i);
       let value: DatabaseValue = null;
-      
+
       switch (columnType) {
         case relationalStore.ColumnType.INTEGER:
           value = resultSet.getLong(i);
@@ -1740,7 +1740,7 @@ export class DatabaseManager {
           value = null;
           break;
       }
-      
+
       // 使用显式属性赋值而不是索引访问
       this.setRecordProperty(record, columnName, value);
     }

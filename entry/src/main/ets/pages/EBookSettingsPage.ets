@@ -40,6 +40,7 @@ import { getHelpPanelManagerV2 } from 'manxia_features_ui/src/main/ets/Framework
 import { getFontManager, SystemFont, CustomFont } from 'manxia_theme/src/main/ets/Framework/Managers/FontManager';
 import { DisplayMode } from 'manxia_theme/src/main/ets/Utils/WindowManager';
 import { PageWindowCoordinator } from 'manxia_theme/src/main/ets/Utils/PageWindowCoordinator';
+import { resolveMedia } from 'manxia_ui_resources/src/main/ets/ResourceCatalog';
 
 const TAG = 'EBookSettingsPage';
 const TITLE_BAR_HEIGHT_MINI: number = 56;
@@ -1617,10 +1618,7 @@ export struct EBookSettingsPage {
     
     // 检查是否为媒体资源路径 (app.media.xxx 格式)
     if (coverPath.startsWith('app.media.')) {
-      // 提取资源名称并返回 Resource 类型
-      const resourceName = coverPath.replace('app.media.', '');
-      // 使用动态资源引用
-      return $r(`app.media.${resourceName}`);
+      return resolveMedia(coverPath);
     }
     
     // 沙箱路径需要添加 file:// 前缀
@@ -1700,8 +1698,8 @@ export struct EBookSettingsPage {
           if (this.getDisplayCoverPath().length > 0) {
             // 根据路径类型选择不同的图片加载方式
             if (this.getDisplayCoverPath().startsWith('app.media.')) {
-              // 媒体资源路径 - 使用 $r() 加载
-              Image($r(`app.media.${this.getDisplayCoverPath().replace('app.media.', '')}`))
+              // 媒体资源路径 - 使用共享资源目录解析
+              Image(resolveMedia(this.getDisplayCoverPath()))
                 .width('100%')
                 .height('100%')
                 .objectFit(ImageFit.Cover)

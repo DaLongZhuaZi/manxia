@@ -7,8 +7,18 @@
 import { validateJWT, isJWTExpired } from 'manxia_core/src/main/ets/Utils/JWTUtils';
 import { logger } from 'manxia_core/src/main/ets/Utils/Logger';
 import preferences from '@ohos.data.preferences';
+import { getContext as getGlobalContext } from 'manxia_core/src/main/ets/GlobalContext';
 
 const TAG = 'AuthenticationHandler';
+
+/**
+ * 令牌提取配置
+ */
+export interface TokenExtractionConfig {
+  type: 'json' | 'header';
+  path?: string;
+  header?: string;
+}
 
 /**
  * 认证配置
@@ -20,11 +30,7 @@ export interface AuthenticationConfig {
   tokenStorageKey?: string;
   tokenLeeway?: number;
   loginPayload?: Record<string, string>;
-  tokenExtraction?: {
-    type: 'json' | 'header';
-    path?: string;
-    header?: string;
-  };
+  tokenExtraction?: TokenExtractionConfig;
   requiresLogin?: boolean;
 }
 
@@ -35,7 +41,15 @@ export interface Credentials {
   username?: string;
   password?: string;
   token?: string;
-  [key: string]: string | undefined;
+}
+
+/**
+ * 登录配置
+ */
+export interface LoginConfig {
+  url: string;
+  method: string;
+  payload: Record<string, string>;
 }
 
 /**
@@ -60,11 +74,12 @@ export class AuthenticationHandler {
     }
 
     try {
-      const context = (this.getUIContext().getHostContext() as common.UIAbilityContext);
+      const context = getGlobalContext() as common.UIAbilityContext;
       this.preferencesStore = await preferences.getPreferences(context, 'auth_storage');
     } catch (error) {
-      logger.error(TAG, `初始化Preferences失败: ${error}`);
-      throw error;
+      const errMsg = error instanceof Error ? error.message : String(error);
+      logger.error(TAG, `初始化Preferences失败: ${errMsg}`);
+      throw new Error(`初始化Preferences失败: ${errMsg}`);
     }
   }
 
@@ -82,7 +97,8 @@ export class AuthenticationHandler {
       const token = await this.preferencesStore.get(key, '') as string;
       return token || null;
     } catch (error) {
-      logger.error(TAG, `获取存储令牌失败: ${error}`);
+      const errMsg = error instanceof Error ? error.message : String(error);
+      logger.error(TAG, `获取存储令牌失败: ${errMsg}`);
       return null;
     }
   }
@@ -102,8 +118,9 @@ export class AuthenticationHandler {
       await this.preferencesStore.flush();
       logger.info(TAG, `令牌已保存: ${this.sourceId}`);
     } catch (error) {
-      logger.error(TAG, `保存令牌失败: ${error}`);
-      throw error;
+      const errMsg = error instanceof Error ? error.message : String(error);
+      logger.error(TAG, `保存令牌失败: ${errMsg}`);
+      throw new Error(`保存令牌失败: ${errMsg}`);
     }
   }
 
@@ -122,7 +139,8 @@ export class AuthenticationHandler {
       await this.preferencesStore.flush();
       logger.info(TAG, `令牌已清除: ${this.sourceId}`);
     } catch (error) {
-      logger.error(TAG, `清除令牌失败: ${error}`);
+      const errMsg = error instanceof Error ? error.message : String(error);
+      logger.error(TAG, `清除令牌失败: ${errMsg}`);
     }
   }
 
@@ -147,7 +165,7 @@ export class AuthenticationHandler {
       switch (this.config.type) {
         case 'jwt':
           const leeway = this.config.tokenLeeway || 10;
-          return validateJWT(tokenToValidate, leeway);
+          return await validateJWT(tokenToValidate, leeway);
         case 'bearer':
         case 'custom':
           // 简单检查令牌是否为空
@@ -156,7 +174,8 @@ export class AuthenticationHandler {
           return true;
       }
     } catch (error) {
-      logger.error(TAG, `验证令牌失败: ${error}`);
+      const errMsg = error instanceof Error ? error.message : String(error);
+      logger.error(TAG, `验证令牌失败: ${errMsg}`);
       return false;
     }
   }
@@ -174,12 +193,13 @@ export class AuthenticationHandler {
       // 只有JWT类型才检查过期
       if (this.config.type === 'jwt') {
         const leeway = this.config.tokenLeeway || 10;
-        return isJWTExpired(tokenToCheck, leeway);
+        return await isJWTExpired(tokenToCheck, leeway);
       }
 
       return false;
     } catch (error) {
-      logger.error(TAG, `检查令牌过期失败: ${error}`);
+      const errMsg = error instanceof Error ? error.message : String(error);
+      logger.error(TAG, `检查令牌过期失败: ${errMsg}`);
       return true;
     }
   }
@@ -203,7 +223,8 @@ export class AuthenticationHandler {
 
       return token;
     } catch (error) {
-      logger.error(TAG, `获取有效令牌失败: ${error}`);
+      const errMsg = error instanceof Error ? error.message : String(error);
+      logger.error(TAG, `获取有效令牌失败: ${errMsg}`);
       return null;
     }
   }
@@ -239,8 +260,9 @@ export class AuthenticationHandler {
 
       return headers;
     } catch (error) {
-      logger.error(TAG, `构建认证头失败: ${error}`);
-      throw error;
+      const errMsg = error instanceof Error ? error.message : String(error);
+      logger.error(TAG, `构建认证头失败: ${errMsg}`);
+      throw new Error(`构建认证头失败: ${errMsg}`);
     }
   }
 
@@ -266,7 +288,8 @@ export class AuthenticationHandler {
 
       return null;
     } catch (error) {
-      logger.error(TAG, `提取令牌失败: ${error}`);
+      const errMsg = error instanceof Error ? error.message : String(error);
+      logger.error(TAG, `提取令牌失败: ${errMsg}`);
       return null;
     }
   }
@@ -280,8 +303,13 @@ export class AuthenticationHandler {
       let current: ESObject = obj;
 
       for (const part of parts) {
-        if (current && typeof current === 'object' && part in current) {
-          current = current[part] as ESObject;
+        if (current && typeof current === 'object') {
+          const keys = Object.keys(current as Object);
+          if (keys.includes(part)) {
+            current = (current as Record<string, ESObject>)[part] as ESObject;
+          } else {
+            return null;
+          }
         } else {
           return null;
         }
@@ -289,7 +317,8 @@ export class AuthenticationHandler {
 
       return typeof current === 'string' ? current : null;
     } catch (error) {
-      logger.error(TAG, `路径提取失败: ${error}`);
+      const errMsg = error instanceof Error ? error.message : String(error);
+      logger.error(TAG, `路径提取失败: ${errMsg}`);
       return null;
     }
   }
@@ -304,19 +333,16 @@ export class AuthenticationHandler {
   /**
    * 获取登录配置
    */
-  getLoginConfig(): {
-    url: string;
-    method: string;
-    payload: Record<string, string>;
-  } | null {
+  getLoginConfig(): LoginConfig | null {
     if (!this.config.loginUrl || !this.config.loginMethod) {
       return null;
     }
 
+    const payload: Record<string, string> = this.config.loginPayload || {};
     return {
       url: this.config.loginUrl,
       method: this.config.loginMethod,
-      payload: this.config.loginPayload || {}
+      payload: payload
     };
   }
 }

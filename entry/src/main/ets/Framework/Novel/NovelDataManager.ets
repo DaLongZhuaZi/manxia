@@ -422,6 +422,31 @@ export class NovelDataManager {
     );
   }
 
+  /**
+   * Refresh compiler metadata without recreating a row that was deleted or
+   * replaced while a lazy restore was in flight.
+   */
+  async updateCompatibilityRecordIfRawMatches(record: LegadoCompatibilityStorageRecord): Promise<void> {
+    const store = this.getStore();
+    await store.executeSql(
+      `UPDATE novel_source_compatibility
+       SET compilerVersion = ?, compileStatus = ?, engineMode = ?, capabilityJson = ?,
+           diagnosticsJson = ?, compiledAt = ?, updateTime = ?
+       WHERE sourceUrl = ? AND rawSha256 = ?`,
+      [
+        record.compilerVersion,
+        record.status,
+        record.engineMode,
+        record.capabilityJson,
+        record.diagnosticsJson,
+        record.compiledAt,
+        record.updatedAt,
+        record.sourceUrl,
+        record.rawSha256
+      ]
+    );
+  }
+
   async getCompatibilityRecord(sourceUrl: string): Promise<LegadoCompatibilityStorageRecord | null> {
     const store = this.getStore();
     const result = await store.querySql(

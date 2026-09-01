@@ -90,20 +90,20 @@ export function generateRandomString(length: number): string {
  * @param str Base64编码的字符串
  * @returns 解码后的字符串
  */
-export function base64UrlDecode(str: string): string {
+export async function base64UrlDecode(str: string): Promise<string> {
   try {
     // 替换URL安全字符
     let base64: string = str.replace(/-/g, '+').replace(/_/g, '/');
-    
+
     // 添加填充
     const padding: number = base64.length % 4;
     if (padding > 0) {
       base64 += '='.repeat(4 - padding);
     }
-    
+
     // 解码 - 使用 Base64Helper 实例
     const base64Helper: util.Base64Helper = new util.Base64Helper();
-    const decodedArray: Uint8Array = base64Helper.decodeSync(base64);
+    const decodedArray: Uint8Array = await base64Helper.decode(base64);
     const textDecoder: util.TextDecoder = util.TextDecoder.create('utf-8');
     return textDecoder.decodeToString(decodedArray);
   } catch (error) {
@@ -170,9 +170,9 @@ export async function sha256Hash(data: string): Promise<string> {
  * @param length 字节数
  * @returns 随机字节数组
  */
-export function generateRandomBytes(length: number): Uint8Array {
+export async function generateRandomBytes(length: number): Promise<Uint8Array> {
   const rand = cryptoFramework.createRandom();
-  const randomData = rand.generateRandomSync(length);
+  const randomData = await rand.generateRandom(length);
   return randomData.data;
 }
 
@@ -190,10 +190,10 @@ export async function generateAes256Key(): Promise<cryptoFramework.SymKey> {
  * @param key 对称密钥
  * @returns Base64 编码的密钥字符串
  */
-export function exportSymKeyToBase64(key: cryptoFramework.SymKey): string {
+export async function exportSymKeyToBase64(key: cryptoFramework.SymKey): Promise<string> {
   const keyBlob = key.getEncoded();
   const base64Helper = new util.Base64Helper();
-  return base64Helper.encodeToStringSync(keyBlob.data);
+  return await base64Helper.encodeToString(keyBlob.data);
 }
 
 /**
@@ -203,7 +203,7 @@ export function exportSymKeyToBase64(key: cryptoFramework.SymKey): string {
  */
 export async function importSymKeyFromBase64(base64Key: string): Promise<cryptoFramework.SymKey> {
   const base64Helper = new util.Base64Helper();
-  const keyBytes: Uint8Array = base64Helper.decodeSync(base64Key);
+  const keyBytes: Uint8Array = await base64Helper.decode(base64Key);
   const keyBlob: cryptoFramework.DataBlob = { data: keyBytes };
   const keyGenerator = cryptoFramework.createSymKeyGenerator('AES256');
   return await keyGenerator.convertKey(keyBlob);
@@ -218,7 +218,7 @@ export async function importSymKeyFromBase64(base64Key: string): Promise<cryptoF
  */
 export async function aes256GcmEncrypt(plaintext: string, key: cryptoFramework.SymKey): Promise<string> {
   try {
-    const ivBytes: Uint8Array = generateRandomBytes(12);
+    const ivBytes: Uint8Array = await generateRandomBytes(12);
     const gcmParams: cryptoFramework.GcmParamsSpec = {
       algName: 'GcmParamsSpec',
       iv: { data: ivBytes },
@@ -235,7 +235,7 @@ export async function aes256GcmEncrypt(plaintext: string, key: cryptoFramework.S
     combined.set(ivBytes, 0);
     combined.set(cipherBytes, ivBytes.length);
     const base64Helper = new util.Base64Helper();
-    return base64Helper.encodeToStringSync(combined);
+    return await base64Helper.encodeToString(combined);
   } catch (error) {
     logger.error(TAG, `AES-256-GCM加密失败: ${error}`);
     throw new Error(String(error));
@@ -252,7 +252,7 @@ export async function aes256GcmEncrypt(plaintext: string, key: cryptoFramework.S
 export async function aes256GcmDecrypt(ciphertextBase64: string, key: cryptoFramework.SymKey): Promise<string> {
   try {
     const base64Helper = new util.Base64Helper();
-    const combined: Uint8Array = base64Helper.decodeSync(ciphertextBase64);
+    const combined: Uint8Array = await base64Helper.decode(ciphertextBase64);
     if (combined.length < 28) {
       throw new Error('密文数据过短');
     }

@@ -10,7 +10,7 @@ import { preferences } from '@kit.ArkData';
 import { ConfigurationConstant } from '@kit.AbilityKit';
 import { getContext } from 'manxia_core/src/main/ets/GlobalContext';
 import { CommonModifier } from '@kit.ArkUI';
-import { colorMap } from 'manxia_core/src/main/ets/Data/ResourceMap';
+import { resolveColor } from 'manxia_ui_resources/src/main/ets/ResourceCatalog';
 import { AppColors, ColorRole } from '../Theme/AppColors';
 import { UserThemeConfigManager, UserThemeProfile } from '../Theme/UserThemeConfig';
 
@@ -1061,11 +1061,11 @@ export class ThemeManager {
    * 优先使用资源映射中的 app.color.glass_background_overlay，其次回退到 app.color.background_overlay
    */
   public getGlassBackgroundResource(): Resource {
-    const glassRes: Resource | undefined = colorMap['app.color.glass_background_overlay'];
+    const glassRes: Resource = resolveColor('app.color.glass_background_overlay');
     if (glassRes !== undefined) {
       return glassRes;
     }
-    const overlayRes: Resource | undefined = colorMap['app.color.background_overlay'];
+    const overlayRes: Resource = resolveColor('app.color.background_overlay');
     if (overlayRes !== undefined) {
       return overlayRes;
     }

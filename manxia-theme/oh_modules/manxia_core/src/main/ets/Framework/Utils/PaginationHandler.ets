@@ -190,7 +190,7 @@ export class PaginationHandler {
    */
   handleCursorPagination(
     sourceId: string,
-    response: any,
+    response: Object,
     config: PaginationConfig
   ): PaginationResult {
     const state = this.paginationStates.get(sourceId);
@@ -203,14 +203,14 @@ export class PaginationHandler {
     }
 
     // 从响应中提取cursor和hasMore
-    const nextCursor = this.extractField(response, config.cursorField || 'nextCursor');
-    const hasMoreFromResponse = this.extractField(response, config.hasMoreField || 'hasMore');
-    
+    const nextCursor = this.extractCursor(response, config.cursorField || 'nextCursor');
+    const hasMoreFromResponse = this.extractBoolean(response, config.hasMoreField || 'hasMore');
+
     // 判断是否还有更多数据
     let hasMore = false;
-    
+
     if (hasMoreFromResponse !== undefined) {
-      hasMore = hasMoreFromResponse === true || hasMoreFromResponse === 'true';
+      hasMore = hasMoreFromResponse;
     } else if (nextCursor !== null && nextCursor !== undefined && nextCursor !== '') {
       hasMore = true;
     }
@@ -232,23 +232,59 @@ export class PaginationHandler {
   /**
    * 从对象中提取字段值（支持嵌套路径）
    */
-  private extractField(obj: any, path: string): any {
+  private extractField(obj: Object, path: string): Object | undefined {
     if (!obj || !path) {
       return undefined;
     }
 
     const keys = path.split('.');
-    let current = obj;
+    let current: Object = obj;
 
-    for (const key of keys) {
-      if (current && typeof current === 'object' && key in current) {
-        current = current[key];
+    for (let i = 0; i < keys.length; i++) {
+      const key = keys[i];
+      if (current && typeof current === 'object') {
+        const recordObj = current as Record<string, Object>;
+        if (Object.keys(recordObj).includes(key)) {
+          current = recordObj[key];
+        } else {
+          return undefined;
+        }
       } else {
         return undefined;
       }
     }
 
     return current;
+  }
+
+  private extractCursor(obj: Object, path: string): string | null {
+    const value = this.extractField(obj, path);
+    if (value === undefined || value === null) {
+      return null;
+    }
+    if (typeof value === 'string') {
+      return value;
+    }
+    if (typeof value === 'number' || typeof value === 'boolean') {
+      return String(value);
+    }
+    return null;
+  }
+
+  private extractBoolean(obj: Object, path: string): boolean | undefined {
+    const value = this.extractField(obj, path);
+    if (typeof value === 'boolean') {
+      return value;
+    }
+    if (typeof value === 'string') {
+      if (value.toLowerCase() === 'true') {
+        return true;
+      }
+      if (value.toLowerCase() === 'false') {
+        return false;
+      }
+    }
+    return undefined;
   }
 
   /**

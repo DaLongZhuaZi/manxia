@@ -176,7 +176,7 @@ export class TransferRtcFileReceiverService {
       throw new Error(`分片偏移错误: expected=${activeSession.uploadSession.receivedBytes}, actual=${message.offset}`);
     }
 
-    const chunkBytes = this.decodeBase64Chunk(message.data);
+    const chunkBytes = await this.decodeBase64Chunk(message.data);
     if (chunkBytes.byteLength !== message.byteLength) {
       throw new Error(`分片大小不匹配: expected=${message.byteLength}, actual=${chunkBytes.byteLength}`);
     }
@@ -301,9 +301,9 @@ export class TransferRtcFileReceiverService {
     return activeSession;
   }
 
-  private decodeBase64Chunk(data: string): Uint8Array {
+  private async decodeBase64Chunk(data: string): Promise<Uint8Array> {
     try {
-      return this.base64Helper.decodeSync(data);
+      return await this.base64Helper.decode(data);
     } catch (error) {
       throw new Error(`Base64 分片解码失败: ${this.stringifyError(error)}`);
     }

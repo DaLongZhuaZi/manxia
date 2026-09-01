@@ -1122,7 +1122,7 @@ export class NovelSourceExecutor {
       }
 
       if (request.url.startsWith('data:')) {
-        const dataPayload = this.parseDataUrl(request.url);
+        const dataPayload = await this.parseDataUrl(request.url);
         if (this.isLikelyRedirectUrl(dataPayload)) {
           const redirectRequest = await this.analyzeRequestUrl(dataPayload);
           if (!redirectRequest.url.startsWith('data:')) {
@@ -1368,7 +1368,7 @@ export class NovelSourceExecutor {
     return text;
   }
 
-  private parseDataUrl(url: string): string {
+  private async parseDataUrl(url: string): Promise<string> {
     try {
       logger.debug(TAG, `解析data:URL: ${url.substring(0, Math.min(200, url.length))}...`);
 
@@ -1398,7 +1398,7 @@ export class NovelSourceExecutor {
           }
         }
 
-        const decodedContent = this.tryDecodeBase64DataUrlPayload(content);
+        const decodedContent = await this.tryDecodeBase64DataUrlPayload(content);
         if (decodedContent !== null) {
           logger.debug(TAG, `data:URL Base64解码成功: ${decodedContent.substring(0, Math.min(200, decodedContent.length))}...`);
           return decodedContent;
@@ -1414,7 +1414,7 @@ export class NovelSourceExecutor {
     }
   }
 
-  private tryDecodeBase64DataUrlPayload(payload: string): string | null {
+  private async tryDecodeBase64DataUrlPayload(payload: string): Promise<string | null> {
     const trimmedPayload = payload.trim();
     if (!this.isLikelyBase64Payload(trimmedPayload)) {
       return null;
@@ -1428,7 +1428,7 @@ export class NovelSourceExecutor {
       }
 
       const base64Helper: util.Base64Helper = new util.Base64Helper();
-      const decodedBytes: Uint8Array = base64Helper.decodeSync(normalized);
+      const decodedBytes: Uint8Array = await base64Helper.decode(normalized);
       const decoder = new util.TextDecoder('utf-8');
       const decodedText = decoder.decodeToString(decodedBytes).trim();
       if (!this.isUsableDecodedDataPayload(decodedText)) {
@@ -1499,7 +1499,7 @@ export class NovelSourceExecutor {
       }
 
       if (request.url.startsWith('data:')) {
-        const dataPayload = this.parseDataUrl(request.url);
+        const dataPayload = await this.parseDataUrl(request.url);
         if (this.isLikelyRedirectUrl(dataPayload)) {
           const redirectRequest = await this.analyzeRequestUrl(dataPayload);
           if (!redirectRequest.url.startsWith('data:')) {

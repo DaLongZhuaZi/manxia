@@ -31,6 +31,7 @@ import { ContentFilterManager } from 'manxia_core/src/main/ets/Framework/Manager
 import { SettingKeys } from 'manxia_core/src/main/ets/Framework/Contracts/SettingKeys';
 // ../Framework/Managers/SettingsManager';
 import CookieManager from 'manxia_core/src/main/ets/Framework/Managers/CookieManager';
+import { resolveMedia } from 'manxia_ui_resources/src/main/ets/ResourceCatalog';
 import {
   ContentTrackingCardCallbacks,
   ContentTrackingCardState,
@@ -7507,23 +7508,7 @@ export struct UnifiedDetailPage {
   }
 
   private resolveAppMediaCoverResource(raw: string): Resource {
-    const resourceName = raw.substring('app.media.'.length);
-    if (resourceName === 'mangabook') {
-      return $r('app.media.mangabook');
-    }
-    if (resourceName === 'ebook') {
-      return $r('app.media.ebook');
-    }
-    if (resourceName === 'ic_ebook') {
-      return $r('app.media.ic_ebook');
-    }
-    if (resourceName === 'icon') {
-      return $r('app.media.icon');
-    }
-    if (resourceName === 'ic_source_novel' || resourceName === 'ic_novel') {
-      return $r('app.media.ic_source_novel');
-    }
-    return $r('app.media.ebook');
+    return resolveMedia(raw);
   }
   
   /**

@@ -15,7 +15,7 @@
   },
   "image_logo": {
     "type": "IMAGE",
-    "path": "app.media.logo",
+    "path": "app.media.ui_logo",
     "priority": 9,
     "preload": true,
     "persistent": true,

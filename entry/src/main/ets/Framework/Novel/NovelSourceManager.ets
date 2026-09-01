@@ -125,6 +125,15 @@ export class NovelSourceManager {
   private compatibilityModes: Map<string, LegadoCompatibilityEngineMode> = new Map();
   private compatibilityStatuses: Map<string, LegadoCompatibilityStatus> = new Map();
   private verificationRecords: Map<string, LegadoSourceVerificationRecord> = new Map();
+  private pendingCompatibilityRecords: Map<string, LegadoCompatibilityStorageRecord> = new Map();
+  private pendingVerificationRecords: Map<string, LegadoSourceVerificationRecord> = new Map();
+  private pendingExecutionTraceSummaries: LegadoExecutionTraceSummary[] = [];
+  private pendingExecutionTraceWorkflowSummaries: LegadoExecutionTraceSummary[] = [];
+  private compatibilityRestoreTasks: Map<string, Promise<void>> = new Map();
+  private compatibilityRestorePromise: Promise<void> | null = null;
+  private compatibilityRestoreStarted: boolean = false;
+  private compatibilityRestoreGeneration: number = 0;
+  private compatibilityCompiler: LegadoCompatibilityCompiler | null = null;
   private lastExecutionTraces: Map<string, LegadoExecutionTrace> = new Map();
   private lastExecutionTraceSummaries: Map<string, LegadoExecutionTraceSummary> = new Map();
   private executionTraceWorkflowSummaries: Map<string, Map<LegadoWorkflowKind, LegadoExecutionTraceSummary>> = new Map();
@@ -396,6 +405,27 @@ export class NovelSourceManager {
     return NovelSourceManager.instance;
   }
 
+  private getCompatibilityCompiler(): LegadoCompatibilityCompiler {
+    if (this.compatibilityCompiler === null) {
+      this.compatibilityCompiler = new LegadoCompatibilityCompiler();
+    }
+    return this.compatibilityCompiler;
+  }
+
+  private isCurrentCompatibilityRestore(generation: number): boolean {
+    return generation === this.compatibilityRestoreGeneration;
+  }
+
+  private invalidatePendingCompatibilityRestore(sourceId: string): void {
+    this.pendingCompatibilityRecords.delete(sourceId);
+    this.pendingVerificationRecords.delete(sourceId);
+    // A running promise cannot be cancelled here. The source identity and
+    // restore generation checks in restoreOneCompatibilityRecord make its
+    // eventual result harmless, while removing the map entry prevents new
+    // callers from joining stale work.
+    this.compatibilityRestoreTasks.delete(sourceId);
+  }
+
   /**
    * 导入书源（从JSON字符串）
    * 支持单个书源或书源数组，同时持久化到数据库
@@ -463,6 +493,7 @@ export class NovelSourceManager {
         await dataManager.saveSourceWithCompatibilityRecord(source, compatibilityRecord);
       }
 
+      this.invalidatePendingCompatibilityRestore(sourceId);
       this.sources.set(sourceId, source);
       this.executors.delete(sourceId);
       this.compiledSources.set(sourceId, compiled);
@@ -1057,53 +1088,131 @@ export class NovelSourceManager {
   }
 
   /**
-   * Rebuild V2 only from a stored raw document.  Old rows that only have
+   * 保存启动时读取的 V2 记录，但不在首屏关键路径重新编译全部书源。
+   * 兼容状态仍以原始 JSON 和 SHA-256 为准，后续由逐源恢复任务建立。
+   */
+  public prepareCompatibilityRestore(
+    records: LegadoCompatibilityStorageRecord[],
+    verificationRecords: LegadoSourceVerificationRecord[],
+    traceSummaries: LegadoExecutionTraceSummary[],
+    workflowTraceSummaries: LegadoExecutionTraceSummary[]
+  ): void {
+    this.compatibilityRestoreGeneration++;
+    this.pendingCompatibilityRecords.clear();
+    this.pendingVerificationRecords.clear();
+    this.compatibilityRestoreTasks.clear();
+    for (let index = 0; index < records.length; index++) {
+      const record = records[index];
+      this.pendingCompatibilityRecords.set(record.sourceUrl, record);
+    }
+    for (let index = 0; index < verificationRecords.length; index++) {
+      const record = verificationRecords[index];
+      this.pendingVerificationRecords.set(record.sourceUrl, record);
+    }
+    this.pendingExecutionTraceSummaries = traceSummaries.slice();
+    this.pendingExecutionTraceWorkflowSummaries = workflowTraceSummaries.slice();
+    this.compatibilityRestorePromise = null;
+    this.compatibilityRestoreStarted = false;
+    logger.info(
+      TAG,
+      `已登记待恢复 V2 状态: compatibility=${records.length}, verification=${verificationRecords.length}, ` +
+      `trace=${traceSummaries.length}, workflowTrace=${workflowTraceSummaries.length}`
+    );
+  }
+
+  /**
+   * 在应用关键路径完成后逐源恢复兼容状态。每个源之间让出事件循环，避免
+   * 458 条记录的编译和 IMAGE 桥接同步再次形成单次 UI 长任务。
+   */
+  public startCompatibilityRestoreInBackground(): void {
+    if (this.compatibilityRestoreStarted) {
+      return;
+    }
+    this.compatibilityRestoreStarted = true;
+    const restoreGeneration = this.compatibilityRestoreGeneration;
+
+    if (this.pendingCompatibilityRecords.size === 0) {
+      this.pendingVerificationRecords.clear();
+      this.mergePendingExecutionTraceSummaries();
+      logger.info(TAG, '没有待恢复的 V2 兼容记录，后台恢复已完成');
+      return;
+    }
+
+    const restorePromise = new Promise<void>((resolve: () => void): void => {
+      setTimeout((): void => {
+        void this.restorePendingCompatibilityRecords(restoreGeneration).then((): void => {
+          resolve();
+        }).catch((error: Error): void => {
+          logger.warn(TAG, `后台恢复 V2 兼容状态失败: ${String(error)}`);
+          resolve();
+        });
+      }, 0);
+    });
+    this.compatibilityRestorePromise = restorePromise;
+    void restorePromise.then((): void => {
+      if (this.compatibilityRestorePromise === restorePromise) {
+        this.compatibilityRestorePromise = null;
+      }
+    });
+  }
+
+  /** 等待完整兼容状态恢复，供搜索、详情和阅读入口使用。 */
+  public async waitForCompatibilityRestore(): Promise<void> {
+    this.startCompatibilityRestoreInBackground();
+    const restorePromise = this.compatibilityRestorePromise;
+    if (restorePromise !== null) {
+      await restorePromise;
+    }
+  }
+
+  /**
+   * 恢复单个目标书源。后台任务和用户入口共用同一个 Promise，避免重复编译
+   * 或在 V2_FULL_CUTOVER 下把尚未恢复误判为可执行的旧内核。
+   */
+  public async ensureSourceCompatibility(sourceId: string): Promise<void> {
+    const restoreGeneration = this.compatibilityRestoreGeneration;
+    const pendingRecord = this.pendingCompatibilityRecords.get(sourceId);
+    if (pendingRecord === undefined) {
+      return;
+    }
+
+    let restoreTask = this.compatibilityRestoreTasks.get(sourceId);
+    if (restoreTask === undefined) {
+      restoreTask = this.restoreOneCompatibilityRecord(
+        pendingRecord,
+        this.getCompatibilityCompiler(),
+        restoreGeneration
+      );
+      this.compatibilityRestoreTasks.set(sourceId, restoreTask);
+      const taskForCleanup = restoreTask;
+      void restoreTask.then((): void => {
+        if (this.compatibilityRestoreTasks.get(sourceId) === taskForCleanup) {
+          this.compatibilityRestoreTasks.delete(sourceId);
+        }
+      });
+    }
+    await restoreTask;
+  }
+
+  /**
+   * Rebuild V2 only from a stored raw document. Old rows that only have
    * legacy configJson remain operational but cannot be declared lossless.
    */
   async restoreCompatibilityRecords(records: LegadoCompatibilityStorageRecord[]): Promise<void> {
-    const compiler = new LegadoCompatibilityCompiler();
+    const compiler = this.getCompatibilityCompiler();
+    const restoreGeneration = this.compatibilityRestoreGeneration;
     const restoredOrExamined: Set<string> = new Set<string>();
     for (let i = 0; i < records.length; i++) {
       const record = records[i];
-      const savedSource = this.sources.get(record.sourceUrl);
-      if (!savedSource) {
+      if (!this.sources.has(record.sourceUrl)) {
         logger.warn(TAG, `兼容记录缺少对应书源，忽略恢复: ${record.sourceUrl}`);
         continue;
       }
       restoredOrExamined.add(record.sourceUrl);
-      try {
-        const compiled = await compiler.compileOne(record.rawJson);
-        if (compiled === null || compiled.source.bookSourceUrl !== record.sourceUrl ||
-          compiled.raw.sha256 !== record.rawSha256) {
-          this.compatibilityStatuses.set(record.sourceUrl, LegadoCompatibilityStatus.BLOCKED);
-          this.compatibilityModes.set(record.sourceUrl, LegadoCompatibilityEngineMode.LEGACY);
-          logger.warn(TAG, `兼容记录校验失败，回退旧执行器: ${record.sourceUrl}`);
-          continue;
-        }
-        this.applySavedLocalState(savedSource, compiled.source);
-        this.sources.set(record.sourceUrl, compiled.source);
-        this.executors.delete(record.sourceUrl);
-        this.v2Executors.delete(record.sourceUrl);
-        this.compiledSources.set(record.sourceUrl, compiled);
-        this.compatibilityStatuses.set(record.sourceUrl, this.resolveEffectiveCompatibilityStatus(compiled));
-        const restoredMode = this.resolveRestoredMode(record.sourceUrl, record.engineMode);
-        this.compatibilityModes.set(record.sourceUrl, restoredMode);
-        // A compiler contract may gain support for an existing Legado API
-        // without changing the storage schema. Keep the persisted readiness
-        // snapshot in step with the freshly compiled source so full cutover
-        // never routes using stale BLOCKED diagnostics after an app upgrade.
-        if (this.isCompatibilitySnapshotStale(record, compiled)) {
-          await getNovelDataManager().saveCompatibilityRecord(
-            this.createCompatibilityRecord(compiled, record.engineMode)
-          );
-          logger.info(TAG, `已刷新 V2 编译快照: ${record.sourceUrl}`);
-        }
-        await this.syncLegadoImageVirtualSource(compiled.source);
-      } catch (error) {
-        this.compatibilityStatuses.set(record.sourceUrl, LegadoCompatibilityStatus.BLOCKED);
-        this.compatibilityModes.set(record.sourceUrl, LegadoCompatibilityEngineMode.LEGACY);
-        logger.warn(TAG, `恢复兼容记录失败，回退旧执行器: ${record.sourceUrl}, ${String(error)}`);
-      }
+      await this.restoreOneCompatibilityRecord(record, compiler, restoreGeneration);
+    }
+    if (!this.isCurrentCompatibilityRestore(restoreGeneration)) {
+      return;
     }
     this.sources.forEach((_source: LegadoBookSource, sourceUrl: string): void => {
       if (!restoredOrExamined.has(sourceUrl) && !this.compiledSources.has(sourceUrl)) {
@@ -1116,16 +1225,137 @@ export class NovelSourceManager {
   /** Restore only records whose raw hash still matches the compiled source. */
   async restoreCompatibilityVerifications(records: LegadoSourceVerificationRecord[]): Promise<void> {
     for (let i = 0; i < records.length; i++) {
-      const record = records[i];
-      const compiled = this.compiledSources.get(record.sourceUrl);
-      if (!compiled || compiled.raw.sha256 !== record.rawSha256 ||
-        !this.includesAllWorkflows(record.workflows, this.getRequiredVerificationWorkflows(compiled))) {
-        logger.warn(TAG, `忽略已过期或不完整的 V2 工作流验证: ${record.sourceUrl}`);
-        continue;
-      }
-      this.verificationRecords.set(record.sourceUrl, record);
-      this.compatibilityStatuses.set(record.sourceUrl, LegadoCompatibilityStatus.VERIFIED);
+      this.restoreCompatibilityVerificationRecord(records[i]);
     }
+  }
+
+  private async restorePendingCompatibilityRecords(restoreGeneration: number): Promise<void> {
+    const startTime = Date.now();
+    const sourceIds: string[] = [];
+    this.pendingCompatibilityRecords.forEach((_record: LegadoCompatibilityStorageRecord, sourceId: string): void => {
+      sourceIds.push(sourceId);
+    });
+
+    let restoredCount = 0;
+    for (let index = 0; index < sourceIds.length; index++) {
+      if (!this.isCurrentCompatibilityRestore(restoreGeneration)) {
+        return;
+      }
+      const sourceId = sourceIds[index];
+      if (this.pendingCompatibilityRecords.get(sourceId) !== undefined) {
+        await this.ensureSourceCompatibility(sourceId);
+        restoredCount++;
+      }
+      if (!this.isCurrentCompatibilityRestore(restoreGeneration)) {
+        return;
+      }
+      await this.yieldToEventLoop();
+      if ((index + 1) % 32 === 0 || index + 1 === sourceIds.length) {
+        logger.debug(TAG, `后台恢复 V2 兼容状态进度: ${index + 1}/${sourceIds.length}`);
+      }
+    }
+    if (!this.isCurrentCompatibilityRestore(restoreGeneration)) {
+      return;
+    }
+
+    const pendingVerificationCount = this.pendingVerificationRecords.size;
+    this.pendingVerificationRecords.clear();
+    this.mergePendingExecutionTraceSummaries();
+    logger.info(
+      TAG,
+      `后台 V2 兼容状态恢复完成: restored=${restoredCount}/${sourceIds.length}, ` +
+      `orphanVerification=${pendingVerificationCount}, elapsed=${Date.now() - startTime}ms`
+    );
+  }
+
+  private async restoreOneCompatibilityRecord(
+    record: LegadoCompatibilityStorageRecord,
+    compiler: LegadoCompatibilityCompiler,
+    restoreGeneration: number
+  ): Promise<void> {
+    const sourceId = record.sourceUrl;
+    let savedSource: LegadoBookSource | null = null;
+    try {
+      const source = this.sources.get(sourceId);
+      if (source === undefined) {
+        logger.warn(TAG, `兼容记录缺少对应书源，忽略恢复: ${sourceId}`);
+        return;
+      }
+      savedSource = source;
+
+      const compiled = await compiler.compileOne(record.rawJson);
+      if (!this.isCurrentCompatibilityRestore(restoreGeneration) ||
+        this.sources.get(sourceId) !== savedSource) {
+        logger.debug(TAG, `忽略过期的 V2 兼容恢复结果: ${sourceId}`);
+        return;
+      }
+      if (compiled === null || compiled.source.bookSourceUrl !== sourceId ||
+        compiled.raw.sha256 !== record.rawSha256) {
+        this.compatibilityStatuses.set(sourceId, LegadoCompatibilityStatus.BLOCKED);
+        this.compatibilityModes.set(sourceId, LegadoCompatibilityEngineMode.LEGACY);
+        logger.warn(TAG, `兼容记录校验失败，回退旧执行器: ${sourceId}`);
+        return;
+      }
+
+      this.applySavedLocalState(savedSource, compiled.source);
+      this.sources.set(sourceId, compiled.source);
+      this.executors.delete(sourceId);
+      this.v2Executors.delete(sourceId);
+      this.compiledSources.set(sourceId, compiled);
+      this.compatibilityStatuses.set(sourceId, this.resolveEffectiveCompatibilityStatus(compiled));
+      const restoredMode = this.resolveRestoredMode(sourceId, record.engineMode);
+      this.compatibilityModes.set(sourceId, restoredMode);
+
+      // A compiler contract may gain support for an existing Legado API
+      // without changing the storage schema. Keep the persisted readiness
+      // snapshot in step with the freshly compiled source.
+      if (this.isCompatibilitySnapshotStale(record, compiled)) {
+        await getNovelDataManager().updateCompatibilityRecordIfRawMatches(
+          this.createCompatibilityRecord(compiled, record.engineMode)
+        );
+        logger.info(TAG, `已刷新 V2 编译快照: ${sourceId}`);
+      }
+
+      const pendingVerification = this.pendingVerificationRecords.get(sourceId);
+      if (pendingVerification !== undefined) {
+        this.restoreCompatibilityVerificationRecord(pendingVerification);
+        this.pendingVerificationRecords.delete(sourceId);
+      }
+      if (this.isCurrentCompatibilityRestore(restoreGeneration) &&
+        this.sources.get(sourceId) === savedSource) {
+        await this.syncLegadoImageVirtualSource(compiled.source);
+      }
+    } catch (error) {
+      if (savedSource !== null && this.isCurrentCompatibilityRestore(restoreGeneration) &&
+        this.sources.get(sourceId) === savedSource) {
+        this.compatibilityStatuses.set(sourceId, LegadoCompatibilityStatus.BLOCKED);
+        this.compatibilityModes.set(sourceId, LegadoCompatibilityEngineMode.LEGACY);
+      }
+      logger.warn(TAG, `恢复兼容记录失败，回退旧执行器: ${sourceId}, ${String(error)}`);
+    } finally {
+      if (this.isCurrentCompatibilityRestore(restoreGeneration) &&
+        this.pendingCompatibilityRecords.get(sourceId) === record) {
+        this.pendingCompatibilityRecords.delete(sourceId);
+      }
+    }
+  }
+
+  private restoreCompatibilityVerificationRecord(record: LegadoSourceVerificationRecord): void {
+    const compiled = this.compiledSources.get(record.sourceUrl);
+    if (!compiled || compiled.raw.sha256 !== record.rawSha256 ||
+      !this.includesAllWorkflows(record.workflows, this.getRequiredVerificationWorkflows(compiled))) {
+      logger.warn(TAG, `忽略已过期或不完整的 V2 工作流验证: ${record.sourceUrl}`);
+      return;
+    }
+    this.verificationRecords.set(record.sourceUrl, record);
+    this.compatibilityStatuses.set(record.sourceUrl, LegadoCompatibilityStatus.VERIFIED);
+  }
+
+  private mergePendingExecutionTraceSummaries(): void {
+    this.mergeExecutionTraceSummaries(this.pendingExecutionTraceSummaries);
+    this.mergeExecutionTraceWorkflowSummaries(this.pendingExecutionTraceWorkflowSummaries);
+    this.pendingExecutionTraceSummaries = [];
+    this.pendingExecutionTraceWorkflowSummaries = [];
   }
 
   private applySavedLocalState(saved: LegadoBookSource, target: LegadoBookSource): void {
@@ -1397,6 +1627,7 @@ export class NovelSourceManager {
    */
   async deleteSource(sourceId: string): Promise<boolean> {
     const deletedSource = this.sources.get(sourceId) || null;
+    this.invalidatePendingCompatibilityRestore(sourceId);
     this.executors.delete(sourceId);
     this.compiledSources.delete(sourceId);
     this.v2Executors.delete(sourceId);
@@ -1405,6 +1636,7 @@ export class NovelSourceManager {
     this.verificationRecords.delete(sourceId);
     this.lastExecutionTraces.delete(sourceId);
     this.lastExecutionTraceSummaries.delete(sourceId);
+    this.executionTraceWorkflowSummaries.delete(sourceId);
     const deleted = this.sources.delete(sourceId);
     
     // 从数据库删除
@@ -1856,6 +2088,7 @@ export class NovelSourceManager {
     cancellationToken?: LegadoExecutionCancellationToken
   ): Promise<NovelSearchResult[]> {
     cancellationToken?.throwIfCancelled();
+    await this.ensureSourceCompatibility(sourceId);
     const source = this.sources.get(sourceId);
     if (!source) {
       logger.warn(TAG, `书源不存在: ${sourceId}`);
@@ -2012,6 +2245,7 @@ export class NovelSourceManager {
     requestCarrierKey?: string
   ): Promise<LegadoWorkflowBookInfoResult> {
     cancellationToken?.throwIfCancelled();
+    await this.ensureSourceCompatibility(sourceId);
     if (this.getEffectiveCompatibilityEngineMode(sourceId) === LegadoCompatibilityEngineMode.V2_ENABLED) {
       const v2Executor = this.getActiveV2Executor(sourceId);
       if (!v2Executor) {
@@ -2187,6 +2421,7 @@ export class NovelSourceManager {
     cancellationToken?: LegadoExecutionCancellationToken
   ): Promise<LegadoChapter[]> {
     cancellationToken?.throwIfCancelled();
+    await this.ensureSourceCompatibility(sourceId);
     if (this.getEffectiveCompatibilityEngineMode(sourceId) === LegadoCompatibilityEngineMode.V2_ENABLED) {
       const v2Executor = this.getActiveV2Executor(sourceId);
       if (!v2Executor) {
@@ -2252,6 +2487,7 @@ export class NovelSourceManager {
     cancellationToken?: LegadoExecutionCancellationToken
   ): Promise<LegadoWorkflowContentResult> {
     cancellationToken?.throwIfCancelled();
+    await this.ensureSourceCompatibility(sourceId);
     if (this.getEffectiveCompatibilityEngineMode(sourceId) === LegadoCompatibilityEngineMode.V2_ENABLED) {
       const v2Executor = this.getActiveV2Executor(sourceId);
       if (!v2Executor) {
@@ -2381,6 +2617,7 @@ export class NovelSourceManager {
     cancellationToken?: LegadoExecutionCancellationToken
   ): Promise<LegadoExploreKind[]> {
     cancellationToken?.throwIfCancelled();
+    await this.ensureSourceCompatibility(sourceId);
     if (this.getEffectiveCompatibilityEngineMode(sourceId) === LegadoCompatibilityEngineMode.V2_ENABLED) {
       const v2Executor = this.getActiveV2Executor(sourceId);
       if (!v2Executor) {
@@ -2428,6 +2665,7 @@ export class NovelSourceManager {
     cancellationToken?: LegadoExecutionCancellationToken
   ): Promise<NovelSearchResult[]> {
     cancellationToken?.throwIfCancelled();
+    await this.ensureSourceCompatibility(sourceId);
     const source = this.sources.get(sourceId);
     if (!source) {
       return [];
@@ -2514,6 +2752,7 @@ export class NovelSourceManager {
    * 注意：这个方法不会持久化，用于初始化时加载
    */
   loadSourceToMemory(source: LegadoBookSource): void {
+    this.invalidatePendingCompatibilityRestore(source.bookSourceUrl);
     this.sources.set(source.bookSourceUrl, source);
     this.executors.delete(source.bookSourceUrl);
     this.compiledSources.delete(source.bookSourceUrl);

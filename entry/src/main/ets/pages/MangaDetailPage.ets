@@ -28,7 +28,7 @@ import { DownloadStatus, MangaStatus, ReadingStatus, StatusConverter } from 'man
 import { ComicConverter } from '../Framework/Utils/ComicConverter';
 import { DataManager, ComicInfo, ComicInfoInput, ChapterInfo as DataChapterInfo, ChapterInfoInput, PageInfo, PageInfoInput, ReadHistory, OnlineChapterInfoInput, OnlinePageInfoInput, OnlineComicInfo, OnlineComicSourceSaveInput } from '../Framework/Data/DataManager';
 import { ThemeManager, ThemeType } from 'manxia_theme/src/main/ets/Framework/Managers/ThemeManager';
-import { colorMap } from 'manxia_core/src/main/ets/Data/ResourceMap';
+import { resolveColor } from 'manxia_ui_resources/src/main/ets/ResourceCatalog';
 import { MangaReaderPageParams, MangaReaderContentType } from './MangaReaderPage';
 import { openMangaReaderInIsolatedAbility } from '../Framework/Reader/MangaReaderAbilityLauncher';
 import { DataService } from '../Framework/Services/DataService';
@@ -5365,7 +5365,7 @@ struct MangaDetailPage {
     .width('100%')
     .padding(12)
     .backgroundColor(Color.Transparent)
-    .border({ width: 1, color: colorMap['app.color.settings_panel_border'] })
+    .border({ width: 1, color: resolveColor('app.color.settings_panel_border') })
     .borderRadius(8)
     .justifyContent(FlexAlign.Center)
     .alignItems(HorizontalAlign.Center)
@@ -5493,7 +5493,7 @@ struct MangaDetailPage {
     .width('100%')
     .padding({ left: 16, right: 16, top: 12, bottom: 12 })
     .backgroundColor(Color.Transparent)
-    .border({ width: 1, color: colorMap['app.color.settings_panel_border'] })
+    .border({ width: 1, color: resolveColor('app.color.settings_panel_border') })
     .borderRadius(8)
     .onClick(() => this.readChapter(chapter))
     .gesture(

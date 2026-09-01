@@ -5,7 +5,8 @@
  */
 
 import { logger } from 'manxia_core/src/main/ets/Utils/Logger';
-import { MangaInfo, ChapterInfo } from 'manxia_source_engine/src/main/ets/Framework/WebView/MangaSourceTypes';
+// 类型已下沉至 manxia_core（HSP 迁移 P0 依赖解耦）：network 不再直接依赖 manxia_source_engine
+import { MangaInfo, ChapterInfo } from 'manxia_core/src/main/ets/Models/WebViewSourceTypes';
 
 const TAG = 'WebViewDataCacheManager';
 

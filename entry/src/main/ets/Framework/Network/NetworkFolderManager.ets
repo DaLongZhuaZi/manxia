@@ -1406,7 +1406,7 @@ export class NetworkFolderManager {
       this.encryptionKey = await importSymKeyFromBase64(storedKey);
     } else {
       this.encryptionKey = await generateAes256Key();
-      const exportedKey = exportSymKeyToBase64(this.encryptionKey);
+      const exportedKey = await exportSymKeyToBase64(this.encryptionKey);
       await this.pref!.put(ENCRYPTION_KEY_PREF, exportedKey);
       await this.pref!.flush();
     }

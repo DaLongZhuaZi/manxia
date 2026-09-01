@@ -8,6 +8,7 @@ export class SubscriptionInitializer {
   private static instance: SubscriptionInitializer | null = null;
   private readonly manager: SubscriptionManager = getSubscriptionManager();
   private isInitialized: boolean = false;
+  private initializationPromise: Promise<void> | null = null;
 
   private constructor() {
   }
@@ -24,6 +25,23 @@ export class SubscriptionInitializer {
       logger.debug(TAG, '统一内容跟踪模块已初始化，跳过重复初始化');
       return;
     }
+    if (this.initializationPromise !== null) {
+      await this.initializationPromise;
+      return;
+    }
+
+    const initialization = this.initializeInternal(context);
+    this.initializationPromise = initialization;
+    try {
+      await initialization;
+    } finally {
+      if (this.initializationPromise === initialization) {
+        this.initializationPromise = null;
+      }
+    }
+  }
+
+  private async initializeInternal(context: common.UIAbilityContext): Promise<void> {
     logger.info(TAG, '开始初始化统一内容跟踪模块');
     await this.manager.initialize(context);
     this.isInitialized = true;

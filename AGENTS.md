@@ -35,6 +35,16 @@
 - 项目当前定位为纯应用软件，不再包含游戏相关的 C++ 底层逻辑。
 - 优先使用官方最新 API，尽量不引入新的第三方插件。
 
+### 2.0 多模块依赖与 OhmUrl 解析
+
+- 在任意 HAR 模块内以 `manxia_xxx/src/main/ets/...` 形式跨模块导入时，必须先在该模块自身的 `oh-package.json5` 中显式声明对应依赖（`file:../xxx`）；HAR 编译只按自身依赖闭包解析，不会继承根 `oh-package.json5` 或 entry 的依赖提升。
+- 出现 `Failed to resolve OhmUrl ... "undefined" module` 报错时，优先排查“导入方模块是否声明了被导入模块的依赖”，而不是怀疑文件名或大小写；同时确认 `模块名`（下划线）与 `目录名`（连字符，如 `manxia-network`）的对应关系。
+- 新增模块依赖后需重新执行 `ohpm install` 刷新对应模块的 `oh_modules` 软链；若 DevEco Studio 占用锁文件导致 EPERM，由用户在 IDE 内同步即可，代理不必强行处理。
+- 声明依赖前先检查是否形成循环依赖（例如基础模块反向引用上层 UI 模块）。
+- HAR 转 HSP 的完整配套改动：① src/main/module.json5 的 `type` 改 `shared` 并加 `deliveryWithInstall: true`；② **模块根目录 hvigorfile.ts 的 `harTasks` 必须同步改为 `hspTasks`**（否则报 00303278 Configuration Error "Unable to get plugin in hvigorfile.ts"）；③ 转换后用全模块 grep 复核无任何 HAR 依赖该模块（HAR 不依赖 HSP）。回退 = type 改回 har + hvigorfile.ts 改回 harTasks。
+- **⚠️ 本项目已于 2026-06-09 放弃 HSP 迁移**（运行时 record 解析不匹配 + 收益成本不匹配），全部模块维持 HAR，详见 docs/HSP_MIGRATION_PLAN.md 头部决策记录。未经用户明确要求，不要重新发起 HSP 相关改动；P0 的依赖显式化治理（各模块 oh-package 显式声明）仍有效并必须遵守。
+- HAR→HSP 后**编译通过但启动瞬间闪退、报 `cannot find record '&pkg/path&version'`（ReferenceError，无传统 crash 日志）**：这是模块类型/版本变更后增量构建缓存残留旧版 record 请求所致。排查顺序：① hilog 抓 JS_ERROR/AppKit 行确认 record 名称；② 字节级比对 entry abc 请求格式与 HSP abc 提供格式（abc 为 PANDA 二进制，可用 Format-Hex/字节扫描，注意受限模式可能使 ReadAllBytes 返回全零假数据，须用 Format-Hex 或 Get-Content -AsByteStream 复核）；③ 全量清理（停 daemon + 删全部模块 build 目录 + .hvigor + IDE Invalidate Caches）后重建重装；④ 仍不匹配则改用 HSP index.ets 桶导出 + 包名导入（HSP 官方推荐消费方式，深度路径对 HSP 不保证运行时可解析）。
+
 ### 2.1 本机 SDK 路径
 
 - 当前机器已确认的 HarmonyOS SDK 主目录为 `F:\HarmonyOS\SDK`。
@@ -72,6 +82,16 @@
 - 在已连接设备上覆盖安装并启动 APP 时，优先使用以下命令；执行前仍需确认当前工作目录是仓库根目录，并优先使用最新构建出的 signed HAP：
   - 查看已连接设备：`& 'F:\DevEco Studio\sdk\default\openharmony\toolchains\hdc.exe' list targets`
   - 覆盖安装最新 HAP：`& 'F:\DevEco Studio\sdk\default\openharmony\toolchains\hdc.exe' -t <deviceId> install -r 'F:\DevEcoStudioProject\manxia\entry\build\default\outputs\default\entry-default-signed.hap'`
+  - **（已废弃 2026-06-09：HSP 迁移已放弃，本节仅作历史记录保留）HSP 依赖安装**：HDC 单包安装 HAP 会报 9568305 "依赖的模块不存在"。命令行安装必须 HAP+HSP 一起装（目录方式，与 IDE bm install -p 一致）：
+    ```powershell
+    $hdc = 'F:\DevEco Studio\sdk\default\openharmony\toolchains\hdc.exe'
+    & $hdc -t <deviceId> shell mkdir data/local/tmp/manxia_install
+    & $hdc -t <deviceId> file send 'F:\DevEcoStudioProject\manxia\entry\build\default\outputs\default\entry-default-signed.hap' data/local/tmp/manxia_install
+    & $hdc -t <deviceId> file send 'F:\DevEcoStudioProject\manxia\manxia-reader-ui\build\default\outputs\default\manxia_reader_ui-default-signed.hsp' data/local/tmp/manxia_install
+    & $hdc -t <deviceId> shell bm install -p data/local/tmp/manxia_install
+    & $hdc -t <deviceId> shell rm -rf data/local/tmp/manxia_install
+    ```
+    每转换一个 HSP 就多 send 一个对应 `-default-signed.hsp`；HSP 产物路径为 `<模块目录>/build/default/outputs/default/<模块名>-default-signed.hsp`。IDE 运行/调试则推荐在 Run > Edit Configurations 勾选 Auto Dependencies（或 Deploy Multi Hap Packages）自动带上 HSP。
   - 启动主入口：`& 'F:\DevEco Studio\sdk\default\openharmony\toolchains\hdc.exe' -t <deviceId> shell aa start -a EntryAbility -b com.dlzz.manxia -m entry`
   - 验证进程：`& 'F:\DevEco Studio\sdk\default\openharmony\toolchains\hdc.exe' -t <deviceId> shell pidof com.dlzz.manxia`
   - 当前已实测连接设备 ID 示例：`2UCUT24724009680`。该 ID 只能作为当前机器当前设备的便利记录，实际执行前必须以 `list targets` 输出为准。

@@ -343,8 +343,8 @@ export class SuwayomiSource {
    */
   private async loadConfig(): Promise<void> {
     try {
-      // 从 SuwayomiTracker 的配置中读取（使用同步方法保持一致）
-      const store = preferences.getPreferencesSync(this.getAbilityContext(), { name: 'suwayomi_config' });
+      // 从 SuwayomiTracker 的配置中读取（使用异步方法保持一致）
+      const store = await preferences.getPreferences(this.getAbilityContext(), { name: 'suwayomi_config' });
       const serverUrl = store.getSync('serverUrl', '') as string;
       const username = store.getSync('username', '') as string;
       const password = store.getSync('password', '') as string;

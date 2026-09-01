@@ -16,6 +16,7 @@ import { SettingsImmersiveTitleBar } from './settings/SettingsImmersiveTitleBar'
 import { SettingsPageTitleBarManager } from 'manxia_features_ui/src/main/ets/pages/settings/SettingsPageTitleBarManager';
 import { GlobalBackgroundLayerMode } from 'manxia_theme/src/main/ets/Framework/Components/GlobalBackgroundLayer';
 import { SharedPageBackgroundLayer } from 'manxia_theme/src/main/ets/Framework/Components/SharedPageBackgroundLayer';
+import { resolveSystemSymbol, resolveSystemMedia, resolveSystemColor } from '../Framework/Resources/SystemResourceCatalog';
 
 const TAG = 'SystemResourcePreviewPage';
 const GROUP_BATCH_SIZE: number = 8;
@@ -1661,11 +1662,11 @@ export struct SystemResourcePreviewPage {
               GridItem() {
                 Column({ space: 6 }) {
                   if (this.selectedCategory === ResourceCategory.SYMBOL) {
-                    SymbolGlyph($r(`sys.symbol.${itemName}`))
+                    SymbolGlyph(resolveSystemSymbol(itemName))
                       .fontSize(26)
                       .fontColor([ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme)])
                   } else if (this.selectedCategory === ResourceCategory.MEDIA) {
-                    Image($r(`sys.media.${itemName}`))
+                    Image(resolveSystemMedia(itemName))
                       .width(26)
                       .height(26)
                       .objectFit(ImageFit.Contain)
@@ -1675,7 +1676,7 @@ export struct SystemResourcePreviewPage {
                       .width(26)
                       .height(26)
                       .borderRadius(4)
-                      .backgroundColor($r(`sys.color.${itemName}`))
+                      .backgroundColor(resolveSystemColor(itemName))
                   }
                   
                   Text(itemName)
@@ -1842,7 +1843,7 @@ export struct SystemResourcePreviewPage {
           ForEach(this.getVisibleCurrentGridItems(), (itemName: string) => {
             GridItem() {
               Column({ space: 6 }) {
-                SymbolGlyph($r(`sys.symbol.${itemName}`))
+                SymbolGlyph(resolveSystemSymbol(itemName))
                   .fontSize(26)
                   .fontColor([ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme)])
                 
@@ -1896,7 +1897,7 @@ export struct SystemResourcePreviewPage {
           ForEach(this.getVisibleCurrentGridItems(), (itemName: string) => {
             GridItem() {
               Column({ space: 6 }) {
-                Image($r(`sys.media.${itemName}`))
+                Image(resolveSystemMedia(itemName))
                   .width(28)
                   .height(28)
                   .fillColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
@@ -1953,7 +1954,7 @@ export struct SystemResourcePreviewPage {
             Column()
               .width(48)
               .height(48)
-              .backgroundColor($r(`sys.color.${colorName}`))
+              .backgroundColor(resolveSystemColor(colorName))
               .borderRadius(8)
               .border({ width: 1, color: ThemeAwareHelper.getTestManagementThemedColor('divider', this.themeState.currentTheme) })
             

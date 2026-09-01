@@ -516,14 +516,14 @@ export class LegadoRuntimeV2 {
   private async executeSymmetricCryptoBridgeRequest(request: LegadoBridgeRequest): Promise<LegadoBridgeResponse> {
     try {
       const operation = (request.method || '').trim();
-      const keyBytes = this.decodeBase64(request.key || '');
+      const keyBytes = await this.decodeBase64(request.key || '');
       const spec = this.resolveSymmetricCipherSpec(request.algorithm || '', keyBytes.length);
       const keyGenerator = cryptoFramework.createSymKeyGenerator(spec.keyAlgorithm);
       const symKey = await keyGenerator.convertKey({ data: keyBytes });
       const ivText = this.getRequestHeader(request.headers, 'x-legado-iv-base64');
-      const params = this.buildSymmetricParams(spec, ivText);
+      const params = await this.buildSymmetricParams(spec, ivText);
       const isEncrypt = operation.startsWith('encrypt');
-      const input = this.decodeSymmetricInput(
+      const input = await this.decodeSymmetricInput(
         request.body || '',
         this.getRequestHeader(request.headers, 'x-legado-input-encoding')
       );
@@ -534,7 +534,7 @@ export class LegadoRuntimeV2 {
         params
       );
       const result = await cipher.doFinal({ data: input });
-      const body = this.formatSymmetricOutput(operation, result.data);
+      const body = await this.formatSymmetricOutput(operation, result.data);
       return this.buildBridgeResponse(request, true, body, '', 200, '');
     } catch (error) {
       return this.buildBridgeResponse(
@@ -614,14 +614,14 @@ export class LegadoRuntimeV2 {
     };
   }
 
-  private buildSymmetricParams(
+  private async buildSymmetricParams(
     spec: LegadoSymmetricCipherSpec,
     ivBase64: string
-  ): cryptoFramework.ParamsSpec | null {
+  ): Promise<cryptoFramework.ParamsSpec | null> {
     if (!spec.requiresIv) {
       return null;
     }
-    const iv = this.decodeBase64(ivBase64);
+    const iv = await this.decodeBase64(ivBase64);
     if (iv.length !== spec.ivLength) {
       throw new Error(`INVALID_${spec.keyAlgorithm}_CBC_IV_LENGTH:${iv.length}`);
     }
@@ -634,17 +634,17 @@ export class LegadoRuntimeV2 {
     return params;
   }
 
-  private decodeSymmetricInput(value: string, encoding: string): Uint8Array {
+  private async decodeSymmetricInput(value: string, encoding: string): Promise<Uint8Array> {
     if (encoding === 'hex') {
       return this.decodeHex(value);
     }
     if (encoding === 'base64') {
-      return this.decodeBase64(value);
+      return await this.decodeBase64(value);
     }
     throw new Error(`UNSUPPORTED_SYMMETRIC_INPUT_ENCODING:${encoding}`);
   }
 
-  private formatSymmetricOutput(operation: string, bytes: Uint8Array): string {
+  private async formatSymmetricOutput(operation: string, bytes: Uint8Array): Promise<string> {
     if (operation === 'encryptHex' || operation === 'decryptHex') {
       return this.bytesToHex(bytes);
     }
@@ -653,12 +653,12 @@ export class LegadoRuntimeV2 {
       return decoder.decodeToString(bytes);
     }
     const base64 = new util.Base64Helper();
-    return base64.encodeToStringSync(bytes);
+    return await base64.encodeToString(bytes);
   }
 
-  private decodeBase64(value: string): Uint8Array {
+  private async decodeBase64(value: string): Promise<Uint8Array> {
     const base64 = new util.Base64Helper();
-    return base64.decodeSync(value);
+    return await base64.decode(value);
   }
 
   private decodeHex(value: string): Uint8Array {

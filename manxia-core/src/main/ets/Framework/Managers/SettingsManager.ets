@@ -165,10 +165,11 @@ export class SettingsManager implements ISettingsManagerFacade {
 
   /**
    * 获取底部导航栏可见标签
-   * 默认显示基本标签: 书库(1), 图源(3), 书源(4), Suwayomi(5), Komga(7), 管理(6)
+   * 默认显示基本标签: 书库(1), 图源(3), 书源(4), 管理(6)
+   * Suwayomi(5) 与 Komga(7) 默认不在底栏显示，可在对应设置页或欢迎引导中开启
    */
   async getVisibleTabs(): Promise<number[]> {
-    const defaultTabs: number[] = [1, 3, 4, 5, 7, 6];
+    const defaultTabs: number[] = [1, 3, 4, 6];
     const savedValue = this.settingsCache.get(SettingKeys.VISIBLE_TABS);
     if (savedValue === undefined || savedValue.trim().length === 0) {
       return defaultTabs;

@@ -13,7 +13,7 @@ import { logger } from 'manxia_core/src/main/ets/Utils/Logger';
 import { UnifiedOperationInterface, OperationType, OperationParams, OperationParamsData, OperationResult, ConfigurationOperationData, SecurityOperationData, SecurityCheckOperationData, ExtensionOperationData } from 'manxia_source_engine/src/main/ets/Framework/WebView/UnifiedOperationInterface';
 import { WebViewConfigurationParser, SecurityPolicyConfigurationParser, WebViewConfiguration, SecurityPolicyConfiguration, WebViewExtensionConfig } from 'manxia_source_engine/src/main/ets/Framework/WebView/ConfigurationParser';
 import { curves, UIContext } from '@kit.ArkUI';
-import { colorMap } from 'manxia_core/src/main/ets/Data/ResourceMap';
+import { resolveColor } from 'manxia_ui_resources/src/main/ets/ResourceCatalog';
 import { HdsNavDestination, HdsNavDestinationAttribute, ScrollEffectType } from '@kit.UIDesignKit';
 import { webview } from '@kit.ArkWeb';
 import { BusinessError } from '@kit.BasicServicesKit';
@@ -771,7 +771,7 @@ struct WebViewConfigurableSystemTestPage {
       }
       .width('100%')
       .height('100%')
-      .backgroundColor(colorMap['app.color.background_primary'])
+      .backgroundColor(resolveColor('app.color.background_primary'))
       .expandSafeArea([SafeAreaType.SYSTEM], [SafeAreaEdge.TOP, SafeAreaEdge.BOTTOM])
       .padding({ top: this.statusBarHeight })
     }
@@ -790,16 +790,16 @@ struct WebViewConfigurableSystemTestPage {
       Text('WebView基础测试')
         .fontSize(16)
         .fontWeight(FontWeight.Bold)
-        .fontColor(colorMap['app.color.text_primary'])
+        .fontColor(resolveColor('app.color.text_primary'))
 
       // URL输入框
       TextInput({ placeholder: '输入测试URL', text: this.webTestUrl })
         .width('100%')
         .height(44)
         .fontSize(14)
-        .backgroundColor(colorMap['app.color.background_secondary'])
-        .fontColor(colorMap['app.color.text_primary'])
-        .placeholderColor(colorMap['app.color.text_secondary'])
+        .backgroundColor(resolveColor('app.color.background_secondary'))
+        .fontColor(resolveColor('app.color.text_primary'))
+        .placeholderColor(resolveColor('app.color.text_secondary'))
         .borderRadius(8)
         .padding({ left: 12, right: 12 })
         .onChange((value: string) => {
@@ -855,18 +855,18 @@ struct WebViewConfigurableSystemTestPage {
       .width('100%')
       .borderRadius(8)
       .clip(true)
-      .border({ width: 1, color: colorMap['app.color.divider'] })
+      .border({ width: 1, color: resolveColor('app.color.divider') })
 
       // 状态信息
       Column({ space: 8 }) {
         Row({ space: 8 }) {
           Text('状态:')
             .fontSize(13)
-            .fontColor(colorMap['app.color.text_secondary'])
+            .fontColor(resolveColor('app.color.text_secondary'))
             .width(50)
           Text(this.webLoadState)
             .fontSize(13)
-            .fontColor(this.webLoadState === 'error' ? '#FF5252' : colorMap['app.color.text_primary'])
+            .fontColor(this.webLoadState === 'error' ? '#FF5252' : resolveColor('app.color.text_primary'))
             .fontWeight(FontWeight.Medium)
         }
         .width('100%')
@@ -874,11 +874,11 @@ struct WebViewConfigurableSystemTestPage {
         Row({ space: 8 }) {
           Text('URL:')
             .fontSize(13)
-            .fontColor(colorMap['app.color.text_secondary'])
+            .fontColor(resolveColor('app.color.text_secondary'))
             .width(50)
           Text(this.webCurrentUrl)
             .fontSize(13)
-            .fontColor(colorMap['app.color.text_primary'])
+            .fontColor(resolveColor('app.color.text_primary'))
             .layoutWeight(1)
             .maxLines(2)
             .textOverflow({ overflow: TextOverflow.Ellipsis })
@@ -889,11 +889,11 @@ struct WebViewConfigurableSystemTestPage {
         Row({ space: 8 }) {
           Text('标题:')
             .fontSize(13)
-            .fontColor(colorMap['app.color.text_secondary'])
+            .fontColor(resolveColor('app.color.text_secondary'))
             .width(50)
           Text(this.webPageTitle || '无')
             .fontSize(13)
-            .fontColor(colorMap['app.color.text_primary'])
+            .fontColor(resolveColor('app.color.text_primary'))
             .layoutWeight(1)
             .maxLines(2)
             .textOverflow({ overflow: TextOverflow.Ellipsis })
@@ -903,12 +903,12 @@ struct WebViewConfigurableSystemTestPage {
       }
       .width('100%')
       .padding(12)
-      .backgroundColor(colorMap['app.color.background_secondary'])
+      .backgroundColor(resolveColor('app.color.background_secondary'))
       .borderRadius(8)
     }
     .width('100%')
     .padding(16)
-    .backgroundColor(colorMap['app.color.panel_background'])
+    .backgroundColor(resolveColor('app.color.panel_background'))
     .borderRadius(12)
   }
 
@@ -919,15 +919,15 @@ struct WebViewConfigurableSystemTestPage {
       Text('基础测试')
         .fontSize(16)
         .fontWeight(FontWeight.Bold)
-        .fontColor(colorMap['app.color.text_primary'])
+        .fontColor(resolveColor('app.color.text_primary'))
       
       // 使用Flex自动换行
       Flex({ wrap: FlexWrap.Wrap, justifyContent: FlexAlign.Start }) {
         Button('加载页面')
           .fontSize(12)
           .type(ButtonType.Capsule)
-          .backgroundColor(colorMap['app.color.accent_primary'])
-          .fontColor(colorMap['app.color.text_inverse'])
+          .backgroundColor(resolveColor('app.color.accent_primary'))
+          .fontColor(resolveColor('app.color.text_inverse'))
           .margin({ right: 8, bottom: 8 })
           .padding({ left: 16, right: 16 })
           .onClick(() => this.startWebBasicTest())
@@ -935,8 +935,8 @@ struct WebViewConfigurableSystemTestPage {
         Button('标题')
           .fontSize(12)
           .type(ButtonType.Capsule)
-          .backgroundColor(colorMap['app.color.accent_blue'])
-          .fontColor(colorMap['app.color.text_inverse'])
+          .backgroundColor(resolveColor('app.color.accent_blue'))
+          .fontColor(resolveColor('app.color.text_inverse'))
           .margin({ right: 8, bottom: 8 })
           .padding({ left: 16, right: 16 })
           .onClick(() => this.runTitleJsTest())
@@ -944,8 +944,8 @@ struct WebViewConfigurableSystemTestPage {
         Button('链接数')
           .fontSize(12)
           .type(ButtonType.Capsule)
-          .backgroundColor(colorMap['app.color.accent_orange'])
-          .fontColor(colorMap['app.color.text_inverse'])
+          .backgroundColor(resolveColor('app.color.accent_orange'))
+          .fontColor(resolveColor('app.color.text_inverse'))
           .margin({ right: 8, bottom: 8 })
           .padding({ left: 16, right: 16 })
           .onClick(() => this.runLinksCountTest())
@@ -953,8 +953,8 @@ struct WebViewConfigurableSystemTestPage {
         Button('UA')
           .fontSize(12)
           .type(ButtonType.Capsule)
-          .backgroundColor(colorMap['app.color.accent_green'])
-          .fontColor(colorMap['app.color.text_inverse'])
+          .backgroundColor(resolveColor('app.color.accent_green'))
+          .fontColor(resolveColor('app.color.text_inverse'))
           .margin({ right: 8, bottom: 8 })
           .padding({ left: 16, right: 16 })
           .onClick(() => this.runUserAgentTest())
@@ -965,15 +965,15 @@ struct WebViewConfigurableSystemTestPage {
       Text('高级捕获')
         .fontSize(16)
         .fontWeight(FontWeight.Bold)
-        .fontColor(colorMap['app.color.text_primary'])
+        .fontColor(resolveColor('app.color.text_primary'))
         .margin({ top: 8 })
       
       Flex({ wrap: FlexWrap.Wrap, justifyContent: FlexAlign.Start }) {
         Button('所有链接')
           .fontSize(12)
           .type(ButtonType.Capsule)
-          .backgroundColor(colorMap['app.color.accent_purple'])
-          .fontColor(colorMap['app.color.text_inverse'])
+          .backgroundColor(resolveColor('app.color.accent_purple'))
+          .fontColor(resolveColor('app.color.text_inverse'))
           .margin({ right: 8, bottom: 8 })
           .padding({ left: 16, right: 16 })
           .onClick(() => this.getAllLinks())
@@ -981,8 +981,8 @@ struct WebViewConfigurableSystemTestPage {
         Button('所有图片')
           .fontSize(12)
           .type(ButtonType.Capsule)
-          .backgroundColor(colorMap['app.color.accent_pink'])
-          .fontColor(colorMap['app.color.text_inverse'])
+          .backgroundColor(resolveColor('app.color.accent_pink'))
+          .fontColor(resolveColor('app.color.text_inverse'))
           .margin({ right: 8, bottom: 8 })
           .padding({ left: 16, right: 16 })
           .onClick(() => this.getAllImages())
@@ -990,8 +990,8 @@ struct WebViewConfigurableSystemTestPage {
         Button('元信息')
           .fontSize(12)
           .type(ButtonType.Capsule)
-          .backgroundColor(colorMap['app.color.accent_teal'])
-          .fontColor(colorMap['app.color.text_inverse'])
+          .backgroundColor(resolveColor('app.color.accent_teal'))
+          .fontColor(resolveColor('app.color.text_inverse'))
           .margin({ right: 8, bottom: 8 })
           .padding({ left: 16, right: 16 })
           .onClick(() => this.getPageMetaInfo())
@@ -999,8 +999,8 @@ struct WebViewConfigurableSystemTestPage {
         Button('Cookie')
           .fontSize(12)
           .type(ButtonType.Capsule)
-          .backgroundColor(colorMap['app.color.accent_amber'])
-          .fontColor(colorMap['app.color.text_inverse'])
+          .backgroundColor(resolveColor('app.color.accent_amber'))
+          .fontColor(resolveColor('app.color.text_inverse'))
           .margin({ right: 8, bottom: 8 })
           .padding({ left: 16, right: 16 })
           .onClick(() => this.getCookieInfo())
@@ -1008,8 +1008,8 @@ struct WebViewConfigurableSystemTestPage {
         Button('Storage')
           .fontSize(12)
           .type(ButtonType.Capsule)
-          .backgroundColor(colorMap['app.color.accent_cyan'])
-          .fontColor(colorMap['app.color.text_inverse'])
+          .backgroundColor(resolveColor('app.color.accent_cyan'))
+          .fontColor(resolveColor('app.color.text_inverse'))
           .margin({ right: 8, bottom: 8 })
           .padding({ left: 16, right: 16 })
           .onClick(() => this.getLocalStorageInfo())
@@ -1017,8 +1017,8 @@ struct WebViewConfigurableSystemTestPage {
         Button('性能')
           .fontSize(12)
           .type(ButtonType.Capsule)
-          .backgroundColor(colorMap['app.color.accent_indigo'])
-          .fontColor(colorMap['app.color.text_inverse'])
+          .backgroundColor(resolveColor('app.color.accent_indigo'))
+          .fontColor(resolveColor('app.color.text_inverse'))
           .margin({ right: 8, bottom: 8 })
           .padding({ left: 16, right: 16 })
           .onClick(() => this.getPerformanceInfo())
@@ -1026,8 +1026,8 @@ struct WebViewConfigurableSystemTestPage {
         Button('源码')
           .fontSize(12)
           .type(ButtonType.Capsule)
-          .backgroundColor(colorMap['app.color.accent_brown'])
-          .fontColor(colorMap['app.color.text_inverse'])
+          .backgroundColor(resolveColor('app.color.accent_brown'))
+          .fontColor(resolveColor('app.color.text_inverse'))
           .margin({ right: 8, bottom: 8 })
           .padding({ left: 16, right: 16 })
           .onClick(() => this.getPageSource())
@@ -1040,35 +1040,35 @@ struct WebViewConfigurableSystemTestPage {
           Text('JS输出')
             .fontSize(14)
             .fontWeight(FontWeight.Medium)
-            .fontColor(colorMap['app.color.text_secondary'])
+            .fontColor(resolveColor('app.color.text_secondary'))
             .layoutWeight(1)
           
           Text(`${this.jsOutput.length} 字符`)
             .fontSize(12)
-            .fontColor(colorMap['app.color.text_tertiary'])
+            .fontColor(resolveColor('app.color.text_tertiary'))
         }
         .width('100%')
         
         Scroll() {
           Text(this.jsOutput || '暂无输出')
             .fontSize(12)
-            .fontColor(colorMap['app.color.text_primary'])
+            .fontColor(resolveColor('app.color.text_primary'))
             .fontFamily('monospace')
             .width('100%')
             .padding(8)
         }
         .width('100%')
         .height(180)
-        .backgroundColor(colorMap['app.color.background_secondary'])
+        .backgroundColor(resolveColor('app.color.background_secondary'))
         .borderRadius(8)
-        .border({ width: 1, color: colorMap['app.color.divider'] })
+        .border({ width: 1, color: resolveColor('app.color.divider') })
       }
       .width('100%')
       .alignItems(HorizontalAlign.Start)
     }
     .width('100%')
     .padding(16)
-    .backgroundColor(colorMap['app.color.panel_background'])
+    .backgroundColor(resolveColor('app.color.panel_background'))
     .borderRadius(12)
   }
 
@@ -1079,10 +1079,10 @@ struct WebViewConfigurableSystemTestPage {
         Image($r('sys.media.ohos_ic_public_arrow_left'))
           .width(24)
           .height(24)
-          .fillColor(colorMap['app.color.text_primary'])
+          .fillColor(resolveColor('app.color.text_primary'))
       }
       .type(ButtonType.Circle)
-      .backgroundColor(colorMap['app.color.button_background'])
+      .backgroundColor(resolveColor('app.color.button_background'))
       .onClick(() => {
         this.goBack();
       })
@@ -1090,7 +1090,7 @@ struct WebViewConfigurableSystemTestPage {
       Text('WebView可配置系统测试')
         .fontSize(20)
         .fontWeight(FontWeight.Medium)
-        .fontColor(colorMap['app.color.text_primary'])
+        .fontColor(resolveColor('app.color.text_primary'))
         .layoutWeight(1)
         .textAlign(TextAlign.Center)
 
@@ -1098,10 +1098,10 @@ struct WebViewConfigurableSystemTestPage {
         Image($r('app.media.ic_public_refresh'))
           .width(24)
           .height(24)
-          .fillColor(colorMap['app.color.text_primary'])
+          .fillColor(resolveColor('app.color.text_primary'))
       }
       .type(ButtonType.Circle)
-      .backgroundColor(colorMap['app.color.button_background'])
+      .backgroundColor(resolveColor('app.color.button_background'))
       .onClick(() => {
         this.resetTests();
       })
@@ -1116,8 +1116,8 @@ struct WebViewConfigurableSystemTestPage {
       Row({ space: 12 }) {
         Button('运行所有测试')
           .type(ButtonType.Capsule)
-          .backgroundColor(colorMap['app.color.accent_primary'])
-          .fontColor(colorMap['app.color.text_inverse'])
+          .backgroundColor(resolveColor('app.color.accent_primary'))
+          .fontColor(resolveColor('app.color.text_inverse'))
           .enabled(!this.isRunning)
           .layoutWeight(1)
           .onClick(() => {
@@ -1126,8 +1126,8 @@ struct WebViewConfigurableSystemTestPage {
 
         Button('运行配置测试')
           .type(ButtonType.Capsule)
-          .backgroundColor(colorMap['app.color.accent_orange'])
-          .fontColor(colorMap['app.color.text_inverse'])
+          .backgroundColor(resolveColor('app.color.accent_orange'))
+          .fontColor(resolveColor('app.color.text_inverse'))
           .enabled(!this.isRunning)
           .layoutWeight(1)
           .onClick(() => {
@@ -1138,8 +1138,8 @@ struct WebViewConfigurableSystemTestPage {
       Row({ space: 12 }) {
         Button('运行性能测试')
           .type(ButtonType.Capsule)
-          .backgroundColor(colorMap['app.color.accent_blue'])
-          .fontColor(colorMap['app.color.text_inverse'])
+          .backgroundColor(resolveColor('app.color.accent_blue'))
+          .fontColor(resolveColor('app.color.text_inverse'))
           .enabled(!this.isRunning)
           .layoutWeight(1)
           .onClick(() => {
@@ -1152,11 +1152,11 @@ struct WebViewConfigurableSystemTestPage {
           LoadingProgress()
             .width(20)
             .height(20)
-            .color(colorMap['app.color.accent_primary'])
+            .color(resolveColor('app.color.accent_primary'))
 
           Text(`正在执行: ${this.currentTest}`)
             .fontSize(14)
-            .fontColor(colorMap['app.color.text_secondary'])
+            .fontColor(resolveColor('app.color.text_secondary'))
         }
         .width('100%')
         .justifyContent(FlexAlign.Center)
@@ -1164,7 +1164,7 @@ struct WebViewConfigurableSystemTestPage {
     }
     .width('100%')
     .padding(16)
-    .backgroundColor(colorMap['app.color.panel_background'])
+    .backgroundColor(resolveColor('app.color.panel_background'))
     .borderRadius(12)
   }
 
@@ -1176,13 +1176,13 @@ struct WebViewConfigurableSystemTestPage {
           Text('测试进度')
             .fontSize(16)
             .fontWeight(FontWeight.Medium)
-            .fontColor(colorMap['app.color.text_primary'])
+            .fontColor(resolveColor('app.color.text_primary'))
 
           Blank()
 
           Text(`${this.completedTests}/${this.totalTests}`)
             .fontSize(14)
-            .fontColor(colorMap['app.color.text_secondary'])
+            .fontColor(resolveColor('app.color.text_secondary'))
         }
         .width('100%')
 
@@ -1192,22 +1192,22 @@ struct WebViewConfigurableSystemTestPage {
           type: ProgressType.Linear
         })
         .width('100%')
-        .color(colorMap['app.color.accent_primary'])
-        .backgroundColor(colorMap['app.color.background_secondary'])
+        .color(resolveColor('app.color.accent_primary'))
+        .backgroundColor(resolveColor('app.color.background_secondary'))
 
         Row({ space: 16 }) {
           Text(`成功: ${this.successfulTests}`)
             .fontSize(12)
-            .fontColor(colorMap['app.color.success_text'])
+            .fontColor(resolveColor('app.color.success_text'))
 
           Text(`失败: ${this.failedTests}`)
             .fontSize(12)
-            .fontColor(colorMap['app.color.error_text'])
+            .fontColor(resolveColor('app.color.error_text'))
 
           if (this.overallEndTime > 0) {
             Text(`总耗时: ${this.overallEndTime - this.overallStartTime}ms`)
               .fontSize(12)
-              .fontColor(colorMap['app.color.text_secondary'])
+              .fontColor(resolveColor('app.color.text_secondary'))
           }
         }
         .width('100%')
@@ -1215,7 +1215,7 @@ struct WebViewConfigurableSystemTestPage {
       }
       .width('100%')
       .padding(16)
-      .backgroundColor(colorMap['app.color.panel_background'])
+      .backgroundColor(resolveColor('app.color.panel_background'))
       .borderRadius(12)
     }
   }
@@ -1227,7 +1227,7 @@ struct WebViewConfigurableSystemTestPage {
         Text('测试结果')
           .fontSize(16)
           .fontWeight(FontWeight.Medium)
-          .fontColor(colorMap['app.color.text_primary'])
+          .fontColor(resolveColor('app.color.text_primary'))
           .width('100%')
 
         List({ space: 8 }) {
@@ -1254,24 +1254,24 @@ struct WebViewConfigurableSystemTestPage {
         Image(category.expanded ? $r('sys.media.ohos_ic_public_arrow_down') : $r('sys.media.ohos_ic_public_arrow_right'))
           .width(16)
           .height(16)
-          .fillColor(colorMap['app.color.text_secondary'])
+          .fillColor(resolveColor('app.color.text_secondary'))
 
         Text(category.name)
           .fontSize(16)
           .fontWeight(FontWeight.Medium)
-          .fontColor(colorMap['app.color.text_primary'])
+          .fontColor(resolveColor('app.color.text_primary'))
           .layoutWeight(1)
 
         Text(`${category.tests.filter(t => t.success).length}/${category.tests.length}`)
           .fontSize(12)
-          .fontColor(colorMap['app.color.text_secondary'])
+          .fontColor(resolveColor('app.color.text_secondary'))
           .padding({ left: 8, right: 8, top: 4, bottom: 4 })
-          .backgroundColor(colorMap['app.color.background_secondary'])
+          .backgroundColor(resolveColor('app.color.background_secondary'))
           .borderRadius(8)
       }
       .width('100%')
       .padding(12)
-      .backgroundColor(colorMap['app.color.panel_background'])
+      .backgroundColor(resolveColor('app.color.panel_background'))
       .borderRadius(8)
       .onClick(() => {
         this.testCategories[categoryIndex].expanded = !this.testCategories[categoryIndex].expanded;
@@ -1298,23 +1298,23 @@ struct WebViewConfigurableSystemTestPage {
         Image(test.success ? $r('app.media.ic_public_correct') : $r('app.media.ic_public_cancel'))
           .width(16)
           .height(16)
-          .fillColor(test.success ? colorMap['app.color.success_text'] : colorMap['app.color.error_text'])
+          .fillColor(test.success ? resolveColor('app.color.success_text') : resolveColor('app.color.error_text'))
 
         Text(test.name)
           .fontSize(14)
-          .fontColor(colorMap['app.color.text_primary'])
+          .fontColor(resolveColor('app.color.text_primary'))
           .layoutWeight(1)
 
         Text(`${test.executionTime}ms`)
           .fontSize(12)
-          .fontColor(colorMap['app.color.text_secondary'])
+          .fontColor(resolveColor('app.color.text_secondary'))
       }
       .width('100%')
 
       if (test.message) {
         Text(test.message)
           .fontSize(12)
-          .fontColor(test.success ? colorMap['app.color.text_secondary'] : colorMap['app.color.error_text'])
+          .fontColor(test.success ? resolveColor('app.color.text_secondary') : resolveColor('app.color.error_text'))
           .width('100%')
           .maxLines(3)
           .textOverflow({ overflow: TextOverflow.Ellipsis })
@@ -1323,19 +1323,19 @@ struct WebViewConfigurableSystemTestPage {
       if (test.data) {
         Text(JSON.stringify(test.data, null, 2))
           .fontSize(10)
-          .fontColor(colorMap['app.color.text_secondary'])
+          .fontColor(resolveColor('app.color.text_secondary'))
           .width('100%')
           .maxLines(5)
           .textOverflow({ overflow: TextOverflow.Ellipsis })
           .fontFamily('monospace')
-          .backgroundColor(colorMap['app.color.background_secondary'])
+          .backgroundColor(resolveColor('app.color.background_secondary'))
           .padding(8)
           .borderRadius(4)
       }
     }
     .width('100%')
     .padding(12)
-    .backgroundColor(colorMap['app.color.background_secondary'])
+    .backgroundColor(resolveColor('app.color.background_secondary'))
     .borderRadius(8)
   }
 

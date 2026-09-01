@@ -70,8 +70,8 @@ export class DynamicUrlResolver {
   /**
    * 解析对象中的所有URL字段
    */
-  resolveUrlsInObject(obj: Record<string, any>, config: UrlResolverConfig): Record<string, any> {
-    const result: Record<string, any> = {};
+  resolveUrlsInObject(obj: Record<string, Object>, config: UrlResolverConfig): Record<string, Object> {
+    const result: Record<string, Object> = {};
     
     Object.keys(obj).forEach(key => {
       const value = obj[key];
@@ -85,7 +85,7 @@ export class DynamicUrlResolver {
         }
       } else if (typeof value === 'object' && value !== null) {
         // 递归处理嵌套对象
-        result[key] = this.resolveUrlsInObject(value, config);
+        result[key] = this.resolveUrlsInObject(value as Record<string, Object>, config);
       } else {
         result[key] = value;
       }
@@ -212,7 +212,9 @@ export class DynamicUrlResolver {
       const pairs = queryString.split('&');
       
       pairs.forEach(pair => {
-        const [key, value] = pair.split('=');
+        const pairParts: string[] = pair.split('=');
+        const key: string = pairParts[0];
+        const value: string = pairParts.length > 1 ? pairParts[1] : '';
         if (key) {
           params[decodeURIComponent(key)] = value ? decodeURIComponent(value) : '';
         }

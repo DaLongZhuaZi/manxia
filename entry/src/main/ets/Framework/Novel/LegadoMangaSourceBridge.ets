@@ -174,6 +174,14 @@ export class LegadoMangaSourceBridge {
     return LegadoMangaSourceBridge.instance;
   }
 
+  /**
+   * 重置单例状态，清理长生命周期 Map
+   * 应用退出、用户注销或图源全量重置时调用
+   */
+  reset(): void {
+    this.virtualSourceSyncTasks.clear();
+  }
+
   static isLegadoMangaPkg(pkg: string | undefined | null): boolean {
     return !!pkg && pkg.startsWith(LEGADO_MANGA_PKG_PREFIX);
   }

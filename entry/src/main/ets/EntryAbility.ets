@@ -15,6 +15,8 @@ import { logger } from 'manxia_core/src/main/ets/Utils/Logger';
 import { WindowManager, DisplayMode } from 'manxia_theme/src/main/ets/Utils/WindowManager';
 import { OrientationLockApplyResult, OrientationLockManager, OrientationLockStrategy } from 'manxia_core/src/main/ets/Utils/OrientationLockManager';
 import { DataInitializer } from './Framework/Initialization/DataInitializer';
+import { getNovelInitializer } from './Framework/Novel/NovelInitializer';
+import { getSubscriptionInitializer } from './Framework/Subscription/SubscriptionInitializer';
 import { ThemeManager } from 'manxia_theme/src/main/ets/Framework/Managers/ThemeManager';
 import { DeviceAdaptationManager } from 'manxia_theme/src/main/ets/Framework/Managers/DeviceAdaptationManager';
 import { SettingsManager, SettingKeys } from 'manxia_core/src/main/ets/Framework/Managers/SettingsManager';
@@ -72,10 +74,13 @@ import {
   ExternalFileTaskSource
 } from 'manxia_network/src/main/ets/Framework/ExternalFile/ExternalFileTaskTypes';
 
+const DEFERRED_STARTUP_WORK_DELAY_MS = 1000;
+
 export default class EntryAbility extends UIAbility {
 
   /** 跨端接续恢复使用的 LocalStorage（restoreWindowStage 传入，onWindowStageRestore 中随 loadContent 传递） */
   private continuationWindowStorage: LocalStorage = new LocalStorage();
+  private deferredStartupWorkTimer: number = -1;
 
   onCreate(want: Want, launchParam: AbilityConstant.LaunchParam): void {
     logger.startup('EntryAbility', 'onCreate START', 'EntryAbility开始创建');
@@ -486,6 +491,7 @@ export default class EntryAbility extends UIAbility {
     // 所有阶段完成
     initManager.markCompleted();
     ngfCoreEventBridge.publishInitializationCompleted('应用初始化流程全部完成');
+    this.scheduleDeferredStartupWork();
   }
 
   private publishInitPhaseCompleted(phase: InitPhase, message: string): void {
@@ -494,6 +500,38 @@ export default class EntryAbility extends UIAbility {
 
   private publishInitPhaseFailed(phase: InitPhase, errorMessage: string): void {
     ngfCoreEventBridge.publishInitializationFailed(phase, errorMessage);
+  }
+
+  /**
+   * 首屏稳定后再恢复全部 V2 兼容状态，并初始化依赖设置门面的订阅服务。
+   * 这两项工作不影响主页面展示，但必须保留完整屏障和失败日志。
+   */
+  private scheduleDeferredStartupWork(): void {
+    if (this.deferredStartupWorkTimer !== -1) {
+      return;
+    }
+    this.deferredStartupWorkTimer = setTimeout((): void => {
+      this.deferredStartupWorkTimer = -1;
+      try {
+        getNovelInitializer().startDeferredRestore();
+        void getSubscriptionInitializer().initialize(this.context)
+          .then((): void => {
+            logger.info('EntryAbility', '✅ 订阅服务已在启动关键路径后初始化');
+          })
+          .catch((error: Error): void => {
+            logger.warn('EntryAbility', `⚠️ 订阅服务后台初始化失败: ${String(error)}`);
+          });
+      } catch (error) {
+        logger.warn('EntryAbility', `⚠️ 后台启动任务调度失败: ${String(error)}`);
+      }
+    }, DEFERRED_STARTUP_WORK_DELAY_MS) as number;
+  }
+
+  private cancelDeferredStartupWork(): void {
+    if (this.deferredStartupWorkTimer !== -1) {
+      clearTimeout(this.deferredStartupWorkTimer);
+      this.deferredStartupWorkTimer = -1;
+    }
   }
   
   /**
@@ -1473,6 +1511,7 @@ export default class EntryAbility extends UIAbility {
   // 在Ability销毁时的清理工作（游戏引擎已移除）
   onDestroy(): void {
     logger.info('EntryAbility', 'onDestroy: app is being destroyed');
+    this.cancelDeferredStartupWork();
     // [修复] 接续迁移时入口任务被系统迁移销毁，但源端阅读器任务仍在运行：
     // 跳过全局清理（WindowManager 释放、错误监控停止、分布式会话清理），
     // 否则会破坏仍在阅读器中的窗口状态与遥控器会话

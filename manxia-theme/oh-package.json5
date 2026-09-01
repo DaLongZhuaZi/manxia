@@ -5,6 +5,9 @@
   "main": "./src/main/ets/index.ets",
   "author": "",
   "license": "",
-  "dependencies": { "manxia_core": "file:../manxia-core" },
+  "dependencies": {
+    "manxia_core": "file:../manxia-core",
+    "manxia_ui_resources": "file:../manxia-ui-resources"
+  },
   "devDependencies": {}
 }
