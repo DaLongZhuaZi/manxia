@@ -11,6 +11,17 @@ import { ProxyManager } from '../Network/ProxyManager';
 
 const TAG = 'MangaSourceAPIEngine';
 
+function formatHttpError(err: Object): string {
+  if (err instanceof Error) {
+    return err.message;
+  }
+  try {
+    return JSON.stringify(err);
+  } catch (_e) {
+    return 'unknown http error';
+  }
+}
+
 /**
  * 空对象类
  */
@@ -177,7 +188,7 @@ export class MangaSourceAPIEngine {
         response = await this.withTimeoutHttp(httpRequest.request(config.url, options), effectiveTimeout, config.url);
         logger.info(TAG, '底层 http.request 调用已返回');
       } catch (reqError) {
-        const reqMsg: string = reqError instanceof Error ? reqError.message : String(reqError);
+        const reqMsg: string = formatHttpError(reqError as Object);
         logger.error(TAG, `http.request 调用失败或超时: ${reqMsg}`);
         throw new Error(reqMsg);
       }

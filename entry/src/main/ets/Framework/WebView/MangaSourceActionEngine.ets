@@ -1151,6 +1151,9 @@ export class MangaSourceActionEngine {
             if (result.trim().startsWith('{') || result.trim().startsWith('[')) {
               const parsedResult = SafeUtils.parseObj(result) as T;
               resolve(parsedResult);
+            } else if (result === 'true' || result === 'false') {
+              // runJavaScript 将布尔值序列化为字符串，必须还原，否则 "false" 被当作真值
+              resolve((result === 'true') as T);
             } else {
               // 对于非JSON结果，进行类型转换
               resolve(result as T);
@@ -1212,6 +1215,8 @@ export class MangaSourceActionEngine {
             if (result.trim().startsWith('{') || result.trim().startsWith('[')) {
               const parsed = SafeUtils.parseObj(result) as T;
               resolve(parsed);
+            } else if (result === 'true' || result === 'false') {
+              resolve((result === 'true') as T);
             } else {
               resolve(result as T);
             }
@@ -1238,7 +1243,8 @@ export class MangaSourceActionEngine {
    */
   private async checkElement(selector: string): Promise<boolean> {
     const script = `document.querySelector('${selector}') !== null`;
-    return await this.executeJavaScript<boolean>(script);
+    const result = await this.executeJavaScript<boolean | string>(script);
+    return result === true || result === 'true';
   }
 
   /**
@@ -1249,7 +1255,7 @@ export class MangaSourceActionEngine {
     
     while (Date.now() - startTime < timeout) {
       const exists = await this.checkElement(selector);
-      if (exists) {
+      if (exists === true) {
         return true;
       }
       await this.sleep(200);
