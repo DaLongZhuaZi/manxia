@@ -146,25 +146,45 @@ export struct WebViewContainer {
 
 /**
  * 全局WebView容器管理器
- * 提供便捷的API来操作容器
+ * 支持多容器共存（MainMenu + SourceDetail 同时挂载时，以最近注册的存活容器为准）
  */
 export class GlobalWebViewContainer {
-  private static containerRef: WebViewContainer | null = null;  
+  private static containers: WebViewContainer[] = [];
 
   /**
-   * 设置容器引用
+   * 注册容器（后注册优先，适配页面栈顶）
    */
   static setContainer(container: WebViewContainer): void {
-    GlobalWebViewContainer.containerRef = container;
-    logger.info(TAG, '设置全局WebView容器引用');
+    const next: WebViewContainer[] = [];
+    for (let i = 0; i < GlobalWebViewContainer.containers.length; i++) {
+      if (GlobalWebViewContainer.containers[i] !== container) {
+        next.push(GlobalWebViewContainer.containers[i]);
+      }
+    }
+    next.push(container);
+    GlobalWebViewContainer.containers = next;
+    logger.info(TAG, `注册全局WebView容器，当前数量: ${GlobalWebViewContainer.containers.length}`);
   }
 
-  /** 当前容器销毁时清空引用，避免持有已卸载实例 */
+  /** 容器销毁时移除自身，保留仍存活的底层容器 */
   static clearContainer(container: WebViewContainer): void {
-    if (GlobalWebViewContainer.containerRef === container) {
-      GlobalWebViewContainer.containerRef = null;
-      logger.info(TAG, '清除全局WebView容器引用');
+    const next: WebViewContainer[] = [];
+    for (let i = 0; i < GlobalWebViewContainer.containers.length; i++) {
+      if (GlobalWebViewContainer.containers[i] !== container) {
+        next.push(GlobalWebViewContainer.containers[i]);
+      }
     }
+    if (next.length !== GlobalWebViewContainer.containers.length) {
+      GlobalWebViewContainer.containers = next;
+      logger.info(TAG, `移除全局WebView容器，剩余: ${GlobalWebViewContainer.containers.length}`);
+    }
+  }
+
+  private static activeContainer(): WebViewContainer | null {
+    if (GlobalWebViewContainer.containers.length === 0) {
+      return null;
+    }
+    return GlobalWebViewContainer.containers[GlobalWebViewContainer.containers.length - 1];
   }
 
   /**
@@ -177,8 +197,9 @@ export class GlobalWebViewContainer {
     callbacks?: WebViewEventCallbacks,
     initialUrl?: string
   ): void {
-    if (GlobalWebViewContainer.containerRef) {
-      GlobalWebViewContainer.containerRef.addWebView(sourceId, controller, config, callbacks, initialUrl);
+    const active = GlobalWebViewContainer.activeContainer();
+    if (active) {
+      active.addWebView(sourceId, controller, config, callbacks, initialUrl);
     } else {
       logger.error(TAG, '容器引用未设置，无法添加WebView');
     }
@@ -188,19 +209,26 @@ export class GlobalWebViewContainer {
    * 移除WebView
    */
   static removeWebView(sourceId: string): void {
-    if (GlobalWebViewContainer.containerRef) {
-      GlobalWebViewContainer.containerRef.removeWebView(sourceId);
-    } else {
+    let removed = false;
+    for (let i = GlobalWebViewContainer.containers.length - 1; i >= 0; i--) {
+      const c = GlobalWebViewContainer.containers[i];
+      if (c) {
+        c.removeWebView(sourceId);
+        removed = true;
+      }
+    }
+    if (!removed) {
       logger.error(TAG, '容器引用未设置，无法移除WebView');
     }
   }
 
   /**
    * 清理所有WebView
-   */ 
+   */
   static clearAll(): void {
-    if (GlobalWebViewContainer.containerRef) {
-      GlobalWebViewContainer.containerRef.clearAllWebViews();
+    const active = GlobalWebViewContainer.activeContainer();
+    if (active) {
+      active.clearAllWebViews();
     }
   }
 
@@ -208,6 +236,7 @@ export class GlobalWebViewContainer {
    * 获取WebView数量
    */
   static getCount(): number {
-    return GlobalWebViewContainer.containerRef ? GlobalWebViewContainer.containerRef.getWebViewCount() : 0;
+    const active = GlobalWebViewContainer.activeContainer();
+    return active ? active.getWebViewCount() : 0;
   }
 }

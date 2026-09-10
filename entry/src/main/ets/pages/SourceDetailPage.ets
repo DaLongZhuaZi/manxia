@@ -1739,19 +1739,19 @@ export struct SourceDetailPage {
    * 等待WebView准备就绪
    */
   private async waitForWebViewReady(): Promise<void> {
-    const maxWaitTime = 5000;
+    const maxWaitTime = 15000;
     const checkInterval = 100;
     let waited = 0;
-    
+
     while (!this.webViewControllerAttached && waited < maxWaitTime) {
       await new Promise<void>((resolve) => setTimeout(resolve, checkInterval));
       waited += checkInterval;
     }
-    
+
     if (this.webViewControllerAttached) {
       logger.info(TAG, `WebView已就绪，等待时间: ${waited}ms`);
     } else {
-      logger.warn(TAG, `WebView等待超时(${maxWaitTime}ms)，继续执行`);
+      logger.error(TAG, `WebView等待超时(${maxWaitTime}ms)，controller 仍未挂载，后续 loadUrl/JS 可能失败`);
     }
   }
 
@@ -4746,8 +4746,9 @@ export struct SourceDetailPage {
         .height('100%')
         .expandSafeArea([SafeAreaType.SYSTEM], [SafeAreaEdge.TOP, SafeAreaEdge.BOTTOM])
 
-        // 后台WebView组件：调试/验证窗口未展开时保持离屏承接，避免影响工作流
-        if (this.useWebView && !this.isDebugWebViewExpanded()) {
+        // 后台WebView组件：始终挂载，避免 useWebView 异步置真前 controller 无法关联
+        // 调试/验证窗口展开时也保留此实例，防止同一 controller 被卸载重挂导致竞态
+        if (!this.isDebugWebViewExpanded()) {
           this.buildSourceWebView(false, false)
         }
 

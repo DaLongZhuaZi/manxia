@@ -446,8 +446,26 @@ export class MangaSourceActionEngine {
     logger.info(TAG, `导航到: ${url}, waitAfterLoad=${waitAfterLoad}ms`);
 
     try {
-      // 开始导航
-      this.webviewController.loadUrl(url);
+      // controller 切页/重挂时可能短暂未关联，最多重试 loadUrl
+      let loadOk = false;
+      for (let attempt = 0; attempt < 8; attempt++) {
+        try {
+          this.webviewController.loadUrl(url);
+          loadOk = true;
+          break;
+        } catch (loadErr) {
+          const msg = loadErr instanceof Error ? loadErr.message : String(loadErr);
+          if (msg.includes('must be associated') || msg.includes('Init error')) {
+            logger.warn(TAG, `loadUrl 时 controller 未关联，等待挂载后重试 (${attempt + 1}/8)`);
+            await this.sleep(250);
+            continue;
+          }
+          throw new Error(msg);
+        }
+      }
+      if (!loadOk) {
+        throw new Error('WebviewController must be associated with a Web component');
+      }
 
       // [优化] 智能等待：轮询 document.readyState 替代盲等
       const startTime = Date.now();

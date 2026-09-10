@@ -193,8 +193,9 @@ export struct InvisibleWebView {
     }
     .width(1)
     .height(1)
-    .position({ x: -1000, y: -1000 }) // 移到屏幕外
-    .visibility(Visibility.Hidden) // 隐藏但保持功能
+    .opacity(0)
+    // 必须用 opacity+屏外定位，不能 Visibility.Hidden/None，否则 Web 可能不真正挂载
+    .position({ x: -1000, y: -1000 })
   }
 }
 

@@ -1,4 +1,4 @@
-﻿import { SafeFileUtils } from 'manxia_core/src/main/ets/Utils/SafeFileUtils';
+import { SafeFileUtils } from 'manxia_core/src/main/ets/Utils/SafeFileUtils';
 import { SafeUtils } from 'manxia_core/src/main/ets/Utils/SafeUtils';
 // 文件路径: entry/src/main/ets/pages/MangaDetailPage.ets
 // 职责: 漫画详情页面，展示漫画的详细信息、章节列表等内容（含收藏持久化）
@@ -4970,7 +4970,21 @@ struct MangaDetailPage {
         .fontWeight(FontWeight.Medium)
         .fontFamily(this.appFontFamily)
         .margin({ bottom: 12 })
-      
+
+      Button('下载选中')
+        .width('100%')
+        .fontFamily(this.appFontFamily)
+        .margin({ bottom: 8 })
+        .enabled(this.selectedChapters.size > 0)
+        .onClick(() => {
+          const n = this.selectedChapters.size;
+          logger.info(TAG, `下载选中章节: ${n}`);
+          void this.downloadSelectedChapters();
+          this.showDownloadOptions = false;
+          this.isSelectionMode = false;
+          this.selectedChapters.clear();
+        })
+
       Button('下载所有')
         .width('100%')
         .fontFamily(this.appFontFamily)
@@ -4979,7 +4993,7 @@ struct MangaDetailPage {
           this.downloadAllChapters();
           this.showDownloadOptions = false;
         })
-      
+
       Button('下载未读')
         .width('100%')
         .fontFamily(this.appFontFamily)
