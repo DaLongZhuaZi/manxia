@@ -454,6 +454,18 @@ export class ImageCacheManager {
     return onlineOptions;
   }
 
+  private isLikelyTlsImageError(errCode: Object | undefined, errMsg: string): boolean {
+    const codeText = errCode === undefined || errCode === null ? '' : String(errCode);
+    if (codeText === '2300060' || codeText === '2300999') {
+      return true;
+    }
+    const text = errMsg.toLowerCase();
+    return text.includes('certificate') || text.includes('ssl') || text.includes('tls') ||
+      text.includes('unexpected_eof') || text.includes('handshake') ||
+      text.includes('connection_closed') || text.includes('internal error') ||
+      text.includes('code=2300999') || text.includes('code=2300060');
+  }
+
   private cloneRequestHeaderEntries(entries?: RequestHeaderEntry[]): RequestHeaderEntry[] | undefined {
     if (!entries || entries.length === 0) {
       return undefined;
@@ -1035,6 +1047,13 @@ export class ImageCacheManager {
           originHdr = 'https://b.amh1234.com';
         }
 
+        // 美图乐图床防盗链
+        if (url.includes('tujiba.top') || url.includes('meitula.org')) {
+          if (refererHdr.length === 0) {
+            refererHdr = 'https://www.meitula.org/';
+          }
+        }
+
         // Pixiv CDN防盗链：i.pximg.net 必须携带 Referer
         if (url.includes('i.pximg.net') || url.includes('.pximg.net')) {
           if (refererHdr.length === 0) {
@@ -1206,13 +1225,30 @@ export class ImageCacheManager {
         if (errCode === 2300060 && url.startsWith('https://')) {
           const httpUrl = url.replace('https://', 'http://');
           logger.info(TAG, `SSL错误，尝试HTTP降级: ${httpUrl.substring(0, 80)}`);
-          
+
           try {
             // 递归调用自己，使用HTTP URL
             return await this.loadFromNetwork(httpUrl, options);
           } catch (retryError) {
-            logger.warn(TAG, `HTTP降级也失败: ${httpUrl.substring(0, 80)}`);
+            logger.warn(TAG, `HTTP降级也失败，转 OnlineImageLoader WebView: ${url.substring(0, 80)}`);
+            try {
+              const onlineLoader = OnlineImageLoader.getInstance();
+              return await onlineLoader.load(url, this.buildOnlineLoadOptions(options));
+            } catch (onlineError) {
+              logger.warn(TAG, `OnlineImageLoader SSL恢复失败: ${String(onlineError)}`);
+            }
             // 继续正常的重试逻辑
+          }
+        }
+
+        // TLS 握手被掐断（图床指纹）时也转 WebView 队列
+        if (url.startsWith('http') && this.isLikelyTlsImageError(errCode, errMsg)) {
+          logger.warn(TAG, `疑似TLS拦截(code=${errCode})，转 OnlineImageLoader: ${url.substring(0, 80)}`);
+          try {
+            const onlineLoader = OnlineImageLoader.getInstance();
+            return await onlineLoader.load(url, this.buildOnlineLoadOptions(options));
+          } catch (onlineError) {
+            logger.warn(TAG, `OnlineImageLoader TLS恢复失败: ${String(onlineError)}`);
           }
         }
         

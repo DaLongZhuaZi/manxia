@@ -44,6 +44,7 @@ export struct WebViewContainer {
    */
   aboutToAppear() {
     logger.info(TAG, 'WebView容器初始化');
+    GlobalWebViewContainer.setContainer(this);
   }
 
   /**
@@ -52,6 +53,7 @@ export struct WebViewContainer {
   aboutToDisappear() {
     logger.info(TAG, 'WebView容器销毁');
     this.clearAllWebViews();
+    GlobalWebViewContainer.clearContainer(this);
   }
 
   /**
@@ -64,14 +66,6 @@ export struct WebViewContainer {
     callbacks?: WebViewEventCallbacks,
     initialUrl: string = 'about:blank'
   ): void {
-    // 检查是否已存在
-    const existingIndex = this.webViewItems.findIndex(item => item.sourceId === sourceId);
-    if (existingIndex >= 0) {
-      logger.warn(TAG, `WebView已存在: ${sourceId}, 将替换`);
-      this.webViewItems.splice(existingIndex, 1);
-    }
-
-    // 添加新实例
     const item: WebViewContainerItem = {
       sourceId,
       controller,
@@ -79,10 +73,18 @@ export struct WebViewContainer {
       callbacks,
       initialUrl
     };
-    
-    this.webViewItems.push(item);
+
+    // ArkUI @State 数组必须整体重新赋值才会触发 ForEach 更新
+    const next: WebViewContainerItem[] = [];
+    for (let i = 0; i < this.webViewItems.length; i++) {
+      if (this.webViewItems[i].sourceId !== sourceId) {
+        next.push(this.webViewItems[i]);
+      }
+    }
+    next.push(item);
+    this.webViewItems = next;
     this.manager.registerWebView(sourceId, controller, config, callbacks);
-    
+
     logger.info(TAG, `添加WebView实例: ${sourceId}, 当前总数: ${this.webViewItems.length}`);
   }
 
@@ -90,9 +92,17 @@ export struct WebViewContainer {
    * 移除WebView实例
    */
   removeWebView(sourceId: string): void {
-    const index = this.webViewItems.findIndex(item => item.sourceId === sourceId);
-    if (index >= 0) {
-      this.webViewItems.splice(index, 1);
+    const next: WebViewContainerItem[] = [];
+    let removed = false;
+    for (let i = 0; i < this.webViewItems.length; i++) {
+      if (this.webViewItems[i].sourceId === sourceId) {
+        removed = true;
+        continue;
+      }
+      next.push(this.webViewItems[i]);
+    }
+    if (removed) {
+      this.webViewItems = next;
       this.manager.unregisterWebView(sourceId);
       logger.info(TAG, `移除WebView实例: ${sourceId}, 剩余: ${this.webViewItems.length}`);
     }
@@ -126,9 +136,11 @@ export struct WebViewContainer {
         })
       }, (item: WebViewContainerItem) => item.sourceId)
     }
-    .width(0)
-    .height(0)
-    .visibility(Visibility.None)
+    .width(1)
+    .height(1)
+    .opacity(0)
+    // 注意：不能用 Visibility.None，否则 Web 子组件不会真正挂载，controller 无法 loadUrl
+    .position({ x: -10000, y: -10000 })
   }
 }
 
@@ -145,6 +157,14 @@ export class GlobalWebViewContainer {
   static setContainer(container: WebViewContainer): void {
     GlobalWebViewContainer.containerRef = container;
     logger.info(TAG, '设置全局WebView容器引用');
+  }
+
+  /** 当前容器销毁时清空引用，避免持有已卸载实例 */
+  static clearContainer(container: WebViewContainer): void {
+    if (GlobalWebViewContainer.containerRef === container) {
+      GlobalWebViewContainer.containerRef = null;
+      logger.info(TAG, '清除全局WebView容器引用');
+    }
   }
 
   /**

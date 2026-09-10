@@ -1260,9 +1260,22 @@ export class OnlineImageLoader {
         try {
           return await this.doHttpRequest(httpUrl, options);
         } catch (retryError) {
-          // HTTP降级也失败，抛出原始错误
-          logger.warn(TAG, `HTTP降级也失败: ${httpUrl.substring(0, 80)}`);
+          // HTTP降级也失败，尝试 WebView 放行证书
+          logger.warn(TAG, `HTTP降级也失败，尝试WebView SSL降级: ${url.substring(0, 80)}`);
+          const recovered = await this.retrySslWithWebView(url, options);
+          if (recovered) {
+            return recovered;
+          }
           throw error instanceof Error ? error : new Error(String(error));
+        }
+      }
+
+      // TLS 握手被对端掐断（图床指纹拦截）时，改走 WebView
+      if (this.isLikelyTlsBlockError(errCode, errMsg) && url.startsWith('http')) {
+        logger.warn(TAG, `疑似 TLS 拦截(code=${errCode})，尝试WebView降级: ${url.substring(0, 80)}`);
+        const recovered = await this.retrySslWithWebView(url, options);
+        if (recovered) {
+          return recovered;
         }
       }
 
@@ -1333,6 +1346,129 @@ export class OnlineImageLoader {
 
   private isPixivCdnUrl(url: string): boolean {
     return url.includes('i.pximg.net') || url.includes('.pximg.net');
+  }
+
+  private isLikelyTlsBlockError(errCode: Object | undefined, errMsg: string): boolean {
+    const codeText = errCode === undefined || errCode === null ? '' : String(errCode);
+    if (codeText === '2300060' || codeText === '2300999') {
+      return true;
+    }
+    const text = errMsg.toLowerCase();
+    return text.includes('certificate') || text.includes('ssl') || text.includes('tls') ||
+      text.includes('unexpected_eof') || text.includes('handshake') ||
+      text.includes('connection_closed') || text.includes('internal error') ||
+      text.includes('code=2300999') || text.includes('code=2300060');
+  }
+
+  private async retrySslWithWebView(url: string, options: OnlineLoadOptions): Promise<image.PixelMap | null> {
+    const controller = new webview.WebviewController();
+    const headers = await this.buildHeaders(url, options);
+    const userAgent = headers.userAgent ? headers.userAgent :
+      'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/142.0.0.0 Safari/537.36';
+    const sourceId = `ssl_fallback_${Date.now()}`;
+    const config: WebViewSourceConfig = {
+      sourceId: sourceId,
+      userAgent: userAgent,
+      enableJavaScript: true,
+      enableImages: true,
+      cookiePolicy: 'accept_all',
+      timeout: this.TIMEOUT,
+      ignoreSslErrors: true
+    };
+
+    let resolveImage: (buffer: ArrayBuffer) => void = (): void => {};
+    let rejectImage: (error: Error) => void = (): void => {};
+    const imageLoadPromise = new Promise<ArrayBuffer>((resolve, reject) => {
+      resolveImage = resolve;
+      rejectImage = reject;
+    });
+
+    const extractScript = `(() => {
+      const img = document.querySelector('img');
+      if (!img) { return 'NO_IMG'; }
+      if (!img.complete || img.naturalWidth === 0) { return 'NOT_READY'; }
+      try {
+        const canvas = document.createElement('canvas');
+        canvas.width = img.naturalWidth;
+        canvas.height = img.naturalHeight;
+        const ctx = canvas.getContext('2d');
+        ctx.drawImage(img, 0, 0);
+        const dataUrl = canvas.toDataURL('image/png');
+        const base64 = dataUrl.split(',')[1];
+        const binary = atob(base64);
+        const bytes = new Uint8Array(binary.length);
+        for (let i = 0; i < binary.length; i++) { bytes[i] = binary.charCodeAt(i); }
+        return bytes.buffer;
+      } catch (e) { return 'ERROR:' + e.message; }
+    })();`;
+
+    const callbacks: WebViewEventCallbacks = {
+      onPageEnd: async (_loadedUrl: string) => {
+        let attempts = 0;
+        const maxAttempts = 6;
+        while (attempts < maxAttempts) {
+          try {
+            await this.delay(attempts === 0 ? 400 : 500);
+            const jsResult = await controller.runJavaScriptExt(extractScript);
+            const resultType = jsResult.getType();
+            if (resultType === webview.JsMessageType.ARRAY_BUFFER) {
+              resolveImage(jsResult.getArrayBuffer());
+              return;
+            } else if (resultType === webview.JsMessageType.STRING) {
+              const str = jsResult.getString();
+              if (str === 'NO_IMG') {
+                rejectImage(new Error('SSL WebView: no img element found'));
+                return;
+              }
+              if (str === 'NOT_READY') {
+                attempts++;
+                continue;
+              }
+              if (str && str.startsWith('ERROR:')) {
+                rejectImage(new Error(`SSL WebView canvas error: ${str}`));
+                return;
+              }
+              rejectImage(new Error(`SSL WebView unexpected: ${str}`));
+              return;
+            }
+          } catch (e) {
+            rejectImage(e instanceof Error ? e : new Error(String(e)));
+            return;
+          }
+          attempts++;
+        }
+        rejectImage(new Error('SSL WebView: image not ready after retries'));
+      },
+      onError: (error: string) => {
+        rejectImage(new Error(error));
+      }
+    };
+
+    GlobalWebViewContainer.addWebView(sourceId, controller, config, callbacks, 'about:blank');
+
+    try {
+      await this.loadWebViewUrlWithRetry(controller, url, headers, userAgent);
+      const timeoutPromise = new Promise<never>((_resolve, reject) => {
+        setTimeout(() => reject(new Error('SSL WebView load timeout')), this.WEBVIEW_FALLBACK_LOAD_TIMEOUT);
+      });
+      const imageBuffer = await Promise.race([imageLoadPromise, timeoutPromise]);
+      if (!imageBuffer || imageBuffer.byteLength === 0) {
+        throw new Error('SSL WebView returned empty buffer');
+      }
+      const pixelMap = await this.createPixelMapFromBuffer(imageBuffer, options);
+      logger.info(TAG, `SSL WebView降级加载成功: bytes=${imageBuffer.byteLength}`);
+      return pixelMap;
+    } catch (error) {
+      const errMsg = error instanceof Error ? error.message : String(error);
+      logger.warn(TAG, `SSL WebView降级加载失败: ${errMsg}`);
+      return null;
+    } finally {
+      try {
+        controller.loadUrl('about:blank');
+      } catch (_loadBlankError) {
+      }
+      GlobalWebViewContainer.removeWebView(sourceId);
+    }
   }
 
   private async retryPixivWithWebView(url: string, options: OnlineLoadOptions): Promise<image.PixelMap | null> {

@@ -107,6 +107,8 @@ export interface WebViewSourceConfig {
   readonly cookiePolicy: string;
   /** 超时时间 */
   readonly timeout: number;
+  /** 仅图片/封面恢复场景使用：放行过期或自签证书 */
+  readonly ignoreSslErrors?: boolean;
 }
 
 /**

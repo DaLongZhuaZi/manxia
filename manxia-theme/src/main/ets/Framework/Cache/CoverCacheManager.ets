@@ -1,4 +1,4 @@
-﻿import { SafeFileUtils } from 'manxia_core/src/main/ets/Utils/SafeFileUtils';
+import { SafeFileUtils } from 'manxia_core/src/main/ets/Utils/SafeFileUtils';
 /**
  * 封面缓存管理器
  * 负责管理漫画封面的本地缓存
@@ -12,6 +12,9 @@ import CookieManager from 'manxia_core/src/main/ets/Framework/Managers/CookieMan
 import fs from '@ohos.file.fs';
 import http from '@ohos.net.http';
 import { BusinessError } from '@ohos.base';
+import { webview } from '@kit.ArkWeb';
+import { GlobalWebViewContainer, WebViewEventCallbacks } from 'manxia_source_engine/src/main/ets/Framework/WebView/WebViewContainerPage';
+import { WebViewSourceConfig } from 'manxia_source_engine/src/main/ets/Framework/WebView/WebViewImageLoader';
 
 const TAG = 'CoverCacheManager';
 
@@ -608,6 +611,13 @@ export class CoverCacheManager {
         finalHeaders['Origin'] = 'https://b.amh1234.com';
       }
 
+      // 美图乐图床防盗链
+      if (coverUrl.includes('tujiba.top') || coverUrl.includes('meitula.org')) {
+        if (!finalHeaders['Referer']) {
+          finalHeaders['Referer'] = 'https://www.meitula.org/';
+        }
+      }
+
       // Pixiv CDN防盗链
       if (coverUrl.includes('i.pximg.net') || coverUrl.includes('.pximg.net')) {
         if (!finalHeaders['Referer']) {
@@ -637,6 +647,15 @@ export class CoverCacheManager {
         downloadUrl = downloadUrl.replace('https://', 'http://');
         logger.info(TAG, `SSL错误，尝试HTTP降级: ${downloadUrl}`);
         result = await this.tryDownloadCover(downloadUrl, finalHeaders, localPath);
+      }
+
+      // HTTP 也失败时，用 WebView（可放行证书）拉取封面
+      if (!result[0]) {
+        logger.info(TAG, `HTTP封面失败，尝试WebView降级: ${coverUrl}`);
+        const webOk: boolean = await this.tryDownloadCoverViaWebView(coverUrl, finalHeaders, localPath);
+        if (webOk) {
+          result = [true, false];
+        }
       }
       
       if (result[0]) {
@@ -672,6 +691,126 @@ export class CoverCacheManager {
    * 尝试下载封面（内部方法）
    * @returns [success, sslError] - 下载是否成功，是否是SSL错误
    */
+  private async tryDownloadCoverViaWebView(
+    url: string,
+    headers: Record<string, string>,
+    localPath: string
+  ): Promise<boolean> {
+    try {
+      const controller = new webview.WebviewController();
+      const userAgent: string = headers['User-Agent'] ||
+        'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/142.0.0.0 Safari/537.36';
+      const sourceId: string = `cover_ssl_${Date.now()}`;
+      const config: WebViewSourceConfig = {
+        sourceId: sourceId,
+        userAgent: userAgent,
+        enableJavaScript: true,
+        enableImages: true,
+        cookiePolicy: 'accept_all',
+        timeout: 20000,
+        ignoreSslErrors: true
+      };
+
+      let resolveBuf: (buffer: ArrayBuffer) => void = (): void => {};
+      let rejectBuf: (error: Error) => void = (): void => {};
+      const bufPromise = new Promise<ArrayBuffer>((resolve, reject) => {
+        resolveBuf = resolve;
+        rejectBuf = reject;
+      });
+
+      const extractScript = `(() => {
+        const img = document.querySelector('img');
+        if (!img) { return 'NO_IMG'; }
+        if (!img.complete || img.naturalWidth === 0) { return 'NOT_READY'; }
+        try {
+          const canvas = document.createElement('canvas');
+          canvas.width = img.naturalWidth;
+          canvas.height = img.naturalHeight;
+          const ctx = canvas.getContext('2d');
+          ctx.drawImage(img, 0, 0);
+          const dataUrl = canvas.toDataURL('image/png');
+          const base64 = dataUrl.split(',')[1];
+          const binary = atob(base64);
+          const bytes = new Uint8Array(binary.length);
+          for (let i = 0; i < binary.length; i++) { bytes[i] = binary.charCodeAt(i); }
+          return bytes.buffer;
+        } catch (e) { return 'ERROR:' + e.message; }
+      })();`;
+
+      let attachedResolve: () => void = (): void => {};
+      const attachedPromise = new Promise<void>((resolve) => {
+        attachedResolve = resolve;
+      });
+
+      const callbacks: WebViewEventCallbacks = {
+        onControllerAttached: (): void => {
+          attachedResolve();
+        },
+        onPageEnd: async (_loadedUrl: string): Promise<void> => {
+          for (let attempt = 0; attempt < 6; attempt++) {
+            try {
+              await new Promise<void>((resolve) => setTimeout(resolve, attempt === 0 ? 400 : 500));
+              const jsResult = await controller.runJavaScriptExt(extractScript);
+              const resultType = jsResult.getType();
+              if (resultType === webview.JsMessageType.ARRAY_BUFFER) {
+                resolveBuf(jsResult.getArrayBuffer());
+                return;
+              }
+              if (resultType === webview.JsMessageType.STRING) {
+                const str = jsResult.getString();
+                if (str === 'NOT_READY') {
+                  continue;
+                }
+                rejectBuf(new Error(`cover webview: ${str}`));
+                return;
+              }
+            } catch (e) {
+              rejectBuf(e instanceof Error ? e : new Error(String(e)));
+              return;
+            }
+          }
+          rejectBuf(new Error('cover webview: image not ready'));
+        },
+        onError: (error: string): void => {
+          rejectBuf(new Error(error));
+        }
+      };
+
+      GlobalWebViewContainer.addWebView(sourceId, controller, config, callbacks, 'about:blank');
+      try {
+        // 等待 Web 真正挂载 controller，再 loadUrl
+        const attachTimeout = new Promise<never>((_resolve, reject) => {
+          setTimeout(() => reject(new Error('cover webview attach timeout')), 8000);
+        });
+        await Promise.race([attachedPromise, attachTimeout]);
+        controller.setCustomUserAgent(userAgent);
+        controller.loadUrl(url);
+        const timeoutPromise = new Promise<never>((_resolve, reject) => {
+          setTimeout(() => reject(new Error('cover webview timeout')), 25000);
+        });
+        const buffer = await Promise.race([bufPromise, timeoutPromise]);
+        if (!buffer || buffer.byteLength === 0) {
+          return false;
+        }
+        const file = SafeFileUtils.openSync(localPath, fs.OpenMode.CREATE | fs.OpenMode.WRITE_ONLY);
+        SafeFileUtils.writeSync(file.fd, buffer);
+        SafeFileUtils.closeSync(file);
+        logger.info(TAG, `封面WebView下载成功: ${localPath}, bytes=${buffer.byteLength}`);
+        return true;
+      } finally {
+        try {
+          controller.loadUrl('about:blank');
+        } catch (_e) {
+        }
+        GlobalWebViewContainer.removeWebView(sourceId);
+      }
+    } catch (error) {
+      const msg: string = error instanceof Error ? error.message : String(error);
+      logger.warn(TAG, `封面WebView下载失败: ${msg}, url=${url}`);
+      return false;
+    }
+  }
+
   private async tryDownloadCover(
     url: string,
     headers: Record<string, string>,
@@ -724,8 +863,10 @@ export class CoverCacheManager {
         errMsg = String(error);
       }
 
-      // 检查是否是SSL错误 (code=2300060)
-      const isSslError = errCode === 2300060;
+      // 检查是否是SSL/TLS错误
+      const codeText = errCode === undefined || errCode === null ? '' : String(errCode);
+      const isSslError = codeText === '2300060' || codeText === '2300999' ||
+        errMsg.toLowerCase().includes('internal error') || errMsg.toLowerCase().includes('ssl');
 
       if (isSslError) {
         logger.warn(TAG, `封面下载SSL错误: ${url}`);

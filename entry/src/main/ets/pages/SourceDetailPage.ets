@@ -32,6 +32,7 @@ import { ComicSourceDatabaseRecord } from 'manxia_core/src/main/ets/Framework/Da
 import { image } from '@kit.ImageKit';
 import { ImageCacheManager, LoadOptions, RequestHeaderEntry, RequestHeaders } from '../Framework/Cache/ImageCacheManager';
 import { CoverCacheManager } from 'manxia_theme/src/main/ets/Framework/Cache/CoverCacheManager';
+import { WebViewContainer } from 'manxia_source_engine/src/main/ets/Framework/WebView/WebViewContainerPage';
 import { DeviceAdaptationManager, DeviceInfo, DeviceChangeListener, Breakpoint } from 'manxia_theme/src/main/ets/Framework/Managers/DeviceAdaptationManager';
 import { AppNotificationManager } from 'manxia_core/src/main/ets/Framework/Managers/NotificationManager';
 import { CredentialLoginDialog } from 'manxia_theme/src/main/ets/Framework/Components/CredentialLoginDialog';
@@ -329,6 +330,7 @@ interface SourceLoginConfig {
 
 interface SourceNetworkUserAgentConfig {
   userAgent?: string;
+  ignoreSslErrors?: boolean;
 }
 
 interface SourceFilterOptionConfig {
@@ -450,6 +452,7 @@ export struct SourceDetailPage {
   @State selectedSearchType: string = 'search'; // 当前选中的搜索类型
   @State searchPlaceholder: string = '搜索漫画名称、粘贴URL、或输入 id:作品ID'; // 搜索框占位符
   @State sourceUserAgent: string = 'Mozilla/5.0 (Linux; Android 13; Pixel 7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Mobile Safari/537.36'; // 图源UA配置
+  @State sourceIgnoreSslErrors: boolean = false; // 仅图源显式声明时放行过期/自签证书
   @State isLegadoMangaBridgeSource: boolean = false;
   
   // 显示模式相关状态
@@ -2013,6 +2016,12 @@ export struct SourceDetailPage {
     
     // 尝试从 network.userAgent 读取
     const network: SourceNetworkUserAgentConfig | undefined = sourceConfig.network;
+    if (network) {
+      this.sourceIgnoreSslErrors = network.ignoreSslErrors === true;
+      if (this.sourceIgnoreSslErrors) {
+        logger.warn(TAG, '图源已声明 ignoreSslErrors，WebView 将放行证书错误');
+      }
+    }
     if (network && network.userAgent && network.userAgent.length > 0) {
       this.sourceUserAgent = network.userAgent;
       logger.info(TAG, `使用图源配置的UserAgent: ${this.sourceUserAgent.substring(0, 50)}...`);
@@ -4781,6 +4790,13 @@ export struct SourceDetailPage {
         if (this.showAmbiguousDialog) {
           this.buildAmbiguousDialog()
         }
+
+        // 后台 WebView 容器（封面 SSL 降级等）；必须可挂载，不能 Visibility.None
+        WebViewContainer()
+          .width(1)
+          .height(1)
+          .opacity(0)
+          .position({ x: -10000, y: -10000 })
       }
       .width('100%')
       .height('100%')
@@ -6044,6 +6060,16 @@ export struct SourceDetailPage {
         const requestUrl: string = event.request.getRequestUrl();
         const isMainFrame: boolean = event.request.isMainFrame();
         this.handleDebugWebViewResourceError(errorCode, errorInfo, requestUrl, isMainFrame);
+      })
+      .onSslErrorEventReceive((event) => {
+        const sslError: string = event?.error ? String(event.error) : 'unknown';
+        if (this.sourceIgnoreSslErrors) {
+          logger.warn(TAG, `图源声明 ignoreSslErrors，放行 SSL 错误: ${sslError}`);
+          event.handler.handleConfirm();
+          return;
+        }
+        logger.warn(TAG, `SSL错误已拒绝: ${sslError}`);
+        event.handler.handleCancel();
       })
       .position(this.getDebugWebViewPosition(expanded, embedded))
       .width(this.getDebugWebViewWidth(expanded, embedded))

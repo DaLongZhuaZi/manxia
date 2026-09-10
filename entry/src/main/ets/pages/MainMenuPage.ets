@@ -34949,11 +34949,12 @@ struct MainMenuPage {
         // 后台任务悬浮球
         TaskFloatingBall()
 
-        // 全局WebView容器（隐藏，用于后台WebView操作）
+        // 全局WebView容器（不可见，但必须可挂载 Web，否则 controller 无法 loadUrl）
         WebViewContainer()
-          .width(0)
-          .height(0)
-          .visibility(Visibility.None)
+          .width(1)
+          .height(1)
+          .opacity(0)
+          .position({ x: -10000, y: -10000 })
 
         if (this.mainMenuReentryShieldVisible) {
           Stack() {

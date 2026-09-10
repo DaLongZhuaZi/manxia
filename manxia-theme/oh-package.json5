@@ -7,7 +7,8 @@
   "license": "",
   "dependencies": {
     "manxia_core": "file:../manxia-core",
-    "manxia_ui_resources": "file:../manxia-ui-resources"
+    "manxia_ui_resources": "file:../manxia-ui-resources",
+    "manxia_source_engine": "file:../manxia-source-engine"
   },
   "devDependencies": {}
 }

@@ -24,6 +24,8 @@ export interface WebViewEventCallbacks {
   onError?: (error: string) => void;
   /** 控制台消息 */
   onConsoleMessage?: (message: string, level: string) => void;
+  /** Web 控制器已挂载，可安全 loadUrl */
+  onControllerAttached?: () => void;
 }
 
 /**
@@ -98,6 +100,12 @@ export struct InvisibleWebView {
         .width(1)  // 最小宽度
         .height(1) // 最小高度
         .opacity(0) // 完全透明
+        .onControllerAttached(() => {
+          logger.info(TAG, `WebView控制器已挂载: ${this.config.sourceId}`);
+          if (this.callbacks?.onControllerAttached) {
+            this.callbacks.onControllerAttached();
+          }
+        })
         
         // ==================== WebView功能配置 ====================
         .javaScriptAccess(this.config.enableJavaScript)
@@ -166,8 +174,13 @@ export struct InvisibleWebView {
         
         // ==================== SSL错误处理 ====================
         .onSslErrorEventReceive((event) => {
-          logger.warn(TAG, `SSL错误: ${event.error}`);
-          // 生产环境应该拒绝不安全的连接
+          const sslError: string = event?.error ? String(event.error) : 'unknown';
+          if (this.config.ignoreSslErrors === true) {
+            logger.warn(TAG, `配置 ignoreSslErrors，放行 SSL 错误: ${sslError}`);
+            event.handler.handleConfirm();
+            return;
+          }
+          logger.warn(TAG, `SSL错误: ${sslError}`);
           event.handler.handleCancel();
         })
         
