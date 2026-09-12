@@ -1,4 +1,4 @@
-﻿// 文件路径: entry/src/main/ets/pages/EBookDetailPage.ets
+// 文件路径: entry/src/main/ets/pages/EBookDetailPage.ets
 /**
  * 电子书详情页
  * 显示电子书的详细信息、章节列表、阅读进度等
@@ -27,6 +27,11 @@ import { startBookOpenTransition, startBookOpenTransitionWithComponentId, CoverP
 import { ContentFilterManager } from 'manxia_core/src/main/ets/Framework/Managers/ContentFilterManager';
 import { buildNovelReaderParamsFromTxtEBook } from '../Framework/Adapters/LocalTextNovelAdapter';
 import { resolveMedia } from 'manxia_ui_resources/src/main/ets/ResourceCatalog';
+import { common } from '@kit.AbilityKit';
+import { fileUri } from '@kit.CoreFileKit';
+import { systemShare } from '@kit.ShareKit';
+import { uniformTypeDescriptor as utd } from '@kit.ArkData';
+import { SafeFileUtils } from 'manxia_core/src/main/ets/Utils/SafeFileUtils';
 
 const TAG = 'EBookDetailPage';
 const TITLE_BAR_HEIGHT = 56;
@@ -965,6 +970,65 @@ export struct EBookDetailPage {
   /**
    * 构建信息部分
    */
+  /**
+   * 分享电子书原文件（与其他内容类型一致，基于导入后的工作副本）
+   */
+  private async shareLocalEBookFile(): Promise<void> {
+    const filePath: string = this.ebook?.filePath ?? '';
+    if (filePath.length <= 0) {
+      this.getUIContext().getPromptAction().showToast({ message: '内置电子书没有可分享的文件', duration: 1800 });
+      return;
+    }
+    try {
+      if (!SafeFileUtils.accessSync(filePath)) {
+        this.getUIContext().getPromptAction().showToast({ message: '本地文件不存在，无法分享', duration: 1800 });
+        logger.warn(TAG, '分享失败，文件不存在: ' + filePath);
+        return;
+      }
+      const context = this.getUIContext().getHostContext() as common.UIAbilityContext;
+      const shareUri: string = fileUri.getUriFromPath(filePath);
+      const shareData: systemShare.SharedData = new systemShare.SharedData({
+        utd: this.resolveShareUtd(filePath),
+        uri: shareUri,
+        title: this.ebook?.metadata.title ?? '电子书',
+        description: '电子书原文件'
+      });
+      const controller: systemShare.ShareController = new systemShare.ShareController(shareData);
+      await controller.show(context, {
+        previewMode: systemShare.SharePreviewMode.DETAIL,
+        selectionMode: systemShare.SelectionMode.SINGLE
+      });
+      logger.info(TAG, '电子书原文件分享面板已打开: ' + filePath);
+    } catch (error) {
+      const errorMessage: string = error instanceof Error ? error.message : String(error);
+      logger.error(TAG, '电子书原文件分享失败: ' + errorMessage);
+      this.getUIContext().getPromptAction().showToast({ message: '分享失败: ' + errorMessage, duration: 2000 });
+    }
+  }
+
+  private resolveShareUtd(path: string): string {
+    const lower: string = path.toLowerCase();
+    if (lower.endsWith('.pdf')) {
+      return utd.UniformDataType.PDF;
+    }
+    if (lower.endsWith('.epub')) {
+      return utd.UniformDataType.EPUB;
+    }
+    if (lower.endsWith('.mobi')) {
+      return utd.UniformDataType.MOBI;
+    }
+    if (lower.endsWith('.azw')) {
+      return utd.UniformDataType.AZW;
+    }
+    if (lower.endsWith('.azw3')) {
+      return utd.UniformDataType.AZW3;
+    }
+    if (lower.endsWith('.txt')) {
+      return utd.UniformDataType.PLAIN_TEXT;
+    }
+    return utd.UniformDataType.FILE;
+  }
+
   @Builder
   buildInfoSection() {
     if (this.ebook) {
@@ -1021,6 +1085,31 @@ export struct EBookDetailPage {
           })
           .onClick(() => {
             this.openEditDialog();
+          })
+
+          // 分享按钮（与其他内容类型一致：分享原文件）
+          Button() {
+            Row({ space: 4 }) {
+              SymbolGlyph($r('sys.symbol.share'))
+                .fontSize(14)
+                .fontColor([ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme)])
+              Text('分享')
+                .fontSize(12)
+                .fontFamily(this.appFontFamily)
+                .fontColor(ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme))
+            }
+          }
+          .height(28)
+          .padding({ left: 10, right: 10 })
+          .backgroundColor('transparent')
+          .border({
+            width: 1,
+            color: ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme),
+            radius: 14
+          })
+          .margin({ left: 8 })
+          .onClick(() => {
+            void this.shareLocalEBookFile();
           })
         }
         .width('100%')

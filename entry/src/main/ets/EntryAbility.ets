@@ -119,6 +119,12 @@ export default class EntryAbility extends UIAbility {
       logger.info('EntryAbility', '收到接续转交启动，已触发主页接续导航检查');
     }
     
+    // [探针] PDF Kit 能力探针启动参数
+    if (want.parameters && want.parameters['pdfKitProbe']) {
+      AppStorage.setOrCreate('pdfKitProbeAutoOpen', true);
+      logger.info('EntryAbility', '收到 PDF Kit 探针启动参数，将在主页显示后打开探针页');
+    }
+
     // 详细记录Want信息用于调试
     logger.info('EntryAbility', `📋 Want详情: uri=${want.uri || 'null'}, type=${want.type || 'null'}, action=${want.action || 'null'}`);
     if (want.parameters) {

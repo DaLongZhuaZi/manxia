@@ -1,6 +1,7 @@
 import { AbilityConstant, UIAbility, Want, common } from '@kit.AbilityKit';
 import { window } from '@kit.ArkUI';
 import { logger } from 'manxia_core/src/main/ets/Utils/Logger';
+import { OrientationLockManager } from 'manxia_core/src/main/ets/Utils/OrientationLockManager';
 import { continuationStateHelper } from './Framework/Distributed/ContinuationStateHelper';
 import { NovelReaderPageParams } from './pages/NovelBookshelfPage';
 import {
@@ -25,6 +26,8 @@ export default class NovelReaderAbility extends UIAbility {
   private continuationRedirectMode: boolean = false;
   /** 跨端接续恢复使用的 LocalStorage（restoreWindowStage 传入，onWindowStageRestore 中随 loadContent 传递） */
   private continuationWindowStorage: LocalStorage = new LocalStorage();
+  /** 本实例主窗口 ID：用于窗口销毁时清理方向锁请求，避免残留污染其它阅读器实例 */
+  private orientationWindowId: number = -1;
 
   onCreate(want: Want, launchParam: AbilityConstant.LaunchParam): void {
     // [修复] 目标端接续启动：恢复接续状态（立即入会+权限确保）并转交 EntryAbility 统一处理接续导航
@@ -65,6 +68,7 @@ export default class NovelReaderAbility extends UIAbility {
     }
     const readerParams: NovelReaderPageParams | null = NovelReaderAbilityParamStore.getInstance().getParams(this.instanceId);
     const windowId = this.resolveMainWindowId(windowStage);
+    this.orientationWindowId = windowId;
     NovelReaderAbilityParamStore.getInstance().bindWindowPayload(windowId, this.instanceId, readerParams);
 
     if (!readerParams) {
@@ -123,6 +127,7 @@ export default class NovelReaderAbility extends UIAbility {
   }
 
   onWindowStageDestroy(): void {
+    this.releaseOrientationWindowLock();
     this.detachWindowLifecycleController();
     NovelReaderAbilityParamStore.getInstance().remove(this.instanceId);
     logger.lifecycle(TAG, 'onWindowStageDestroy', `独立小说阅读器实例销毁: instanceId=${this.instanceId}`);
@@ -147,9 +152,28 @@ export default class NovelReaderAbility extends UIAbility {
   }
 
   onDestroy(): void {
+    this.releaseOrientationWindowLock();
     this.detachWindowLifecycleController();
     NovelReaderAbilityParamStore.getInstance().remove(this.instanceId);
     logger.lifecycle(TAG, 'onDestroy', `独立小说阅读器实例结束: instanceId=${this.instanceId}`);
+  }
+
+  /**
+   * 窗口销毁前清理本窗口的方向锁请求。
+   * 官方文档说明 context.windowStage 在 onWindowStageDestroy 已不可用，
+   * 因此此处使用 onWindowStageCreate 阶段缓存的窗口 ID。
+   */
+  private releaseOrientationWindowLock(): void {
+    try {
+      const released: number = OrientationLockManager.releaseWindowById(this.orientationWindowId);
+      if (released > 0) {
+        logger.info(TAG, `已释放阅读器窗口方向锁请求: windowId=${this.orientationWindowId}, count=${released}`);
+      }
+    } catch (error) {
+      logger.warn(TAG, `释放阅读器窗口方向锁请求失败: ${String(error)}`);
+    } finally {
+      this.orientationWindowId = -1;
+    }
   }
 
   private detachWindowLifecycleController(): void {

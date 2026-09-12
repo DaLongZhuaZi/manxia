@@ -1,4 +1,4 @@
-﻿import { SafeUtils } from 'manxia_core/src/main/ets/Utils/SafeUtils';
+import { SafeUtils } from 'manxia_core/src/main/ets/Utils/SafeUtils';
 import { webview } from '@kit.ArkWeb';
 import { BusinessError, pasteboard } from '@kit.BasicServicesKit';
 import { common } from '@kit.AbilityKit';
@@ -1013,7 +1013,12 @@ export struct EpubWebViewReaderComponent {
     return true;
   }
 
-  private queryViewportThenInject(pageOffset: number, source: string): void {
+  private queryViewportThenInject(
+    pageOffset: number,
+    source: string,
+    notifyReady: boolean = true,
+    anchorRatio: number = -1
+  ): void {
     this.runJs(
       '(function(){return JSON.stringify({w:window.innerWidth,h:window.innerHeight,visualW:window.visualViewport?(window.visualViewport.width||0):0,visualH:window.visualViewport?(window.visualViewport.height||0):0,visualScale:window.visualViewport?(window.visualViewport.scale||0):0});})();',
       (raw: string) => {
@@ -1054,8 +1059,9 @@ export struct EpubWebViewReaderComponent {
           pageOffset,
           this.activeTextSettings,
           this.activePageSettings,
-          true,
-          source
+          notifyReady,
+          source,
+          anchorRatio
         );
       }
     );
@@ -4101,16 +4107,10 @@ export struct EpubWebViewReaderComponent {
         TAG,
         `执行排版重应用: reason=${reason}, page=${savedPage}, ratio=${anchorRatio.toFixed(3)}, vp=${vpW}x${vpH}, text(${this.describeTextSettings(this.activeTextSettings)}), page(${this.describePageSettings(this.activePageSettings)})`
       );
-      this.applyInjectedLayout(
-        vpW,
-        vpH,
-        savedPage,
-        this.activeTextSettings,
-        this.activePageSettings,
-        false,
-        `scheduled:${reason}`,
-        anchorRatio
-      );
+      // [修复] 宿区尺寸变化（旋转/折叠/分屏）后，CSS 必须按 WebView 的"真实当前视口"重建，
+      // 否则会沿用旋转前的旧尺寸计算 column-width / 边距，横屏出现排版错乱。
+      // 这里统一重新查询 WebView 视口（会同步刷新 lastVpW/lastVisualVpW），保持 ready 状态不闪烁。
+      this.queryViewportThenInject(savedPage, `scheduled:${reason}`, false, anchorRatio);
     }, delayMs);
   }
 
@@ -5686,11 +5686,23 @@ export struct EpubWebViewReaderComponent {
     .onAreaChange((_oldArea: Area, newArea: Area) => {
       const widthVp = Number(newArea.width);
       const heightVp = Number(newArea.height);
+      let hostSizeChanged = false;
       if (widthVp > 0) {
+        if (Math.abs(widthVp - this.hostWidthVp) > 1) {
+          hostSizeChanged = true;
+        }
         this.hostWidthVp = widthVp;
       }
       if (heightVp > 0) {
+        if (Math.abs(heightVp - this.hostHeightVp) > 1) {
+          hostSizeChanged = true;
+        }
         this.hostHeightVp = heightVp;
+      }
+      if (hostSizeChanged && this.ready) {
+        // [修复] 宿区尺寸变化（旋转/折叠/分屏）自身即可触发重排，不依赖宿主页面回调，
+        // 保证横屏后一定按新视口重建 CSS 与分页。
+        this.scheduleSettingsReapply('host_area_change');
       }
     })
   }

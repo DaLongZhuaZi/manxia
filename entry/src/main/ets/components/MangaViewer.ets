@@ -330,6 +330,8 @@ interface MangaViewerCallbacks {
   onScrollPositionChange?: (position: number) => void;
   onComponentReady?: (component: MangaViewer) => void;
   onFirstVisibleDisplayCommitted?: (pageIndex: number, pageId: string, sourceType: ImageSourceType) => void;
+  /** 页面真实解码尺寸测量回调（供上层自动识别长图/宽图并切换阅读模式） */
+  onPageImageMeasured?: (pageIndex: number, pageId: string, width: number, height: number, sourceType: ImageSourceType) => void;
   onWebtoonDetected?: (isWebtoon: boolean, avgAspectRatio: number) => void;  // 条漫检测回调
   // [新增] 条漫模式章节切换回调 - 当滚动到其他章节时通知父组件
   onWebtoonChapterSwitch?: (chapterId: string, chapterTitle: string, pageIndex: number) => void;
@@ -9350,6 +9352,7 @@ export struct MangaViewer {
     }).then((pixelMap) => {
       if (pixelMap) {
         logger.debug(TAG, `本地图片缓存加载成功: ${page.id}`);
+        this.notifyLocalPageImageMeasuredFromPixelMap(page, pageIndex, pixelMap);
         this.recordReadFlowAssetEvent(
           MangaReadFlowEventType.ASSET_LOADED,
           page,
@@ -10207,6 +10210,29 @@ export struct MangaViewer {
   }
 
   /**
+   * 上报页面真实解码尺寸（供上层自动识别长图/宽图并切换阅读模式）。
+   */
+  private notifyPageImageMeasured(pageIndex: number, page: MangaPage, width: number, height: number): void {
+    if (!this.callbacks || !this.callbacks.onPageImageMeasured) {
+      return;
+    }
+    if (width <= 0 || height <= 0) {
+      return;
+    }
+    this.callbacks.onPageImageMeasured(pageIndex, page.id, width, height, page.sourceType);
+  }
+
+  private notifyLocalPageImageMeasuredFromPixelMap(page: MangaPage, pageIndex: number, pixelMap: image.PixelMap): void {
+    try {
+      const info = pixelMap.getImageInfoSync();
+      if (info && info.size) {
+        this.notifyPageImageMeasured(pageIndex, page, info.size.width, info.size.height);
+      }
+    } catch (_error) {
+    }
+  }
+
+  /**
    * 提交页面 PixelMap。
    * 条漫模式下优先做行级刷新，避免每张图都触发整树响应式重算。
    */
@@ -10238,6 +10264,7 @@ export struct MangaViewer {
           } as ImageLoadState;
           this.imageLoadStates.set(pageId, nextState);
           this.imageLoadStates = new Map(this.imageLoadStates);
+          this.notifyPageImageMeasured(pageIndex, page, imageInfo.size.width, imageInfo.size.height);
         }
       } catch (_error) {
       }

@@ -1,6 +1,7 @@
 import { ISettingsManagerFacade, SettingsManagerHolder } from 'manxia_core/src/main/ets/Framework/Contracts/ISettingsManagerFacade';
 import { SafeFileUtils } from 'manxia_core/src/main/ets/Utils/SafeFileUtils';
 import { SafeUtils } from 'manxia_core/src/main/ets/Utils/SafeUtils';
+import { OrientationLockManager } from 'manxia_core/src/main/ets/Utils/OrientationLockManager';
 // 文件路径: src/main/ets/pages/MainMenuPage.ets
 // 职责: 漫画阅读应用主入口页面，采用底部导航栏设计，参考Mihon、komikku等现代漫画阅读软件
 
@@ -59,6 +60,8 @@ import { SystemAnimationDemoPage } from './SystemAnimationDemoPage';
 import { SystemResourceDemoPage } from './SystemResourceDemoPage';
 import { HelloWorldPage } from './HelloWorldPage';
 import { SystemStatusPage } from './SystemStatusPage';
+import { PdfKitCapabilityProbePage } from './PdfKitCapabilityProbePage';
+import { TestManagementPage } from './TestManagementPage';
 import { NGFFrameworkStatusPage } from './settings/NGFFrameworkStatusPage';
 import { SearchPage } from './SearchPage';
 import { GlobalSearchPage } from './GlobalSearchPage';
@@ -3505,6 +3508,13 @@ struct MainMenuPage {
   private applyOrientationPreference(): void {
     try {
       const ui = this.getUIContext();
+      // [修复] 阅读器（小说/漫画/电子书）正在持有方向锁时，主界面绝不能覆盖其方向策略，
+      // 否则 display 变化（旋转/折叠）会把阅读器的 LOCK_CURRENT 冲成自动旋转。
+      const activeReaderLock = OrientationLockManager.getActiveRequest(ui);
+      if (activeReaderLock !== null) {
+        logger.info(TAG, `检测到阅读器方向锁生效，跳过主界面方向偏好应用: owner=${activeReaderLock.owner}`);
+        return;
+      }
       if (this.forceLandscapeMode) {
         WindowManager.setPreferredOrientationLandscape(ui);
       } else {
@@ -10911,6 +10921,14 @@ struct MainMenuPage {
       return;
     }
     this.checkPendingFileImport();
+
+    // [探针] PDF Kit 能力探针自动打开（仅测试用）
+    if (AppStorage.get<boolean>('pdfKitProbeAutoOpen') === true) {
+      AppStorage.setOrCreate('pdfKitProbeAutoOpen', false);
+      logger.info(TAG, 'PDF Kit 能力探针自动打开');
+      this.pathStack.pushPath({ name: 'PdfKitCapabilityProbePage' });
+      return;
+    }
 
     // 检查是否有卡片跳转请求（来自onNewWant或onCreate）
     void this.handleWidgetNavigationIfPresent(this.startupRoutePending);
@@ -32791,11 +32809,11 @@ struct MainMenuPage {
   @Builder
   buildNavDestination(name: string, param: ESObject) {
     Column() {
-      // 测试页面导航已移除
-      // if (name === 'TestManagementPage') {
-      //   TestManagementPage()
-      // } else
-      if (name === 'DataManagementPage') {
+      if (name === 'TestManagementPage') {
+        TestManagementPage()
+      } else if (name === 'PdfKitCapabilityProbePage') {
+        PdfKitCapabilityProbePage()
+      } else if (name === 'DataManagementPage') {
         DataManagementPage()
       } else if (name === 'RemoteControlPage') {
         RemoteControlPage()

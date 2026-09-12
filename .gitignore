@@ -33,6 +33,9 @@ docs/logs/*.txt
 *.swp
 *~
 
+# 历史 *.bak 备份归档目录（不参与编译与打包，也不纳入版本管理）
+/_backup_archive/
+
 # OS
 .DS_Store
 Thumbs.db

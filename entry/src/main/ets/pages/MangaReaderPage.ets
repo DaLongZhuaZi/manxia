@@ -11,6 +11,8 @@ import { ReaderSafeAreaUtils } from '../Utils/ReaderSafeAreaUtils';
 import { common } from '@kit.AbilityKit';
 import { WindowManager, DisplayMode } from 'manxia_theme/src/main/ets/Utils/WindowManager';
 import { ReaderOrientationLockHelper } from 'manxia_core/src/main/ets/Utils/ReaderOrientationLockHelper';
+import { OrientationLockManager, OrientationLockPriority, OrientationLockStrategy } from 'manxia_core/src/main/ets/Utils/OrientationLockManager';
+import { ReaderToolbarButton } from '../components/ReaderToolbarButton';
 import { PageWindowCoordinator } from 'manxia_theme/src/main/ets/Utils/PageWindowCoordinator';
 import { globalAnimationManager, AnimationType, AnimationState,
   AnimationEasing } from '../Framework/Animation/GlobalAnimationSystem';
@@ -151,7 +153,17 @@ import { distributedPermissionManager } from '../Framework/Distributed/Distribut
 import { continuationStateHelper } from '../Framework/Distributed/ContinuationStateHelper';
 
 const TAG = 'MangaReaderPage';
-const AUTO_WEBTOON_ASPECT_RATIO_THRESHOLD: number = 2.8;
+// 自动识别长图/宽图并切换阅读模式（采样判定，尺寸未知可重试）
+const AUTO_MODE_SAMPLE_COUNT: number = 3;
+const AUTO_WEBTOON_STRONG_ASPECT_RATIO: number = 2.8;
+const AUTO_WEBTOON_AVG_ASPECT_RATIO: number = 2.0;
+const AUTO_WIDE_AVG_ASPECT_RATIO: number = 1.6;
+// 交互提示（显示/阅读模式引导）时机参数
+const HINT_SHOW_DELAY_MS: number = 250;
+const HINT_MODE_CHANGE_DELAY_MS: number = 320;
+const HINT_FIRST_DURATION_MS: number = 5000;
+const HINT_MODE_CHANGE_DURATION_MS: number = 3000;
+const HINT_PERSIST_STABLE_MS: number = 700;
 
 /**
 * 漫画阅读器页面参数接口
@@ -572,8 +584,15 @@ export struct MangaReaderPage {
   @State overlayDismissTimer: number = -1;
   @State isReadingSettingsReady: boolean = false;// 阅读设置是否已加载
   private static hasShownInteractionHint: boolean = false;// 进程内缓存，持久化状态见 SettingsManager
-  private static lastShownReadingMode: ReadingMode | null = null;// 上次显示提示时的阅读模式
+  private static lastShownInteractionHintKey: string = '';// 上次显示提示时的 "模式|方向" 键
   private settingsManager: ISettingsManagerFacade = SettingsManagerHolder.get();
+  // 交互提示统一入口的运行时状态（修复多点触发互相取消、过早显示、误写持久化标记）
+  private interactionHintShowTimer: number = -1;
+  private interactionHintPersistTimer: number = -1;
+  private interactionHintModeAtRequest: ReadingMode | null = null;
+  private interactionHintContentReady: boolean = false;
+  private interactionHintWaitingContent: boolean = false;
+  private interactionHintPendingReason: string = '';
   
   // 设置面板动画状态
   @State showDebugClickIndicator: boolean = false;
@@ -650,7 +669,14 @@ export struct MangaReaderPage {
   private lastWebtoonSwitchChapterId: string = '';
   private lastWebtoonSwitchAt: number = 0;
   private chapterPageCountRefreshInProgress: boolean = false;
-  private hasAutoWebtoonModeDetectionRun: boolean = false;
+  private autoModeDetectionResolved: boolean = false;
+  private autoModeChapterId: string = '';
+  private autoModeMeasuredPageIds: string[] = [];
+  private autoModeTallRatios: number[] = [];
+  private autoModeWideRatios: number[] = [];
+  private autoWebtoonSwitchApplied: boolean = false;
+  private autoLandscapeApplied: boolean = false;
+  private autoLandscapeToken: string = '';
   private readonly WEBTOON_SWITCH_DEBOUNCE_LOCAL_MS: number = 120;
   private readonly WEBTOON_SWITCH_DEBOUNCE_ONLINE_MS: number = 280;
   
@@ -707,6 +733,7 @@ private onlineDownloadedLocalFastPathActive: boolean = false;
     this.setupFullscreenMode();
     this.scheduleFullscreenRestore('page_show');
     this.refreshCurrentMangaBookmarkState('on_page_show');
+    this.syncExternalReadingSettingsOnShow();
     logger.lifecycle(TAG, '漫画阅读器页面开始显示');
     
     // 通知预加载管理器：阅读器已激活
@@ -1481,6 +1508,8 @@ private onlineDownloadedLocalFastPathActive: boolean = false;
     // 恢复正常状态栏模式
     this.unregisterVolumeKeyListener();
     this.orientationLockToken = ReaderOrientationLockHelper.release(this.orientationLockToken, this.uiContext);
+    // [修复] 若自动横屏被触发过，退出阅读器时恢复自动旋转
+    this.restoreAutoModeOrientation();
 
     // 清理主题感知
     this.restoreNormalMode();
@@ -6354,6 +6383,40 @@ private onlineDownloadedLocalFastPathActive: boolean = false;
     }
   }
 
+  /**
+   * 从设置页返回时同步"外部修改"的阅读设置，并在模式/方向变化时补交互提示。
+   */
+  private syncExternalReadingSettingsOnShow(): void {
+    if (!this.isReadingSettingsReady || !this.readerState.currentManga) {
+      return;
+    }
+    const mangaId = this.readerState.currentManga.id;
+    const raw = AppStorage.get<string>('manga_settings_' + mangaId);
+    if (!raw || raw.length <= 0) {
+      return;
+    }
+    try {
+      const parsed = SafeUtils.parseObj(raw) as ReadingSettings;
+      const externalSettings: ReadingSettings = this.cloneReadingSettings(parsed);
+      if (externalSettings.readingMode === this.readingSettings.readingMode &&
+        externalSettings.readingDirection === this.readingSettings.readingDirection) {
+        return;
+      }
+      logger.info(
+        TAG,
+        '检测到外部阅读设置变更，返回阅读器时同步: mode=' + String(externalSettings.readingMode) +
+          ', direction=' + String(externalSettings.readingDirection)
+      );
+      this.readingSettings = externalSettings;
+      this.readerState.currentManga.readingSettings = externalSettings;
+      this.syncDeviceOrientationLock('external_settings_sync');
+      this.syncAutoPageTurnStateFromSettings(true);
+      this.requestInteractionHint('external_mode_change', HINT_MODE_CHANGE_DELAY_MS);
+    } catch (error) {
+      logger.warn(TAG, '同步外部阅读设置失败: ' + String(error));
+    }
+  }
+
   private async loadReadingSettings(): Promise<void> {
     logger.debug(TAG, '⚙️ 开始加载阅读设置');
     
@@ -6365,11 +6428,8 @@ private onlineDownloadedLocalFastPathActive: boolean = false;
         this.updateVolumeKeyListener();
         this.syncAutoPageTurnStateFromSettings();
         this.isReadingSettingsReady = true;
-        logger.info(TAG, '📋 使用默认阅读设置，尝试显示交互提示Overlay');
-        if (!this.showInteractionOverlay) {
-          this.showInteractionOverlay = true;
-          this.showInteractionOverlayWithAnimation();
-        }
+        logger.info(TAG, '📋 使用默认阅读设置，请求交互提示Overlay');
+        this.requestInteractionHint('settings_loaded_default', HINT_SHOW_DELAY_MS);
         return;
       }
 
@@ -6415,11 +6475,8 @@ private onlineDownloadedLocalFastPathActive: boolean = false;
       this.syncAutoPageTurnStateFromSettings();
       this.isReadingSettingsReady = true;
       
-      logger.info(TAG, '✅ 阅读设置加载完成（来自数据库），尝试显示交互提示Overlay');
-      if (!this.showInteractionOverlay) {
-        this.showInteractionOverlay = true;
-        this.showInteractionOverlayWithAnimation();
-      }
+      logger.info(TAG, '✅ 阅读设置加载完成（来自数据库），请求交互提示Overlay');
+      this.requestInteractionHint('settings_loaded', HINT_SHOW_DELAY_MS);
       logger.debug(TAG, `📋 最终阅读设置:`);
       logger.debug(TAG, `📋 最终阅读设置:`);
       logger.debug(TAG, `  - 阅读模式: ${this.readingSettings.readingMode}`);
@@ -6445,11 +6502,8 @@ private onlineDownloadedLocalFastPathActive: boolean = false;
       this.updateVolumeKeyListener();
       this.syncAutoPageTurnStateFromSettings();
       this.isReadingSettingsReady = true;
-      logger.info(TAG, '📋 回退到默认阅读设置，尝试显示交互提示Overlay');
-      if (!this.showInteractionOverlay) {
-        this.showInteractionOverlay = true;
-        this.showInteractionOverlayWithAnimation();
-      }
+      logger.info(TAG, '📋 回退到默认阅读设置，请求交互提示Overlay');
+      this.requestInteractionHint('settings_loaded_fallback', HINT_SHOW_DELAY_MS);
     }
   }
 
@@ -6635,10 +6689,9 @@ private onlineDownloadedLocalFastPathActive: boolean = false;
       // 直接设置最终状态，跳过动画
       this.contentOpacity = 1;
       this.titleTranslateY = 0;
-      // 仅在阅读设置已就绪时显示交互提示
+      // 仅在阅读设置已就绪时请求交互提示
       if (this.isReadingSettingsReady) {
-        this.showInteractionOverlay = true;
-        this.showInteractionOverlayWithAnimation();
+        this.requestInteractionHint('entrance_complete', HINT_SHOW_DELAY_MS);
       }
       return;
     }
@@ -6652,12 +6705,11 @@ private onlineDownloadedLocalFastPathActive: boolean = false;
       duration: 300,
       curve: Curve.EaseOut,
       onFinish: () => {
-        // 入场动画完成后，仅在阅读设置已就绪时显示交互提示
+        // 入场动画完成后，仅在阅读设置已就绪时请求交互提示（统一入口会去重，不会互相取消）
         if (this.isReadingSettingsReady) {
-          this.showInteractionOverlay = true;
-          this.showInteractionOverlayWithAnimation();
+          this.requestInteractionHint('entrance_complete', HINT_SHOW_DELAY_MS);
         } else {
-          logger.debug(TAG, '入场动画完成，但阅读设置尚未就绪，延迟显示Overlay');
+          logger.debug(TAG, '入场动画完成，但阅读设置尚未就绪，等待设置加载后再请求');
         }
       }
     }, () => {
@@ -6676,70 +6728,167 @@ private onlineDownloadedLocalFastPathActive: boolean = false;
   }
 
   /**
-   * 检查是否应该显示交互提示
-   * 只在以下情况显示：
-   * 1. 首次使用漫画阅读器
-   * 2. 阅读模式发生变化
-    */
-  private shouldShowInteractionHint(): boolean {
-    const currentMode = this.readingSettings.readingMode;
+   * 交互提示去重键：阅读模式 + 屏幕方向（横竖屏交互区域不同）。
+   */
+  private getInteractionHintKey(): string {
+    const orientation: string = this.isLandscapeScreen() ? 'landscape' : 'portrait';
+    return String(this.readingSettings.readingMode) + '|' + orientation;
+  }
 
-    if (MangaReaderPage.hasShownInteractionHint && MangaReaderPage.lastShownReadingMode === currentMode) {
-      logger.debug(TAG, `本进程已显示过当前阅读模式交互提示，跳过显示: mode=${currentMode}`);
+  /**
+   * 检查是否应该显示交互提示：
+   * 1) 首次使用漫画阅读器；
+   * 2) 阅读模式或屏幕方向发生变化。
+   * 仅做判定，不产生显示/隐藏副作用。
+   */
+  private shouldShowInteractionHint(): boolean {
+    const hintKey: string = this.getInteractionHintKey();
+
+    if (MangaReaderPage.hasShownInteractionHint && MangaReaderPage.lastShownInteractionHintKey === hintKey) {
+      logger.debug(TAG, '本进程已显示过当前模式/方向的交互提示，跳过: key=' + hintKey);
       return false;
     }
 
-    const persistedMode = this.settingsManager.getString(SettingKeys.MANGA_READER_INTERACTION_HINT_LAST_MODE, '');
-    if (persistedMode.length === 0) {
-      logger.info(TAG, '首次使用漫画阅读器，显示交互提示');
+    const persistedKey = this.settingsManager.getString(SettingKeys.MANGA_READER_INTERACTION_HINT_LAST_MODE, '');
+    if (persistedKey.length === 0) {
+      logger.info(TAG, '首次使用漫画阅读器，允许显示交互提示');
       return true;
     }
-
-    if (persistedMode !== currentMode) {
-      logger.info(TAG, `阅读模式变更，显示交互提示: ${persistedMode} -> ${currentMode}`);
+    if (persistedKey !== hintKey) {
+      logger.info(TAG, '阅读模式/方向变更，允许显示交互提示: ' + persistedKey + ' -> ' + hintKey);
       return true;
     }
 
     MangaReaderPage.hasShownInteractionHint = true;
-    MangaReaderPage.lastShownReadingMode = currentMode;
-    logger.debug(TAG, `已持久化显示过当前阅读模式交互提示，跳过显示: mode=${currentMode}`);
+    MangaReaderPage.lastShownInteractionHintKey = hintKey;
+    logger.debug(TAG, '已持久化显示过当前模式/方向交互提示，跳过: key=' + hintKey);
     return false;
   }
 
-  private async persistInteractionHintShown(mode: ReadingMode): Promise<void> {
+  private isFirstEverInteractionHint(): boolean {
+    const persistedKey = this.settingsManager.getString(SettingKeys.MANGA_READER_INTERACTION_HINT_LAST_MODE, '');
+    return persistedKey.length === 0;
+  }
+
+  private async persistInteractionHintShown(hintKey: string): Promise<void> {
     try {
-      await this.settingsManager.setString(SettingKeys.MANGA_READER_INTERACTION_HINT_LAST_MODE, String(mode));
-      logger.debug(TAG, `已持久化漫画阅读交互提示模式: ${mode}`);
+      await this.settingsManager.setString(SettingKeys.MANGA_READER_INTERACTION_HINT_LAST_MODE, hintKey);
+      logger.debug(TAG, '已持久化漫画阅读交互提示键: ' + hintKey);
     } catch (error) {
-      logger.warn(TAG, `保存漫画阅读交互提示标记失败: ${String(error)}`);
+      logger.warn(TAG, '保存漫画阅读交互提示标记失败: ' + String(error));
     }
   }
 
-  /**
-   * 显示交互区域提示overlay
-    */
-  private showInteractionOverlayWithAnimation(): void {
-    if (!this.showInteractionOverlay) {
-      return;
+  private clearInteractionHintTimers(): void {
+    if (this.interactionHintShowTimer !== -1) {
+      clearTimeout(this.interactionHintShowTimer);
+      this.interactionHintShowTimer = -1;
     }
-    
-    // 检查是否应该显示提示
-    if (!this.shouldShowInteractionHint()) {
-      this.showInteractionOverlay = false;
-      return;
+    if (this.interactionHintPersistTimer !== -1) {
+      clearTimeout(this.interactionHintPersistTimer);
+      this.interactionHintPersistTimer = -1;
     }
-    
-    // 记录当前阅读模式和已显示状态
     if (this.overlayDismissTimer !== -1) {
       clearTimeout(this.overlayDismissTimer);
       this.overlayDismissTimer = -1;
     }
-    MangaReaderPage.lastShownReadingMode = this.readingSettings.readingMode;
-    MangaReaderPage.hasShownInteractionHint = true;
-    void this.persistInteractionHintShown(this.readingSettings.readingMode);
-    
-    // 5秒后自动隐藏
+  }
+
+  /**
+   * 内容就绪门槛：首图提交后才允许展示提示，避免提示盖在加载层上。
+   */
+  private markInteractionHintContentReady(reason: string): void {
+    if (this.interactionHintContentReady) {
+      return;
+    }
+    this.interactionHintContentReady = true;
+    logger.debug(TAG, '交互提示内容就绪: reason=' + reason);
+    if (this.interactionHintWaitingContent) {
+      this.interactionHintWaitingContent = false;
+      const pendingReason: string = this.interactionHintPendingReason.length > 0
+        ? this.interactionHintPendingReason
+        : 'content_ready';
+      this.requestInteractionHint(pendingReason, HINT_SHOW_DELAY_MS);
+    }
+  }
+
+  /**
+   * 统一交互提示入口：去重、去抖、等待内容就绪、延迟展示。
+   * 同一轮内多次触发不会互相取消；被取消的提示不会误写持久化标记。
+   */
+  private requestInteractionHint(reason: string, delayMs: number = HINT_SHOW_DELAY_MS): void {
+    if (!this.isReaderLifecycleCurrent(this.readerLifecycleGeneration)) {
+      return;
+    }
+    const requestedMode: ReadingMode = this.readingSettings.readingMode;
+
+    if (!this.interactionHintContentReady) {
+      this.interactionHintWaitingContent = true;
+      this.interactionHintPendingReason = reason;
+      logger.debug(TAG, '交互提示等待内容就绪: reason=' + reason + ', mode=' + String(requestedMode));
+      return;
+    }
+
+    if (this.interactionHintShowTimer !== -1 && this.interactionHintModeAtRequest === requestedMode) {
+      logger.debug(TAG, '交互提示请求已排队，忽略重复触发: reason=' + reason + ', mode=' + String(requestedMode));
+      return;
+    }
+    if (this.showInteractionOverlay) {
+      logger.debug(TAG, '交互提示已显示，忽略重复触发: reason=' + reason);
+      return;
+    }
+
+    if (this.interactionHintShowTimer !== -1) {
+      clearTimeout(this.interactionHintShowTimer);
+      this.interactionHintShowTimer = -1;
+    }
+
+    this.interactionHintModeAtRequest = requestedMode;
     const lifecycleGeneration: number = this.readerLifecycleGeneration;
+    const effectiveDelay: number = Math.max(0, delayMs);
+    this.interactionHintShowTimer = setTimeout(() => {
+      this.interactionHintShowTimer = -1;
+      if (!this.isReaderLifecycleCurrent(lifecycleGeneration)) {
+        return;
+      }
+      this.showInteractionOverlayNow(reason);
+    }, effectiveDelay);
+    logger.debug(TAG, '交互提示已排队: reason=' + reason + ', mode=' + String(requestedMode) + ', delay=' + effectiveDelay + 'ms');
+  }
+
+  private showInteractionOverlayNow(reason: string): void {
+    if (this.showInteractionOverlay) {
+      return;
+    }
+    if (!this.shouldShowInteractionHint()) {
+      return;
+    }
+    this.showInteractionOverlay = true;
+    MangaReaderPage.lastShownInteractionHintKey = this.getInteractionHintKey();
+
+    const durationMs: number = this.isFirstEverInteractionHint()
+      ? HINT_FIRST_DURATION_MS
+      : HINT_MODE_CHANGE_DURATION_MS;
+    const lifecycleGeneration: number = this.readerLifecycleGeneration;
+
+    // 稳定可见后再写入持久化标记，避免"刚显示就被取消/立刻关闭"时误写导致以后永久不再提示
+    if (this.interactionHintPersistTimer !== -1) {
+      clearTimeout(this.interactionHintPersistTimer);
+      this.interactionHintPersistTimer = -1;
+    }
+    this.interactionHintPersistTimer = setTimeout(() => {
+      this.interactionHintPersistTimer = -1;
+      if (!this.showInteractionOverlay || !this.isReaderLifecycleCurrent(lifecycleGeneration)) {
+        return;
+      }
+      MangaReaderPage.hasShownInteractionHint = true;
+      void this.persistInteractionHintShown(this.getInteractionHintKey());
+    }, HINT_PERSIST_STABLE_MS);
+
+    if (this.overlayDismissTimer !== -1) {
+      clearTimeout(this.overlayDismissTimer);
+      this.overlayDismissTimer = -1;
+    }
     let dismissTimerId: number = -1;
     dismissTimerId = setTimeout(() => {
       if (this.overlayDismissTimer !== dismissTimerId) {
@@ -6749,22 +6898,17 @@ private onlineDownloadedLocalFastPathActive: boolean = false;
       if (this.isReaderLifecycleCurrent(lifecycleGeneration)) {
         this.hideInteractionOverlay();
       }
-    }, 5000);
+    }, durationMs);
     this.overlayDismissTimer = dismissTimerId;
-    
-    logger.info(TAG, `显示交互提示Overlay（模式: ${this.readingSettings.readingMode}），5秒后自动隐藏`);
+
+    logger.info(TAG, '显示交互提示Overlay: reason=' + reason + ', mode=' + String(this.readingSettings.readingMode) + ', duration=' + durationMs + 'ms');
   }
 
   /**
    * 隐藏交互区域提示overlay
-    */
+   */
   private hideInteractionOverlay(): void {
-    // 清除自动隐藏定时器
-    if (this.overlayDismissTimer !== -1) {
-      clearTimeout(this.overlayDismissTimer);
-      this.overlayDismissTimer = -1;
-    }
-    
+    this.clearInteractionHintTimers();
     this.showInteractionOverlay = false;
     logger.info(TAG, '隐藏交互提示Overlay');
   }
@@ -7417,10 +7561,9 @@ private onlineDownloadedLocalFastPathActive: boolean = false;
     // 更新自动翻页配置
     this.syncAutoPageTurnStateFromSettings(true);
     
-    // 如果阅读模式变更，显示交互提示
+    // 如果阅读模式变更，延迟到布局切换完成后再显示交互提示
     if (readingModeChanged) {
-      this.showInteractionOverlay = true;
-      this.showInteractionOverlayWithAnimation();
+      this.requestInteractionHint('mode_change', HINT_MODE_CHANGE_DELAY_MS);
     }
 
     // 注意：不要在设置变更时自动启动/停止自动翻页
@@ -10552,46 +10695,113 @@ private onlineDownloadedLocalFastPathActive: boolean = false;
   }
 
   private handleFirstVisibleMangaImageCommitted(pageIndex: number, pageId: string, sourceType: ImageSourceType): void {
-    void this.refreshChapterPageCountsForList(`first_visible_${pageIndex + 1}`).catch((error: Error) => {
-      logger.warn(TAG, `首图显示后刷新章节目录页数失败: ${error.message}`);
+    void this.refreshChapterPageCountsForList('first_visible_' + (pageIndex + 1)).catch((error: Error) => {
+      logger.warn(TAG, '首图显示后刷新章节目录页数失败: ' + error.message);
     });
-    this.tryAutoSwitchToWebtoonForLongImage(pageIndex, pageId, sourceType);
+    // 兜底：若首图元数据已带尺寸，直接参与自动模式判定（真实解码尺寸走 onPageImageMeasured）
+    const page: MangaPage | null = this.findCurrentChapterPage(pageIndex, pageId);
+    if (page && page.width !== undefined && page.height !== undefined &&
+      page.width > 0 && page.height > 0) {
+      this.handleMangaPageImageMeasured(pageIndex, pageId, page.width, page.height, sourceType);
+    }
   }
 
-  private tryAutoSwitchToWebtoonForLongImage(pageIndex: number, pageId: string, sourceType: ImageSourceType): void {
-    if (this.hasAutoWebtoonModeDetectionRun) {
+  /**
+   * 统一处理页面真实尺寸测量结果：自动识别超长图（条漫）与超宽图并切换阅读模式。
+   * 修复：尺寸未知不消耗探测机会可重试；多张采样而非只看首图；章节切换自动重置；新增超宽图分支。
+   */
+  private handleMangaPageImageMeasured(
+    pageIndex: number,
+    pageId: string,
+    width: number,
+    height: number,
+    sourceType: ImageSourceType
+  ): void {
+    if (width <= 0 || height <= 0) {
       return;
     }
-    this.hasAutoWebtoonModeDetectionRun = true;
-
+    this.syncAutoModeDetectionChapter();
+    if (this.autoModeDetectionResolved) {
+      return;
+    }
     if (this.isWebtoonMode()) {
-      logger.debug(TAG, '自动条漫检测跳过: 当前已是条漫模式');
+      this.autoModeDetectionResolved = true;
+      this.autoWebtoonSwitchApplied = true;
       return;
     }
     if (this.isModeLocked()) {
-      logger.info(TAG, '自动条漫检测跳过: 阅读模式已锁定');
+      logger.info(TAG, '自动模式检测跳过: 阅读模式已锁定');
+      this.autoModeDetectionResolved = true;
+      return;
+    }
+    if (this.autoModeMeasuredPageIds.includes(pageId)) {
+      return;
+    }
+    this.autoModeMeasuredPageIds.push(pageId);
+    const tallRatio: number = height / width;
+    const wideRatio: number = width / height;
+    this.autoModeTallRatios.push(tallRatio);
+    this.autoModeWideRatios.push(wideRatio);
+    logger.debug(
+      TAG,
+      '自动模式采样: page=' + (pageIndex + 1) + ', size=' + width + 'x' + height +
+        ', tall=' + tallRatio.toFixed(2) + ', wide=' + wideRatio.toFixed(2) +
+        ', sourceType=' + String(sourceType)
+    );
+
+    if (tallRatio >= AUTO_WEBTOON_STRONG_ASPECT_RATIO) {
+      this.applyAutoWebtoonSwitch('auto_long_strong', width, height);
+      return;
+    }
+    if (this.autoModeTallRatios.length < AUTO_MODE_SAMPLE_COUNT) {
       return;
     }
 
-    const page = this.findCurrentChapterPage(pageIndex, pageId);
-    if (!page) {
-      logger.warn(TAG, `自动条漫检测跳过: 未找到首图页面, pageIndex=${pageIndex}, pageId=${pageId}`);
+    const avgTall: number = this.averageNumber(this.autoModeTallRatios);
+    const avgWide: number = this.averageNumber(this.autoModeWideRatios);
+    this.autoModeDetectionResolved = true;
+    if (avgTall >= AUTO_WEBTOON_AVG_ASPECT_RATIO) {
+      this.applyAutoWebtoonSwitch('auto_long_avg', width, height);
       return;
     }
-
-    const width: number = page.width && page.width > 0 ? page.width : 0;
-    const height: number = page.height && page.height > 0 ? page.height : 0;
-    if (width <= 0 || height <= 0) {
-      logger.info(TAG, `自动条漫检测跳过: 首图尺寸未知, pageId=${pageId}, sourceType=${String(sourceType)}`);
+    if (avgWide >= AUTO_WIDE_AVG_ASPECT_RATIO) {
+      this.applyAutoWideSwitch('auto_wide_avg', width, height);
       return;
     }
+    logger.info(TAG, '自动模式检测完成: 非长图/宽图, avgTall=' + avgTall.toFixed(2) + ', avgWide=' + avgWide.toFixed(2));
+  }
 
-    const aspectRatio: number = height / width;
-    if (aspectRatio < AUTO_WEBTOON_ASPECT_RATIO_THRESHOLD) {
-      logger.debug(TAG, `自动条漫检测未命中: ratio=${aspectRatio.toFixed(2)}, threshold=${AUTO_WEBTOON_ASPECT_RATIO_THRESHOLD}`);
+  private syncAutoModeDetectionChapter(): void {
+    const currentChapter = this.readerState.currentChapter;
+    const chapterId: string = currentChapter ? currentChapter.id : '';
+    if (chapterId === this.autoModeChapterId) {
       return;
     }
+    this.autoModeChapterId = chapterId;
+    this.autoModeMeasuredPageIds = [];
+    this.autoModeTallRatios = [];
+    this.autoModeWideRatios = [];
+    this.autoModeDetectionResolved = false;
+    logger.debug(TAG, '自动模式检测重置: chapterId=' + chapterId);
+  }
 
+  private averageNumber(values: number[]): number {
+    if (values.length <= 0) {
+      return 0;
+    }
+    let sum: number = 0;
+    for (let i = 0; i < values.length; i++) {
+      sum += values[i];
+    }
+    return sum / values.length;
+  }
+
+  private applyAutoWebtoonSwitch(trigger: string, width: number, height: number): void {
+    this.autoModeDetectionResolved = true;
+    if (this.autoWebtoonSwitchApplied || this.isWebtoonMode()) {
+      this.autoWebtoonSwitchApplied = true;
+      return;
+    }
     const nextSettings: ReadingSettings = this.cloneReadingSettings(this.readingSettings);
     nextSettings.readingMode = ReadingMode.WEBTOON;
     nextSettings.readingDirection = ReadingDirection.TOP_TO_BOTTOM;
@@ -10599,17 +10809,20 @@ private onlineDownloadedLocalFastPathActive: boolean = false;
     const snapshot: ReadingSettings = this.cloneReadingSettings(nextSettings);
     if (this.readerState.currentManga) {
       const mangaId = this.readerState.currentManga.id;
-      AppStorage.setOrCreate(`manga_settings_${mangaId}`, JSON.stringify(snapshot));
+      AppStorage.setOrCreate('manga_settings_' + mangaId, JSON.stringify(snapshot));
       this.readerState.currentManga.readingSettings = snapshot;
     }
     this.readingSettings = snapshot;
+    this.autoWebtoonSwitchApplied = true;
     this.syncDeviceOrientationLock('auto_webtoon_long_image');
     this.queueReadingSettingsSave('auto_webtoon_long_image');
     this.updateAdjacentChaptersForWebtoon();
     this.syncAutoPageTurnStateFromSettings(true);
 
-    logger.info(TAG, `自动切换条漫模式: page=${pageIndex + 1}, size=${width}x${height}, ratio=${aspectRatio.toFixed(2)}, sourceType=${String(sourceType)}`);
+    logger.info(TAG, '自动切换条漫模式: trigger=' + trigger + ', size=' + width + 'x' + height);
     this.getUIContext().getPromptAction().showToast({ message: '检测到长条图片，已自动切换为条漫模式' });
+    // 切换稳定后再教一次新模式的交互区域（与 toast 错开，避免同时弹出）
+    this.requestInteractionHint('auto_webtoon', 1500);
 
     const targetIndex: number = this.readerState.currentPageIndex;
     const lifecycleGeneration: number = this.readerLifecycleGeneration;
@@ -10629,6 +10842,48 @@ private onlineDownloadedLocalFastPathActive: boolean = false;
         this.scrollToWebtoonPage(targetIndex);
       }
     }, 120);
+  }
+
+  private applyAutoWideSwitch(trigger: string, width: number, height: number): void {
+    if (this.autoLandscapeApplied) {
+      return;
+    }
+    if (this.readingSettings.lockDeviceOrientation ?? false) {
+      logger.info(TAG, '检测到宽图但方向锁已开启，跳过自动横屏: trigger=' + trigger);
+      return;
+    }
+    if (this.isLandscapeScreen()) {
+      this.autoLandscapeApplied = true;
+      return;
+    }
+    this.autoLandscapeApplied = true;
+    if (!this.uiContext) {
+      this.uiContext = this.getUIContext();
+    }
+    // 通过方向锁请求栈登记，避免主界面 device 监听把自动横屏冲掉；退出时 release 自动回落系统旋转策略
+    this.autoLandscapeToken = OrientationLockManager.acquirePageLock(
+      'MangaReaderPageAutoLandscape',
+      OrientationLockStrategy.USER_ROTATION_LANDSCAPE,
+      this.uiContext ?? undefined,
+      OrientationLockPriority.PAGE
+    );
+    logger.info(TAG, '自动切换横屏阅读宽图: trigger=' + trigger + ', size=' + width + 'x' + height);
+    this.getUIContext().getPromptAction().showToast({ message: '检测到宽图，已自动切换为横屏阅读' });
+    // 旋转完成后再提示（去重键含方向，横屏与竖屏的交互区域不同）
+    this.requestInteractionHint('auto_wide', 1600);
+  }
+
+  private restoreAutoModeOrientation(): void {
+    const token: string = this.autoLandscapeToken;
+    this.autoLandscapeToken = '';
+    this.autoLandscapeApplied = false;
+    if (token.length <= 0) {
+      return;
+    }
+    if (!this.uiContext) {
+      this.uiContext = this.getUIContext();
+    }
+    OrientationLockManager.releaseLock(token, this.uiContext ?? undefined);
   }
 
   private isReaderProgressRtl(): boolean {
@@ -11443,15 +11698,13 @@ private onlineDownloadedLocalFastPathActive: boolean = false;
   buildTopToolbar() {
     Row() {
             // 条漫模式下需要滚动到对应页面
-      Button() {
-        SymbolGlyph($r('sys.symbol.arrow_left'))
-          .fontColor([this.getToolbarIconColor()])
-
-      }
-      .width(48)
-      .height(48)
-      .backgroundColor(Color.Transparent)
-      .onClick(() => void this.goBack())
+      ReaderToolbarButton({
+        icon: $r('sys.symbol.arrow_left'),
+        label: '返回',
+        iconColor: this.getToolbarIconColor(),
+        iconSize: 20,
+        onAction: () => { void this.goBack(); }
+      })
 
             // 条漫模式下需要滚动到对应页面
       Column() {
@@ -11476,40 +11729,36 @@ private onlineDownloadedLocalFastPathActive: boolean = false;
       .alignItems(HorizontalAlign.Start)
       .margin({ left: 12 })
 
-      Button() {
-        SymbolGlyph(this.isCurrentPageBookmarked ? $r('sys.symbol.bookmark_fill') : $r('sys.symbol.bookmark'))
-          .fontColor([this.getToolbarIconColor(this.isCurrentPageBookmarked)])
-      }
-      .width(48)
-      .height(48)
-      .backgroundColor(Color.Transparent)
-      .onClick(() => {
-        this.addCurrentMangaBookmark();
+      ReaderToolbarButton({
+        icon: this.isCurrentPageBookmarked ? $r('sys.symbol.bookmark_fill') : $r('sys.symbol.bookmark'),
+        label: '书签',
+        iconColor: this.getToolbarIconColor(this.isCurrentPageBookmarked),
+        iconSize: 20,
+        onAction: () => {
+          this.addCurrentMangaBookmark();
+        }
       })
 
-      Button() {
-        SymbolGlyph($r('sys.symbol.highlighter_line'))
-          .fontColor([this.getToolbarIconColor()])
-      }
-      .width(48)
-      .height(48)
-      .backgroundColor(Color.Transparent)
-      .onClick(() => {
-        this.openCurrentMangaAnnotationCenter();
+      ReaderToolbarButton({
+        icon: $r('sys.symbol.highlighter_line'),
+        label: '划线',
+        iconColor: this.getToolbarIconColor(),
+        iconSize: 20,
+        onAction: () => {
+          this.openCurrentMangaAnnotationCenter();
+        }
       })
 
         // 阅读模式快捷设置按钮
-      Button() {
-        SymbolGlyph($r('sys.symbol.more'))
-          .fontColor([this.getToolbarIconColor()])
-
-      }
-      .width(48)
-      .height(48)
-      .backgroundColor(Color.Transparent)
-        .onClick(() => {
+      ReaderToolbarButton({
+        icon: $r('sys.symbol.more'),
+        label: '更多',
+        iconColor: this.getToolbarIconColor(),
+        iconSize: 20,
+        onAction: () => {
           this.showMoreMenuWithAnimation();
-        })
+        }
+      })
     }
     .width('100%')
     .height(ReaderSafeAreaUtils.getTopToolbarHeight(this.getToolbarStatusBarHeight()))
@@ -11593,76 +11842,66 @@ private onlineDownloadedLocalFastPathActive: boolean = false;
       // 加载状态
       Row() {
       // 加载状态
-        Button() {
-          SymbolGlyph($r('sys.symbol.list_bullet'))
-            .fontColor([this.getToolbarIconColor()])
-
-        }
-        .width(48)
-        .height(48)
-        .backgroundColor(Color.Transparent)
-        .onClick(() => {
-          this.openTableOfContents();
+        ReaderToolbarButton({
+          icon: $r('sys.symbol.list_bullet'),
+          label: '目录',
+          iconColor: this.getToolbarIconColor(),
+          iconSize: 20,
+          onAction: () => {
+            this.openTableOfContents();
+          }
         })
 
         Blank()
 
         // 显示章节名称
-        Button() {
-          SymbolGlyph($r('sys.symbol.gearshape'))
-            .fontColor([this.getToolbarIconColor()])
-
-        }
-        .width(48)
-        .height(48)
-        .backgroundColor(Color.Transparent)
-        .onClick(() => {
-          this.showQuickSettingsWithAnimation();
+        ReaderToolbarButton({
+          icon: $r('sys.symbol.gearshape'),
+          label: '设置',
+          iconColor: this.getToolbarIconColor(),
+          iconSize: 20,
+          onAction: () => {
+            this.showQuickSettingsWithAnimation();
+          }
         })
 
         Blank()
 
       // 错误状态1：加载失败
-        Button() {
-          SymbolGlyph($r('sys.symbol.page_turning'))
-            .fontColor([this.getToolbarIconColor()])
-
-        }
-        .width(48)
-        .height(48)
-        .backgroundColor(Color.Transparent)
-        .onClick(() => {
-          this.showPageTurnAnimationSettingsWithAnimation();
+        ReaderToolbarButton({
+          icon: $r('sys.symbol.page_turning'),
+          label: '翻页',
+          iconColor: this.getToolbarIconColor(),
+          iconSize: 20,
+          onAction: () => {
+            this.showPageTurnAnimationSettingsWithAnimation();
+          }
         })
 
         Blank()
 
         // 显示详细错误信息，支持多行显示
-        Button() {
-          SymbolGlyph($r('sys.symbol.eye'))
-            .fontColor([this.getToolbarIconColor()])
-
-        }
-        .width(48)
-        .height(48)
-        .backgroundColor(Color.Transparent)
-        .onClick(() => {
-          this.showSettingsPanelWithAnimation();
+        ReaderToolbarButton({
+          icon: $r('sys.symbol.eye'),
+          label: '阅读',
+          iconColor: this.getToolbarIconColor(),
+          iconSize: 20,
+          onAction: () => {
+            this.showSettingsPanelWithAnimation();
+          }
         })
 
         Blank()
 
                 // 重置错误状态
-        Button() {
-          SymbolGlyph(this.getAutoPageTurnIconResource())
-            .fontColor([this.getToolbarIconColor()])
-
-        }
-        .width(48)
-        .height(48)
-        .backgroundColor(Color.Transparent)
-        .onClick(() => {
-          this.toggleAutoPageTurnSettings();
+        ReaderToolbarButton({
+          icon: this.getAutoPageTurnIconResource(),
+          label: '自动',
+          iconColor: this.getToolbarIconColor(),
+          iconSize: 20,
+          onAction: () => {
+            this.toggleAutoPageTurnSettings();
+          }
         })
 
       }
@@ -11997,12 +12236,33 @@ private onlineDownloadedLocalFastPathActive: boolean = false;
                 return;
               }
               this.handleFirstVisibleMangaImageCommitted(pageIndex, pageId, sourceType);
+              this.markInteractionHintContentReady('first_visible_display');
               this.handleOnlineDownloadedFirstVisibleDisplayCommitted(
                 pageIndex,
                 pageId,
                 sourceType,
                 'viewer_callback'
               );
+            },
+            onPageImageMeasured: (
+              pageIndex: number,
+              pageId: string,
+              width: number,
+              height: number,
+              sourceType: ImageSourceType
+            ) => {
+              if (!this.isReaderLifecycleCurrent(viewerLifecycleGeneration)) {
+                return;
+              }
+              this.handleMangaPageImageMeasured(pageIndex, pageId, width, height, sourceType);
+            },
+            onWebtoonDetected: (isWebtoon: boolean, _avgAspectRatio: number) => {
+              if (!this.isReaderLifecycleCurrent(viewerLifecycleGeneration)) {
+                return;
+              }
+              if (isWebtoon) {
+                this.applyAutoWebtoonSwitch('viewer_sample', 0, 0);
+              }
             },
             onComponentReady: (component: MangaViewer) => {
               if (!this.isReaderLifecycleCurrent(viewerLifecycleGeneration)) {

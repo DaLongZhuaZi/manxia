@@ -32,10 +32,22 @@ export enum PdfImportMode {
 }
 
 /**
+ * PDF 阅读方式（默认原生，保留图片化兼容导入）
+ */
+export enum PdfReaderMode {
+  /** 原生 PDF 阅读：保留文本/目录/搜索/缩放，可导出与分享原文件 */
+  NATIVE = 'native',
+  /** 图片化兼容导入：逐页转为图片，适合扫描件或固定版式 */
+  IMAGE = 'image'
+}
+
+/**
  * PDF导入结果
  */
 export interface PdfImportDialogResult {
   contentType: PdfContentType;
+  /** 阅读方式（原生/图片化） */
+  readerMode: PdfReaderMode;
   /** 导入模式 */
   importMode: PdfImportMode;
   title: string;
@@ -69,6 +81,7 @@ export struct PdfImportDialog {
 
   // 表单状态
   @State selectedType: PdfContentType = PdfContentType.MANGA;
+  @State selectedReaderMode: PdfReaderMode = PdfReaderMode.NATIVE;
   @State importMode: PdfImportMode = PdfImportMode.TANKOUBON;
   @State title: string = '';
   @State author: string = '';
@@ -227,20 +240,32 @@ export struct PdfImportDialog {
       }
       .width('100%')
 
-      // 提示文本
-      Text('⚠️ PDF转换为图片是耗时操作，大文件可能需要几分钟')
-        .fontSize(12)
-        .fontFamily(this.appFontFamily)
-        .fontColor(AppColors.warning)
-        .width('100%')
-        .textAlign(TextAlign.Center)
+      // 阅读方式（默认原生，保留图片化兼容导入）
+      this.buildReaderModeSelector()
 
-      // 分类选择
-      this.buildTypeSelector()
+      if (this.selectedReaderMode === PdfReaderMode.IMAGE) {
+        // 提示文本
+        Text('⚠️ PDF转换为图片是耗时操作，大文件可能需要几分钟')
+          .fontSize(12)
+          .fontFamily(this.appFontFamily)
+          .fontColor(AppColors.warning)
+          .width('100%')
+          .textAlign(TextAlign.Center)
 
-      // 导入模式选择（单行本/单章节）- 仅漫画类型显示
-      if (this.selectedType === PdfContentType.MANGA) {
-        this.buildImportModeSelector()
+        // 分类选择
+        this.buildTypeSelector()
+
+        // 导入模式选择（单行本/单章节）- 仅漫画类型显示
+        if (this.selectedType === PdfContentType.MANGA) {
+          this.buildImportModeSelector()
+        }
+      } else {
+        Text('✅ 以原生 PDF 阅读：保留文本、目录、搜索与缩放，可随时导出或分享原文件')
+          .fontSize(12)
+          .fontFamily(this.appFontFamily)
+          .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
+          .width('100%')
+          .textAlign(TextAlign.Center)
       }
 
       Scroll() {
@@ -445,6 +470,7 @@ export struct PdfImportDialog {
             if (this.validateForm()) {
               const result: PdfImportDialogResult = {
                 contentType: this.selectedType,
+                readerMode: this.selectedReaderMode,
                 importMode: this.importMode,
                 title: this.title.trim() || this.defaultTitle || '未知标题',
                 author: this.author.trim() || '未知作者',
@@ -483,6 +509,72 @@ export struct PdfImportDialog {
       offsetX: 0,
       offsetY: 10
     })
+  }
+
+  @Builder
+  buildReaderModeSelector() {
+    Column({ space: 8 }) {
+      Text('阅读方式')
+        .fontSize(14)
+        .fontFamily(this.appFontFamily)
+        .fontWeight(FontWeight.Medium)
+        .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
+        .width('100%')
+
+      Row({ space: 12 }) {
+        Column({ space: 4 }) {
+          Text('📄 原生阅读（推荐）')
+            .fontSize(14)
+            .fontFamily(this.appFontFamily)
+            .fontWeight(FontWeight.Medium)
+            .fontColor(this.selectedReaderMode === PdfReaderMode.NATIVE ? AppColors.primary :
+              ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
+          Text('保留文本/目录/搜索，可导出与分享原文件')
+            .fontSize(10)
+            .fontFamily(this.appFontFamily)
+            .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
+        }
+        .padding({ left: 12, right: 12, top: 12, bottom: 12 })
+        .backgroundColor(this.selectedReaderMode === PdfReaderMode.NATIVE ? AppColors.primaryContainer :
+          ThemeAwareHelper.getTestManagementThemedColor('comp_background_tertiary', this.themeState.currentTheme))
+        .borderRadius(8)
+        .border({
+          width: 2,
+          color: this.selectedReaderMode === PdfReaderMode.NATIVE ? AppColors.primary : Color.Transparent
+        })
+        .layoutWeight(1)
+        .onClick(() => {
+          this.selectedReaderMode = PdfReaderMode.NATIVE;
+        })
+
+        Column({ space: 4 }) {
+          Text('🖼️ 图片化（兼容）')
+            .fontSize(14)
+            .fontFamily(this.appFontFamily)
+            .fontWeight(FontWeight.Medium)
+            .fontColor(this.selectedReaderMode === PdfReaderMode.IMAGE ? AppColors.primary :
+              ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
+          Text('逐页转图片，适合扫描件/固定版式')
+            .fontSize(10)
+            .fontFamily(this.appFontFamily)
+            .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
+        }
+        .padding({ left: 12, right: 12, top: 12, bottom: 12 })
+        .backgroundColor(this.selectedReaderMode === PdfReaderMode.IMAGE ? AppColors.primaryContainer :
+          ThemeAwareHelper.getTestManagementThemedColor('comp_background_tertiary', this.themeState.currentTheme))
+        .borderRadius(8)
+        .border({
+          width: 2,
+          color: this.selectedReaderMode === PdfReaderMode.IMAGE ? AppColors.primary : Color.Transparent
+        })
+        .layoutWeight(1)
+        .onClick(() => {
+          this.selectedReaderMode = PdfReaderMode.IMAGE;
+        })
+      }
+      .width('100%')
+    }
+    .width('100%')
   }
 
   @Builder

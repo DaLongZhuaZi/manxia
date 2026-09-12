@@ -10,6 +10,7 @@ import { ThemeType } from '../Managers/ThemeManager';
 import { AppColors } from '../Theme/AppColors';
 import { EBookReadingSettings, EBookPageMode, DEFAULT_EBOOK_READING_SETTINGS } from 'manxia_core/src/main/ets/Models/EBookModels';
 import { getFontManager, SystemFont, CustomFont } from '../Managers/FontManager';
+import { ReaderOrientationLockHelper, ReaderOrientationLockScope } from 'manxia_core/src/main/ets/Utils/ReaderOrientationLockHelper';
 
 const TAG = 'EBookReadingSettingsPanel';
 
@@ -25,6 +26,8 @@ export interface EBookReadingSettingsPanelParams {
 @Component
 export struct EBookReadingSettingsPanel {
   @Prop settings: EBookReadingSettings;
+  /** 固定版式（PDF）：无重排/字体 API，相关子项在此显式声明为不可用，而不是静默忽略 */
+  @Prop fixedLayout: boolean = false;
   onSettingsChange: (settings: EBookReadingSettings) => void = (settings: EBookReadingSettings) => {};
   onClose: () => void = () => {};
 
@@ -227,13 +230,35 @@ export struct EBookReadingSettingsPanel {
   }
 
   private getDeviceOrientationLockHint(): string {
-    return (this.settings.lockDeviceOrientation ?? false)
+    const localEnabled: boolean = this.settings.lockDeviceOrientation ?? false;
+    const globalEnabled: boolean = ReaderOrientationLockHelper.isGlobalOrientationLockEnabled(
+      ReaderOrientationLockScope.EBOOK
+    );
+    if (globalEnabled) {
+      return '全局锁定方向已开启：电子书阅读会保持当前屏幕方向，旋转设备不会改变方向';
+    }
+    return localEnabled
       ? '保持当前屏幕方向，阅读时旋转设备不会改变方向'
-      : '关闭后会跟随系统旋转策略，适合临时横屏阅读';
+      : '关闭后会跟随系统旋转策略；若全局开关已开启，仍会按全局锁定';
   }
 
   build() {
     Column() {
+      // 固定版式（PDF）说明：显式标注不可用子项，避免静默忽略
+      if (this.fixedLayout) {
+        Row({ space: 8 }) {
+          SymbolGlyph($r('sys.symbol.info_circle'))
+            .fontSize(14)
+            .fontColor([ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.currentTheme)])
+          Text('PDF 为固定版式：行高、字体粗细、字体、字体颜色由 PDF 自身决定，不可更改；调整字号将以页面缩放呈现。页边距、阅读主题、翻页模式、锁定方向等正常生效。')
+            .fontSize(11)
+            .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.currentTheme))
+            .layoutWeight(1)
+        }
+        .width('100%')
+        .padding({ left: 4, right: 4, bottom: 10 })
+      }
+
       // 顶部标题栏
       Row() {
         Text('阅读设置')
@@ -468,6 +493,7 @@ export struct EBookReadingSettingsPanel {
         .trackColor(ThemeAwareHelper.getTestManagementThemedColor('divider', this.currentTheme))
         .selectedColor(ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.currentTheme))
         .showTips(false)
+        .enabled(!this.fixedLayout)
         .onChange((value: number) => {
           this.updateLineHeight(Math.round(value * 10) / 10);
         })
@@ -506,6 +532,7 @@ export struct EBookReadingSettingsPanel {
         .trackColor(ThemeAwareHelper.getTestManagementThemedColor('divider', this.currentTheme))
         .selectedColor(ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.currentTheme))
         .showTips(false)
+        .enabled(!this.fixedLayout)
         .onChange((value: number) => {
           this.updateFontWeight(Math.round(value));
         })
@@ -523,7 +550,11 @@ export struct EBookReadingSettingsPanel {
           .fontColor(ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.currentTheme))
       }
       .width('100%')
+      .enabled(!this.fixedLayout)
       .onClick(() => {
+        if (this.fixedLayout) {
+          return;
+        }
         this.showFontPicker = !this.showFontPicker;
       })
 
@@ -815,6 +846,9 @@ export struct EBookReadingSettingsPanel {
                   : ThemeAwareHelper.getTestManagementThemedColor('divider', this.currentTheme)
               })
               .onClick(() => {
+                if (this.fixedLayout) {
+                  return;
+                }
                 this.updateTextColor(colorOption.color);
               })
 

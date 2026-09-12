@@ -1,4 +1,4 @@
-﻿import { ThemeManager } from 'manxia_theme/src/main/ets/Framework/Managers/ThemeManager';
+import { ThemeManager } from 'manxia_theme/src/main/ets/Framework/Managers/ThemeManager';
 import {
   EBookReadingSettings,
   DEFAULT_EBOOK_READING_SETTINGS,
@@ -15,6 +15,7 @@ import {
   PageTurnAnimationType
 } from 'manxia_core/src/main/ets/Models/MangaModels';
 import { getFontManager, SystemFont, CustomFont } from 'manxia_theme/src/main/ets/Framework/Managers/FontManager';
+import { ReaderOrientationLockHelper, ReaderOrientationLockScope } from 'manxia_core/src/main/ets/Utils/ReaderOrientationLockHelper';
 import { UIContext, display } from '@kit.ArkUI';
 
 interface EpubSettingsPanelCallbacks {
@@ -502,9 +503,17 @@ export struct EpubReaderSettingsPanel {
   }
 
   private getDeviceOrientationLockHint(): string {
-    return (this.current.lockDeviceOrientation ?? false)
+    const localEnabled: boolean = (this.current.lockDeviceOrientation ?? false) ||
+      (this.currentPageSettings.lockDeviceOrientation ?? false);
+    const globalEnabled: boolean = ReaderOrientationLockHelper.isGlobalOrientationLockEnabled(
+      ReaderOrientationLockScope.EBOOK
+    );
+    if (globalEnabled) {
+      return '全局锁定方向已开启：电子书阅读会保持当前屏幕方向，旋转设备不会改变方向';
+    }
+    return localEnabled
       ? '保持当前屏幕方向，阅读时旋转设备不会改变方向'
-      : '关闭后会跟随系统旋转策略，适合临时横屏阅读';
+      : '关闭后会跟随系统旋转策略；若全局开关已开启，仍会按全局锁定';
   }
 
   private resetAllSettings(): void {

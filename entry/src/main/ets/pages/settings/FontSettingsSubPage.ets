@@ -319,7 +319,7 @@ export struct FontSettingsSubPage {
 
       // 自定义字体
       if (this.customFonts.length > 0) {
-        Text('自定义字体')
+        Text('内置与自定义字体')
           .fontSize(14)
           .fontWeight(FontWeight.Medium)
           .fontFamily(this.appFontFamily)
@@ -352,14 +352,24 @@ export struct FontSettingsSubPage {
             .alignItems(HorizontalAlign.Start)
             .layoutWeight(1)
 
-            Button({ type: ButtonType.Circle, stateEffect: true }) {
-              SymbolGlyph($r('sys.symbol.trash')).fontSize(14).fontColor([ThemeAwareHelper.getTestManagementThemedColor('button_danger', this.themeState.currentTheme)])
+            if (font.isBuiltIn === true) {
+              Text('内置')
+                .fontSize(11)
+                .fontFamily(this.appFontFamily)
+                .fontColor(ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme))
+                .padding({ left: 8, right: 8, top: 3, bottom: 3 })
+                .borderRadius(10)
+                .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('comp_background_tertiary', this.themeState.currentTheme))
+            } else {
+              Button({ type: ButtonType.Circle, stateEffect: true }) {
+                SymbolGlyph($r('sys.symbol.trash')).fontSize(14).fontColor([ThemeAwareHelper.getTestManagementThemedColor('button_danger', this.themeState.currentTheme)])
+              }
+              .width(32).height(32)
+              .backgroundColor(Color.Transparent)
+              .onClick(() => {
+                this.deleteCustomFont(font.id);
+              })
             }
-            .width(32).height(32)
-            .backgroundColor(Color.Transparent)
-            .onClick(() => {
-              this.deleteCustomFont(font.id);
-            })
           }
           .width('100%')
           .padding(12)

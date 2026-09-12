@@ -68,7 +68,8 @@ import { ThemeAwareState, ThemeAwareHelper } from 'manxia_theme/src/main/ets/Fra
 import { FontAwareHelper, FontAwareState } from 'manxia_theme/src/main/ets/Framework/Components/FontAware';
 import { PageLifecycleManager } from 'manxia_core/src/main/ets/Framework/Lifecycle/index';
 import { WindowManager, DisplayMode } from 'manxia_theme/src/main/ets/Utils/WindowManager';
-import { ReaderOrientationLockHelper } from 'manxia_core/src/main/ets/Utils/ReaderOrientationLockHelper';
+import { ReaderOrientationLockHelper, ReaderOrientationLockScope } from 'manxia_core/src/main/ets/Utils/ReaderOrientationLockHelper';
+import { ReaderToolbarButton } from '../components/ReaderToolbarButton';
 import { PageWindowCoordinator } from 'manxia_theme/src/main/ets/Utils/PageWindowCoordinator';
 import { curves, promptAction } from '@kit.ArkUI';
 import { webview } from '@kit.ArkWeb';
@@ -204,6 +205,7 @@ export struct NovelReaderPage {
   // 3个独立设置面板
   @State showTopToolbar: boolean = false;
   @State showBottomToolbar: boolean = false;
+  @StorageProp('reader_toolbar_text_hint_enabled') toolbarTextHintEnabled: boolean = true;
   @State toolbarOpacity: number = 0.0;
   @State showInteractionOverlay: boolean = false;
   @State showChapterList: boolean = false;
@@ -472,6 +474,8 @@ export struct NovelReaderPage {
     this.applyMissionContinueStateWithPermission();
     this.setupFullscreenMode();
     this.scheduleFullscreenRestore('page_show');
+    // 兜底重申方向锁：从设置页/后台返回时按最新全局开关重新评估
+    this.syncDeviceOrientationLock('page_show');
     this.tryShowQueuedInteractionHint('page_show', 260);
     AppStorage.setOrCreate('ReadAloudCurrentHostPage', 'NovelReaderPage');
     this.syncReadAloudStateFromController();
@@ -1295,9 +1299,10 @@ export struct NovelReaderPage {
     if (!this.uiContext) {
       this.uiContext = this.getUIContext();
     }
-    const enabled: boolean = this.settings.lockDeviceOrientation ??
-      DEFAULT_TEXT_READER_SETTINGS.lockDeviceOrientation ??
-      false;
+    const enabled: boolean = ReaderOrientationLockHelper.resolveOrientationLockEnabled(
+      ReaderOrientationLockScope.TEXT,
+      this.settings.lockDeviceOrientation ?? DEFAULT_TEXT_READER_SETTINGS.lockDeviceOrientation ?? false
+    );
     this.orientationLockToken = ReaderOrientationLockHelper.syncCurrentOrientationLock(
       'NovelReaderPage',
       this.orientationLockToken,
@@ -2509,9 +2514,10 @@ export struct NovelReaderPage {
       if (!this.uiContext) {
         this.uiContext = this.getUIContext();
       }
-      const deviceOrientationLocked: boolean = this.settings.lockDeviceOrientation ??
-        DEFAULT_TEXT_READER_SETTINGS.lockDeviceOrientation ??
-        false;
+      const deviceOrientationLocked: boolean = ReaderOrientationLockHelper.resolveOrientationLockEnabled(
+        ReaderOrientationLockScope.TEXT,
+        this.settings.lockDeviceOrientation ?? DEFAULT_TEXT_READER_SETTINGS.lockDeviceOrientation ?? false
+      );
       
       if (newMode === TextReadingMode.DUAL_PAGE) {
         // 延迟重载组件，等待横屏旋转完成
@@ -4853,15 +4859,13 @@ export struct NovelReaderPage {
   buildTopToolbar() {
     Row() {
       // 返回按钮
-      Button() {
-        SymbolGlyph($r('sys.symbol.arrow_left'))
-          .fontSize(24)
-          .fontColor([$r('app.color.text_primary')])
-      }
-      .width(48)
-      .height(48)
-      .backgroundColor(Color.Transparent)
-      .onClick(() => this.closeReader())
+      ReaderToolbarButton({
+        icon: $r('sys.symbol.arrow_left'),
+        label: '返回',
+        iconColor: $r('app.color.text_primary'),
+        iconSize: 22,
+        onAction: () => this.closeReader()
+      })
 
       // 书名
       Text(this.bookName)
@@ -4874,28 +4878,24 @@ export struct NovelReaderPage {
         .layoutWeight(1)
         .margin({ left: 12 })
 
-      Button() {
-        SymbolGlyph(this.isCurrentPageBookmarked ? $r('sys.symbol.bookmark_fill') : $r('sys.symbol.bookmark'))
-          .fontSize(20)
-          .fontColor([this.isCurrentPageBookmarked ? $r('app.color.accent_primary') : $r('app.color.text_primary')])
-      }
-      .width(48)
-      .height(48)
-      .backgroundColor(Color.Transparent)
-      .onClick(() => {
-        this.addCurrentNovelBookmark();
+      ReaderToolbarButton({
+        icon: this.isCurrentPageBookmarked ? $r('sys.symbol.bookmark_fill') : $r('sys.symbol.bookmark'),
+        label: '书签',
+        iconColor: this.isCurrentPageBookmarked ? $r('app.color.accent_primary') : $r('app.color.text_primary'),
+        iconSize: 20,
+        onAction: () => {
+          this.addCurrentNovelBookmark();
+        }
       })
 
-      Button() {
-        SymbolGlyph($r('sys.symbol.highlighter_line'))
-          .fontSize(20)
-          .fontColor([$r('app.color.text_primary')])
-      }
-      .width(48)
-      .height(48)
-      .backgroundColor(Color.Transparent)
-      .onClick(() => {
-        this.openCurrentNovelAnnotationCenter();
+      ReaderToolbarButton({
+        icon: $r('sys.symbol.highlighter_line'),
+        label: '划线',
+        iconColor: $r('app.color.text_primary'),
+        iconSize: 20,
+        onAction: () => {
+          this.openCurrentNovelAnnotationCenter();
+        }
       })
     }
     .width('100%')
@@ -4955,100 +4955,105 @@ export struct NovelReaderPage {
       // 控制按钮
       Row() {
         // 目录按钮
-        Button() {
-          SymbolGlyph($r('sys.symbol.list_bullet'))
-            .fontColor([$r('app.color.text_primary')])
-
-        }
-        .width(48)
-        .height(48)
-        .backgroundColor(Color.Transparent)
-        .onClick(() => {
-          this.hideToolbarWithAnimation();
-          this.showChapterListWithAnimation();
+        ReaderToolbarButton({
+          icon: $r('sys.symbol.list_bullet'),
+          label: '目录',
+          iconColor: $r('app.color.text_primary'),
+          iconSize: 20,
+          onAction: () => {
+            this.hideToolbarWithAnimation();
+            this.showChapterListWithAnimation();
+          }
         })
 
         Blank()
 
         // 字体设置按钮
-        Button() {
-          SymbolGlyph($r('sys.symbol.textformat'))
-            .fontColor([$r('app.color.text_primary')])
-
-        }
-        .width(48)
-        .height(48)
-        .backgroundColor(Color.Transparent)
-        .onClick(() => {
-          this.showFontSettingsPanel();
+        ReaderToolbarButton({
+          icon: $r('sys.symbol.textformat'),
+          label: '字体',
+          iconColor: $r('app.color.text_primary'),
+          iconSize: 20,
+          onAction: () => {
+            this.showFontSettingsPanel();
+          }
         })
 
         Blank()
 
         // 背景设置按钮
-        Button() {
-          SymbolGlyph($r('sys.symbol.paintbrush'))
-            .fontColor([$r('app.color.text_primary')])
-
-        }
-        .width(48)
-        .height(48)
-        .backgroundColor(Color.Transparent)
-        .onClick(() => {
-          this.showBackgroundSettingsPanel();
+        ReaderToolbarButton({
+          icon: $r('sys.symbol.paintbrush'),
+          label: '背景',
+          iconColor: $r('app.color.text_primary'),
+          iconSize: 20,
+          onAction: () => {
+            this.showBackgroundSettingsPanel();
+          }
         })
 
         Blank()
 
         // 阅读设置按钮
-        Button() {
-          SymbolGlyph($r('sys.symbol.gearshape'))
-            .fontColor([$r('app.color.text_primary')])
-        }
-        .width(48)
-        .height(48)
-        .backgroundColor(Color.Transparent)
-        .onClick(() => {
-          this.showReadingSettingsPanel();
+        ReaderToolbarButton({
+          icon: $r('sys.symbol.gearshape'),
+          label: '设置',
+          iconColor: $r('app.color.text_primary'),
+          iconSize: 20,
+          onAction: () => {
+            this.showReadingSettingsPanel();
+          }
         })
 
         Blank()
 
         // 听书胶囊区域
-        Row() {
+        Column({ space: 1 }) {
           Row() {
-            SymbolGlyph(this.readAloudPlaying ? $r('sys.symbol.pause_fill') : $r('sys.symbol.play_fill'))
-              .fontSize(18)
-              .fontColor([this.readAloudPlaying ? Color.White : $r('app.color.text_primary')])
-          }
-          .width(48)
-          .height('100%')
-          .justifyContent(FlexAlign.Center)
-          .onClick(() => {
-            this.toggleReadAloudFromToolbar();
-          })
+            Row() {
+              SymbolGlyph(this.readAloudPlaying ? $r('sys.symbol.pause_fill') : $r('sys.symbol.play_fill'))
+                .fontSize(18)
+                .fontColor([this.readAloudPlaying ? Color.White : $r('app.color.text_primary')])
+            }
+            .width(48)
+            .height('100%')
+            .justifyContent(FlexAlign.Center)
+            .onClick(() => {
+              this.toggleReadAloudFromToolbar();
+            })
 
-          Column()
-            .width(1)
-            .height(16)
-            .backgroundColor(this.readAloudPlaying ? '#66FFFFFF' : $r('app.color.divider_primary'))
+            Column()
+              .width(1)
+              .height(16)
+              .backgroundColor(this.readAloudPlaying ? '#66FFFFFF' : $r('app.color.divider_primary'))
 
-          Row() {
-            SymbolGlyph($r('sys.symbol.gearshape'))
-              .fontSize(16)
-              .fontColor([this.readAloudPlaying ? Color.White : $r('app.color.text_primary')])
+            Row() {
+              SymbolGlyph($r('sys.symbol.gearshape'))
+                .fontSize(16)
+                .fontColor([this.readAloudPlaying ? Color.White : $r('app.color.text_primary')])
+            }
+            .width(44)
+            .height('100%')
+            .justifyContent(FlexAlign.Center)
+            .onClick(() => {
+              this.openReadAloudSettingsPanelFromToolbar();
+            })
           }
-          .width(44)
-          .height('100%')
-          .justifyContent(FlexAlign.Center)
-          .onClick(() => {
-            this.openReadAloudSettingsPanelFromToolbar();
-          })
+          .height(36)
+          .backgroundColor(this.readAloudPlaying ? '#1A1890FF' : $r('app.color.background_secondary'))
+          .borderRadius(18)
+          .clip(true)
+
+          if (this.toolbarTextHintEnabled) {
+            Text('听书')
+              .fontSize(9)
+              .fontColor($r('app.color.text_primary'))
+              .fontFamily(this.appFontFamily)
+              .maxLines(1)
+              .textOverflow({ overflow: TextOverflow.Ellipsis })
+          }
         }
-        .height(36)
-        .backgroundColor(this.readAloudPlaying ? '#1A1890FF' : $r('app.color.background_secondary'))
-        .borderRadius(18)
-        .clip(true)
+        .alignItems(HorizontalAlign.Center)
 
 
       }

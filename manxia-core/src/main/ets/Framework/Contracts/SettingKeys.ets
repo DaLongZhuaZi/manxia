@@ -85,6 +85,8 @@ export class SettingKeys {
   static readonly GLOBAL_TEXT_PAGE_TURN_ANIMATION = 'global_text_page_turn_animation';
   static readonly GLOBAL_TEXT_KEEP_SCREEN_ON = 'global_text_keep_screen_on';
   static readonly GLOBAL_TEXT_LOCK_DEVICE_ORIENTATION = 'global_text_lock_device_orientation';
+  /** 所有阅读器工具栏/顶栏按钮是否显示文字提示（全局开关，默认开启） */
+  static readonly READER_TOOLBAR_TEXT_HINT_ENABLED = 'reader_toolbar_text_hint_enabled';
   static readonly GLOBAL_TEXT_VOLUME_KEY_NAV = 'global_text_volume_key_nav';
   static readonly GLOBAL_TEXT_TAP_TO_TURN = 'global_text_tap_to_turn';
   static readonly TEXT_READER_INTERACTION_HINT_SEEN_PREFIX = 'text_reader_interaction_hint_seen_';

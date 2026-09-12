@@ -188,6 +188,8 @@ export struct ReadingSettingsSubPage {
   @State textPageTurnAnimation: TextPageTurnAnimation = DEFAULT_TEXT_READER_SETTINGS.pageTurnAnimation;
   @State textKeepScreenOn: boolean = DEFAULT_TEXT_READER_SETTINGS.keepScreenOn;
   @State textLockDeviceOrientation: boolean = DEFAULT_TEXT_READER_SETTINGS.lockDeviceOrientation ?? false;
+  // 所有阅读器工具栏/顶栏按钮文字提示（全局）
+  @State readerToolbarTextHintEnabled: boolean = true;
   @State textVolumeKeyNav: boolean = DEFAULT_TEXT_READER_SETTINGS.volumeKeyNavigation;
   @State textTapToTurn: boolean = DEFAULT_TEXT_READER_SETTINGS.tapToTurn;
   @State textAutoPageTurnEnabled: boolean = DEFAULT_TEXT_READER_SETTINGS.autoPageTurnEnabled ?? false;
@@ -797,6 +799,10 @@ export struct ReadingSettingsSubPage {
       this.textLockDeviceOrientation = this.settingsManager.getBoolean(
         SettingKeys.GLOBAL_TEXT_LOCK_DEVICE_ORIENTATION,
         globalNovelSettings.lockDeviceOrientation ?? DEFAULT_TEXT_READER_SETTINGS.lockDeviceOrientation ?? false
+      );
+      this.readerToolbarTextHintEnabled = this.settingsManager.getBoolean(
+        SettingKeys.READER_TOOLBAR_TEXT_HINT_ENABLED,
+        true
       );
       this.textVolumeKeyNav = this.settingsManager.getBoolean(
         SettingKeys.GLOBAL_TEXT_VOLUME_KEY_NAV,
@@ -2361,8 +2367,8 @@ export struct ReadingSettingsSubPage {
             .fontFamily(this.appFontFamily)
             .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
           Text(this.ebookLockDeviceOrientation
-            ? '保持当前屏幕方向，阅读时旋转设备不会改变方向'
-            : '关闭后会跟随系统旋转策略，适合临时横屏阅读')
+            ? '全局已开启：所有电子书阅读都会锁定当前屏幕方向，旋转设备不会改变方向；本设置优先于每本电子书内部的锁定方向开关'
+            : '全局已关闭：是否锁定方向由每本电子书阅读器内部的锁定方向开关决定；关闭时跟随系统旋转策略，适合临时横屏阅读')
             .fontSize(12)
             .fontFamily(this.appFontFamily)
             .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
@@ -3105,6 +3111,34 @@ export struct ReadingSettingsSubPage {
       // 文字阅读交互开关
       Column({ space: 12 }) {
         Row() {
+          Column() {
+            Text('按钮文字提示')
+              .fontSize(16)
+              .fontFamily(this.appFontFamily)
+              .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
+            Text(this.readerToolbarTextHintEnabled
+              ? '已开启：所有阅读器的顶栏与工具栏按钮都会在图标下方显示文字说明'
+              : '已关闭：所有阅读器只显示图标，工具栏更紧凑')
+              .fontSize(12)
+              .fontFamily(this.appFontFamily)
+              .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
+              .margin({ top: 2 })
+          }
+          .alignItems(HorizontalAlign.Start)
+          .layoutWeight(1)
+
+          Toggle({ type: ToggleType.Switch, isOn: this.readerToolbarTextHintEnabled })
+            .selectedColor(ThemeAwareHelper.getTestManagementThemedColor('accent_blue', this.themeState.currentTheme))
+            .onChange(async (isOn: boolean) => {
+              this.readerToolbarTextHintEnabled = isOn;
+              await this.settingsManager.setBoolean(SettingKeys.READER_TOOLBAR_TEXT_HINT_ENABLED, isOn);
+              AppStorage.setOrCreate('reader_toolbar_text_hint_enabled', isOn);
+            })
+        }
+        .width('100%')
+        .padding({ top: 12, bottom: 12 })
+
+        Row() {
           Text('保持屏幕常亮')
             .fontSize(14)
             .fontFamily(this.appFontFamily)
@@ -3126,8 +3160,8 @@ export struct ReadingSettingsSubPage {
               .fontFamily(this.appFontFamily)
               .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
             Text(this.textLockDeviceOrientation
-              ? '保持当前屏幕方向，阅读时旋转设备不会改变方向'
-              : '关闭后会跟随系统旋转策略，适合临时横屏阅读')
+              ? '全局已开启：所有小说阅读都会锁定当前屏幕方向，旋转设备不会改变方向；本设置优先于每本小说内部的锁定方向开关'
+              : '全局已关闭：是否锁定方向由每本小说阅读器内部的锁定方向开关决定；关闭时跟随系统旋转策略，适合临时横屏阅读')
               .fontSize(12)
               .fontFamily(this.appFontFamily)
               .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))

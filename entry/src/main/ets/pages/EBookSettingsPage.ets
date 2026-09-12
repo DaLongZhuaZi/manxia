@@ -1,4 +1,4 @@
-﻿import { SafeFileUtils } from 'manxia_core/src/main/ets/Utils/SafeFileUtils';
+import { SafeFileUtils } from 'manxia_core/src/main/ets/Utils/SafeFileUtils';
 // 文件路径: entry/src/main/ets/pages/EBookSettingsPage.ets
 /**
  * 电子书设置页面
@@ -1449,8 +1449,8 @@ export struct EBookSettingsPage {
             .fontFamily(this.appFontFamily)
             .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
           Text(this.settingLockDeviceOrientation
-            ? '保持当前屏幕方向，阅读时旋转设备不会改变方向'
-            : '关闭后会跟随系统旋转策略，适合临时横屏阅读')
+            ? '保持当前屏幕方向，阅读时旋转设备不会改变方向；全局锁定方向开启时以全局设置为准'
+            : '关闭后跟随系统旋转策略；若全局锁定方向已开启，仍会按全局设置强制锁定')
             .fontSize(12)
             .fontFamily(this.appFontFamily)
             .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
@@ -2667,8 +2667,8 @@ export struct EBookSettingsPage {
             .fontFamily(this.appFontFamily)
             .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
           Text(this.settingLockDeviceOrientation
-            ? '保持当前屏幕方向，阅读时旋转设备不会改变方向'
-            : '关闭后会跟随系统旋转策略，适合临时横屏阅读')
+            ? '保持当前屏幕方向，阅读时旋转设备不会改变方向；全局锁定方向开启时以全局设置为准'
+            : '关闭后跟随系统旋转策略；若全局锁定方向已开启，仍会按全局设置强制锁定')
             .fontSize(12)
             .fontFamily(this.appFontFamily)
             .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))

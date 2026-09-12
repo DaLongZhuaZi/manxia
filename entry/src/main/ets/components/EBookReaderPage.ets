@@ -1,4 +1,4 @@
-﻿import { SafeUtils } from 'manxia_core/src/main/ets/Utils/SafeUtils';
+import { SafeUtils } from 'manxia_core/src/main/ets/Utils/SafeUtils';
 // 文件路径: entry/src/main/ets/pages/EBookReaderPage.ets
 /**
  * 电子书阅读器页面
@@ -8,7 +8,8 @@
 
 import { logger } from 'manxia_core/src/main/ets/Utils/Logger';
 import { ReaderSafeAreaUtils } from '../Utils/ReaderSafeAreaUtils';
-import { ReaderOrientationLockHelper } from 'manxia_core/src/main/ets/Utils/ReaderOrientationLockHelper';
+import { ReaderOrientationLockHelper, ReaderOrientationLockScope } from 'manxia_core/src/main/ets/Utils/ReaderOrientationLockHelper';
+import { ReaderToolbarImageButton } from './ReaderToolbarButton';
 import { ThemeAwareState, ThemeAwareHelper } from 'manxia_theme/src/main/ets/Framework/Components/ThemeAware';
 import { ThemeManager, ThemeType, GlassEffectContext } from 'manxia_theme/src/main/ets/Framework/Managers/ThemeManager';
 import { WindowManager, DisplayMode } from 'manxia_theme/src/main/ets/Utils/WindowManager';
@@ -778,9 +779,15 @@ struct EBookReaderPage {
     }
     let enabled: boolean = false;
     if (this.isUsingTextReader()) {
-      enabled = this.textReaderSettings.lockDeviceOrientation ?? false;
+      enabled = ReaderOrientationLockHelper.resolveOrientationLockEnabled(
+        ReaderOrientationLockScope.TEXT,
+        this.textReaderSettings.lockDeviceOrientation ?? false
+      );
     } else {
-      enabled = this.ebook?.readingSettings?.lockDeviceOrientation ?? false;
+      enabled = ReaderOrientationLockHelper.resolveOrientationLockEnabled(
+        ReaderOrientationLockScope.EBOOK,
+        this.ebook?.readingSettings?.lockDeviceOrientation ?? false
+      );
     }
     this.orientationLockToken = ReaderOrientationLockHelper.syncCurrentOrientationLock(
       'EBookReaderPage',
@@ -1961,16 +1968,13 @@ struct EBookReaderPage {
   buildTopToolbar() {
     Row() {
       // 返回按钮
-      Button() {
-        Image($r('app.media.ic_arrow_back'))
-          .width(24)
-          .height(24)
-          .fillColor($r('app.color.text_primary'))
-      }
-      .width(48)
-      .height(48)
-      .backgroundColor(Color.Transparent)
-      .onClick(() => this.goBack())
+      ReaderToolbarImageButton({
+        icon: $r('app.media.ic_arrow_back'),
+        label: '返回',
+        fillColor: $r('app.color.text_primary'),
+        iconSize: 24,
+        onAction: () => this.goBack()
+      })
 
       // 标题区域 - 只显示书名，章节信息移到底部
       Text(this.ebook?.metadata.title || '电子书阅读器')
@@ -1983,17 +1987,14 @@ struct EBookReaderPage {
         .margin({ left: 12 })
 
       // 菜单按钮
-      Button() {
-        Image($r('app.media.ic_more_vert'))
-          .width(24)
-          .height(24)
-          .fillColor($r('app.color.text_primary'))
-      }
-      .width(48)
-      .height(48)
-      .backgroundColor(Color.Transparent)
-      .onClick(() => {
-        this.showMoreMenuWithAnimation();
+      ReaderToolbarImageButton({
+        icon: $r('app.media.ic_more_vert'),
+        label: '更多',
+        fillColor: $r('app.color.text_primary'),
+        iconSize: 24,
+        onAction: () => {
+          this.showMoreMenuWithAnimation();
+        }
       })
     }
     .width('100%')
@@ -2051,18 +2052,16 @@ struct EBookReaderPage {
       // 控制按钮区域 - 根据阅读器类型显示不同按钮
       Row() {
         // 目录按钮
-        Button() {
-          Image($r('app.media.ic_reading_settings'))
-            .width(24)
-            .height(24)
-            .fillColor($r('app.color.text_primary'))
-        }
-        .width(64)
-        .height(48)
-        .backgroundColor(Color.Transparent)
-        .onClick(() => {
-          logger.info(TAG, `目录按钮被点击，当前章节: ${this.currentChapterIndex}`);
-          this.showChapterListWithAnimation();
+        ReaderToolbarImageButton({
+          icon: $r('app.media.ic_reading_settings'),
+          label: '目录',
+          fillColor: $r('app.color.text_primary'),
+          iconSize: 24,
+          buttonWidth: 64,
+          onAction: () => {
+            logger.info(TAG, `目录按钮被点击，当前章节: ${this.currentChapterIndex}`);
+            this.showChapterListWithAnimation();
+          }
         })
 
         Blank()
@@ -2070,48 +2069,40 @@ struct EBookReaderPage {
         // 根据文件格式显示不同的设置按钮
         if (this.isUsingTextReader()) {
           // 纯文本阅读器：显示综合设置按钮
-          Button() {
-            Image($r('app.media.ic_brightness_high'))
-              .width(24)
-              .height(24)
-              .fillColor($r('app.color.text_primary'))
-          }
-          .width(64)
-          .height(48)
-          .backgroundColor(Color.Transparent)
-          .onClick(() => {
-            this.showTextReaderSettingsWithAnimation();
+          ReaderToolbarImageButton({
+            icon: $r('app.media.ic_brightness_high'),
+            label: '设置',
+            fillColor: $r('app.color.text_primary'),
+            iconSize: 24,
+            buttonWidth: 64,
+            onAction: () => {
+              this.showTextReaderSettingsWithAnimation();
+            }
           })
         } else {
           // 电子书阅读器：显示字体和阅读设置按钮
           // 字体设置按钮
-          Button() {
-            Image($r('app.media.ic_book'))
-              .width(24)
-              .height(24)
-              .fillColor($r('app.color.text_primary'))
-          }
-          .width(48)
-          .height(48)
-          .backgroundColor(Color.Transparent)
-          .onClick(() => {
-            this.showFontSettingsPanelWithAnimation();
+          ReaderToolbarImageButton({
+            icon: $r('app.media.ic_book'),
+            label: '字体',
+            fillColor: $r('app.color.text_primary'),
+            iconSize: 24,
+            onAction: () => {
+              this.showFontSettingsPanelWithAnimation();
+            }
           })
 
           Blank()
 
           // 阅读设置按钮（主题、翻页等）
-          Button() {
-            Image($r('app.media.ic_brightness_high'))
-              .width(24)
-              .height(24)
-              .fillColor($r('app.color.text_primary'))
-          }
-          .width(48)
-          .height(48)
-          .backgroundColor(Color.Transparent)
-          .onClick(() => {
-            this.showReadingOptionsPanelWithAnimation();
+          ReaderToolbarImageButton({
+            icon: $r('app.media.ic_brightness_high'),
+            label: '阅读',
+            fillColor: $r('app.color.text_primary'),
+            iconSize: 24,
+            onAction: () => {
+              this.showReadingOptionsPanelWithAnimation();
+            }
           })
         }
       }

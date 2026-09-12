@@ -48,7 +48,31 @@ export interface CustomFont {
   filePath: string;        // rawfile路径或沙箱路径
   isRegistered: boolean;
   addedTime: number;
+  /** 是否为随包内置字体（内置字体不可删除） */
+  isBuiltIn?: boolean;
 }
+
+// 内置字体定义（随包提供，用户无需导入）
+export interface BuiltInFont {
+  id: string;
+  familyName: string;
+  displayName: string;
+  /** rawfile 相对路径，如 fonts/SmileySans-Oblique.ttf */
+  rawfileName: string;
+  /** 落地到沙箱字体目录后的文件名 */
+  fileName: string;
+}
+
+// 内置字体清单（随包资源，位于 resources/rawfile/fonts）
+export const BUILT_IN_FONTS: BuiltInFont[] = [
+  {
+    id: 'builtin_smiley_sans_oblique',
+    familyName: 'SmileySans-Oblique',
+    displayName: '得意黑（内置）',
+    rawfileName: 'fonts/SmileySans-Oblique.ttf',
+    fileName: 'builtin_SmileySans-Oblique.ttf'
+  }
+];
 
 // 字体设置
 export interface FontSettings {
@@ -217,7 +241,10 @@ export class FontManager {
       
       // 加载自定义字体列表
       await this.loadCustomFonts();
-      
+
+      // 准备随包内置字体（落地到沙箱并登记，幂等）
+      await this.ensureBuiltInFonts();
+
       // 注册已保存的自定义字体。冷启动早期可能还没有 UIContext，此时会延迟到页面可用后重试。
       await this.registerSavedCustomFonts();
       
@@ -320,6 +347,64 @@ export class FontManager {
     } catch (error) {
       logger.error(TAG, `保存自定义字体列表失败: ${String(error)}`);
     }
+  }
+
+  /**
+   * 准备内置字体：把随包 rawfile 字体落地到沙箱字体目录并登记到字体列表（幂等）。
+   * 内置字体与用户导入字体共用同一套注册/选择/应用链路，区别仅在于不可删除。
+   */
+  private async ensureBuiltInFonts(): Promise<void> {
+    const context = this.context;
+    if (!context || this.fontsDirPath.length === 0) {
+      logger.warn(TAG, '上下文或字体目录未就绪，跳过内置字体准备');
+      return;
+    }
+    for (const builtIn of BUILT_IN_FONTS) {
+      try {
+        const targetPath: string = this.fontsDirPath + '/' + builtIn.fileName;
+        let exists = false;
+        try {
+          exists = SafeFileUtils.accessSync(targetPath);
+        } catch (_accessError) {
+          exists = false;
+        }
+        if (!exists) {
+          const bytes: Uint8Array = await context.resourceManager.getRawFileContent(builtIn.rawfileName);
+          const buffer: ArrayBuffer = bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength);
+          const file = SafeFileUtils.openSync(targetPath, fileIo.OpenMode.READ_WRITE | fileIo.OpenMode.CREATE);
+          await fileIo.write(file.fd, buffer);
+          SafeFileUtils.closeSync(file.fd);
+          logger.info(TAG, '内置字体已落地: ' + builtIn.displayName + ' -> ' + targetPath);
+        }
+        const entry: CustomFont = {
+          id: builtIn.id,
+          familyName: builtIn.familyName,
+          displayName: builtIn.displayName,
+          filePath: targetPath,
+          isRegistered: false,
+          addedTime: 0,
+          isBuiltIn: true
+        };
+        const index = this.customFonts.findIndex((item: CustomFont) => item.id === builtIn.id);
+        if (index >= 0) {
+          entry.isRegistered = this.customFonts[index].isRegistered;
+          this.customFonts[index] = entry;
+        } else {
+          this.customFonts.unshift(entry);
+        }
+        logger.info(TAG, '内置字体已登记: ' + builtIn.displayName + ', familyName=' + builtIn.familyName);
+      } catch (error) {
+        logger.warn(TAG, '内置字体准备失败: ' + builtIn.displayName + ', 原因: ' + String(error));
+      }
+    }
+    await this.saveCustomFonts();
+  }
+
+  /**
+   * 获取内置字体列表
+   */
+  getBuiltInFonts(): CustomFont[] {
+    return this.customFonts.filter((font: CustomFont) => font.isBuiltIn === true);
   }
 
   /**
@@ -534,6 +619,11 @@ export class FontManager {
    * 删除自定义字体
    */
   async removeCustomFont(fontId: string): Promise<void> {
+    const targetFont = this.customFonts.find((f: CustomFont) => f.id === fontId);
+    if (targetFont && targetFont.isBuiltIn === true) {
+      throw new Error('内置字体不可删除');
+    }
+
     const index = this.customFonts.findIndex(f => f.id === fontId);
     if (index === -1) {
       throw new Error('字体不存在');

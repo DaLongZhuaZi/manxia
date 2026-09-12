@@ -10,7 +10,8 @@ import { systemShare } from '@kit.ShareKit';
 import { uniformTypeDescriptor as utd } from '@kit.ArkData';
 import { KeyCode } from '@kit.InputKit';
 import { WindowManager, DisplayMode } from 'manxia_theme/src/main/ets/Utils/WindowManager';
-import { ReaderOrientationLockHelper } from 'manxia_core/src/main/ets/Utils/ReaderOrientationLockHelper';
+import { ReaderOrientationLockHelper, ReaderOrientationLockScope } from 'manxia_core/src/main/ets/Utils/ReaderOrientationLockHelper';
+import { ReaderToolbarButton } from '../components/ReaderToolbarButton';
 import { PageWindowCoordinator } from 'manxia_theme/src/main/ets/Utils/PageWindowCoordinator';
 import { ThemeManager } from 'manxia_theme/src/main/ets/Framework/Managers/ThemeManager';
 import { getFontManager, FontScene } from 'manxia_theme/src/main/ets/Framework/Managers/FontManager';
@@ -253,6 +254,8 @@ struct EBookImageReaderPage {
 
   onPageShow(): void {
     this.isPageVisible = true;
+    // 兜底重申方向锁：从设置页/后台返回时按最新全局开关重新评估
+    this.syncDeviceOrientationLock('page_show');
     if (this.shouldSkipFullscreenRestore('page_show')) {
       return;
     }
@@ -779,9 +782,10 @@ struct EBookImageReaderPage {
     if (!this.uiContext) {
       this.uiContext = this.getUIContext();
     }
-    const enabled: boolean = this.readingSettings.lockDeviceOrientation ??
-      DEFAULT_READING_SETTINGS.lockDeviceOrientation ??
-      false;
+    const enabled: boolean = ReaderOrientationLockHelper.resolveOrientationLockEnabled(
+      ReaderOrientationLockScope.EBOOK,
+      this.readingSettings.lockDeviceOrientation ?? DEFAULT_READING_SETTINGS.lockDeviceOrientation ?? false
+    );
     this.orientationLockToken = ReaderOrientationLockHelper.syncCurrentOrientationLock(
       'EBookImageReaderPage',
       this.orientationLockToken,
@@ -2356,12 +2360,13 @@ struct EBookImageReaderPage {
   @Builder
   private buildTopToolbar() {
     Row() {
-      Button() {
-        SymbolGlyph($r('sys.symbol.arrow_left'))
-          .fontColor([this.getToolbarIconColor()])
-      }
-        .width(48).height(48).backgroundColor(Color.Transparent)
-        .onClick(() => { void this.goBack(); })
+      ReaderToolbarButton({
+        icon: $r('sys.symbol.arrow_left'),
+        label: '返回',
+        iconColor: this.getToolbarIconColor(),
+        iconSize: 20,
+        onAction: () => { void this.goBack(); }
+      })
 
       Column() {
         Text(this.ebook?.metadata.title || '图片 EPUB 阅读器')
@@ -2385,26 +2390,29 @@ struct EBookImageReaderPage {
       .alignItems(HorizontalAlign.Start)
       .margin({ left: 12 })
 
-      Button() {
-        SymbolGlyph(this.isCurrentPageBookmarked ? $r('sys.symbol.bookmark_fill') : $r('sys.symbol.bookmark'))
-          .fontColor([this.getToolbarIconColor(this.isCurrentPageBookmarked)])
-      }
-        .width(48).height(48).backgroundColor(Color.Transparent)
-        .onClick(() => { this.toggleCurrentEBookBookmark(); })
-      Button() {
-        SymbolGlyph($r('sys.symbol.highlighter_line'))
-          .fontColor([this.getToolbarIconColor()])
-      }
-        .width(48).height(48).backgroundColor(Color.Transparent)
-        .onClick(() => { this.openCurrentEBookAnnotationCenter(); })
-      Button() {
-        SymbolGlyph($r('sys.symbol.more'))
-          .fontColor([this.getToolbarIconColor()])
-      }
-        .width(48).height(48).backgroundColor(Color.Transparent)
-        .onClick(() => {
+      ReaderToolbarButton({
+        icon: this.isCurrentPageBookmarked ? $r('sys.symbol.bookmark_fill') : $r('sys.symbol.bookmark'),
+        label: '书签',
+        iconColor: this.getToolbarIconColor(this.isCurrentPageBookmarked),
+        iconSize: 20,
+        onAction: () => { this.toggleCurrentEBookBookmark(); }
+      })
+      ReaderToolbarButton({
+        icon: $r('sys.symbol.highlighter_line'),
+        label: '划线',
+        iconColor: this.getToolbarIconColor(),
+        iconSize: 20,
+        onAction: () => { this.openCurrentEBookAnnotationCenter(); }
+      })
+      ReaderToolbarButton({
+        icon: $r('sys.symbol.more'),
+        label: '更多',
+        iconColor: this.getToolbarIconColor(),
+        iconSize: 20,
+        onAction: () => {
           this.showMoreMenuWithAnimation();
-        })
+        }
+      })
     }
     .width('100%')
     .height(ReaderSafeAreaUtils.getTopToolbarHeight(this.statusBarHeight))
@@ -2475,50 +2483,55 @@ struct EBookImageReaderPage {
       .padding({ left: 16, right: 16 })
 
       Row() {
-        Button() {
-          SymbolGlyph($r('sys.symbol.list_bullet'))
-            .fontColor([this.getToolbarIconColor()])
-        }
-          .width(48).height(48).backgroundColor(Color.Transparent)
-          .onClick(() => {
+        ReaderToolbarButton({
+          icon: $r('sys.symbol.list_bullet'),
+          label: '目录',
+          iconColor: this.getToolbarIconColor(),
+          iconSize: 20,
+          onAction: () => {
             this.openTableOfContents();
-          })
+          }
+        })
         Blank()
-        Button() {
-          SymbolGlyph($r('sys.symbol.gearshape'))
-            .fontColor([this.getToolbarIconColor()])
-        }
-          .width(48).height(48).backgroundColor(Color.Transparent)
-          .onClick(() => {
+        ReaderToolbarButton({
+          icon: $r('sys.symbol.gearshape'),
+          label: '设置',
+          iconColor: this.getToolbarIconColor(),
+          iconSize: 20,
+          onAction: () => {
             this.showQuickSettingsWithAnimation();
-          })
+          }
+        })
         Blank()
-        Button() {
-          SymbolGlyph($r('sys.symbol.page_turning'))
-            .fontColor([this.getToolbarIconColor()])
-        }
-          .width(48).height(48).backgroundColor(Color.Transparent)
-          .onClick(() => {
+        ReaderToolbarButton({
+          icon: $r('sys.symbol.page_turning'),
+          label: '翻页',
+          iconColor: this.getToolbarIconColor(),
+          iconSize: 20,
+          onAction: () => {
             this.showPageTurnAnimationSettingsWithAnimation();
-          })
+          }
+        })
         Blank()
-        Button() {
-          SymbolGlyph($r('sys.symbol.eye'))
-            .fontColor([this.getToolbarIconColor()])
-        }
-          .width(48).height(48).backgroundColor(Color.Transparent)
-          .onClick(() => {
+        ReaderToolbarButton({
+          icon: $r('sys.symbol.eye'),
+          label: '阅读',
+          iconColor: this.getToolbarIconColor(),
+          iconSize: 20,
+          onAction: () => {
             this.showSettingsPanelWithAnimation();
-          })
+          }
+        })
         Blank()
-        Button() {
-          SymbolGlyph(this.getAutoPageTurnIconResource())
-            .fontColor([this.getToolbarIconColor()])
-        }
-          .width(48).height(48).backgroundColor(Color.Transparent)
-          .onClick(() => {
+        ReaderToolbarButton({
+          icon: this.getAutoPageTurnIconResource(),
+          label: '自动',
+          iconColor: this.getToolbarIconColor(),
+          iconSize: 20,
+          onAction: () => {
             this.toggleAutoPageTurnSettings();
-          })
+          }
+        })
       }
       .width('100%')
       .padding({ left: 16, right: 16, bottom: this.navigationBarHeight })

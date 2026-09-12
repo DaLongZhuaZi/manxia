@@ -2555,11 +2555,18 @@ export class EBookCoverExtractor {
    * 这种方式比 convertToImage 更不容易阻塞主线程。
    */
   private static async extractPdfCover(filePath: string, savePath: string): Promise<EBookCoverExtractionResult> {
-    logger.info(EBookCoverExtractor.TAG, `开始提取 PDF 封面: ${filePath}`);
-    
+    // [修复] savePath 必须是文件路径；若调用方传入目录（无扩展名），补一个默认文件名，
+    // 否则会把目录当文件去 open/write，报 Invalid fd
+    const lastSegment: string = savePath.substring(savePath.lastIndexOf('/') + 1);
+    let targetPath: string = savePath;
+    if (lastSegment.indexOf('.') < 0) {
+      targetPath = savePath + '/pdf_cover.webp';
+    }
+    logger.info(EBookCoverExtractor.TAG, `开始提取 PDF 封面: ${filePath}, target=${targetPath}`);
+
     try {
       // 创建输出目录
-      const outputDir = savePath.substring(0, savePath.lastIndexOf('/'));
+      const outputDir = targetPath.substring(0, targetPath.lastIndexOf('/'));
       
       // 确保目录存在
       try {
@@ -2635,22 +2642,22 @@ export class EBookCoverExtractor {
         
         // 如果目标文件已存在，先删除
         try {
-          SafeFileUtils.unlinkSync(savePath);
+          SafeFileUtils.unlinkSync(targetPath);
         } catch (unlinkError) {
           // 文件不存在，忽略
         }
         
         // 异步写入文件
-        const file = SafeFileUtils.openSync(savePath, fileIo.OpenMode.READ_WRITE | fileIo.OpenMode.CREATE);
+        const file = SafeFileUtils.openSync(targetPath, fileIo.OpenMode.READ_WRITE | fileIo.OpenMode.CREATE);
         await fileIo.write(file.fd, imgBuffer);
         SafeFileUtils.closeSync(file.fd);
         
-        logger.info(EBookCoverExtractor.TAG, `PDF 封面图片生成成功: ${savePath}`);
+        logger.info(EBookCoverExtractor.TAG, `PDF 封面图片生成成功: ${targetPath}`);
         
         return {
           success: true,
-          coverPath: savePath,
-          candidateImages: [savePath],
+          coverPath: targetPath,
+          candidateImages: [targetPath],
           errorMessage: ''
         };
         
@@ -3533,8 +3540,8 @@ class PdfParser extends EBookParser {
         }
       }
       
-      // 尝试获取文档元数据（PDF Kit 可能不支持直接获取元数据）
-      const metadata: PdfDocumentMetadata = {
+      // 读取文档元数据（PDF Kit getMetadata）
+      let metadata: PdfDocumentMetadata = {
         title: '',
         author: '',
         subject: '',
@@ -3542,7 +3549,26 @@ class PdfParser extends EBookParser {
         creator: '',
         producer: ''
       };
-      
+      try {
+        const kitMetadata = pdfDocument.getMetadata();
+        metadata = {
+          title: kitMetadata.title ?? '',
+          author: kitMetadata.author ?? '',
+          subject: kitMetadata.subject ?? '',
+          keywords: kitMetadata.keywords ?? '',
+          creator: kitMetadata.creator ?? '',
+          producer: kitMetadata.producer ?? ''
+        };
+        logger.info(TAG, '[PDF Kit] 元数据: title=' + metadata.title + ', author=' + metadata.author + ', subject=' + metadata.subject);
+      } catch (metadataError) {
+        logger.warn(TAG, '[PDF Kit] 读取元数据失败: ' + String(metadataError));
+      }
+
+      try {
+        pdfDocument.releaseDocument();
+      } catch (_releaseError) {
+      }
+
       return {
         pageCount,
         fileSize,

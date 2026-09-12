@@ -10,7 +10,8 @@ import { fileIo } from '@kit.CoreFileKit';
 import batteryInfo from '@ohos.batteryInfo';
 import { WindowManager, DisplayMode } from 'manxia_theme/src/main/ets/Utils/WindowManager';
 import { PageWindowCoordinator } from 'manxia_theme/src/main/ets/Utils/PageWindowCoordinator';
-import { ReaderOrientationLockHelper } from 'manxia_core/src/main/ets/Utils/ReaderOrientationLockHelper';
+import { ReaderOrientationLockHelper, ReaderOrientationLockScope } from 'manxia_core/src/main/ets/Utils/ReaderOrientationLockHelper';
+import { ReaderToolbarButton } from '../components/ReaderToolbarButton';
 import { ReaderSafeAreaUtils } from '../Utils/ReaderSafeAreaUtils';
 import { ThemeManager } from 'manxia_theme/src/main/ets/Framework/Managers/ThemeManager';
 import { getFontManager, FontScene } from 'manxia_theme/src/main/ets/Framework/Managers/FontManager';
@@ -192,6 +193,7 @@ export struct EpubWebViewReaderPage {
   @State errorMessage: string = '';
   @State showTopToolbar: boolean = false;
   @State showBottomToolbar: boolean = false;
+  @StorageProp('reader_toolbar_text_hint_enabled') toolbarTextHintEnabled: boolean = true;
   @State toolbarOpacity: number = 0;
   @State showSettingsPanel: boolean = false;
   @State showQuickSettings: boolean = false;
@@ -3334,8 +3336,11 @@ export struct EpubWebViewReaderPage {
     if (!this.uiContext) {
       this.uiContext = this.getUIContext();
     }
-    const enabled: boolean = (this.readingSettings.lockDeviceOrientation ?? false) ||
-      (this.pageReadingSettings.lockDeviceOrientation ?? false);
+    const enabled: boolean = ReaderOrientationLockHelper.resolveOrientationLockEnabled(
+      ReaderOrientationLockScope.EBOOK,
+      this.readingSettings.lockDeviceOrientation ?? false,
+      this.pageReadingSettings.lockDeviceOrientation ?? false
+    );
     this.orientationLockToken = ReaderOrientationLockHelper.syncCurrentOrientationLock(
       'EpubWebViewReaderPage',
       this.orientationLockToken,
@@ -4726,14 +4731,13 @@ export struct EpubWebViewReaderPage {
   @Builder
   private buildTopToolbar() {
     Row() {
-      Button() {
-        SymbolGlyph($r('sys.symbol.arrow_left'))
-          .fontSize(22)
-          .fontColor([this.getToolbarIconColor()])
-      }
-      .width(48).height(48)
-      .backgroundColor(Color.Transparent)
-      .onClick(() => { void this.goBack(); })
+      ReaderToolbarButton({
+        icon: $r('sys.symbol.arrow_left'),
+        label: '返回',
+        iconColor: this.getToolbarIconColor(),
+        iconSize: 20,
+        onAction: () => { void this.goBack(); }
+      })
 
       Column() {
         Text(this.getBookTitle())
@@ -4757,16 +4761,14 @@ export struct EpubWebViewReaderPage {
       .alignItems(HorizontalAlign.Start)
       .margin({ left: 8, right: 8 })
 
-      Button() {
-        SymbolGlyph(this.isCurrentPageBookmarked ? $r('sys.symbol.bookmark_fill') : $r('sys.symbol.bookmark'))
-          .fontSize(20)
-          .fontColor([this.isCurrentPageBookmarked ? $r('app.color.accent_primary') : this.getToolbarIconColor()])
-      }
-      .width(48)
-      .height(48)
-      .backgroundColor(Color.Transparent)
-      .onClick(() => {
-        this.addCurrentEpubBookmark();
+      ReaderToolbarButton({
+        icon: this.isCurrentPageBookmarked ? $r('sys.symbol.bookmark_fill') : $r('sys.symbol.bookmark'),
+        label: '书签',
+        iconColor: this.isCurrentPageBookmarked ? $r('app.color.accent_primary') : this.getToolbarIconColor(),
+        iconSize: 20,
+        onAction: () => {
+          this.addCurrentEpubBookmark();
+        }
       })
     }
     .width('100%')
@@ -4866,99 +4868,111 @@ export struct EpubWebViewReaderPage {
 
       // 功能按钮行
       Row() {
-        Button() {
-          SymbolGlyph($r('sys.symbol.list_bullet'))
-            .fontSize(22)
-            .fontColor([this.getToolbarIconColor()])
-        }
-        .width(48).height(48).backgroundColor(Color.Transparent)
-        .onClick(() => {
-          this.openChapterList();
-        })
-
-        Blank()
-
-        Button() {
-          SymbolGlyph($r('sys.symbol.gearshape'))
-            .fontSize(22)
-            .fontColor([this.getToolbarIconColor()])
-        }
-        .width(48).height(48).backgroundColor(Color.Transparent)
-        .onClick(() => {
-          this.openQuickSettings();
-        })
-
-        Blank()
-
-        Button() {
-          SymbolGlyph($r('sys.symbol.page_turning'))
-            .fontSize(22)
-            .fontColor([this.getToolbarIconColor()])
-        }
-        .width(48).height(48).backgroundColor(Color.Transparent)
-        .onClick(() => {
-          this.openPageTurnAnimationSettings();
-        })
-
-        Blank()
-
-        Button() {
-          SymbolGlyph($r('sys.symbol.eye'))
-            .fontSize(22)
-            .fontColor([this.getToolbarIconColor()])
-        }
-        .width(48).height(48).backgroundColor(Color.Transparent)
-        .onClick(() => {
-          this.openTextSettings();
-        })
-
-        Blank()
-
-        Row() {
-          Row() {
-            SymbolGlyph(this.readAloudPlaying ? $r('sys.symbol.pause_fill') : $r('sys.symbol.play_fill'))
-              .fontSize(18)
-              .fontColor([this.readAloudPlaying ? Color.White : this.getToolbarIconColor()])
+        ReaderToolbarButton({
+          icon: $r('sys.symbol.list_bullet'),
+          label: '目录',
+          iconColor: this.getToolbarIconColor(),
+          iconSize: 20,
+          onAction: () => {
+            this.openChapterList();
           }
-          .width(48)
-          .height('100%')
-          .justifyContent(FlexAlign.Center)
-          .onClick(() => {
-            this.toggleReadAloudFromToolbar();
-          })
-
-          Column()
-            .width(1)
-            .height(16)
-            .backgroundColor(this.readAloudPlaying ? '#66FFFFFF' : $r('app.color.divider_primary'))
-
-          Row() {
-            SymbolGlyph($r('sys.symbol.gearshape'))
-              .fontSize(16)
-              .fontColor([this.readAloudPlaying ? Color.White : this.getToolbarIconColor()])
-          }
-          .width(44)
-          .height('100%')
-          .justifyContent(FlexAlign.Center)
-          .onClick(() => {
-            this.openReadAloudSettingsPanelFromToolbar();
-          })
-        }
-        .height(36)
-        .backgroundColor(this.readAloudPlaying ? '#1A1890FF' : $r('app.color.background_secondary'))
-        .borderRadius(18)
-        .clip(true)
+        })
 
         Blank()
 
-        Button() {
-          SymbolGlyph(this.getAutoPageTurnIconResource())
-            .fontSize(22)
-            .fontColor([this.getToolbarIconColor(this.autoPageTurnEnabled)])
+        ReaderToolbarButton({
+          icon: $r('sys.symbol.gearshape'),
+          label: '设置',
+          iconColor: this.getToolbarIconColor(),
+          iconSize: 20,
+          onAction: () => {
+            this.openQuickSettings();
+          }
+        })
+
+        Blank()
+
+        ReaderToolbarButton({
+          icon: $r('sys.symbol.page_turning'),
+          label: '翻页',
+          iconColor: this.getToolbarIconColor(),
+          iconSize: 20,
+          onAction: () => {
+            this.openPageTurnAnimationSettings();
+          }
+        })
+
+        Blank()
+
+        ReaderToolbarButton({
+          icon: $r('sys.symbol.eye'),
+          label: '阅读',
+          iconColor: this.getToolbarIconColor(),
+          iconSize: 20,
+          onAction: () => {
+            this.openTextSettings();
+          }
+        })
+
+        Blank()
+
+        Column({ space: 1 }) {
+          Row() {
+            Row() {
+              SymbolGlyph(this.readAloudPlaying ? $r('sys.symbol.pause_fill') : $r('sys.symbol.play_fill'))
+                .fontSize(18)
+                .fontColor([this.readAloudPlaying ? Color.White : this.getToolbarIconColor()])
+            }
+            .width(48)
+            .height('100%')
+            .justifyContent(FlexAlign.Center)
+            .onClick(() => {
+              this.toggleReadAloudFromToolbar();
+            })
+
+            Column()
+              .width(1)
+              .height(16)
+              .backgroundColor(this.readAloudPlaying ? '#66FFFFFF' : $r('app.color.divider_primary'))
+
+            Row() {
+              SymbolGlyph($r('sys.symbol.gearshape'))
+                .fontSize(16)
+                .fontColor([this.readAloudPlaying ? Color.White : this.getToolbarIconColor()])
+            }
+            .width(44)
+            .height('100%')
+            .justifyContent(FlexAlign.Center)
+            .onClick(() => {
+              this.openReadAloudSettingsPanelFromToolbar();
+            })
+          }
+          .height(36)
+          .backgroundColor(this.readAloudPlaying ? '#1A1890FF' : $r('app.color.background_secondary'))
+          .borderRadius(18)
+          .clip(true)
+
+          if (this.toolbarTextHintEnabled) {
+            Text('听书')
+              .fontSize(9)
+              .fontColor(this.getToolbarIconColor())
+              .fontFamily(this.appFontFamily)
+              .maxLines(1)
+              .textOverflow({ overflow: TextOverflow.Ellipsis })
+          }
         }
-        .width(48).height(48).backgroundColor(Color.Transparent)
-        .onClick(() => {
-          this.openAutoPageTurnSettings();
+        .alignItems(HorizontalAlign.Center)
+
+        Blank()
+
+        ReaderToolbarButton({
+          icon: this.getAutoPageTurnIconResource(),
+          label: '自动',
+          iconColor: this.getToolbarIconColor(this.autoPageTurnEnabled),
+          iconSize: 20,
+          onAction: () => {
+            this.openAutoPageTurnSettings();
+          }
         })
       }
       .width('100%')
