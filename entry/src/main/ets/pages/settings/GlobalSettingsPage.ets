@@ -76,6 +76,13 @@ export struct GlobalSettingsPage {
       targetPage: 'ReadingSettingsSubPage'
     },
     {
+      id: 'continuation_reading',
+      title: '接续阅读',
+      subtitle: '管理接续方式、默认模式和接续缓存',
+      icon: $r('sys.symbol.book_open_fill'),
+      targetPage: 'ContinuationReadingSettingsPage'
+    },
+    {
       id: 'page',
       title: '页面设置',
       subtitle: '详情页类型选择、页面显示偏好',
@@ -113,7 +120,7 @@ export struct GlobalSettingsPage {
     {
       id: 'interaction',
       title: '交互设置',
-      subtitle: '震动反馈、触觉体验',
+      subtitle: '震动反馈、智感握姿',
       icon: $r('sys.symbol.hand_tap'),
       targetPage: 'InteractionSettingsSubPage'
     },
@@ -467,6 +474,8 @@ export struct GlobalSettingsPage {
     switch (pageName) {
       case 'ReadingSettingsSubPage':
         return '阅读设置';
+      case 'ContinuationReadingSettingsPage':
+        return '接续阅读';
       case 'PageSettingsSubPage':
         return '页面设置';
       case 'ShortcutSettingsSubPage':

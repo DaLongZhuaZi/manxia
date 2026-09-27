@@ -113,6 +113,8 @@ export interface NovelReaderPageParams {
    * prior chapter cache hide the V2 Content workflow on first open.
    */
   forceNetworkContentRefresh?: boolean;
+  continuationCacheId?: string;
+  continuationImportedSnapshot?: boolean;
 }
 
 /**

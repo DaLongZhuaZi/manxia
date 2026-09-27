@@ -18,6 +18,7 @@ import { getFontManager, FontScene } from 'manxia_theme/src/main/ets/Framework/M
 import { distributedReadingService } from '../Framework/Distributed/DistributedReadingService';
 import { distributedDataSyncManager, SyncReadingState } from '../Framework/Distributed/DistributedDataSyncManager';
 import { EBookDataManager } from 'manxia_core/src/main/ets/Framework/Data/EBookDataManager';
+import { ContinuationCacheManager } from '../Framework/Distributed/ContinuationCacheManager';
 import { EBookParserFactory, resolveEpubPackageDocumentPathFromRoot } from '../Framework/Parsers/EBookParser';
 import { convertMobiToExtractedDir } from 'manxia_source_engine/src/main/ets/Framework/Parsers/MobiParser';
 import { KeyCode, inputConsumer } from '@kit.InputKit';
@@ -241,8 +242,12 @@ export struct EpubWebViewReaderPage {
   private autoPageTurnTimer: number = -1;
   private timeUpdateTimer: number = -1;
   private lastProgressSaveTime: number = 0;
+  private lastDistributedProgressBookId: string = '';
+  private lastDistributedProgressSpineIndex: number = -1;
+  private lastDistributedProgressPageIndex: number = -1;
   private lastRemoteInstructionTimestamp: number = 0;
   private remoteCallbacksRegistered: boolean = false;
+  private continuationCacheId: string = '';
   private pendingContinuationSpineIndex: number = -1;
   private pendingContinuationPageIndex: number = -1;
   private sessionStartTimestamp: number = 0;
@@ -406,6 +411,7 @@ export struct EpubWebViewReaderPage {
     this.routeReaderTitle = params.readerTitle || '';
     this.shouldAutoStartReadAloudFromRoute = params.autoStartReadAloud === true;
     this.shouldAutoOpenReadAloudPlayerFromRoute = params.autoOpenReadAloudPlayer === true;
+    this.continuationCacheId = params.continuationCacheId || '';
     this.routeReadAloudAutoStartAttempts = 0;
     this.startEpubReadFlowSession(params.bookId, this.routeReaderTitle, '', 'initialize_params');
     await this.loadEBook(params.bookId);
@@ -436,7 +442,9 @@ export struct EpubWebViewReaderPage {
     this.replaceSettingsLoaded = false;
 
     try {
-      const ebook = await this.ebookDataManager.getEBookById(bookId);
+      const ebook = this.continuationCacheId.length > 0
+        ? await ContinuationCacheManager.getInstance().getEBook(this.continuationCacheId)
+        : await this.ebookDataManager.getEBookById(bookId);
       if (!ebook) {
         throw new Error('未找到电子书');
       }
@@ -463,12 +471,12 @@ export struct EpubWebViewReaderPage {
               }
             }
           }
-          void this.ebookDataManager.saveEBook(ebook, { skipReadingSettings: true });
+          this.persistEBookSnapshot(ebook);
           logger.info(TAG, `懒解压成功: extractedRootPath=${extractedRoot}`);
         }
       }
 
-      if (isMobiFormat) {
+      if (isMobiFormat && !(this.continuationCacheId.length > 0 && extractedRoot.length > 0)) {
         logger.info(
           TAG,
           `${extractedRoot.length === 0 ? 'MOBI extractedRootPath 为空，触发懒转换' : '检查 MOBI 本地转换缓存版本'}: ${ebook.filePath}`
@@ -485,7 +493,7 @@ export struct EpubWebViewReaderPage {
             }
             ebook.chapters = newSpine;
           }
-          void this.ebookDataManager.saveEBook(ebook, { skipReadingSettings: true });
+          this.persistEBookSnapshot(ebook);
           logger.info(TAG, `MOBI 本地转换缓存就绪: ${extractedRoot}`);
         } else {
           mobiConversionError = convResult.errorMessage;
@@ -518,7 +526,7 @@ export struct EpubWebViewReaderPage {
             ch.bookId = ebook.id;
           }
           ebook.chapters = opfSpineItems;
-          void this.ebookDataManager.saveEBook(ebook, { skipReadingSettings: true });
+          this.persistEBookSnapshot(ebook);
           spineItems = opfSpineItems;
           logger.info(TAG, `已根据 OPF 刷新 WebView spine 元数据: count=${spineItems.length}`);
         }
@@ -532,7 +540,7 @@ export struct EpubWebViewReaderPage {
             ch.bookId = ebook.id;
           }
           ebook.chapters = opfSpineItems;
-          void this.ebookDataManager.saveEBook(ebook, { skipReadingSettings: true });
+          this.persistEBookSnapshot(ebook);
           spineItems = opfSpineItems;
           logger.info(TAG, `OPF 直接解析成功，获得 ${spineItems.length} 个 spine 项`);
         }
@@ -615,7 +623,7 @@ export struct EpubWebViewReaderPage {
       }
       // [修复] 加载完成立即同步一次阅读状态：打开书籍后未翻页就触发接续时，
       // onContinue 守卫依赖 currentRead*（此前该状态只随进度保存更新，会误判拒绝流转）
-      distributedReadingService.syncProgress(ebook.id, this.currentSpineIndex, this.currentPageWithinSpine, 0, 'ebook');
+      this.syncCurrentProgressToRemote('ebook_loaded', true);
       logger.info(TAG, `阅读状态已就绪: bookId=${ebook.id}, spine=${this.currentSpineIndex}, page=${this.currentPageWithinSpine}`);
 
       this.isLoading = false;
@@ -3297,6 +3305,9 @@ export struct EpubWebViewReaderPage {
     if (!this.ebook) {
       return;
     }
+    if (this.continuationCacheId.length > 0) {
+      return;
+    }
     try {
       await this.ebookDataManager.saveImageReaderSettings(
         this.ebook.id,
@@ -3311,6 +3322,15 @@ export struct EpubWebViewReaderPage {
     this.queuePageReadingSettingsSave(trigger);
   }
 
+  private persistEBookSnapshot(ebook: EBook): void {
+    if (this.continuationCacheId.length > 0) {
+      return;
+    }
+    void this.ebookDataManager.saveEBook(ebook, { skipReadingSettings: true }).catch((error: Error) => {
+      logger.warn(TAG, `保存 EPUB 元数据失败: ${String(error)}`);
+    });
+  }
+
   private async executePersistTextReadingSettings(trigger: string): Promise<void> {
     if (!this.ebook) {
       return;
@@ -3322,7 +3342,11 @@ export struct EpubWebViewReaderPage {
         TAG,
         `保存 WebView EPUB 文本阅读设置: 触发源=${trigger}, fontSize=${snapshot.fontSize}, fontFamily=${snapshot.fontFamily}, fontPath=${snapshot.fontPath || 'none'}, fontWeight=${snapshot.fontWeight}, lineHeight=${snapshot.lineHeight}, pageMargin=${snapshot.pageMargin}, letterSpacing=${snapshot.letterSpacing ?? 0}, paragraphSpacing=${snapshot.paragraphSpacing ?? 8}, firstLineIndent=${snapshot.firstLineIndent ?? 2}, textAlignment=${snapshot.textAlignment ?? 'JUSTIFY'}`
       );
-      await this.ebookDataManager.saveReadingSettings(this.ebook.id, snapshot);
+      if (this.continuationCacheId.length > 0) {
+        await ContinuationCacheManager.getInstance().updateEBookSettings(this.continuationCacheId, snapshot);
+      } else {
+        await this.ebookDataManager.saveReadingSettings(this.ebook.id, snapshot);
+      }
     } catch (error) {
       logger.error(TAG, `保存 WebView EPUB 文本阅读设置失败: 触发源=${trigger}, 错误=${String(error)}`);
     }
@@ -4170,6 +4194,26 @@ export struct EpubWebViewReaderPage {
 
   // ──── 进度保存 ────
 
+  private syncCurrentProgressToRemote(trigger: string, force: boolean = false): void {
+    const ebook = this.ebook;
+    if (!ebook || ebook.id.length <= 0 || this.currentSpineIndex < 0 || this.currentPageWithinSpine < 0) {
+      return;
+    }
+    if (!force && this.lastDistributedProgressBookId === ebook.id &&
+      this.lastDistributedProgressSpineIndex === this.currentSpineIndex &&
+      this.lastDistributedProgressPageIndex === this.currentPageWithinSpine) {
+      return;
+    }
+    this.lastDistributedProgressBookId = ebook.id;
+    this.lastDistributedProgressSpineIndex = this.currentSpineIndex;
+    this.lastDistributedProgressPageIndex = this.currentPageWithinSpine;
+    distributedReadingService.syncProgress(ebook.id, this.currentSpineIndex, this.currentPageWithinSpine, 0, 'ebook');
+    logger.debug(
+      TAG,
+      `[${trigger}] 已即时同步遥控阅读状态: spine=${this.currentSpineIndex}, page=${this.currentPageWithinSpine}`
+    );
+  }
+
   private async saveReadingProgress(trigger: string): Promise<void> {
     const saveStartedAt = Date.now();
     const ebook = this.ebook;
@@ -4202,11 +4246,19 @@ export struct EpubWebViewReaderPage {
       totalReadingTime: baseTotalReadingTime + sessionMinutes
     };
     try {
-      await this.ebookDataManager.saveReadingProgress(progress);
+      if (this.continuationCacheId.length > 0) {
+        await ContinuationCacheManager.getInstance().updateProgress(this.continuationCacheId, {
+          chapterIndex: progress.currentChapterIndex,
+          pageIndex: progress.currentPosition,
+          offset: this.currentPageWithinSpine,
+          lastReadTime: progress.lastReadTime
+        });
+      } else {
+        await this.ebookDataManager.saveReadingProgress(progress);
+      }
       ebook.readingProgress = progress;
-      // [修复] 同步跨端接续阅读状态（currentRead* + 独立通道推送），
-      // WebView EPUB 阅读器此前缺失该调用，导致 onContinue 打包旧书状态被拒绝
-      distributedReadingService.syncProgress(ebook.id, progress.currentChapterIndex, progress.currentPosition, 0, 'ebook');
+      // 定时或退出保存成功后强制刷新会话时间戳。
+      this.syncCurrentProgressToRemote(trigger, true);
       this.lastProgressSaveTime = now;
       this.sessionStartTimestamp = now;
       logger.debug(
@@ -5474,6 +5526,7 @@ export struct EpubWebViewReaderPage {
                     const isReadAloudFollow = source === EpubWebPageChangeSource.READ_ALOUD_FOLLOW && !spineChanged;
                     this.currentPageWithinSpine = page;
                     this.totalPagesInSpine = totalPages;
+                    this.syncCurrentProgressToRemote('page_change');
                     if (this.currentAnchorFragment.length > 0) {
                       this.currentAnchorFragment = '';
                     }

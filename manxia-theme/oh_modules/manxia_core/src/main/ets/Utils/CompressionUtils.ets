@@ -2201,7 +2201,7 @@ export class CompressionUtils {
 /**
  * 检测到的章节信息（内部使用）
  */
-interface DetectedChapterInfo {
+export interface DetectedChapterInfo {
   index: number;
   number: number;
   title: string;

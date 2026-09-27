@@ -16,6 +16,7 @@ import {
 import { curves, UIContext, display } from '@kit.ArkUI';
 import { ThemeAwareState, ThemeAwareHelper } from 'manxia_theme/src/main/ets/Framework/Components/ThemeAware';
 import { ThemeType } from 'manxia_theme/src/main/ets/Framework/Managers/ThemeManager';
+import { MangaImageFitMode, resolveMangaImageFitMode } from './MangaImageFitPlanner';
 
 const TAG = 'MangaQuickSettings';
 
@@ -206,6 +207,23 @@ export struct MangaQuickSettings {
     if (this.callbacks.onSettingsChange) {
       this.callbacks.onSettingsChange(newSettings);
     }
+  }
+
+  private updateImageFitMode(mode: MangaImageFitMode): void {
+    const newSettings: ReadingSettings = this.createNewSettings();
+    newSettings.fitMode = mode;
+    if (this.callbacks.onSettingsChange) {
+      this.callbacks.onSettingsChange(newSettings);
+    }
+  }
+
+  private supportsPagedImageFitMode(): boolean {
+    const mode: ReadingMode = this.getEffectiveReadingMode();
+    return this.isSinglePageReadingMode() || mode === ReadingMode.DOUBLE_PAGE;
+  }
+
+  private isImageFitModeSelected(mode: MangaImageFitMode): boolean {
+    return resolveMangaImageFitMode(this.readingSettings.fitMode) === mode;
   }
 
   /**
@@ -498,6 +516,42 @@ export struct MangaQuickSettings {
     }
     .width('100%')
     .margin({ bottom: 16 })
+  }
+
+  @Builder
+  private buildImageFitModeSelector() {
+    Column({ space: 8 }) {
+      Text('图片适配')
+        .fontSize(this.isLandscape ? 12 : 14)
+        .fontWeight(FontWeight.Medium)
+        .fontColor($r('app.color.text_primary'))
+        .fontFamily(this.appFontFamily)
+        .width('100%')
+
+      Row({ space: this.isLandscape ? 4 : 8 }) {
+        this.buildImageFitModeButton('适宽', MangaImageFitMode.FIT_WIDTH)
+        this.buildImageFitModeButton('适高', MangaImageFitMode.FIT_HEIGHT)
+        this.buildImageFitModeButton('原始', MangaImageFitMode.ORIGINAL)
+      }
+      .width('100%')
+    }
+    .width('100%')
+    .margin({ bottom: this.isLandscape ? 12 : 16 })
+  }
+
+  @Builder
+  private buildImageFitModeButton(label: string, mode: MangaImageFitMode) {
+    Column() {
+      Text(label)
+        .fontSize(this.isLandscape ? 10 : 12)
+        .fontFamily(this.appFontFamily)
+        .fontColor(this.isImageFitModeSelected(mode) ? $r('app.color.accent') : $r('app.color.text_secondary'))
+    }
+    .layoutWeight(1)
+    .padding(this.isLandscape ? 8 : 10)
+    .backgroundColor(this.isImageFitModeSelected(mode) ? $r('app.color.accent_background') : Color.Transparent)
+    .borderRadius(6)
+    .onClick(() => this.updateImageFitMode(mode))
   }
 
   /**
@@ -912,6 +966,10 @@ export struct MangaQuickSettings {
         Column() {
           // 阅读模式选择
           this.buildReadingModeSelector()
+
+          if (this.supportsPagedImageFitMode()) {
+            this.buildImageFitModeSelector()
+          }
           
           // 阅读方向选择
           this.buildReadingDirectionSelector()
@@ -1006,6 +1064,10 @@ export struct MangaQuickSettings {
           Column() {
             // 横屏模式：使用更紧凑的网格布局
             this.buildLandscapeModeSelector()
+
+            if (this.supportsPagedImageFitMode()) {
+              this.buildImageFitModeSelector()
+            }
             
             // 阅读方向（紧凑版）
             this.buildLandscapeDirectionSelector()

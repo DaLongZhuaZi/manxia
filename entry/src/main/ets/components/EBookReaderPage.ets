@@ -16,6 +16,7 @@ import { WindowManager, DisplayMode } from 'manxia_theme/src/main/ets/Utils/Wind
 import { EBook, EBookChapter, EBookReadingProgress, EBookReadingSettings, EBookPageMode, EBookFormat, DEFAULT_EBOOK_READING_SETTINGS, EBOOK_THEME_PRESETS, EBookThemePreset } from 'manxia_core/src/main/ets/Models/EBookModels';
 import { SettingsManager, SettingKeys } from 'manxia_core/src/main/ets/Framework/Managers/SettingsManager';
 import { EBookDataManager } from 'manxia_core/src/main/ets/Framework/Data/EBookDataManager';
+import { ContinuationCacheManager } from '../Framework/Distributed/ContinuationCacheManager';
 import { PdfViewerComponent } from '../Framework/Components/PdfViewerComponent';
 import { PdfKitViewerComponent, PdfViewerCallbacks } from '../Framework/Components/PdfKitViewerComponent';
 import { isReaderKitEnabled } from '../Framework/Initialization/ReaderKitFeatureGate';
@@ -58,6 +59,7 @@ interface ReaderKitViewerControllerLike {
  */
 export interface EBookReaderParams {
   bookId: string;
+  continuationCacheId?: string;
 }
 
 @Component
@@ -77,6 +79,7 @@ struct EBookReaderPage {
   @State currentChapterIndex: number = 0;
   @State isLoading: boolean = true;
   @State errorMessage: string = '';
+  private continuationCacheId: string = '';
 
   // 阅读设置
   @State fontSize: number = 18;
@@ -421,8 +424,9 @@ struct EBookReaderPage {
 
       logger.info(TAG, `开始加载电子书: ${bookId}`);
       
-      // 从数据库加载电子书
-      const ebook = await this.ebookDataManager.getEBookById(bookId);
+      const ebook = this.continuationCacheId.length > 0
+        ? await ContinuationCacheManager.getInstance().getEBook(this.continuationCacheId)
+        : await this.ebookDataManager.getEBookById(bookId);
       
       if (!ebook) {
         throw new Error('电子书不存在');
@@ -920,7 +924,7 @@ struct EBookReaderPage {
       }
 
       // 保存到数据库
-      await this.ebookDataManager.saveReadingSettings(this.ebook.id, settings);
+      await this.persistReadingSettings(settings);
       logger.info(TAG, '阅读设置已保存');
     } catch (error) {
       logger.error(TAG, `保存阅读设置失败: ${String(error)}`);
@@ -948,7 +952,7 @@ struct EBookReaderPage {
     }
 
     // 异步保存到数据库
-    this.ebookDataManager.saveReadingSettings(this.ebook.id, this.ebook.readingSettings)
+    this.persistReadingSettings(this.ebook.readingSettings)
       .then(() => logger.debug(TAG, '设置已保存'))
       .catch((error: Error) => logger.error(TAG, `保存设置失败: ${error.message}`));
   }
@@ -1014,7 +1018,16 @@ struct EBookReaderPage {
         totalReadingTime: totalReadingTime
       };
 
-      await this.ebookDataManager.saveReadingProgress(progress);
+      if (this.continuationCacheId.length > 0) {
+        await ContinuationCacheManager.getInstance().updateProgress(this.continuationCacheId, {
+          chapterIndex: this.currentChapterIndex,
+          pageIndex: this.textCurrentPageIndex,
+          offset: currentPosition,
+          lastReadTime: progress.lastReadTime
+        });
+      } else {
+        await this.ebookDataManager.saveReadingProgress(progress);
+      }
       
       // 更新内存中的阅读进度
       if (this.ebook.readingProgress) {
@@ -1025,6 +1038,17 @@ struct EBookReaderPage {
     } catch (error) {
       logger.error(TAG, '保存阅读进度失败', String(error instanceof Error ? error.message : error));
     }
+  }
+
+  private async persistReadingSettings(settings: EBookReadingSettings): Promise<void> {
+    if (!this.ebook) {
+      return;
+    }
+    if (this.continuationCacheId.length > 0) {
+      await ContinuationCacheManager.getInstance().updateEBookSettings(this.continuationCacheId, settings);
+      return;
+    }
+    await this.ebookDataManager.saveReadingSettings(this.ebook.id, settings);
   }
 
   // 上次保存进度的时间戳，用于防抖
@@ -1487,6 +1511,7 @@ struct EBookReaderPage {
       
       const params = context.pathInfo.param as EBookReaderParams | null;
       if (params && params.bookId) {
+        this.continuationCacheId = params.continuationCacheId || '';
         this.loadEBook(params.bookId);
       } else {
         this.errorMessage = '缺少电子书ID参数';
@@ -1809,7 +1834,16 @@ struct EBookReaderPage {
         totalReadingTime: 0
       };
       
-      await this.ebookDataManager.saveReadingProgress(readingProgress);
+      if (this.continuationCacheId.length > 0) {
+        await ContinuationCacheManager.getInstance().updateProgress(this.continuationCacheId, {
+          chapterIndex: this.currentChapterIndex,
+          pageIndex: pageIndex,
+          offset: pageIndex,
+          lastReadTime: readingProgress.lastReadTime
+        });
+      } else {
+        await this.ebookDataManager.saveReadingProgress(readingProgress);
+      }
       logger.debug(TAG, `保存文本阅读进度: 章节=${this.currentChapterIndex}, 页码=${pageIndex}`);
     } catch (error) {
       logger.error(TAG, `保存文本阅读进度失败: ${String(error)}`);
@@ -1954,7 +1988,7 @@ struct EBookReaderPage {
       settings.showBattery = this.textReaderSettings.showBattery;
 
       // 保存到数据库
-      await this.ebookDataManager.saveReadingSettings(this.ebook.id, settings);
+      await this.persistReadingSettings(settings);
       logger.info(TAG, `文本阅读器设置已保存: volumeKeyNavigation=${settings.volumeKeyNavigation}, bgType=${settings.backgroundType}, bgColor=${settings.backgroundColor}, textColor=${settings.textColor}, bgImagePath=${settings.backgroundImagePath}`);
     } catch (error) {
       logger.error(TAG, `保存文本阅读器设置失败: ${String(error)}`);

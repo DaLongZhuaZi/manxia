@@ -27,8 +27,8 @@ import { SupporterDataManager } from 'manxia_core/src/main/ets/Framework/Manager
 
 const TAG = 'AboutPage';
 const TITLE_BAR_HEIGHT_MINI: number = 56;
-const APP_TEST_INVITE_URL = 'https://appgallery.huawei.com/apptest/4PlqU4ygat3';
-const APP_GALLERY_INVITE_URL = 'https://appgallery.huawei.com/apptest/join/b38068c67248de9fa6d71a3d0b728399?invitationCode=8vTXct0EstJ';
+const APP_TEST_INVITE_URL = 'https://appgallery.huawei.com/apptest/7D3tpdQlW2f';
+const APP_GALLERY_INVITE_URL = 'https://appgallery.huawei.com/apptest/join/04dd51398acc864727bea24ab096cf7c?invitationCode=A5z7QwcajlY';
 
 interface InviteTestLinkOption {
   label: string;

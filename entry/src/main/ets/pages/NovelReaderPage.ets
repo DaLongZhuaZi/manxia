@@ -24,7 +24,7 @@ import {
   LegadoWorkflowOutputKind
 } from 'manxia_novel/src/main/ets/Framework/Novel/LegadoCompatibilityTypes';
 import { NovelReaderPageParams } from './NovelBookshelfPage';
-import { NovelBook, NovelReadStatus } from 'manxia_core/src/main/ets/Models/NovelModels';
+import { NovelBook, NovelChapter, NovelReadStatus } from 'manxia_core/src/main/ets/Models/NovelModels';
 import {
   TextReaderComponent,
   PaginationMode,
@@ -97,6 +97,7 @@ import { AppGuideManager, AppGuidePageId, AppGuideStep } from 'manxia_core/src/m
 import { READER_ABILITY_HOST_MULTITON } from 'manxia_reader_ui/src/main/ets/Framework/Reader/MangaReaderAbilityConstants';
 import { openReadAloudPlayerInIsolatedAbility } from '../Framework/ReadAloud/ReadAloudPlayerAbilityLauncher';
 import { distributedReadingService } from '../Framework/Distributed/DistributedReadingService';
+import { ContinuationCacheManager } from '../Framework/Distributed/ContinuationCacheManager';
 import { distributedDataSyncManager, SyncReadingState } from '../Framework/Distributed/DistributedDataSyncManager';
 import { distributedPermissionManager } from '../Framework/Distributed/DistributedPermissionManager';
 import { continuationStateHelper } from '../Framework/Distributed/ContinuationStateHelper';
@@ -241,6 +242,8 @@ export struct NovelReaderPage {
 
   private sourceId: string = '';
   private bookUrl: string = '';
+  private continuationCacheId: string = '';
+  private continuationImportedSnapshot: boolean = false;
   private bookName: string = '';
   private author: string = '';
   private bookCoverUrl: string = '';
@@ -1361,7 +1364,9 @@ export struct NovelReaderPage {
     }
 
     try {
-      const ebook = await this.ebookDataManager.getEBookById(this.localEbookId);
+      const ebook = this.continuationCacheId.length > 0
+        ? await ContinuationCacheManager.getInstance().getEBook(this.continuationCacheId)
+        : await this.ebookDataManager.getEBookById(this.localEbookId);
       if (!ebook) {
         logger.warn(TAG, `Local TXT ebook data not found: ebookId=${this.localEbookId}`);
         return null;
@@ -1855,6 +1860,16 @@ export struct NovelReaderPage {
   }
 
   private async getRawChapterContent(chapterIndex: number): Promise<string | null> {
+    if (this.continuationCacheId.length > 0) {
+      const cachedContinuationContent = await ContinuationCacheManager.getInstance().getNovelChapterContent(
+        this.continuationCacheId,
+        chapterIndex
+      );
+      if (cachedContinuationContent && cachedContinuationContent.length > 0) {
+        logger.info(TAG, `接续章节命中专用缓存: cacheId=${this.continuationCacheId}, chapter=${chapterIndex}`);
+        return cachedContinuationContent;
+      }
+    }
     if (this.isLocalTxtNovelMode()) {
       const ebook = await this.ensureLocalEbookLoaded();
       const chapter = ebook?.chapters[chapterIndex];
@@ -1883,6 +1898,10 @@ export struct NovelReaderPage {
 
     const chapter = this.chapterList[chapterIndex];
     if (!chapter) {
+      return null;
+    }
+    if (this.continuationCacheId.length > 0 && !this.sourceManager.getSource(this.sourceId)) {
+      this.getUIContext().getPromptAction().showToast({ message: '目标设备未配置原书源，当前缓存章节仍可阅读' });
       return null;
     }
 
@@ -2133,7 +2152,9 @@ export struct NovelReaderPage {
       // Keep V2 reads single-flight until the scheduler owns isolated source
       // contexts; legacy prefetch behavior remains unchanged.
       const contentEngine = this.sourceManager.getEffectiveCompatibilityEngineMode(this.sourceId);
-      if (contentEngine === LegadoCompatibilityEngineMode.V2_ENABLED) {
+      if (this.continuationCacheId.length > 0) {
+        logger.info(TAG, '仅阅读接续缓存不会预取缓存包外的章节');
+      } else if (contentEngine === LegadoCompatibilityEngineMode.V2_ENABLED) {
         logger.info(TAG, 'skip cross-chapter prefetch for V2 source-scoped execution');
       } else {
         this.scheduleCrossChapterPrefetch();
@@ -2174,6 +2195,74 @@ export struct NovelReaderPage {
 
   async loadChapterList(): Promise<void> {
     try {
+      if (this.continuationCacheId.length > 0 ||
+        (this.continuationImportedSnapshot && !this.isLocalTxtNovelMode())) {
+        const cacheManager = ContinuationCacheManager.getInstance();
+        const cachedBook = this.continuationCacheId.length > 0
+          ? await cacheManager.getNovelBook(this.continuationCacheId)
+          : null;
+        let cachedChapters: NovelChapter[] = [];
+        if (this.continuationCacheId.length > 0) {
+          cachedChapters = await cacheManager.getNovelChapters(this.continuationCacheId);
+        } else {
+          const legadoChapters = await this.cacheManager.getCachedChapterList(this.bookId, 876000);
+          if (legadoChapters) {
+            cachedChapters = legadoChapters.map((chapter: LegadoChapter): NovelChapter => ({
+              id: chapter.id || `${this.bookId}_${chapter.index}`,
+              bookId: this.bookId,
+              url: chapter.url,
+              title: chapter.title,
+              index: chapter.index,
+              isVolume: chapter.isVolume || false,
+              isVip: chapter.isVip || false,
+              isPay: chapter.isPay || false,
+              isDownloaded: true,
+              contentPath: '',
+              wordCount: 0,
+              updateTime: chapter.updateTime,
+              createTime: Date.now()
+            }));
+          }
+        }
+        if (cachedChapters.length <= 0) {
+          throw new Error('接续小说快照中没有章节目录');
+        }
+        this.chapterList = cachedChapters.map((chapter: NovelChapter): LegadoChapter => ({
+          id: chapter.id,
+          bookUrl: this.bookUrl,
+          url: chapter.url,
+          title: chapter.title,
+          index: chapter.index,
+          isVolume: chapter.isVolume,
+          isVip: chapter.isVip,
+          isPay: chapter.isPay,
+          updateTime: chapter.updateTime
+        }));
+        this.totalChapters = this.chapterList.length;
+        this.chapters = this.chapterList.map((chapter: LegadoChapter, index: number): TextChapter => ({
+          id: chapter.id || `chapter_${index}`,
+          title: chapter.title,
+          content: '',
+          wordCount: 0,
+          index: index,
+          startPosition: 0,
+          endPosition: 0
+        }));
+        const record = this.continuationCacheId.length > 0
+          ? await cacheManager.getRecord(this.continuationCacheId)
+          : null;
+        const requestedIndex = record ? record.chapterIndex : this.currentChapterIndex;
+        this.currentChapterIndex = Math.max(0, Math.min(requestedIndex, this.chapterList.length - 1));
+        const currentChapter = this.chapterList[this.currentChapterIndex];
+        this.chapterUrl = currentChapter.url;
+        this.chapterTitle = currentChapter.title;
+        this.chapterId = `${this.bookId}_${this.currentChapterIndex}`;
+        this.bookName = cachedBook?.name || this.bookName;
+        this.bookCoverUrl = cachedBook?.coverLocalPath || cachedBook?.coverUrl || this.bookCoverUrl;
+        logger.info(TAG, `从接续缓存恢复小说目录: cacheId=${this.continuationCacheId}, chapters=${this.chapterList.length}`);
+        this.syncOverallReadProgress('continuation_cache_chapter_list');
+        return;
+      }
       if (this.isLocalTxtNovelMode()) {
         const ebook = await this.ensureLocalEbookLoaded();
         if (!ebook) {
@@ -2241,6 +2330,7 @@ export struct NovelReaderPage {
       };
       const chapters = await this.sourceManager.getChapterList(this.sourceId, book);
       if (chapters && chapters.length > 0) {
+        await this.cacheManager.saveChapterList(this.bookId, chapters);
         this.chapterList = chapters;
         this.totalChapters = chapters.length;
         let matchedChapterIndex = -1;
@@ -2295,7 +2385,11 @@ export struct NovelReaderPage {
     if (this.isLocalTxtNovelMode() && this.localEbookId.length > 0) {
       const ebook = await this.ensureLocalEbookLoaded();
       const ebookSettings = syncTextReaderSettingsToEBookSettings(snapshot, ebook?.readingSettings);
-      await this.ebookDataManager.saveReadingSettings(this.localEbookId, ebookSettings);
+      if (this.continuationCacheId.length > 0) {
+        await ContinuationCacheManager.getInstance().updateEBookSettings(this.continuationCacheId, ebookSettings);
+      } else {
+        await this.ebookDataManager.saveReadingSettings(this.localEbookId, ebookSettings);
+      }
       if (ebook) {
         ebook.readingSettings = ebookSettings;
       }
@@ -2986,7 +3080,16 @@ export struct NovelReaderPage {
           totalReadingTime: totalReadingTime
         };
 
-        await this.ebookDataManager.saveReadingProgress(progress);
+        if (this.continuationCacheId.length > 0) {
+          await ContinuationCacheManager.getInstance().updateProgress(this.continuationCacheId, {
+            chapterIndex: this.currentChapterIndex,
+            pageIndex: this.currentPageIndex,
+            offset: this.currentPageStartCharIndex,
+            lastReadTime: now
+          });
+        } else {
+          await this.ebookDataManager.saveReadingProgress(progress);
+        }
         ebook.readingProgress.currentChapterId = progress.currentChapterId;
         ebook.readingProgress.currentChapterIndex = progress.currentChapterIndex;
         ebook.readingProgress.currentPosition = progress.currentPosition;
@@ -3012,15 +3115,21 @@ export struct NovelReaderPage {
         progress: this.calculateReadProgressPercent(),
         readTime: now
       };
-      
-      await this.dataManager.saveReadProgress(progress);
-      
-      // 更新阅读时长（秒）
-      if (this.readStartTime > 0) {
-        const readingDuration = Math.floor((now - this.readStartTime) / 1000);
-        if (readingDuration > 0) {
-          await this.dataManager.updateReadingTime(this.bookId, readingDuration);
-          this.readStartTime = now;// 重置开始时间，避免重复计算
+      if (this.continuationCacheId.length > 0) {
+        await ContinuationCacheManager.getInstance().updateProgress(this.continuationCacheId, {
+          chapterIndex: this.currentChapterIndex,
+          pageIndex: this.currentPageIndex,
+          offset: this.currentPageStartCharIndex,
+          lastReadTime: now
+        });
+      } else {
+        await this.dataManager.saveReadProgress(progress);
+        if (this.readStartTime > 0) {
+          const readingDuration = Math.floor((now - this.readStartTime) / 1000);
+          if (readingDuration > 0) {
+            await this.dataManager.updateReadingTime(this.bookId, readingDuration);
+            this.readStartTime = now;
+          }
         }
       }
       
@@ -3059,6 +3168,15 @@ export struct NovelReaderPage {
     if (!this.bookId) return;
     
     try {
+      if (this.continuationCacheId.length > 0) {
+        const record = await ContinuationCacheManager.getInstance().getRecord(this.continuationCacheId);
+        if (record) {
+          this.currentChapterIndex = Math.max(0, record.chapterIndex);
+          this.currentPageIndex = Math.max(0, record.pageIndex);
+          this.currentPageStartCharIndex = Math.max(0, record.offset);
+        }
+        return;
+      }
       if (this.isLocalTxtNovelMode()) {
         const ebook = await this.ensureLocalEbookLoaded();
         const progress = ebook?.readingProgress;
@@ -3379,7 +3497,7 @@ export struct NovelReaderPage {
   }
 
   private async recordBrowseHistory(param: NovelReaderPageParams): Promise<void> {
-    if (this.isLocalTxtNovelMode()) {
+    if (this.isLocalTxtNovelMode() || this.continuationCacheId.length > 0) {
       return;
     }
     try {
@@ -3403,7 +3521,7 @@ export struct NovelReaderPage {
   * [修复] 确保书籍存在于数据库中（用于首页最近阅读显示）
   */
   private async ensureBookInDatabase(param: NovelReaderPageParams): Promise<void> {
-    if (this.isLocalTxtNovelMode()) {
+    if (this.isLocalTxtNovelMode() || this.continuationCacheId.length > 0) {
       return;
     }
     try {
@@ -4655,6 +4773,8 @@ export struct NovelReaderPage {
           TAG,
           `阅读器刷新意图已接收: forceContentRefresh=${this.forceNetworkContentRefresh}`
         );
+        this.continuationCacheId = param.continuationCacheId || '';
+        this.continuationImportedSnapshot = param.continuationImportedSnapshot === true;
         this.sourceId = param.sourceId;
         this.localEbook = null;
         this.localEbookId = param.localEbookId

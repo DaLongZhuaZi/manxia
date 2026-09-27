@@ -66,6 +66,8 @@ import { distributedFileManager } from './Framework/Distributed/DistributedFileM
 import { distributedDataSyncManager } from './Framework/Distributed/DistributedDataSyncManager';
 import { distributedPermissionManager } from './Framework/Distributed/DistributedPermissionManager';
 import { continuationStateHelper } from './Framework/Distributed/ContinuationStateHelper';
+import { ContinuationReadingSettingsManager } from './Framework/Distributed/ContinuationReadingSettingsManager';
+import { ContinuationCacheManager } from './Framework/Distributed/ContinuationCacheManager';
 import { openExternalFileTaskInIsolatedAbilityByContext } from 'manxia_network/src/main/ets/Framework/ExternalFile/ExternalFileTaskLauncher';
 import {
   ExternalFileTaskFactory,
@@ -93,6 +95,12 @@ export default class EntryAbility extends UIAbility {
     // [修复] 注册入口 Ability 上下文（接续成功后源端自动拉起遥控器使用）并预载权限 tokenId
     // （让 onContinue 同步路径 isPermissionGrantedSync() 拿到真实授权结果，避免首次误拒）
     continuationStateHelper.registerEntryAbilityContext(this.context);
+    void ContinuationReadingSettingsManager.getInstance().initialize(this.context).catch((error: Error) => {
+      logger.warn('EntryAbility', `接续阅读设置初始化失败，使用默认仅阅读模式: ${String(error)}`);
+    });
+    void ContinuationCacheManager.getInstance().initialize(this.context).catch((error: Error) => {
+      logger.warn('EntryAbility', `接续阅读缓存初始化失败: ${String(error)}`);
+    });
     distributedPermissionManager.preloadTokenId();
 
     // 启动早期先抑制「设备发现和连接」权限的后台检查点自动请求：

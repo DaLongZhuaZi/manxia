@@ -153,6 +153,13 @@ export function buildLocalTextNovelBookId(ebookId: string): string {
   return `${LOCAL_TXT_NOVEL_BOOK_ID_PREFIX}${ebookId}`;
 }
 
+export function getLocalTextNovelEBookId(novelBookId: string): string {
+  if (!novelBookId.startsWith(LOCAL_TXT_NOVEL_BOOK_ID_PREFIX)) {
+    return '';
+  }
+  return novelBookId.substring(LOCAL_TXT_NOVEL_BOOK_ID_PREFIX.length);
+}
+
 export function isLocalTxtNovelReaderSource(sourceId: string): boolean {
   return sourceId === LOCAL_TXT_NOVEL_SOURCE_ID;
 }

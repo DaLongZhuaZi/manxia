@@ -2,6 +2,9 @@ import { AbilityConstant, Want } from '@kit.AbilityKit';
 import common from '@ohos.app.ability.common';
 import { logger } from 'manxia_core/src/main/ets/Utils/Logger';
 import { distributedReadingService } from './DistributedReadingService';
+import { ContinuationReadingSettingsManager } from './ContinuationReadingSettingsManager';
+import { ContinuationTransferMode } from './ContinuationReadingTypes';
+import { RemoteControlSocketChannel } from './RemoteControlSocketChannel';
 import { distributedDataSyncManager } from './DistributedDataSyncManager';
 import { distributedPermissionManager } from './DistributedPermissionManager';
 import { eventBus, GameEvent, ContinuationTriggeredPayload } from '../EventBus';
@@ -213,6 +216,11 @@ export class ContinuationStateHelper {
       return AbilityConstant.OnContinueResult.REJECT;
     }
 
+    if (bookId && sourceType === 'novel' && bookId.startsWith('local_txt_ebook_')) {
+      isLocal = true;
+      logger.info(TAG, `packContinuationWant: 识别到本地TXT小说，修正本地内容标志: bookId=${bookId}`);
+    }
+
     logger.info(TAG, `packContinuationWant: bookId=${bookId}, chapter=${chapterIndex}, page=${pageIndex}, offset=${offset}, sourceType=${sourceType}, external=${resolvedSource ? 'yes' : 'no'}`);
 
     // 生成分布式状态机 sessionId 并写入 wantParam（系统保证送达目标端）
@@ -224,6 +232,10 @@ export class ContinuationStateHelper {
     wantParam['pageIndex'] = pageIndex;
     wantParam['offset'] = offset;
     wantParam['sourceType'] = sourceType;
+    const continuationMode = ContinuationReadingSettingsManager.getInstance().getEffectiveMode();
+    wantParam['continuationTransferMode'] = continuationMode;
+    RemoteControlSocketChannel.getInstance().requireVersionedContinuationProtocol();
+    logger.info(TAG, `接续方式已写入 Want: mode=${continuationMode}`);
 
     // 启动分布式状态机会话并写入进度快照（实时同步通道，供遥控器等使用）
     distributedDataSyncManager.joinSession(sessionId);
@@ -442,12 +454,22 @@ export class ContinuationStateHelper {
     }
     const sessionId = want.parameters['distributedSessionId'] as string;
     const bookId = want.parameters['bookId'] as string;
-    const isLocal = want.parameters['isLocal'] as boolean;
+    let isLocal = want.parameters['isLocal'] as boolean;
     const chapterIndex = want.parameters['chapterIndex'] as number;
     const pageIndex = want.parameters['pageIndex'] as number;
     const offset = want.parameters['offset'] as number;
     const rawSourceType = want.parameters['sourceType'] as string;
     const sourceType = this.normalizeContinuationSourceType(rawSourceType);
+    if (bookId && sourceType === 'novel' && bookId.startsWith('local_txt_ebook_')) {
+      isLocal = true;
+      logger.info(TAG, `restoreContinuationState: 识别到本地TXT小说，按本地内容恢复: bookId=${bookId}`);
+    }
+    const rawContinuationMode = want.parameters['continuationTransferMode'] as string;
+    const continuationMode: ContinuationTransferMode = rawContinuationMode === ContinuationTransferMode.IMPORT_TO_LIBRARY
+      ? ContinuationTransferMode.IMPORT_TO_LIBRARY
+      : rawContinuationMode === ContinuationTransferMode.DISABLED
+        ? ContinuationTransferMode.DISABLED
+        : ContinuationTransferMode.READ_ONLY;
 
     // [诊断] 接续链路排查需要完整日志：目标端用户若把日志等级设为“关闭”，
     // 接续期间临时强制为 DEBUG（仅本次进程运行时生效，不改写用户设置）。
@@ -518,6 +540,7 @@ export class ContinuationStateHelper {
     AppStorage.setOrCreate('continuationOffset', offset);
     AppStorage.setOrCreate('continuationChapterIndex', chapterIndex);
     AppStorage.setOrCreate('continuationIsLocal', isLocal);
+    AppStorage.setOrCreate('continuationTransferMode', continuationMode);
     logger.info(TAG, `restoreContinuationState: 接续导航标志已设置, contentType=${sourceType}, contentId=${bookId}`);
   }
 

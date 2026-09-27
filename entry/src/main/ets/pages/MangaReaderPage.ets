@@ -148,6 +148,7 @@ import {
 } from 'manxia_reader_ui/src/main/ets/Framework/Reader/MangaChapterResolveGuard';
 import { MangaIdentityResolver, MangaIdentityResolveResult } from '../Framework/Reader/MangaIdentityResolver';
 import { distributedReadingService } from '../Framework/Distributed/DistributedReadingService';
+import { ContinuationCacheManager } from '../Framework/Distributed/ContinuationCacheManager';
 import { distributedDataSyncManager, SyncReadingState } from '../Framework/Distributed/DistributedDataSyncManager';
 import { distributedPermissionManager } from '../Framework/Distributed/DistributedPermissionManager';
 import { continuationStateHelper } from '../Framework/Distributed/ContinuationStateHelper';
@@ -203,6 +204,7 @@ export interface MangaReaderPageParams {
   originImportId?: string;
   /** 导入/恢复流程来源类型，例如 local_manga/pdf/download_sync */
   originImportKind?: string;
+  continuationCacheId?: string;
 }
 
 /**
@@ -493,6 +495,7 @@ export struct MangaReaderPage {
   // WebView图源相关
   private webViewManager: WebViewSourceManager = WebViewSourceManager.getInstance();
   private mangaEngine: MangaSourceEngine | null = null;
+  private continuationSourceUnavailable: boolean = false;
   @State networkHeaders: RequestHeaders | undefined = undefined;
   private emptyNetworkHeaders: RequestHeaders = {};
   @State networkHeadersTick: number = 0;
@@ -3959,6 +3962,7 @@ private onlineDownloadedLocalFastPathActive: boolean = false;
   
   private async initializeMangaReader(params: MangaReaderPageParams): Promise<void> {
     this.pageParams = params;
+    this.continuationSourceUnavailable = false;
     const initKey = this.buildInitParamsKey(params);
     if (!this.isInitializing &&
       this.lastInitializedParamsKey === initKey &&
@@ -4655,6 +4659,9 @@ private onlineDownloadedLocalFastPathActive: boolean = false;
         // 直接使用传递的漫画对象（通常来自WebView图源）
       const isWebViewSource = params.contentType === MangaReaderContentType.OnlineUndownloaded ||
                            params.contentType === MangaReaderContentType.OnlineDownloaded;
+      if (isWebViewSource && (params.continuationCacheId || '').length > 0 && params.sourceId === undefined) {
+        this.continuationSourceUnavailable = true;
+      }
       const isLegadoBridgeSource: boolean = params.sourceId !== undefined && params.sourceId > 0
         ? await getLegadoMangaSourceBridge().isLegadoMangaSourceId(params.sourceId)
         : false;
@@ -4731,7 +4738,7 @@ private onlineDownloadedLocalFastPathActive: boolean = false;
           if (params.chapterTitle) {
             logger.info(TAG, `🔍 当前章节标题: "${params.chapterTitle}"`);
           }
-        } else if (!isWebViewSource) {
+        } else if (!isWebViewSource && !(params.continuationCacheId && params.continuationCacheId.length > 0)) {
           await this.hydrateLocalMangaFromDatabase(manga, params);
         }
         
@@ -4746,6 +4753,9 @@ private onlineDownloadedLocalFastPathActive: boolean = false;
             // 加载图源的预加载设置
             this.mangaEngine = await this.webViewManager.getMangaEngine(params.sourceId, params.sourceName);
             logger.info(TAG, 'MangaSourceEngine acquired successfully');
+            if (!this.mangaEngine && (params.continuationCacheId || '').length > 0) {
+              this.continuationSourceUnavailable = true;
+            }
             
             // 加载图源的预加载设置
             await this.loadSourcePreloadSettings(params.sourceId);
@@ -4943,6 +4953,9 @@ private onlineDownloadedLocalFastPathActive: boolean = false;
               logger.error(TAG, `错误堆栈: ${errorStack}`);
             }
             webViewSourceInitializationError = new Error(`WebView 图源引擎初始化失败: ${errorMsg}`);
+            if ((params.continuationCacheId || '').length > 0) {
+              this.continuationSourceUnavailable = true;
+            }
             logger.warn(
               TAG,
               `WebView 图源引擎初始化失败，将先继续尝试本地CBZ归档: ${errorMsg}`
@@ -9736,7 +9749,20 @@ private onlineDownloadedLocalFastPathActive: boolean = false;
 
     // 保存到数据库（会插入新记录，新章节的记录自动覆盖旧章节）
     // 保存到数据库（会插入新记录，新章节的记录自动覆盖旧章节）
-    await this.dataService.saveReadingProgress(manga.id, chapter.id, pageIndex, duration, sourceId, mangaData);
+    const cacheId = this.pageParams?.continuationCacheId || '';
+    if (cacheId.length > 0) {
+      const chapterIndex = chapter.chapterNumber > 0
+        ? chapter.chapterNumber - 1
+        : manga.chapters.findIndex((item: MangaChapter) => item.id === chapter.id);
+      await ContinuationCacheManager.getInstance().updateProgress(cacheId, {
+        chapterIndex: Math.max(0, chapterIndex),
+        pageIndex: pageIndex,
+        offset: 0,
+        lastReadTime: now
+      });
+    } else {
+      await this.dataService.saveReadingProgress(manga.id, chapter.id, pageIndex, duration, sourceId, mangaData);
+    }
     this.recordMangaReadFlowEvent(
       MangaReadFlowEventType.PROGRESS_SAVED,
       trigger,
@@ -9787,9 +9813,11 @@ private onlineDownloadedLocalFastPathActive: boolean = false;
     logger.info(TAG, `✅ 阅读进度已更新: 章节=${chapter.title}, 页码=${pageIndex + 1}, 时间=${now}`);
 
     // 更新跟踪服务进度（异步，不阻塞主流程）
-    this.updateTrackingProgress(manga.id, chapter, manga.chapters.length).catch((error: Error) => {
-      logger.debug(TAG, `更新跟踪进度失败: ${error.message}`);
-    });
+    if (cacheId.length <= 0) {
+      this.updateTrackingProgress(manga.id, chapter, manga.chapters.length).catch((error: Error) => {
+        logger.debug(TAG, `更新跟踪进度失败: ${error.message}`);
+      });
+    }
 
     this.lastSavedPageIndex = pageIndex;
     this.lastProgressSaveTime = now;
@@ -9797,7 +9825,10 @@ private onlineDownloadedLocalFastPathActive: boolean = false;
     
     // 向分布式沙箱同步实时进度
     const chIndex = manga.chapters.findIndex(c => c.id === chapter.id);
-    distributedReadingService.syncProgress(manga.id, chIndex >= 0 ? chIndex : 0, pageIndex, 0, this.buildSyncSourceType(this.pageParams?.contentType));
+    const resolvedChapterIndex = cacheId.length > 0 && chapter.chapterNumber > 0
+      ? chapter.chapterNumber - 1
+      : (chIndex >= 0 ? chIndex : 0);
+    distributedReadingService.syncProgress(manga.id, resolvedChapterIndex, pageIndex, 0, this.buildSyncSourceType(this.pageParams?.contentType));
     
     logger.debug(TAG, `已保存阅读进度[${trigger}]: ${manga.title} / ${chapter.title} -> 第${pageIndex + 1}页, 时长${duration}ms`);
   }
@@ -9907,6 +9938,9 @@ private onlineDownloadedLocalFastPathActive: boolean = false;
       const targetChapter = manga.chapters.find(ch => ch.id === chapterId);
       if (!targetChapter) {
         logger.warn(TAG, `无法切换章节：未找到章节ID ${chapterId}`);
+        return;
+      }
+      if (this.shouldBlockUncachedContinuationChapter(targetChapter)) {
         return;
       }
       // 保存当前章节进度
@@ -11127,6 +11161,9 @@ private onlineDownloadedLocalFastPathActive: boolean = false;
       const currentIndex = currentManga.chapters.findIndex(ch => ch.id === currentChapter.id);
       if (currentIndex > 0) {
         const prevChapter = currentManga.chapters[currentIndex - 1];
+        if (this.shouldBlockUncachedContinuationChapter(prevChapter)) {
+          return;
+        }
         
         // 检查上一章节是否已有页面信息
         if (!prevChapter.pages || prevChapter.pages.length === 0) {
@@ -11256,6 +11293,22 @@ private onlineDownloadedLocalFastPathActive: boolean = false;
     return currentIndex >= 0 && currentIndex < currentManga.chapters.length - 1;
   }
 
+  private shouldBlockUncachedContinuationChapter(chapter: MangaChapter): boolean {
+    const continuationCacheId = this.pageParams?.continuationCacheId || '';
+    if (continuationCacheId.length <= 0 || !this.continuationSourceUnavailable) {
+      return false;
+    }
+    for (const page of chapter.pages) {
+      if ((page.localPath || '').length > 0) {
+        return false;
+      }
+    }
+    this.getUIContext().getPromptAction().showToast({
+      message: '该章节未包含在接续缓存中，请配置原图源并连接网络后重试'
+    });
+    return true;
+  }
+
   private goToNextChapter(): void {
     const lifecycleGeneration: number = this.readerLifecycleGeneration;
     if (!this.isReaderLifecycleCurrent(lifecycleGeneration)) {
@@ -11278,6 +11331,9 @@ private onlineDownloadedLocalFastPathActive: boolean = false;
       
       if (currentIndex < currentManga.chapters.length - 1) {
         const nextChapter = currentManga.chapters[currentIndex + 1];
+        if (this.shouldBlockUncachedContinuationChapter(nextChapter)) {
+          return;
+        }
         
         // 检查下一章节是否已有页面信息
         if (!nextChapter.pages || nextChapter.pages.length === 0) {

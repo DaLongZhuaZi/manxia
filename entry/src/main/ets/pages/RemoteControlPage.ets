@@ -3,6 +3,7 @@ import { logger } from 'manxia_core/src/main/ets/Utils/Logger';
 import { distributedDataSyncManager, SyncReadingState } from '../Framework/Distributed/DistributedDataSyncManager';
 import { ContinuationTriggeredPayload } from '../Framework/EventBus';
 import { REMOTE_CONTROL_ABILITY_INSTANCE_ID_KEY } from '../Framework/RemoteControl/RemoteControlAbilityConstants';
+import { FontAwareHelper, FontAwareState } from 'manxia_theme/src/main/ets/Framework/Components/FontAware';
 
 const TAG = 'RemoteControlPage';
 
@@ -10,6 +11,9 @@ const TAG = 'RemoteControlPage';
 export struct RemoteControlPage {
   @Consume('NavPathStack') pageStack: NavPathStack;
   @LocalStorageProp(REMOTE_CONTROL_ABILITY_INSTANCE_ID_KEY) private remoteControlAbilityInstanceId: string = '';
+  @StorageLink('appFontFamily') appFontFamily: string = 'HarmonyOS Sans';
+  @State private fontState: FontAwareState = new FontAwareState();
+  private fontAwareComponentId: string = `${TAG}_${Date.now()}`;
   
   @State private sessionId: string = '';
   @State private bookId: string = '';
@@ -68,12 +72,33 @@ export struct RemoteControlPage {
   
   aboutToAppear() {
     logger.info(TAG, 'RemoteControlPage aboutToAppear');
+    FontAwareHelper.initializeFontAware(
+      this.fontAwareComponentId,
+      this.fontState,
+      (newState: FontAwareState) => {
+        this.fontState = newState;
+      }
+    );
   }
 
   aboutToDisappear() {
     logger.info(TAG, 'RemoteControlPage aboutToDisappear');
-    // 断开遥控器连接，但不需要终止分布式会话（因为目标端可能还要继续阅读）
+    FontAwareHelper.cleanupFontAware(this.fontAwareComponentId);
+    // 仅解除 UI 回调；分布式会话和远程连接仍供阅读器继续同步使用。
     this.detachRemoteCallbacks();
+  }
+
+  onPageShow(): void {
+    if (!this.isHostedByIsolatedAbility() || this.sessionId.length <= 0) {
+      return;
+    }
+    this.attachRemoteCallbacks();
+    const latestState = distributedDataSyncManager.getCurrentState();
+    if (latestState && latestState.sessionId === this.sessionId) {
+      this.chapterIndex = latestState.chapterIndex;
+      this.pageIndex = latestState.pageIndex;
+      this.readingOffset = latestState.offset;
+    }
   }
 
   private onReady(context: NavDestinationContext) {
@@ -134,28 +159,28 @@ export struct RemoteControlPage {
     return this.remoteControlAbilityInstanceId.length > 0;
   }
 
-  private async closeRemoteControl(leaveSession: boolean, reason: string): Promise<void> {
-    if (leaveSession) {
-      distributedDataSyncManager.leaveSession();
-    }
-    this.detachRemoteCallbacks();
-
+  private async closeRemoteControl(reason: string): Promise<void> {
     if (this.isHostedByIsolatedAbility()) {
       try {
         const hostContext = this.getUIContext()?.getHostContext() as common.UIAbilityContext;
         if (!hostContext) {
-          logger.warn(TAG, `独立遥控器关闭失败，回退页面栈: reason=${reason}`);
-          this.pageStack.pop();
+          logger.warn(TAG, `无法取得独立遥控器上下文，保留当前页面: reason=${reason}`);
+          this.getUIContext().getPromptAction().showToast({ message: '暂时无法返回阅读器' });
           return;
         }
-        logger.info(TAG, `独立遥控器关闭: reason=${reason}, instanceId=${this.remoteControlAbilityInstanceId}`);
-        await hostContext.terminateSelf();
+        this.detachRemoteCallbacks();
+        logger.info(TAG, `独立遥控器返回源页面: reason=${reason}, instanceId=${this.remoteControlAbilityInstanceId}`);
+        await hostContext.moveAbilityToBackground();
         return;
       } catch (error) {
-        logger.warn(TAG, `独立遥控器关闭异常，回退页面栈: reason=${reason}, error=${String(error)}`);
+        logger.warn(TAG, `独立遥控器返回源页面失败: reason=${reason}, error=${String(error)}`);
+        this.attachRemoteCallbacks();
+        this.getUIContext().getPromptAction().showToast({ message: '返回阅读器失败，请重试' });
+        return;
       }
     }
 
+    this.detachRemoteCallbacks();
     this.pageStack.pop();
   }
 
@@ -181,27 +206,16 @@ export struct RemoteControlPage {
           .width(48)
           .height(48)
           .onClick(() => {
-            void this.closeRemoteControl(false, 'back');
+            void this.closeRemoteControl('back');
           })
 
           Text('遥控器模式')
             .fontSize(20)
             .fontWeight(FontWeight.Bold)
             .fontColor($r('sys.color.font_primary'))
+            .fontFamily(this.appFontFamily)
             .layoutWeight(1)
             .textAlign(TextAlign.Center)
-
-          Button({ type: ButtonType.Circle, stateEffect: true }) {
-            SymbolGlyph($r('sys.symbol.xmark'))
-              .fontSize(24)
-              .fontColor([$r('sys.color.font_primary')])
-          }
-          .backgroundColor(Color.Transparent)
-          .width(48)
-          .height(48)
-          .onClick(() => {
-            void this.closeRemoteControl(true, 'leave_session');
-          })
         }
         .width('100%')
         .padding({ top: 12, left: 16, right: 16, bottom: 12 })
@@ -218,10 +232,12 @@ export struct RemoteControlPage {
                this.connectionStatus === 'offline' ? '目标设备已离线' : '连接发生错误')
             .fontSize(16)
             .fontColor(this.connectionStatus === 'error' ? $r('app.color.color_error') : $r('sys.color.font_secondary'))
+            .fontFamily(this.appFontFamily)
 
           Text(`书籍 ID: ${this.bookId}`)
             .fontSize(14)
             .fontColor($r('sys.color.font_tertiary'))
+            .fontFamily(this.appFontFamily)
             .maxLines(1)
             .textOverflow({ overflow: TextOverflow.Ellipsis })
 
@@ -230,10 +246,12 @@ export struct RemoteControlPage {
               Text('当前章节')
                 .fontSize(14)
                 .fontColor($r('sys.color.font_tertiary'))
+                .fontFamily(this.appFontFamily)
               Text(`${this.chapterIndex + 1}`)
                 .fontSize(28)
                 .fontWeight(FontWeight.Medium)
                 .fontColor($r('sys.color.font_primary'))
+                .fontFamily(this.appFontFamily)
             }.alignItems(HorizontalAlign.Center)
 
             Divider().vertical(true).height(40).color($r('sys.color.comp_divider'))
@@ -242,10 +260,12 @@ export struct RemoteControlPage {
               Text('当前页码/偏移')
                 .fontSize(14)
                 .fontColor($r('sys.color.font_tertiary'))
+                .fontFamily(this.appFontFamily)
               Text(this.sourceType === 'novel' ? `${this.readingOffset}` : `${this.pageIndex + 1}`)
                 .fontSize(28)
                 .fontWeight(FontWeight.Medium)
                 .fontColor($r('sys.color.font_primary'))
+                .fontFamily(this.appFontFamily)
             }.alignItems(HorizontalAlign.Center)
           }
           .padding(24)
@@ -306,6 +326,7 @@ export struct RemoteControlPage {
                 Text('上一页')
                   .fontSize(16)
                   .fontColor($r('sys.color.font_primary'))
+                  .fontFamily(this.appFontFamily)
               }
             }
             .backgroundColor($r('sys.color.comp_background_secondary'))
@@ -319,6 +340,7 @@ export struct RemoteControlPage {
                 Text('下一页')
                   .fontSize(16)
                   .fontColor($r('sys.color.font_primary'))
+                  .fontFamily(this.appFontFamily)
                 SymbolGlyph($r('sys.symbol.chevron_right'))
                   .fontSize(20)
                   .fontColor([$r('sys.color.font_primary')])
@@ -342,6 +364,10 @@ export struct RemoteControlPage {
     .hideTitleBar(true)
     .onReady((context: NavDestinationContext) => {
       this.onReady(context);
+    })
+    .onBackPressed((): boolean => {
+      void this.closeRemoteControl('system_back');
+      return true;
     })
   }
 }

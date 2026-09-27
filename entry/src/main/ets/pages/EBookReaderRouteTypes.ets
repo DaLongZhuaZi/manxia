@@ -11,4 +11,5 @@ export interface EBookReaderParams {
   originImportId?: string;
   originImportKind?: string;
   readerOpenFlowId?: string;
+  continuationCacheId?: string;
 }

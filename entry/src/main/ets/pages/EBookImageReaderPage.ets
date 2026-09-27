@@ -16,6 +16,7 @@ import { PageWindowCoordinator } from 'manxia_theme/src/main/ets/Utils/PageWindo
 import { ThemeManager } from 'manxia_theme/src/main/ets/Framework/Managers/ThemeManager';
 import { getFontManager, FontScene } from 'manxia_theme/src/main/ets/Framework/Managers/FontManager';
 import { EBookDataManager } from 'manxia_core/src/main/ets/Framework/Data/EBookDataManager';
+import { ContinuationCacheManager } from '../Framework/Distributed/ContinuationCacheManager';
 import { EBookParserFactory } from '../Framework/Parsers/EBookParser';
 import { getUnifiedAnnotationManager } from 'manxia_core/src/main/ets/Framework/Annotations/UnifiedAnnotationManager';
 import { UnifiedContentType } from 'manxia_core/src/main/ets/Models/UnifiedContentModels';
@@ -201,6 +202,7 @@ struct EBookImageReaderPage {
   private lastRemoteInstructionTimestamp: number = 0;
   private remoteCallbacksRegistered: boolean = false;
   private pendingContinuationPageIndex: number = -1;
+  private continuationCacheId: string = '';
 
   aboutToAppear(): void {
     this.isPageVisible = true;
@@ -474,6 +476,7 @@ struct EBookImageReaderPage {
 
   private async initializeWithParams(params: EBookReaderParams): Promise<void> {
     this.sourceCoverComponentId = params.coverComponentId || '';
+    this.continuationCacheId = params.continuationCacheId || '';
     this.routerBackOnClose = params.routerBackOnClose === true;
     this.readerHostMode = params.readerHostMode || '';
     this.readerInstanceId = params.readerInstanceId || '';
@@ -628,7 +631,9 @@ struct EBookImageReaderPage {
           const safeIndex = Math.max(0, Math.min(previousProgress?.currentChapterIndex ?? 0, ebook.chapters.length - 1));
           ebook.readingProgress.currentChapterId = ebook.chapters[safeIndex].id;
         }
-        await this.ebookDataManager.saveEBook(ebook, { skipReadingSettings: true });
+        if (this.continuationCacheId.length <= 0) {
+          await this.ebookDataManager.saveEBook(ebook, { skipReadingSettings: true });
+        }
         logger.info(TAG, `图片 EPUB 修复完成: ${ebook.metadata.title}`);
       }
     } catch (error) {
@@ -648,7 +653,9 @@ struct EBookImageReaderPage {
     this.reportTransitionLoadingProgress(0.08, 'load_start');
 
     try {
-      let ebook = await this.ebookDataManager.getEBookById(bookId);
+      let ebook = this.continuationCacheId.length > 0
+        ? await ContinuationCacheManager.getInstance().getEBook(this.continuationCacheId)
+        : await this.ebookDataManager.getEBookById(bookId);
       if (!ebook) {
         throw new Error('未找到电子书');
       }
@@ -1028,7 +1035,16 @@ struct EBookImageReaderPage {
       return;
     }
 
-    await this.ebookDataManager.saveReadingProgress(progress);
+    if (this.continuationCacheId.length > 0) {
+      await ContinuationCacheManager.getInstance().updateProgress(this.continuationCacheId, {
+        chapterIndex: progress.currentChapterIndex,
+        pageIndex: progress.currentPosition,
+        offset: progress.currentPosition,
+        lastReadTime: progress.lastReadTime
+      });
+    } else {
+      await this.ebookDataManager.saveReadingProgress(progress);
+    }
     ebook.readingProgress = progress;
     // [修复] 同步跨端接续阅读状态（currentRead* + 独立通道推送），
     // 图片 EPUB 阅读器此前缺失该调用，导致 onContinue 打包旧书状态被拒绝

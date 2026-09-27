@@ -1,16 +1,20 @@
 import { SafeFileUtils } from 'manxia_core/src/main/ets/Utils/SafeFileUtils';
 import { fileIo as fs } from '@kit.CoreFileKit';
-import { EBook } from 'manxia_core/src/main/ets/Models/EBookModels';
+import { EBook, EBookFormat } from 'manxia_core/src/main/ets/Models/EBookModels';
 import { logger } from 'manxia_core/src/main/ets/Utils/Logger';
 import { EBookDataManager } from 'manxia_core/src/main/ets/Framework/Data/EBookDataManager';
 import { EBookCoverExtractor, EBookParserFactory } from '../Parsers/EBookParser';
+import { TransferredBookValidation } from './TransferredBookValidation';
 import { getContext } from 'manxia_core/src/main/ets/GlobalContext';
+import { ContinuationCacheManager } from '../Distributed/ContinuationCacheManager';
+import { ContinuationTransferManifest } from '../Distributed/ContinuationReadingTypes';
 
 const TAG = 'OnlineEBookImportService';
 
 export class OnlineEBookImportService {
   private static instance: OnlineEBookImportService;
   private ebookDataManager: EBookDataManager = EBookDataManager.getInstance();
+  private transferredBookValidation: TransferredBookValidation = new TransferredBookValidation();
 
   private constructor() {
   }
@@ -190,12 +194,15 @@ export class OnlineEBookImportService {
     }
 
     const ebook: EBook = await parser.parse();
-    // [修复] ReaderKit 解析失败会走降级解析：标题回退为文件名（即 targetBookId）、无真实章节。
-    // 对传输导入而言这等同于“文件损坏/不完整”，不能入库，否则目标端后续打开会报
-    // “File is not exist / 加载章节失败”，且残留记录会让下次接续跳过重新拉取。
+    // ReaderKit 降级结果以 bookId 为标题时视为无效；有效 PDF 则用解析出的页面章节证明内容完整。
     const parsedTitle = (ebook.metadata.title || '').trim();
     if (parsedTitle.length <= 0 || parsedTitle === targetBookId) {
-      throw new Error(`传输文件解析异常，文件可能不完整: ${finalPath}`);
+      if (ebook.format === EBookFormat.PDF && this.transferredBookValidation.hasUsablePdfPages(ebook)) {
+        ebook.metadata.title = this.transferredBookValidation.getPdfFallbackTitle(originalFileName, targetBookId);
+        logger.warn(TAG, `接续PDF没有文档标题元数据，已使用文件名: bookId=${targetBookId}, title=${ebook.metadata.title}, pages=${ebook.chapters.length}`);
+      } else {
+        throw new Error(`传输文件解析异常，缺少有效标题或内容: ${finalPath}`);
+      }
     }
     // 重绑为源端 bookId（接续按 bookId 命中；章节与阅读进度同步重绑）
     ebook.id = targetBookId;
@@ -210,5 +217,148 @@ export class OnlineEBookImportService {
     await this.ebookDataManager.saveEBook(ebook);
     logger.info(TAG, `接续传输电子书导入成功: bookId=${targetBookId}, title=${ebook.metadata.title}`);
     return ebook;
+  }
+
+  public async importContinuationPackage(
+    manifest: ContinuationTransferManifest,
+    packageDirectory: string
+  ): Promise<EBook> {
+    if (manifest.schemaVersion !== 1 || !manifest.ebook ||
+      (manifest.contentType !== 'ebook' && !(manifest.contentType === 'novel' && manifest.isLocal))) {
+      throw new Error('接续电子书数据包格式无效');
+    }
+    const targetBookId = manifest.contentType === 'novel' && manifest.isLocal
+      ? manifest.ebook.id
+      : manifest.sourceBookId;
+    const context = getContext();
+    const ebookRoot = `${context.filesDir}/ebooks`;
+    const safeBookId = targetBookId.replace(/[^A-Za-z0-9_-]/g, '_');
+    const stageDirectory = `${ebookRoot}/.continuation_pending_${safeBookId}_${Date.now()}`;
+    const finalDirectory = `${ebookRoot}/continuation_${safeBookId}_${Date.now()}`;
+    let movedToFinal = false;
+    const previousBook = await this.ebookDataManager.getEBookById(targetBookId);
+    try {
+      SafeFileUtils.mkdirSync(stageDirectory, true);
+      for (const file of manifest.files) {
+        const relativePath = this.normalizePackagePath(file.relativePath);
+        const sourcePath = `${packageDirectory}/${relativePath}`;
+        const targetPath = `${stageDirectory}/${relativePath}`;
+        if (!SafeFileUtils.accessSync(sourcePath)) {
+          throw new Error(`接续电子书文件缺失: ${relativePath}`);
+        }
+        this.ensureDirectory(targetPath.substring(0, targetPath.lastIndexOf('/')));
+        SafeFileUtils.copyFileSyncStrict(sourcePath, targetPath);
+      }
+      // materializeEBook resolves paths in place on the shared manifest metadata objects.
+      const relativeFilePath = manifest.ebook.filePath;
+      const relativeExtractedRoot = manifest.ebook.extractedRootPath;
+      const relativeCoverPath = manifest.ebook.metadata.coverImagePath;
+      const relativeChapterPaths: string[] = [];
+      for (const chapter of manifest.ebook.chapters) {
+        relativeChapterPaths.push(chapter.resourceImagePath || '');
+      }
+      const cacheManager = ContinuationCacheManager.getInstance();
+      const stagedBook = cacheManager.materializeEBook(manifest, stageDirectory, targetBookId);
+      if (!stagedBook) {
+        throw new Error('接续电子书元数据不完整');
+      }
+      SafeFileUtils.renameSyncStrict(stageDirectory, finalDirectory);
+      movedToFinal = true;
+      stagedBook.filePath = this.resolvePackagePath(finalDirectory, relativeFilePath);
+      stagedBook.extractedRootPath = this.resolvePackagePath(finalDirectory, relativeExtractedRoot);
+      stagedBook.metadata.coverImagePath = this.resolvePackagePath(finalDirectory, relativeCoverPath);
+      for (let index = 0; index < stagedBook.chapters.length; index++) {
+        stagedBook.chapters[index].resourceImagePath = this.resolvePackagePath(
+          finalDirectory,
+          relativeChapterPaths[index]
+        );
+      }
+      stagedBook.isFavorite = true;
+      stagedBook.lastUpdateTime = Date.now();
+      stagedBook.readingProgress.currentChapterIndex = manifest.chapterIndex;
+      stagedBook.readingProgress.currentPosition = manifest.offset > 0 ? manifest.offset : manifest.pageIndex;
+      stagedBook.readingProgress.lastReadTime = Date.now();
+      stagedBook.readingProgress.bookId = targetBookId;
+      await this.ebookDataManager.saveEBook(stagedBook, { skipReadingSettings: true });
+      logger.info(TAG, `完整接续电子书已导入书库: bookId=${targetBookId}, title=${stagedBook.metadata.title}`);
+      return stagedBook;
+    } catch (error) {
+      if (previousBook) {
+        try {
+          await this.ebookDataManager.saveEBook(previousBook, { skipReadingSettings: true });
+        } catch (restoreError) {
+          logger.error(TAG, `接续导入失败后恢复原电子书记录失败: ${String(restoreError)}`);
+        }
+      } else {
+        try {
+          await this.ebookDataManager.deleteEBook(targetBookId);
+        } catch (deleteError) {
+          logger.warn(TAG, `接续导入失败后清理电子书记录失败: ${String(deleteError)}`);
+        }
+      }
+      if (movedToFinal) {
+        this.deleteDirectory(finalDirectory);
+      } else {
+        this.deleteDirectory(stageDirectory);
+      }
+      throw error as Error;
+    }
+  }
+
+  private normalizePackagePath(path: string): string {
+    const normalized = path.replace(/\\/g, '/');
+    if (normalized.startsWith('/') || normalized.indexOf(':') >= 0) {
+      throw new Error('接续电子书路径包含绝对路径');
+    }
+    const segments = normalized.split('/');
+    for (const segment of segments) {
+      if (segment === '..') {
+        throw new Error('接续电子书路径越界');
+      }
+    }
+    return normalized;
+  }
+
+  private resolvePackagePath(root: string, relativePath: string): string {
+    const normalized = this.normalizePackagePath(relativePath);
+    if (normalized.length <= 0) {
+      return '';
+    }
+    return `${root}/${normalized}`;
+  }
+
+  private ensureDirectory(path: string): void {
+    if (SafeFileUtils.accessSync(path)) {
+      if (!SafeFileUtils.lstatSyncStrict(path).isDirectory()) {
+        throw new Error(`接续电子书目标路径不是目录: ${path}`);
+      }
+      return;
+    }
+    try {
+      SafeFileUtils.mkdirSyncStrict(path, true);
+    } catch (error) {
+      if (SafeFileUtils.accessSync(path) && SafeFileUtils.lstatSyncStrict(path).isDirectory()) {
+        return;
+      }
+      throw error as Error;
+    }
+    if (!SafeFileUtils.lstatSyncStrict(path).isDirectory()) {
+      throw new Error(`接续电子书目标目录创建失败: ${path}`);
+    }
+  }
+
+  private deleteDirectory(path: string): void {
+    if (!SafeFileUtils.accessSync(path)) {
+      return;
+    }
+    const stat = SafeFileUtils.lstatSyncStrict(path);
+    if (!stat.isDirectory()) {
+      SafeFileUtils.unlinkSyncStrict(path);
+      return;
+    }
+    for (const entry of SafeFileUtils.listFileSync(path)) {
+      this.deleteDirectory(`${path}/${entry}`);
+    }
+    SafeFileUtils.rmdirSync(path);
   }
 }
