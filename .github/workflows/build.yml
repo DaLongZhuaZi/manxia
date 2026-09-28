@@ -30,7 +30,8 @@ name: Build HAP (构建 / Build)
 #
 # 产出 / Output
 #   - artifact: 未签名 debug HAP / unsigned debug HAP
-#   - push main/master 时额外发布滚动 nightly Release (prerelease)
+#   - push main/master 时刷新滚动 Release `latest`(正式发布, 非预发布),
+#     发布说明按本次推送的提交自动生成(版本 / 提交 / 变更清单 / 变更文件)
 # =============================================================================
 
 on:
@@ -186,9 +187,8 @@ jobs:
           path: dist/
           if-no-files-found: error
           retention-days: 14
-
   release:
-    name: 自动发布滚动 Release / Auto-publish rolling Release
+    name: 发布阶段性构建 / Publish staged build (rolling 'latest')
     needs: build
     if: github.event_name == 'push' && (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/master')
     runs-on: ubuntu-latest
@@ -197,6 +197,8 @@ jobs:
     steps:
       - name: Checkout 检出代码 / Checkout
         uses: actions/checkout@v4
+        with:
+          fetch-depth: 0   # 生成变更清单需要完整历史 / full history for the changelog
 
       - name: 下载 HAP / Download HAP artifact
         uses: actions/download-artifact@v4
@@ -204,24 +206,93 @@ jobs:
           name: hap-unsigned
           path: dist
 
-      - name: 更新滚动 nightly Release / Refresh rolling nightly Release
+      - name: 生成发布说明 / Generate release notes
+        env:
+          BEFORE: ${{ github.event.before }}
+          AFTER: ${{ github.sha }}
+        run: |
+          set -eu
+
+          # 版本号取自 AppScope/app.json5 / version from AppScope/app.json5
+          VERSION_NAME=$(grep -oE '"versionName"[[:space:]]*:[[:space:]]*"[^"]+"' AppScope/app.json5 | head -n1 | sed -E 's/.*"([^"]+)"$/\1/')
+          VERSION_CODE=$(grep -oE '"versionCode"[[:space:]]*:[[:space:]]*[0-9]+' AppScope/app.json5 | head -n1 | grep -oE '[0-9]+$')
+          VERSION_DISPLAY="${VERSION_NAME:-unknown} (${VERSION_CODE:-unknown})"
+
+          # 本次推送的提交区间(兼容首次推送 / 强制推送)/ commit range of this push
+          RANGE_NOTE=""
+          if [ -n "${BEFORE:-}" ] && [ "$BEFORE" != "0000000000000000000000000000000000000000" ] && git cat-file -e "${BEFORE}^{commit}" 2>/dev/null; then
+            RANGE="${BEFORE}..${AFTER}"
+          else
+            RANGE=""
+            RANGE_NOTE="无法定位上一次 main 提交(首次推送或强制推送),下列为最近 50 条提交。/ Previous tip not found - showing the latest 50 commits."
+          fi
+
+          if [ -n "$RANGE" ]; then
+            TOTAL=$(git rev-list --count "$RANGE")
+            LOG=$(git log --pretty=format:'- `%h` %s — %an, %ad' --date=format:'%Y-%m-%d %H:%M' "$RANGE" | head -n 50)
+            STAT=$(git diff --stat "$RANGE" | tail -n 60)
+          else
+          TOTAL=0   # 回退路径不显示"本次共 N 个提交" / no count on the fallback path
+            LOG=$(git log --pretty=format:'- `%h` %s — %an, %ad' --date=format:'%Y-%m-%d %H:%M' -n 50 HEAD)
+            STAT=$(git diff --stat HEAD~1 HEAD 2>/dev/null | tail -n 60 || true)
+          fi
+          [ -n "$LOG" ] || LOG='- (无提交信息 / no commit info)'
+          [ -n "$STAT" ] || STAT='(无文件变更 / no file changes)'
+
+          MORE=""
+          if [ "$TOTAL" -gt 50 ]; then
+            MORE="
+          > 本次共 ${TOTAL} 个提交,此处仅列出最近 50 条 —— 完整列表见 [提交历史](${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/commits/${AFTER})。"
+          fi
+
+          HAP_FILE=$(ls dist/*.hap | head -n1)
+          HAP_NAME=$(basename "$HAP_FILE")
+          HAP_SIZE=$(numfmt --to=iec --suffix=B "$(stat -c%s "$HAP_FILE")")
+
+          {
+            echo '## 阶段性构建 / Staged build'
+            echo
+            echo '由 `main` 分支最新提交自动构建的**未签名** debug HAP。'
+            echo 'Unsigned debug HAP, built automatically from the latest `main` commit.'
+            echo
+            echo '| 项目 / Item | 值 / Value |'
+            echo '|---|---|'
+            echo "| 版本 / Version | \`${VERSION_DISPLAY}\` |"
+            echo "| 提交 / Commit | [\`${AFTER:0:7}\`](${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/commit/${AFTER}) |"
+            echo "| 分支 / Branch | \`${GITHUB_REF_NAME}\` |"
+            echo "| 构建 / Build | [#${GITHUB_RUN_NUMBER}](${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}) · $(date -u '+%Y-%m-%d %H:%M UTC') |"
+            echo "| 产物 / Artifact | \`${HAP_NAME}\` · ${HAP_SIZE} |"
+            echo
+            echo "### 本次变更 / What's Changed"
+            echo
+            echo "$LOG"
+            echo "$MORE"
+            if [ -n "$RANGE_NOTE" ]; then
+              echo
+              echo "> $RANGE_NOTE"
+            fi
+            echo
+            echo '### 变更文件 / Changed Files'
+            echo
+            echo '```'
+            echo "$STAT"
+            echo '```'
+            echo
+            echo '> ⚠️ 未签名,安装前请用 DevEco Studio 或 hap-sign-tool 重新签名。'
+            echo '> Unsigned - re-sign it with DevEco Studio or hap-sign-tool before installing.'
+          } > body.md
+
+          echo "RELEASE_TITLE=阶段性构建 v${VERSION_NAME:-unknown} · ${AFTER:0:7}" >> "$GITHUB_ENV"
+
+      - name: 更新滚动 Release latest / Refresh rolling 'latest' release
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
           set -eu
-          cat > /tmp/note.md <<'EOF'
-          ## 滚动构建 / Rolling build (nightly)
-
-          由 `main` 分支最新提交自动构建的**未签名** debug HAP。
-          Unsigned debug HAP built automatically from the latest `main` commit.
-
-          > 未签名, 安装前请用 DevEco Studio 或 hap-sign-tool 重新签名。
-          > Unsigned - re-sign it with DevEco Studio or hap-sign-tool before installing.
-          EOF
-          gh release delete nightly --cleanup-tag --yes 2>/dev/null || true
-          gh release create nightly \
+          # 先删后建,使 tag `latest` 始终指向最新一次 main 构建 / keep the rolling tag on the newest main build
+          gh release delete latest --cleanup-tag --yes 2>/dev/null || true
+          gh release create latest \
             --target "$GITHUB_SHA" \
-            --title "nightly (滚动构建 / rolling build)" \
-            --prerelease \
-            --notes-file /tmp/note.md \
+            --title "$RELEASE_TITLE" \
+            --notes-file body.md \
             dist/*.hap
