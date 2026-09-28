@@ -379,7 +379,7 @@ struct EBookReaderPage {
     distributedReadingService.attachToReader();
     // [修复] 阅读器进入是窗口就绪的可靠时机：稳定提起分布式数据同步权限请求
     // （管理器内部节流；未授权且满足间隔时会再次弹窗，被打断会在下次进入时重试）
-    this.requestDistributedDataSyncPermission();
+    this.refreshDistributedDataSyncPermissionState();
     // [修复] 权限前置激活系统接续入口（覆盖 NavPath 宿主场景下主页的 INACTIVE；权限未授权时不进入接续状态）
     this.applyMissionContinueStateWithPermission();
     // [修复] 标记阅读器页面在前台（供 onContinue 守卫判定有效阅读状态）
@@ -412,21 +412,26 @@ struct EBookReaderPage {
   }
 
   /**
-   * [修复] 稳定提起分布式数据同步权限请求（阅读器检查点）
-   * 窗口已完全就绪，弹窗不会被启动时序打断；未授权且满足间隔时会再次弹出
+   * [合规修复] 「设备发现和连接」权限的阅读器静默检查点。
+   *
+   * 阅读器**不申请权限**：不弹授权弹窗、不跳转系统设置，未开启权限的用户可以正常阅读，
+   * 应用不会被退出或关闭，也不会被反复弹窗打扰。
+   * 权限申请只发生在用户主动点击时（接续阅读设置页开关/按钮、接续失败提示卡片）。
    */
-  private requestDistributedDataSyncPermission(): void {
+  private refreshDistributedDataSyncPermissionState(): void {
     try {
       const hostContext = this.getUIContext().getHostContext() as common.UIAbilityContext;
       if (!hostContext) {
-        logger.warn(TAG, '分布式权限请求跳过：无法获取 UIAbilityContext');
+        logger.warn(TAG, '「设备发现和连接」权限检查跳过：无法获取 UIAbilityContext');
         return;
       }
       setTimeout(() => {
-        void distributedPermissionManager.ensurePermission(hostContext);
+        void distributedPermissionManager.refreshPermissionState().then((granted: boolean): void => {
+          logger.debug(TAG, `「设备发现和连接」权限静默检查完成: granted=${granted}`);
+        });
       }, 800);
     } catch (error) {
-      logger.warn(TAG, `分布式权限请求异常: ${String(error)}`);
+      logger.warn(TAG, `「设备发现和连接」权限检查异常: ${String(error)}`);
     }
   }
 
@@ -447,8 +452,10 @@ struct EBookReaderPage {
   }
 
   /**
-   * [修复] 激活接续入口（页面检查点）：
-   * 入口按场景无条件显示；权限在触发接续时校验，此处异步确保权限就绪
+   * 激活接续入口（页面检查点）。
+   *
+   * [合规] 由 ContinuationStateHelper 统一处理：总开关关闭时不显示入口；
+   * 权限缺失时只做静默检查并提示"功能不可用"，绝不主动弹出授权弹窗。
    */
   private applyMissionContinueStateWithPermission(): void {
     try {

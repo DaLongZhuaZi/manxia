@@ -11,6 +11,12 @@ export enum ContinuationTransferMode {
 export type ContinuationContentType = 'ebook' | 'manga' | 'novel';
 
 export interface ContinuationReadingSettings {
+  /**
+   * 接续阅读总开关（在「设置 → 接续阅读」中由用户单独控制）。
+   * 关闭后应用不会再申请「设备发现和连接」权限，也不会显示系统接续入口，
+   * 但应用其他功能（阅读、书库、下载等）不受任何影响。
+   */
+  enabled: boolean;
   readOnlyEnabled: boolean;
   importToLibraryEnabled: boolean;
   defaultMode: ContinuationTransferMode;
@@ -19,6 +25,10 @@ export interface ContinuationReadingSettings {
 export function resolveContinuationTransferMode(
   settings: ContinuationReadingSettings
 ): ContinuationTransferMode {
+  // 总开关关闭：无论子开关如何配置，接续能力整体不可用
+  if (!settings.enabled) {
+    return ContinuationTransferMode.DISABLED;
+  }
   if (settings.defaultMode === ContinuationTransferMode.READ_ONLY && settings.readOnlyEnabled) {
     return ContinuationTransferMode.READ_ONLY;
   }
@@ -47,6 +57,7 @@ export function normalizeContinuationReadingSettings(
     defaultMode = ContinuationTransferMode.READ_ONLY;
   }
   return {
+    enabled: settings.enabled,
     readOnlyEnabled: settings.readOnlyEnabled,
     importToLibraryEnabled: settings.importToLibraryEnabled,
     defaultMode: defaultMode

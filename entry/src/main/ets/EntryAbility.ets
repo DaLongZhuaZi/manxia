@@ -103,11 +103,6 @@ export default class EntryAbility extends UIAbility {
     });
     distributedPermissionManager.preloadTokenId();
 
-    // 启动早期先抑制「设备发现和连接」权限的后台检查点自动请求：
-    // 首次启动由新手引导的权限步骤先说明用途再稳定触发；非首次启动由 MainMenuPage
-    // 加载后解除抑制（主页检查点接管），避免应用刚启动、引导未展示时就弹窗或跳转设置
-    distributedPermissionManager.setOnboardingGuideActive(true);
-
     // 启动日志文件持久化（不阻塞启动；供反馈中心按时间范围导出历史日志）
     void logCollector.initialize(this.context);
 
@@ -1421,9 +1416,10 @@ export default class EntryAbility extends UIAbility {
     // 接续入口只在阅读器/听书等场景显示（由阅读页面与独立阅读器 Ability 置 ACTIVE）
     continuationStateHelper.setMissionContinueState(this.context, false);
     
-    // [修复] 前台是窗口就绪的可靠时机：每次回到前台都尝试提起分布式权限请求
-    // （DistributedPermissionManager 无冷却：未授权即请求；被打断自动重试，在途去重防系统抑制）
-    this.requestDistributedDataSyncPermissionSafely();
+    // [合规修复] 回到前台只做「设备发现和连接」权限的**静默检查**：
+    // 不弹授权弹窗、不跳转系统设置。拒绝该权限的用户可正常使用应用全部其他功能；
+    // 权限在用户手动开启后被"发现"，并立即重建此前因 201 失败的分布式会话。
+    this.refreshDistributedDataSyncPermissionSafely();
     
     // 清除后台状态（统一由WindowManager管理）
     WindowManager.syncBackgroundState(false, '应用进入前台');
@@ -1575,21 +1571,26 @@ export default class EntryAbility extends UIAbility {
   }
 
   /**
-   * [修复] 稳定提起分布式数据同步权限请求（窗口已就绪的前台时机）
-   * 由 DistributedPermissionManager 统一处理：未授权即请求（无冷却），
-   * 请求被打断自动重试，请求在途去重防系统抑制；不再只依赖启动时的一次请求。
+   * [合规修复] 「设备发现和连接」权限的前台静默检查点。
+   *
+   * 该权限只服务于可选的"跨设备接续阅读"能力，因此前台检查点**不申请权限**：
+   * - 不弹授权弹窗、不跳转系统设置，用户拒绝后不会被打扰、应用不会被关闭或退出；
+   * - 只读取授权状态，权限可用时重建分布式会话（用户在系统设置里开启后返回即自动生效）。
+   * 权限申请一律交给用户的主动点击（引导页权限步骤、接续阅读设置页、接续失败提示卡片）。
    */
-  private requestDistributedDataSyncPermissionSafely(): void {
+  private refreshDistributedDataSyncPermissionSafely(): void {
     try {
       setTimeout(() => {
-        void distributedPermissionManager.ensurePermission(this.context).then((granted: boolean) => {
+        void distributedPermissionManager.refreshPermissionState().then((granted: boolean) => {
           if (granted) {
-            logger.info('EntryAbility', '分布式数据同步权限就绪（前台检查点）');
+            logger.info('EntryAbility', '「设备发现和连接」权限就绪（前台静默检查点）');
+          } else {
+            logger.debug('EntryAbility', '「设备发现和连接」权限未开启（前台静默检查点，不申请权限）');
           }
         });
       }, 1200);
     } catch (error) {
-      logger.warn('EntryAbility', `分布式数据同步权限请求异常: ${String(error)}`);
+      logger.warn('EntryAbility', `「设备发现和连接」权限检查异常: ${String(error)}`);
     }
   }
 }

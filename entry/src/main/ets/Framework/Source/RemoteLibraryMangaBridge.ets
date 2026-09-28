@@ -1,4 +1,4 @@
-﻿import { SafeFileUtils } from 'manxia_core/src/main/ets/Utils/SafeFileUtils';
+import { SafeFileUtils } from 'manxia_core/src/main/ets/Utils/SafeFileUtils';
 import { SafeUtils } from 'manxia_core/src/main/ets/Utils/SafeUtils';
 import { preferences } from '@kit.ArkData';
 import fs from '@ohos.file.fs';
@@ -10,6 +10,7 @@ import {
   Manga,
   MangaBookmark,
   MangaChapter,
+  MangaImageRequestHeader,
   MangaMetadata,
   MangaPage,
   MangaSourceInfo,
@@ -885,10 +886,35 @@ export class RemoteLibraryMangaBridge {
         width: page.width,
         height: page.height,
         fileSize: 0,
+        requestHeaders: this.convertPageRequestHeaders(page.headers),
         isLoaded: false
       });
     }
     return result;
+  }
+
+  /**
+   * 把远端图源按页下发的请求头（PageInfo.headers）转换成 MangaPage 需要的形态。
+   * 实例级请求头仍由 getRequestHeaders 提供，这里是按页覆盖，用于个别页面需要不同鉴权的场景。
+   */
+  private convertPageRequestHeaders(headers?: Record<string, string>): MangaImageRequestHeader[] | undefined {
+    if (!headers) {
+      return undefined;
+    }
+    const keys: string[] = Object.keys(headers);
+    if (keys.length <= 0) {
+      return undefined;
+    }
+    const result: MangaImageRequestHeader[] = [];
+    for (let index = 0; index < keys.length; index++) {
+      const key: string = keys[index];
+      const value: string = headers[key];
+      if (typeof value === 'string' && value.length > 0) {
+        const header: MangaImageRequestHeader = { name: key, value: value };
+        result.push(header);
+      }
+    }
+    return result.length > 0 ? result : undefined;
   }
 
   private mapStandardHeadersToRequestHeaders(headers: Record<string, string>): RequestHeaders {

@@ -52,6 +52,11 @@ export interface PageInfo {
   url: string;
   width?: number;
   height?: number;
+  /**
+   * 该页图片请求所需的额外请求头（如 Komga 的 Authorization / X-API-Key）。
+   * 由远端图源按页下发，消费方通过显式字段读取，不再使用 ESObject 动态挂载。
+   */
+  headers?: Record<string, string>;
 }
 
 /**

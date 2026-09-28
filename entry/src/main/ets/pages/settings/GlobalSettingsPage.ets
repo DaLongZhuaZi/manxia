@@ -78,7 +78,7 @@ export struct GlobalSettingsPage {
     {
       id: 'continuation_reading',
       title: '接续阅读',
-      subtitle: '管理接续方式、默认模式和接续缓存',
+      subtitle: '跨设备接续开关、接续方式与接续缓存',
       icon: $r('sys.symbol.book_open_fill'),
       targetPage: 'ContinuationReadingSettingsPage'
     },

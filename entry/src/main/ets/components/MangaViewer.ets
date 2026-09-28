@@ -47,6 +47,12 @@ import {
 } from './MangaLazyDataSources';
 // 新增：预加载管理系统
 import { PreloadManager, PreloadTaskItem } from './PreloadManager';
+import {
+  getMangaLoadStageReporter,
+  MangaLoadStage,
+  MangaLoadStageEvent,
+  MangaLoadStageListener
+} from '../Framework/Reader/MangaLoadStageReporter';
 import { ImageLoadStateManager, ImageLoadState as NewImageLoadState, LoadStatsInfo, PageState } from './ImageLoadStateManager';
 import { PreloadDebugInfo } from './PreloadDebugOverlay';
 import { MangaPreloadRunnableBatch, MangaPreloadTaskCoordinator } from './MangaPreloadTaskCoordinator';
@@ -346,6 +352,8 @@ interface ImageCacheMeta {
 
 @Component
 export struct MangaViewer {
+  /** 跟随全局字体设置：本项目统一通过 @StorageLink('appFontFamily') 广播字体 */
+  @StorageLink('appFontFamily') appFontFamily: string = 'HarmonyOS Sans';
   private static readonly VERTICAL_DOUBLE_PAGE_EDGE_TOLERANCE_VP: number = 18;
   private static readonly VERTICAL_DOUBLE_PAGE_EDGE_GUIDE_ZONE_VP: number = 132;
   private static readonly VERTICAL_DOUBLE_PAGE_EDGE_HINT_VP: number = 28;
@@ -460,6 +468,13 @@ export struct MangaViewer {
 
   // 内部状态
   @State private imageLoadStates: Map<string, ImageLoadState> = new Map();
+  /** 每个页面最近一次上报的加载阶段，key = 页面图片地址。刻意与 imageLoadStates 分开，
+   *  以免被其它重建 ImageLoadState 的代码冲掉。 */
+  @State private pageLoadStages: Map<string, MangaLoadStageEvent> = new Map();
+  /** 每秒自增一次，仅用于让占位文案里的"已等待 Ns"跟着刷新。 */
+  @State private loadStageTick: number = 0;
+  private loadStageListener: MangaLoadStageListener | null = null;
+  private loadStageTickerId: number = -1;
   @State private pagePixelMaps: Map<string, image.PixelMap> = new Map();
   @State private pixelMapEpochByPage: Map<string, number> = new Map();
   @State private imageRenderEpochByPage: Map<string, number> = new Map();
@@ -738,6 +753,9 @@ export struct MangaViewer {
   aboutToAppear() {
     // 新增：初始化预加载管理器
     this.initializePreloadManagers();
+
+    // 订阅缓存层的加载阶段上报，让占位区能显示"排队 / 取页 / 解码 / 失败"
+    this.attachLoadStageListener();
     
     this.currentScale = this.zoomScale;
     this.animationId = AnimationUtils.generateAnimationId();
@@ -1181,6 +1199,9 @@ export struct MangaViewer {
   aboutToDisappear(): void {
     logger.lifecycle(TAG, 'MangaViewer组件即将销毁');
 
+    // 退订加载阶段上报，避免组件销毁后回调仍持有 this
+    this.detachLoadStageListener();
+
     // 保存当前滚动位置
     this.saveScrollPosition();
 
@@ -1338,6 +1359,83 @@ export struct MangaViewer {
       
       logger.info(TAG, `预加载管理器初始化完成: 总页数=${this.chapter.pages.length}, 当前页=${this.currentPageIndex}`);
     }
+  }
+
+  /**
+   * 订阅缓存层的加载阶段上报。
+   * 远端图源取页可能耗时几十秒，只有把阶段显示出来，用户才知道是在动还是卡死了。
+   */
+  private attachLoadStageListener(): void {
+    if (this.loadStageListener !== null) {
+      return;
+    }
+    const listener: MangaLoadStageListener = (event: MangaLoadStageEvent): void => {
+      this.onLoadStageReported(event);
+    };
+    this.loadStageListener = listener;
+    getMangaLoadStageReporter().addListener(listener);
+    this.startLoadStageTicker();
+  }
+
+  private detachLoadStageListener(): void {
+    const listener: MangaLoadStageListener | null = this.loadStageListener;
+    if (listener !== null) {
+      getMangaLoadStageReporter().removeListener(listener);
+      this.loadStageListener = null;
+    }
+    this.stopLoadStageTicker();
+  }
+
+  private onLoadStageReported(event: MangaLoadStageEvent): void {
+    this.pageLoadStages.set(event.url, event);
+    this.pageLoadStages = new Map(this.pageLoadStages);
+  }
+
+  private startLoadStageTicker(): void {
+    if (this.loadStageTickerId !== -1) {
+      return;
+    }
+    this.loadStageTickerId = setInterval(() => {
+      if (this.pageLoadStages.size > 0) {
+        this.loadStageTick = this.loadStageTick + 1;
+      }
+    }, 1000);
+  }
+
+  private stopLoadStageTicker(): void {
+    if (this.loadStageTickerId !== -1) {
+      clearInterval(this.loadStageTickerId);
+      this.loadStageTickerId = -1;
+    }
+  }
+
+  /**
+   * 占位区文案：取代原来固定的"加载中..."。
+   * 没有阶段信息时保持原样，保证本地图片等路径行为不变。
+   */
+  private getLoadingStageText(page: MangaPage): string {
+    const event: MangaLoadStageEvent | undefined = this.pageLoadStages.get(page.imageUrl);
+    if (!event) {
+      return '加载中...';
+    }
+    // 读取 tick 让 builder 每秒重算一次文案
+    const refreshTick: number = this.loadStageTick;
+    const waited: number = refreshTick < 0 ? 0 : Math.max(0, Math.round((Date.now() - event.timestamp) / 1000));
+    const suffix: string = waited >= 3 ? ` · 已等待 ${waited}s` : '';
+
+    if (event.stage === MangaLoadStage.QUEUED) {
+      return `排队取页中${suffix}`;
+    }
+    if (event.stage === MangaLoadStage.DOWNLOADING) {
+      return `正在从服务器取页${suffix}`;
+    }
+    if (event.stage === MangaLoadStage.DECODING) {
+      return `正在解码${suffix}`;
+    }
+    if (event.stage === MangaLoadStage.FAILED) {
+      return event.detail.length > 0 ? `加载失败：${event.detail}` : '加载失败';
+    }
+    return '加载中...';
   }
 
   /**
@@ -6075,13 +6173,14 @@ export struct MangaViewer {
   }
 
   @Builder
-  private buildVerticalDoublePageLoading(heightValue: number) {
+  private buildVerticalDoublePageLoading(page: MangaPage, heightValue: number) {
     Column() {
       LoadingProgress()
         .width(44)
         .height(44)
         .color($r('app.color.accent'))
-      Text('加载中...')
+      Text(this.getLoadingStageText(page))
+        .fontFamily(this.appFontFamily)
         .fontSize(13)
         .fontColor($r('app.color.reader_text_secondary'))
         .margin({ top: 8 })
@@ -6139,7 +6238,7 @@ export struct MangaViewer {
         } else if (this.shouldShowVerticalDoublePageError(pageIndex)) {
           this.buildVerticalDoublePageFailure(pageIndex, this.getVerticalDoublePageImageHeight(pageIndex))
         } else {
-          this.buildVerticalDoublePageLoading(this.getVerticalDoublePageImageHeight(pageIndex))
+          this.buildVerticalDoublePageLoading(this.chapter.pages[pageIndex], this.getVerticalDoublePageImageHeight(pageIndex))
         }
       }
       .width('100%')
@@ -6502,6 +6601,7 @@ export struct MangaViewer {
     if (this.shouldShowVerticalDoublePageEdgeHintText(edge)) {
       Row() {
         Text(this.getVerticalDoublePageEdgeHintText(edge))
+          .fontFamily(this.appFontFamily)
           .fontSize(12)
           .fontColor($r('app.color.reader_text_primary'))
           .fontWeight(FontWeight.Medium)
@@ -6907,11 +7007,13 @@ export struct MangaViewer {
         .fontSize(compact ? 32 : 48)
         .fontColor([$r('app.color.color_error')])
       Text('加载失败')
+        .fontFamily(this.appFontFamily)
         .fontSize(compact ? 12 : 14)
         .fontColor($r('app.color.reader_text_primary'))
         .fontWeight(FontWeight.Medium)
         .margin({ top: compact ? 4 : 8 })
       Text(this.getLocalizedImageFailureMessage(page))
+        .fontFamily(this.appFontFamily)
         .width('100%')
         .fontSize(compact ? 10 : 12)
         .fontColor($r('app.color.reader_text_secondary'))
@@ -6921,6 +7023,7 @@ export struct MangaViewer {
         .maxLines(2)
         .textOverflow({ overflow: TextOverflow.Ellipsis })
       Button('重试')
+        .fontFamily(this.appFontFamily)
         .fontSize(compact ? 12 : 14)
         .fontColor($r('app.color.reader_text_primary'))
         .backgroundColor($r('app.color.accent'))
@@ -7054,7 +7157,8 @@ export struct MangaViewer {
             .width(48)
             .height(48)
             .color($r('app.color.accent'))
-          Text('加载中...')
+          Text(this.getLoadingStageText(page))
+            .fontFamily(this.appFontFamily)
             .fontSize(14)
             .fontColor($r('app.color.reader_text_secondary'))
             .margin({ top: 8 })
@@ -7262,7 +7366,8 @@ export struct MangaViewer {
             .width(48)
             .height(48)
             .color($r('app.color.accent'))
-          Text('加载中...')
+          Text(this.getLoadingStageText(page))
+            .fontFamily(this.appFontFamily)
             .fontSize(14)
             .fontColor($r('app.color.reader_text_secondary'))
             .margin({ top: 8 })
@@ -7363,7 +7468,8 @@ export struct MangaViewer {
             .width(32)
             .height(32)
             .color($r('app.color.accent'))
-          Text('加载中...')
+          Text(this.getLoadingStageText(page))
+            .fontFamily(this.appFontFamily)
             .fontSize(12)
             .fontColor($r('app.color.reader_text_secondary'))
             .margin({ top: 4 })
@@ -9368,7 +9474,8 @@ export struct MangaViewer {
             .width(48)
             .height(48)
             .color($r('app.color.accent'))
-          Text('加载中...')
+          Text(this.getLoadingStageText(page))
+            .fontFamily(this.appFontFamily)
             .fontSize(14)
             .fontColor($r('app.color.reader_text_secondary'))
             .margin({ top: 8 })
@@ -11305,7 +11412,8 @@ export struct MangaViewer {
               .width(48)
               .height(48)
               .color($r('app.color.accent'))
-            Text('加载中...')
+            Text(this.getLoadingStageText(page))
+              .fontFamily(this.appFontFamily)
               .fontSize(14)
               .fontColor($r('app.color.reader_text_secondary'))
               .margin({ top: 8 })
@@ -12209,10 +12317,12 @@ export struct MangaViewer {
         if (item.direction === 'prev') {
           // 上一章结束提示
           Text('— 上一章 —')
+            .fontFamily(this.appFontFamily)
             .fontSize(12)
             .fontColor($r('app.color.reader_text_secondary'))
             .margin({ bottom: 8 })
           Text(item.chapterTitle || '未知章节')
+            .fontFamily(this.appFontFamily)
             .fontSize(16)
             .fontColor($r('app.color.reader_text_primary'))
             .fontWeight(FontWeight.Medium)
@@ -12222,10 +12332,12 @@ export struct MangaViewer {
         } else {
           // 下一章开始提示
           Text('— 下一章 —')
+            .fontFamily(this.appFontFamily)
             .fontSize(12)
             .fontColor($r('app.color.reader_text_secondary'))
             .margin({ bottom: 8 })
           Text(item.chapterTitle || '未知章节')
+            .fontFamily(this.appFontFamily)
             .fontSize(16)
             .fontColor($r('app.color.reader_text_primary'))
             .fontWeight(FontWeight.Medium)
@@ -12259,6 +12371,7 @@ export struct MangaViewer {
     if (direction === 'prev' && this.prevChapterSwipeConfirmPending) {
       Column() {
         Text('↑ 再次上滑加载上一章 ↑')
+          .fontFamily(this.appFontFamily)
           .fontSize(15)
           .fontColor($r('app.color.accent'))
           .fontWeight(FontWeight.Medium)
@@ -12272,6 +12385,7 @@ export struct MangaViewer {
       // 检查是否是边界章节 - 显示边界提示而不是加载中
       Column() {
         Text(direction === 'prev' ? '— 已是第一章 —' : '— 已是最后一章 —')
+          .fontFamily(this.appFontFamily)
           .fontSize(14)
           .fontColor($r('app.color.reader_text_secondary'))
       }
@@ -12287,6 +12401,7 @@ export struct MangaViewer {
           .height(32)
           .color($r('app.color.accent'))
         Text(direction === 'prev' ? '正在加载上一章...' : '正在加载下一章...')
+          .fontFamily(this.appFontFamily)
           .fontSize(14)
           .fontColor($r('app.color.reader_text_secondary'))
           .margin({ top: 12 })
@@ -13193,32 +13308,38 @@ export struct MangaViewer {
     Column() {
       Row() {
         Text(this.getDoublePageIndicatorFirstLabel())
+          .fontFamily(this.appFontFamily)
           .fontSize(12)
           .fontColor($r('app.color.reader_text_primary'))
           .fontWeight(FontWeight.Bold)
 
         if (!this.isDoublePageSingleDisplayActive()) {
           Text(' | ')
+            .fontFamily(this.appFontFamily)
             .fontSize(10)
             .fontColor($r('app.color.reader_text_secondary'))
 
           Text(this.getDoublePageIndicatorSecondLabel())
+            .fontFamily(this.appFontFamily)
             .fontSize(12)
             .fontColor($r('app.color.reader_text_primary'))
             .fontWeight(FontWeight.Bold)
         }
 
         Text(' / ')
+          .fontFamily(this.appFontFamily)
           .fontSize(10)
           .fontColor($r('app.color.reader_text_secondary'))
           .margin({ left: 4 })
 
         Text(`${this.chapter.pages.length}`)
+          .fontFamily(this.appFontFamily)
           .fontSize(10)
           .fontColor($r('app.color.reader_text_secondary'))
       }
 
       Text(this.getDoublePageIndicatorLayoutStatus())
+        .fontFamily(this.appFontFamily)
         .fontSize(9)
         .fontColor($r('app.color.accent'))
         .margin({ top: 2 })
@@ -13241,6 +13362,7 @@ export struct MangaViewer {
       Column() {
         Row() {
           Text(this.getActiveProgressChapterTitle())
+            .fontFamily(this.appFontFamily)
             .layoutWeight(1)
             .fontSize(10)
             .fontColor($r('app.color.accent'))
@@ -13249,6 +13371,7 @@ export struct MangaViewer {
             .textAlign(TextAlign.Start)
 
           Text(this.getWebtoonProgressPercentText())
+            .fontFamily(this.appFontFamily)
             .fontSize(10)
             .fontColor($r('app.color.reader_text_secondary'))
         }
@@ -13256,6 +13379,7 @@ export struct MangaViewer {
         .width('100%')
 
         Text(this.getWebtoonPageProgressText())
+          .fontFamily(this.appFontFamily)
           .width('100%')
           .textAlign(this.shouldReverseWebtoonProgressLayout() ? TextAlign.End : TextAlign.Start)
           .fontSize(12)
@@ -13310,6 +13434,7 @@ export struct MangaViewer {
       Column() {
         // 快速跳转按钮
         Button('跳转')
+          .fontFamily(this.appFontFamily)
           .fontSize(12)
           .fontColor($r('app.color.accent'))
           .backgroundColor(Color.Transparent)
@@ -13454,6 +13579,7 @@ export struct MangaViewer {
       // 页面指示器（仅在单页模式下显示）
       if (this.readingSettings.showPageInfo && this.isSinglePageMode()) {
         Text(`${this.viewCurrentPageIndex + 1} / ${this.chapter.pages.length}`)
+          .fontFamily(this.appFontFamily)
           .fontSize(12)
           .fontColor($r('app.color.reader_text_primary'))
           .backgroundColor($r('app.color.reader_overlay_background'))

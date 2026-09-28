@@ -1,4 +1,4 @@
-﻿import { common } from '@kit.AbilityKit';
+import { common } from '@kit.AbilityKit';
 import { promptAction } from '@kit.ArkUI';
 import { logger } from 'manxia_core/src/main/ets/Utils/Logger';
 import { Manga } from 'manxia_core/src/main/ets/Models/MangaModels';
@@ -49,6 +49,23 @@ interface SuwayomiDetailInfo extends ComicDetailInfo {
   chapters?: SuwayomiDetailChapterInfo[];
 }
 
+/**
+ * 章节列表排序方式。
+ * Suwayomi 章节按服务端返回顺序（通常为第 1 章 → 最新章）排列，
+ * 因此"正序"沿用服务端顺序，"倒序"将其反转（最新章节在最前）。
+ */
+enum ChapterSortMode {
+  ASCENDING = 'ascending',
+  DESCENDING = 'descending'
+}
+
+/** 标签收起时最多展示的标签数量 */
+const TAGS_COLLAPSED_LIMIT: number = 8;
+/** 简介收起时展示的最大行数 */
+const DESCRIPTION_COLLAPSED_MAX_LINES: number = 6;
+/** 展开/收起动画时长（毫秒） */
+const EXPAND_ANIMATION_DURATION: number = 260;
+
 @Component
 export struct SuwayomiMangaDetailPage {
   @State pathStack: NavPathStack = new NavPathStack();
@@ -61,6 +78,11 @@ export struct SuwayomiMangaDetailPage {
   @State errorMessage: string = '';
   @State pageContentOpacity: number = 0;
   @State descriptionExpanded: boolean = false;
+  @State tagsExpanded: boolean = false;
+  /** 简介展开指示图标的旋转角度（与展开状态同步动画） */
+  @State descriptionToggleAngle: number = 0;
+  /** 标签展开指示图标的旋转角度（与展开状态同步动画） */
+  @State tagsToggleAngle: number = 0;
   @State isLibraryActionPending: boolean = false;
 
   @State mangaId: string = '';
@@ -69,7 +91,7 @@ export struct SuwayomiMangaDetailPage {
   @State originalCoverUrl: string = '';
   @State displayCoverUrl: string = '';
 
-  @State sortDescending: boolean = true;
+  @State chapterSortMode: ChapterSortMode = ChapterSortMode.DESCENDING;
   @State lastReadChapterId: string = '';
   @State lastReadChapterIndex: number = -1;
   @State lastReadPageIndex: number = 0;
@@ -77,6 +99,8 @@ export struct SuwayomiMangaDetailPage {
   @State isInRemoteLibrary: boolean = false;
   @State imageHeaders: Record<string, string> = {};
 
+  /** 章节列表滚动控制器：排序变化后回到顶部 */
+  private readonly chapterListScroller: Scroller = new Scroller();
   private readonly executor: SuwayomiSourceExecutor = getSuwayomiSourceExecutor();
   private readonly remoteLibraryBridge: RemoteLibraryMangaBridge = RemoteLibraryMangaBridge.getInstance();
   private readonly remoteLibraryShelfManager: RemoteLibraryShelfManager = getRemoteLibraryShelfManager();
@@ -372,7 +396,7 @@ export struct SuwayomiMangaDetailPage {
     }
 
     const chapters = this.mangaDetail.chapters.concat();
-    if (this.sortDescending) {
+    if (this.chapterSortMode === ChapterSortMode.DESCENDING) {
       chapters.reverse();
     }
     return chapters;
@@ -458,16 +482,79 @@ export struct SuwayomiMangaDetailPage {
     this.openChapter(chapters[0], 0);
   }
 
+  /**
+   * 简介展开/收起：在 animateTo 中同时切换文本行数与指示图标角度，
+   * 保证高度变化与图标旋转使用同一条动画曲线。
+   */
   private toggleDescriptionExpanded(): void {
-    this.descriptionExpanded = !this.descriptionExpanded;
+    const nextExpanded = !this.descriptionExpanded;
+    this.getUIContext().animateTo({
+      duration: EXPAND_ANIMATION_DURATION,
+      curve: Curve.EaseInOut
+    }, () => {
+      this.descriptionExpanded = nextExpanded;
+      this.descriptionToggleAngle = nextExpanded ? 180 : 0;
+    });
   }
 
-  private getSortSymbol(): Resource {
-    return this.sortDescending ? $r('sys.symbol.chevron_down') : $r('sys.symbol.chevron_up');
+  /**
+   * 标签展开/收起：与简介保持一致的动画时长与曲线。
+   */
+  private toggleTagsExpanded(): void {
+    const nextExpanded = !this.tagsExpanded;
+    this.getUIContext().animateTo({
+      duration: EXPAND_ANIMATION_DURATION,
+      curve: Curve.EaseInOut
+    }, () => {
+      this.tagsExpanded = nextExpanded;
+      this.tagsToggleAngle = nextExpanded ? 180 : 0;
+    });
   }
 
-  private getDescriptionToggleSymbol(): Resource {
-    return this.descriptionExpanded ? $r('sys.symbol.chevron_up') : $r('sys.symbol.chevron_down');
+  /** 简介内容是否超过收起行数（决定是否显示展开入口） */
+  private hasDescriptionOverflow(): boolean {
+    return this.getDescriptionText().length > 36;
+  }
+
+  /** 当前应展示的标签：收起时截断，展开时全量 */
+  private getVisibleTags(): string[] {
+    const tags = this.getDisplayTags();
+    if (this.tagsExpanded || tags.length <= TAGS_COLLAPSED_LIMIT) {
+      return tags;
+    }
+    return tags.slice(0, TAGS_COLLAPSED_LIMIT);
+  }
+
+  /** 标签数量是否超过收起上限（决定是否显示展开入口） */
+  private hasTagsOverflow(): boolean {
+    return this.getDisplayTags().length > TAGS_COLLAPSED_LIMIT;
+  }
+
+  /** 章节排序按钮上的当前排序文案 */
+  private getChapterSortLabel(): string {
+    return this.chapterSortMode === ChapterSortMode.DESCENDING ? '倒序' : '正序';
+  }
+
+  private getChapterSortSummary(): string {
+    return this.chapterSortMode === ChapterSortMode.DESCENDING
+      ? '最新章节在前'
+      : '第 1 章在前';
+  }
+
+  private applyChapterSort(mode: ChapterSortMode): void {
+    if (this.chapterSortMode === mode) {
+      return;
+    }
+    this.chapterSortMode = mode;
+    logger.info(TAG, `章节列表排序方式已切换: ${mode}`);
+    // 等列表按新顺序渲染完成后再回到顶部，避免停留在旧顺序的滚动位置
+    setTimeout(() => {
+      try {
+        this.chapterListScroller.scrollToIndex(0, true);
+      } catch (error) {
+        logger.debug(TAG, `章节列表回到顶部失败（忽略）: ${String(error)}`);
+      }
+    }, 0);
   }
 
   private getLibraryActionSymbol(): Resource {
@@ -528,13 +615,6 @@ export struct SuwayomiMangaDetailPage {
     return merged;
   }
 
-  private getReadingProgressLabel(): string {
-    if (this.lastReadChapterIndex >= 0) {
-      return `第 ${this.lastReadChapterIndex + 1} 章 · 第 ${this.lastReadPageIndex + 1} 页`;
-    }
-    return '尚未开始阅读';
-  }
-
   @Builder
   private buildBadge(text: string, highlighted: boolean = false) {
     Text(text)
@@ -545,6 +625,11 @@ export struct SuwayomiMangaDetailPage {
       .backgroundColor(highlighted ? this.color('accent_blue') : this.color('comp_background_tertiary'))
       .borderRadius(999)
       .margin({ right: 8, bottom: 8 })
+      // 标签收起/展开时，被移除/新增的标签随容器高度变化一起淡入淡出
+      .transition(TransitionEffect.OPACITY.animation({
+        duration: EXPAND_ANIMATION_DURATION,
+        curve: Curve.EaseInOut
+      }))
   }
 
   @Builder
@@ -578,6 +663,8 @@ export struct SuwayomiMangaDetailPage {
           .fontWeight(FontWeight.Medium)
           .fontColor(this.color('text_primary'))
           .fontFamily(this.appFontFamily)
+          .maxLines(1)
+          .textOverflow({ overflow: TextOverflow.Ellipsis })
 
         if (subtitle.length > 0) {
           Text(subtitle)
@@ -594,38 +681,49 @@ export struct SuwayomiMangaDetailPage {
     .alignItems(VerticalAlign.Center)
   }
 
+  /**
+   * 分区展开/收起按钮（简介、标签共用）。
+   * 文字 + 箭头，箭头角度由调用方传入的 @State 驱动，
+   * 使其能与内容高度变化在同一个 animateTo 中一起动画。
+   */
   @Builder
-  private buildIconActionButton(
-    symbol: Resource,
-    action: () => void,
-    highlighted: boolean = false,
-    enabled: boolean = true
-  ) {
+  private buildExpandToggle(expanded: boolean, angle: number, action: () => void) {
     Button({ type: ButtonType.Normal, stateEffect: true }) {
-      Stack() {
-        SymbolGlyph(symbol)
-          .fontSize(18)
-          .fontColor([highlighted ? Color.White : this.color('text_primary')])
+      Row({ space: 4 }) {
+        Text(expanded ? '收起' : '展开')
+          .fontSize(12)
+          .fontColor(this.color('accent_blue'))
+          .fontFamily(this.appFontFamily)
+
+        SymbolGlyph($r('sys.symbol.chevron_down'))
+          .fontSize(11)
+          .fontColor([this.color('accent_blue')])
+          .rotate({ angle: angle })
       }
-      .width(40)
-      .height(40)
-      .backgroundColor(highlighted ? this.color('accent_blue') : this.color('comp_background_tertiary'))
-      .borderRadius(999)
-      .clip(true)
-      .border({
-        width: 1,
-        color: highlighted ? 'rgba(255,255,255,0.08)' : this.color('panel_border')
-      })
+      .alignItems(VerticalAlign.Center)
     }
-    .width(40)
-    .height(40)
-    .enabled(enabled)
-    .opacity(enabled ? 1 : 0.42)
-    .padding(0)
-    .backgroundColor(Color.Transparent)
+    .height(32)
+    .padding({ left: 12, right: 12 })
+    .backgroundColor(this.color('comp_background_tertiary'))
     .borderRadius(999)
-    .clip(true)
+    .accessibilityText(expanded ? '收起' : '展开')
     .onClick(() => action())
+  }
+
+  /**
+   * 章节列表排序菜单。
+   */
+  @Builder
+  private buildChapterSortMenu() {
+    Menu() {
+      MenuItem({ content: '章节正序（第 1 章在前）' })
+        .selected(this.chapterSortMode === ChapterSortMode.ASCENDING)
+        .onClick(() => this.applyChapterSort(ChapterSortMode.ASCENDING))
+
+      MenuItem({ content: '章节倒序（最新章节在前）' })
+        .selected(this.chapterSortMode === ChapterSortMode.DESCENDING)
+        .onClick(() => this.applyChapterSort(ChapterSortMode.DESCENDING))
+    }
   }
 
   @Builder
@@ -706,45 +804,6 @@ export struct SuwayomiMangaDetailPage {
     .borderRadius(20)
     .clip(true)
     .onClick(() => action())
-  }
-
-  @Builder
-  private buildInfoCard(symbol: Resource, title: string, value: string) {
-    Column({ space: 10 }) {
-      Row({ space: 8 }) {
-        SymbolGlyph(symbol)
-          .fontSize(15)
-          .fontColor([this.color('icon_primary')])
-        Text(title)
-          .fontSize(11)
-          .fontColor(this.color('text_muted'))
-          .fontFamily(this.appFontFamily)
-          .maxLines(1)
-          .textOverflow({ overflow: TextOverflow.Ellipsis })
-      }
-      .width('100%')
-
-      Text(value)
-        .fontSize(14)
-        .fontWeight(FontWeight.Medium)
-        .fontColor(this.color('text_primary'))
-        .fontFamily(this.appFontFamily)
-        .maxLines(2)
-        .textOverflow({ overflow: TextOverflow.Ellipsis })
-    }
-    .width('48%')
-    .padding(16)
-    .backgroundColor(this.themeManager.getGlassBackgroundResource())
-    .backgroundBlurStyle(this.themeManager.getGlassBlurStyle())
-    .borderRadius(18)
-    .border({ width: 1, color: this.color('panel_border') })
-    .shadow({
-      radius: this.themeManager.getGlassRadius(),
-      color: this.themeManager.getGlassShadowColor(),
-      offsetX: 0,
-      offsetY: 2
-    })
-    .alignItems(HorizontalAlign.Start)
   }
 
   @Builder
@@ -848,61 +907,30 @@ export struct SuwayomiMangaDetailPage {
   }
 
   @Builder
-  private buildOverviewSection() {
-    Column({ space: 16 }) {
-      Row({ space: 12 }) {
-        this.buildSectionHeader($r('sys.symbol.book'), '概览', '统一展示章节、进度和书架状态')
-        Blank().layoutWeight(1)
-        this.buildIconActionButton(
-          $r('sys.symbol.arrow_right'),
-          () => this.continueReading(),
-          true,
-          this.getSortedChapters().length > 0
-        )
-      }
-      .width('100%')
-
-      Flex({ wrap: FlexWrap.Wrap, justifyContent: FlexAlign.SpaceBetween }) {
-        this.buildInfoCard($r('sys.symbol.book_pages'), '章节数', `${this.getSortedChapters().length} 章`)
-        this.buildInfoCard($r('sys.symbol.clock'), '阅读进度', this.getReadingProgressLabel())
-        this.buildInfoCard($r('sys.symbol.book'), '本地书架', this.isInLocalLibrary ? '已加入' : '未加入')
-        this.buildInfoCard($r('sys.symbol.bookshelf'), '服务端书库', this.isInRemoteLibrary ? '已收藏' : '未收藏')
-      }
-      .width('100%')
-    }
-    .width('100%')
-    .padding(20)
-    .backgroundColor(this.themeManager.getGlassBackgroundResource())
-    .backgroundBlurStyle(this.themeManager.getGlassBlurStyle())
-    .borderRadius(24)
-    .border({ width: 1, color: this.color('panel_border') })
-    .shadow({
-      radius: this.themeManager.getGlassRadius(),
-      color: this.themeManager.getGlassShadowColor(),
-      offsetX: 0,
-      offsetY: 4
-    })
-  }
-
-  @Builder
   private buildDescriptionSection() {
     Column({ space: 14 }) {
       Row({ space: 12 }) {
-        this.buildSectionHeader($r('sys.symbol.doc_text'), '简介')
+        // 分区标题放入可压缩容器，避免长副标题把右侧按钮挤出屏幕
+        Row() {
+          this.buildSectionHeader($r('sys.symbol.doc_text'), '简介')
+        }
+        .layoutWeight(1)
 
-        if (this.getDescriptionText().length > 36) {
-          Blank().layoutWeight(1)
-          this.buildIconActionButton(this.getDescriptionToggleSymbol(), () => this.toggleDescriptionExpanded())
+        if (this.hasDescriptionOverflow()) {
+          this.buildExpandToggle(this.descriptionExpanded, this.descriptionToggleAngle, () => {
+            this.toggleDescriptionExpanded();
+          })
         }
       }
       .width('100%')
+      .alignItems(VerticalAlign.Center)
 
       Text(this.getDescriptionText())
         .fontSize(13)
         .lineHeight(22)
         .fontColor(this.color('text_muted'))
         .fontFamily(this.appFontFamily)
-        .maxLines(this.descriptionExpanded ? 99 : 6)
+        .maxLines(this.descriptionExpanded ? 99 : DESCRIPTION_COLLAPSED_MAX_LINES)
         .textOverflow({ overflow: TextOverflow.Ellipsis })
     }
     .width('100%')
@@ -923,14 +951,28 @@ export struct SuwayomiMangaDetailPage {
   @Builder
   private buildTagsSection() {
     Column({ space: 14 }) {
-      this.buildSectionHeader($r('sys.symbol.bookmark'), '标签', '用于快速理解漫画主题与来源信息')
+      Row({ space: 12 }) {
+        Row() {
+          this.buildSectionHeader($r('sys.symbol.bookmark'), '标签', '用于快速理解漫画主题与来源信息')
+        }
+        .layoutWeight(1)
+
+        if (this.hasTagsOverflow()) {
+          this.buildExpandToggle(this.tagsExpanded, this.tagsToggleAngle, () => {
+            this.toggleTagsExpanded();
+          })
+        }
+      }
+      .width('100%')
+      .alignItems(VerticalAlign.Center)
 
       if (this.getDisplayTags().length > 0) {
         Flex({ wrap: FlexWrap.Wrap }) {
-          ForEach(this.getDisplayTags(), (tag: string) => {
+          ForEach(this.getVisibleTags(), (tag: string) => {
             this.buildBadge(tag)
           }, (tag: string) => tag)
         }
+        .width('100%')
       } else {
         Text('当前漫画暂无标签')
           .fontSize(12)
@@ -957,15 +999,39 @@ export struct SuwayomiMangaDetailPage {
   private buildChapterSection() {
     Column({ space: 14 }) {
       Row({ space: 12 }) {
-        this.buildSectionHeader($r('sys.symbol.list_bullet'), '章节列表', `共 ${this.getSortedChapters().length} 章`)
-        Blank().layoutWeight(1)
-        this.buildIconActionButton(this.getSortSymbol(), () => {
-          this.sortDescending = !this.sortDescending;
-        })
+        Row() {
+          this.buildSectionHeader(
+            $r('sys.symbol.list_bullet'),
+            '章节列表',
+            `共 ${this.getSortedChapters().length} 章 · ${this.getChapterSortSummary()}`
+          )
+        }
+        .layoutWeight(1)
+
+        // 排序入口：显示当前排序方式，点击弹出排序菜单
+        Row({ space: 4 }) {
+          Text(this.getChapterSortLabel())
+            .fontSize(12)
+            .fontWeight(FontWeight.Medium)
+            .fontColor(this.color('accent_blue'))
+            .fontFamily(this.appFontFamily)
+
+          SymbolGlyph($r('sys.symbol.chevron_down'))
+            .fontSize(10)
+            .fontColor([this.color('accent_blue')])
+        }
+        .height(32)
+        .padding({ left: 12, right: 12 })
+        .backgroundColor(this.color('comp_background_tertiary'))
+        .borderRadius(999)
+        .alignItems(VerticalAlign.Center)
+        .accessibilityText(`章节排序：${this.getChapterSortLabel()}`)
+        .bindMenu(this.buildChapterSortMenu())
       }
       .width('100%')
+      .alignItems(VerticalAlign.Center)
 
-      List() {
+      List({ scroller: this.chapterListScroller }) {
         ForEach(this.getSortedChapters(), (chapter: SuwayomiDetailChapterInfo, index: number) => {
           ListItem() {
             Row({ space: 12 }) {
@@ -1151,7 +1217,6 @@ export struct SuwayomiMangaDetailPage {
             Column({ space: 16 }) {
               Blank().height(SettingsPageTitleBarManager.getContentTopPadding(this.statusBarHeight))
               this.buildHeroSection()
-              this.buildOverviewSection()
               this.buildDescriptionSection()
               this.buildTagsSection()
               this.buildChapterSection()
