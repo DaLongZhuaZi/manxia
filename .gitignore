@@ -53,7 +53,12 @@ Thumbs.db
 komiic_api_log.txt
 
 # Sensitive/User specific configuration
-build-profile.json5
+# 仅根目录 build-profile.json5 含 DevEco 写入的本机签名材料 -> 不入库;
+# 模块级 build-profile.json5 是工程必需配置,必须入库(切勿用无前导斜杠的模式,会误伤模块)。
+# Only the root build-profile.json5 carries machine-local signing data; module-level ones must be tracked.
+/build-profile.json5
+# NGF-start 样例工程同样含本机签名配置 -> 不入库
+/NGF-start/build-profile.json5
 response.json
 .env
 
