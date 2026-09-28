@@ -1,4 +1,4 @@
-﻿import { SafeUtils } from 'manxia_core/src/main/ets/Utils/SafeUtils';
+import { SafeUtils } from 'manxia_core/src/main/ets/Utils/SafeUtils';
 import { http } from '@kit.NetworkKit';
 import { logger } from 'manxia_core/src/main/ets/Utils/Logger';
 import { base64Encode } from 'manxia_core/src/main/ets/Utils/CryptoUtils';
@@ -24,6 +24,9 @@ import {
 import { loadKomgaConfig, saveKomgaConfig } from './KomgaConfigStore';
 
 const TAG = 'KomgaSource';
+
+/** 协议探测的超时；探测只关心"能不能连上"，因此保持短超时避免拖慢首次加载。 */
+const KOMGA_BASE_URL_PROBE_TIMEOUT_MS: number = 8000;
 
 interface KomgaPageWrapperDto<T> {
   content: T[];
@@ -153,6 +156,12 @@ export function getKomgaSource(): KomgaSource {
 }
 
 export class KomgaSource {
+  /**
+   * 已解析的可用基地址缓存：key = 配置里的原始地址，value = 实际可用的同协议地址。
+   * 解析结果同时会写回实例配置，因此重启后也不需要重新探测。
+   */
+  private static resolvedBaseUrlCache: Map<string, string> = new Map<string, string>();
+
   private config: KomgaConfig | null = null;
   private filterCache: Map<string, KomgaFilterOptions> = new Map();
 
@@ -212,7 +221,7 @@ export class KomgaSource {
 
   public getServerUrl(instanceId?: string): string {
     const instance = this.resolveInstance(instanceId);
-    return instance ? this.normalizeServerUrl(instance.serverUrl) : '';
+    return instance ? this.resolveBaseUrlSync(instance) : '';
   }
 
   public getImageHeaders(instanceId?: string): Record<string, string> {
@@ -339,14 +348,14 @@ export class KomgaSource {
     }
 
     const headers = this.buildHeaders(instance, true);
-    const serverUrl = this.normalizeServerUrl(instance.serverUrl);
+    const serverUrl = this.resolveBaseUrlSync(instance);
     const pages = response.map(page => {
       const needsConvert = !SUPPORTED_IMAGE_TYPES.includes(page.mediaType);
       const url = `${serverUrl}/api/v1/books/${bookId}/pages/${page.number}${needsConvert ? '?convert=png' : ''}`;
       const result: PageInfo = {
-        url: url
+        url: url,
+        headers: headers
       };
-      (result as ESObject)['headers'] = headers;
       return result;
     });
     logger.info(TAG, `KomgaSource 页面列表加载完成: instanceId=${instance.id}, bookId=${bookId}, count=${pages.length}`);
@@ -383,7 +392,7 @@ export class KomgaSource {
   }
 
   private toComicInfo(raw: KomgaItemDto, contentType: KomgaContentType, instanceId: string, instance: KomgaInstanceConfig): ComicInfo {
-    const serverUrl = this.normalizeServerUrl(instance.serverUrl);
+    const serverUrl = this.resolveBaseUrlSync(instance);
 
     if (contentType === 'READLISTS') {
       const dto = raw as KomgaReadListDto;
@@ -496,7 +505,7 @@ export class KomgaSource {
   private toChapterInfo(book: KomgaBookDto, isReadList: boolean, index: number, instance: KomgaInstanceConfig): ChapterInfo {
     const metadata = this.getBookMetadata(book);
 
-    const serverUrl = this.normalizeServerUrl(instance.serverUrl);
+    const serverUrl = this.resolveBaseUrlSync(instance);
     const chapterInfo: ChapterInfo = {
       id: book.id,
       title: this.formatChapterName(book, metadata, isReadList, instance.chapterTitleTemplate || KOMGA_DEFAULT_CHAPTER_TEMPLATE),
@@ -680,7 +689,10 @@ export class KomgaSource {
   }
 
   private async requestJson<T>(pathOrUrl: string, instance: KomgaInstanceConfig): Promise<T | null> {
-    const serverUrl = this.normalizeServerUrl(instance.serverUrl);
+    // 协议自适应：首次请求前探测一次实际可用协议，并把结果写回实例配置，后续直接复用，
+    // 不再依赖服务器的 301 跳转（跨协议跳转有丢失 Authorization 的风险）。
+    await this.ensureBaseUrlResolved(instance);
+    const serverUrl = this.resolveBaseUrlSync(instance);
     if (serverUrl.length <= 0) {
       logger.warn(TAG, `Komga 请求被跳过，服务器地址为空: instanceId=${instance.id}`);
       return null;
@@ -726,6 +738,158 @@ export class KomgaSource {
     const hasScheme = /^[a-zA-Z][a-zA-Z0-9+\-.]*:\/\//.test(raw);
     const withScheme = hasScheme ? raw : `http://${raw}`;
     return withScheme.endsWith('/') ? withScheme.substring(0, withScheme.length - 1) : withScheme;
+  }
+
+  /**
+   * 协议自适应：探测该实例实际可用的协议（优先 https），成功后写回实例配置。
+   *
+   * 为什么需要它：Komga 常把 http 请求 301 跳到 https，而 HarmonyOS http 跟随跨协议跳转时
+   * 有丢失 Authorization 的风险，且每次都要多一次往返。这里一次性探测出可用协议并记住，
+   * 之后所有请求直接使用同一协议。
+   *
+   * 探测规则：拿到任何 HTTP 状态码（含 401/403/404）都说明该协议可达；只有连接失败/超时才换下一个候选。
+   */
+  private async ensureBaseUrlResolved(instance: KomgaInstanceConfig): Promise<void> {
+    const configured: string = this.normalizeServerUrl(instance.serverUrl);
+    if (configured.length <= 0) {
+      return;
+    }
+    if (KomgaSource.resolvedBaseUrlCache.has(configured)) {
+      return;
+    }
+
+    const candidates: string[] = [];
+    const httpsUrl: string = this.buildSchemeUrl(configured, 'https');
+    const httpUrl: string = this.buildSchemeUrl(configured, 'http');
+    if (httpsUrl.length > 0) {
+      candidates.push(httpsUrl);
+    }
+    if (httpUrl.length > 0 && httpUrl !== httpsUrl) {
+      candidates.push(httpUrl);
+    }
+
+    let index = 0;
+    while (index < candidates.length) {
+      const candidate: string = candidates[index];
+      if (await this.probeSchemeReachable(candidate, instance)) {
+        KomgaSource.resolvedBaseUrlCache.set(configured, candidate);
+        if (candidate !== configured) {
+          logger.info(TAG, `Komga 协议自适应：${configured} -> ${candidate}，已记住该协议`);
+          await this.persistServerUrl(instance.id, candidate);
+        } else {
+          logger.debug(TAG, `Komga 协议自适应：${configured} 可用，沿用配置`);
+        }
+        return;
+      }
+      index = index + 1;
+    }
+
+    // 两个协议都不可达时沿用配置，避免把用户的配置改坏
+    KomgaSource.resolvedBaseUrlCache.set(configured, configured);
+    logger.warn(TAG, `Komga 协议探测均失败，沿用配置地址: ${configured}`);
+  }
+
+  /** 取用已解析的基地址；尚未探测时回退到配置值（同步，供 URL 拼接使用）。 */
+  private resolveBaseUrlSync(instance: KomgaInstanceConfig): string {
+    const configured: string = this.normalizeServerUrl(instance.serverUrl);
+    const resolved: string = KomgaSource.resolvedBaseUrlCache.get(configured) || '';
+    return resolved.length > 0 ? resolved : configured;
+  }
+
+  /** 把基地址换成指定协议，保留 host / 端口 / 路径前缀。 */
+  private buildSchemeUrl(baseUrl: string, scheme: string): string {
+    const separatorIndex: number = baseUrl.indexOf('://');
+    if (separatorIndex < 0) {
+      return '';
+    }
+    const rest: string = baseUrl.substring(separatorIndex + 3);
+    if (rest.length <= 0) {
+      return '';
+    }
+    return `${scheme}://${rest}`;
+  }
+
+  /** 探测该协议是否可达：拿到任何 HTTP 响应即视为可达。 */
+  private async probeSchemeReachable(baseUrl: string, instance: KomgaInstanceConfig): Promise<boolean> {
+    const request = http.createHttp();
+    try {
+      const response = await request.request(`${baseUrl}/`, {
+        method: http.RequestMethod.GET,
+        header: this.buildHeaders(instance),
+        connectTimeout: KOMGA_BASE_URL_PROBE_TIMEOUT_MS,
+        readTimeout: KOMGA_BASE_URL_PROBE_TIMEOUT_MS
+      });
+      logger.debug(TAG, `Komga 协议探测: ${baseUrl} -> code=${response.responseCode}`);
+      return response.responseCode > 0;
+    } catch (error) {
+      logger.debug(TAG, `Komga 协议不可用: ${baseUrl}, error=${this.formatError(error as Object)}`);
+      return false;
+    } finally {
+      request.destroy();
+    }
+  }
+
+  /** 把探测到的可用协议写回实例配置，实现"下次也用同样的协议"。 */
+  private async persistServerUrl(instanceId: string, serverUrl: string): Promise<void> {
+    try {
+      const currentConfig: KomgaConfig = this.getConfig();
+      const nextInstances: KomgaInstanceConfig[] = [];
+      let changed: boolean = false;
+      let index = 0;
+      while (index < currentConfig.instances.length) {
+        const item: KomgaInstanceConfig = currentConfig.instances[index];
+        if (item.id === instanceId && item.serverUrl !== serverUrl) {
+          const updated: KomgaInstanceConfig = {
+            id: item.id,
+            displayName: item.displayName,
+            serverUrl: serverUrl,
+            authMode: item.authMode,
+            username: item.username,
+            password: item.password,
+            apiKey: item.apiKey,
+            defaultLibraryIds: item.defaultLibraryIds,
+            chapterTitleTemplate: item.chapterTitleTemplate,
+            enabled: item.enabled
+          };
+          nextInstances.push(updated);
+          changed = true;
+        } else {
+          nextInstances.push(item);
+        }
+        index = index + 1;
+      }
+      if (!changed) {
+        return;
+      }
+      const nextConfig: KomgaConfig = {
+        instances: nextInstances,
+        currentInstanceId: currentConfig.currentInstanceId,
+        useBrowsePageAsEntry: currentConfig.useBrowsePageAsEntry
+      };
+      const success: boolean = await saveKomgaConfig(nextConfig);
+      if (success) {
+        this.config = await loadKomgaConfig();
+        logger.info(TAG, `Komga 可用协议已写入实例配置: instanceId=${instanceId}, serverUrl=${serverUrl}`);
+      }
+    } catch (error) {
+      logger.warn(TAG, `记住 Komga 可用协议失败: ${String(error)}`);
+    }
+  }
+
+  /** 把 http 异常转成可读文本（直接 String(error) 只会得到 "[object Object]"）。 */
+  private formatError(error: Object): string {
+    const record = error as Record<string, Object>;
+    const codeValue: Object | undefined = record['code'];
+    const messageValue: Object | undefined = record['message'];
+    const codeText: string = codeValue !== undefined && codeValue !== null ? String(codeValue) : '';
+    const messageText: string = messageValue !== undefined && messageValue !== null ? String(messageValue) : '';
+    if (codeText.length > 0 || messageText.length > 0) {
+      return `code=${codeText.length > 0 ? codeText : '-'}, message=${messageText.length > 0 ? messageText : '-'}`;
+    }
+    if (error instanceof Error) {
+      return `${error.name}: ${error.message}`;
+    }
+    return String(error);
   }
 
   private uniqueStrings(values: string[]): string[] {

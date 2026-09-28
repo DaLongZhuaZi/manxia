@@ -115,7 +115,6 @@ struct WelcomeGuidePage {
 
   private uiContext: UIContext | undefined = undefined;
   private notificationPermissionAutoRequested: boolean = false;
-  private distributedPermissionAutoRequested: boolean = false;
   private customExperienceSettingsInitialized: boolean = false;
   private remoteLibraryTogglesInitialized: boolean = false;
   private isGuideExiting: boolean = false;
@@ -214,9 +213,9 @@ struct WelcomeGuidePage {
     steps.set(GuideStep.ANALYTICS_PERMISSION, analyticsPermissionContent);
 
     const distributedPermissionContent: GuideStepContent = {
-      title: '跨设备接续阅读',
+      title: '跨设备接续阅读（可选）',
       subtitle: '需要「设备发现和连接」权限',
-      description: '开启后，漫匣才能发现附近的其他设备，把当前的阅读进度接续到另一台设备继续阅读，并用本机遥控对方设备翻页。该权限仅用于设备发现与进度同步，不会读取您的其他数据。',
+      description: '开启后，漫匣才能发现附近的其他设备，把当前的阅读进度接续到另一台设备继续阅读，并用本机遥控对方设备翻页。该权限仅用于设备发现与进度同步，不会读取您的其他数据。不开启也可以正常使用漫匣的其他全部功能，之后可在「设置 → 接续阅读」中随时开启。',
       icon: $r('sys.symbol.computer_share_fill'),
       buttonText: '继续下一步',
       showSkip: false
@@ -309,7 +308,8 @@ struct WelcomeGuidePage {
     }
 
     if (step === GuideStep.DISTRIBUTED_PERMISSION) {
-      await this.ensureDistributedPermissionState(true);
+      // [合规] 只做静默检查：不在进入步骤时自动弹窗索要权限
+      await this.ensureDistributedPermissionState();
       return;
     }
 
@@ -363,11 +363,13 @@ struct WelcomeGuidePage {
   }
 
   /**
-   * 检查并稳定触发「设备发现和连接」权限请求（新手引导页面的权限步骤）。
-   * 完全新装的设备上系统会正常弹出授权弹窗；权限曾被用户在设置中固定关闭时
-   * 系统会未弹窗直接拒绝，此时展示"前往设置开启"入口（不自动跳转，先说明原因）。
+   * 检查「设备发现和连接」权限状态（新手引导的权限步骤）。
+   *
+   * [合规] 本步骤只做静默检查，**不会自动弹窗索要权限**：
+   * 该权限只服务于可选的"跨设备接续阅读"能力，不开启也能正常使用漫匣的全部其他功能。
+   * 只有用户点击"开启跨设备接续阅读"按钮时才会发起系统授权弹窗。
    */
-  private async ensureDistributedPermissionState(requestIfNeeded: boolean): Promise<void> {
+  private async ensureDistributedPermissionState(): Promise<void> {
     try {
       const granted = await distributedPermissionManager.isPermissionGranted();
       this.distributedPermissionGranted = granted;
@@ -376,51 +378,54 @@ struct WelcomeGuidePage {
         this.distributedPermissionStatusText = '「设备发现和连接」权限已开启，随时可以把阅读进度接续到其他设备。';
         return;
       }
+      this.distributedPermissionUserFixedDenied = false;
+      this.distributedPermissionStatusText =
+        '当前未开启该权限，跨设备接续阅读无法正常使用；不开启也可以正常使用漫匣的其他全部功能。';
+    } catch (error) {
+      logger.error(TAG, `欢迎引导检查「设备发现和连接」权限失败: ${String(error)}`);
+      this.distributedPermissionStatusText = '检查权限失败，请稍后重试。';
+    }
+  }
 
-      this.distributedPermissionStatusText = requestIfNeeded
-        ? '正在尝试请求「设备发现和连接」权限...'
-        : '「设备发现和连接」权限尚未开启，进入阅读器时会再次提示。';
-
-      if (!requestIfNeeded || this.distributedPermissionAutoRequested) {
-        return;
-      }
-      this.distributedPermissionAutoRequested = true;
-
-      const hostContext = this.uiContext?.getHostContext();
-      const context = hostContext as common.UIAbilityContext | null;
-      if (!context) {
-        this.distributedPermissionStatusText = '无法获取页面上下文，暂时无法请求权限，请稍后重试。';
-        return;
-      }
-
-      this.distributedPermissionRequesting = true;
-      const result = await distributedPermissionManager.requestPermissionForGuide(context);
+  /**
+   * 用户主动点击"开启跨设备接续阅读"：此时才发起系统授权弹窗。
+   * 拒绝后不做任何自动重试，也不再自动打扰用户。
+   */
+  private async requestDistributedPermissionByUser(): Promise<void> {
+    if (this.distributedPermissionRequesting) {
+      return;
+    }
+    const hostContext = this.uiContext?.getHostContext();
+    const context = hostContext as common.UIAbilityContext | null;
+    if (!context) {
+      this.distributedPermissionStatusText = '无法获取页面上下文，暂时无法请求权限，请稍后重试。';
+      return;
+    }
+    this.distributedPermissionRequesting = true;
+    try {
+      const result = await distributedPermissionManager.requestPermission(context, 'WelcomeGuidePage');
       if (result === 'granted') {
         this.distributedPermissionGranted = true;
         this.distributedPermissionUserFixedDenied = false;
         this.distributedPermissionStatusText = '权限已开启，跨设备接续阅读已可用。';
       } else if (result === 'user_fixed_denied') {
         this.distributedPermissionUserFixedDenied = true;
-        this.distributedPermissionStatusText = '该权限曾在系统设置中被固定关闭，应用内无法再弹窗。请点击下方按钮前往设置，打开「设备发现和连接」开关。';
+        this.distributedPermissionStatusText =
+          '该权限曾在系统设置中被关闭，应用内无法再弹窗。可点击下方按钮前往系统设置开启；不开启也不影响其他功能使用。';
       } else if (result === 'denied') {
         this.distributedPermissionUserFixedDenied = false;
-        this.distributedPermissionStatusText = '已选择暂不开启。之后进入阅读器时会再次提示授权。';
+        this.distributedPermissionStatusText =
+          '已选择暂不开启，跨设备接续阅读无法使用；其他功能不受影响，之后可在「设置 → 接续阅读」中随时开启。';
+      } else if (result === 'busy') {
+        this.distributedPermissionStatusText = '权限请求正在处理中，请稍候再试。';
       } else {
         this.distributedPermissionUserFixedDenied = false;
-        this.distributedPermissionStatusText = '权限请求被打断，请点击下方按钮重试。';
+        this.distributedPermissionStatusText =
+          '权限请求被打断，可点击下方按钮重试，或稍后在「设置 → 接续阅读」中开启。';
       }
-    } catch (error) {
-      logger.error(TAG, `欢迎引导检查「设备发现和连接」权限失败: ${String(error)}`);
-      this.distributedPermissionStatusText = '检查权限失败，请稍后重试。';
     } finally {
       this.distributedPermissionRequesting = false;
     }
-  }
-
-  private async requestDistributedPermissionAgain(): Promise<void> {
-    this.distributedPermissionAutoRequested = false;
-    this.distributedPermissionUserFixedDenied = false;
-    await this.ensureDistributedPermissionState(true);
   }
 
   private openDistributedPermissionSettings(): void {
@@ -642,11 +647,6 @@ struct WelcomeGuidePage {
 
   aboutToAppear(): void {
     logger.lifecycle(TAG, '欢迎引导页面开始加载');
-
-    // 新手引导期间抑制后台检查点的权限自动请求/设置跳转：
-    // 「设备发现和连接」权限由本页的权限步骤先说明用途，再稳定触发首次请求，
-    // 避免应用一启动（后台检查点）就直接弹窗或跳转设置
-    distributedPermissionManager.setOnboardingGuideActive(true);
 
     // 获取UIContext
     this.uiContext = this.getUIContext();
@@ -1672,6 +1672,8 @@ struct WelcomeGuidePage {
           .textAlign(TextAlign.Start)
 
         if (!this.distributedPermissionGranted) {
+          // [合规] 该权限只服务于可选的跨设备接续阅读：这里只提供"用户主动开启"的入口，
+          // 不开启也能正常使用应用的其他全部功能，因此不出现任何强制或阻塞措辞
           if (this.distributedPermissionUserFixedDenied) {
             Button(this.distributedPermissionRequesting ? '正在处理...' : '前往设置开启')
               .fontSize(13)
@@ -1688,7 +1690,7 @@ struct WelcomeGuidePage {
                 }
               })
           } else {
-            Button(this.distributedPermissionRequesting ? '正在请求权限...' : '再次请求权限')
+            Button(this.distributedPermissionRequesting ? '正在请求权限...' : '开启跨设备接续阅读')
               .fontSize(13)
               .fontFamily(this.appFontFamily)
               .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_white', this.themeState.currentTheme))
@@ -1699,10 +1701,17 @@ struct WelcomeGuidePage {
               .opacity(this.distributedPermissionRequesting ? 0.6 : 1.0)
               .onClick(() => {
                 if (!this.distributedPermissionRequesting) {
-                  void this.requestDistributedPermissionAgain();
+                  void this.requestDistributedPermissionByUser();
                 }
               })
           }
+
+          Text('暂不开启不影响其他功能使用，之后可在「设置 → 接续阅读」中随时开启。')
+            .fontSize(12)
+            .fontFamily(this.appFontFamily)
+            .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_muted', this.themeState.currentTheme))
+            .width('100%')
+            .textAlign(TextAlign.Start)
         }
       }
       .width('100%')
@@ -2226,8 +2235,6 @@ struct WelcomeGuidePage {
 
   aboutToDisappear(): void {
     logger.lifecycle(TAG, '欢迎引导页面即将销毁');
-    // 引导页销毁后恢复后台检查点的权限请求能力（首次请求已由引导页权限步骤负责）
-    distributedPermissionManager.setOnboardingGuideActive(false);
     this.customExperienceSettingsInitialized = false;
     if (!this.isSingleGuidePreview() && this.isSourceFeatureOnlyFlow()) {
       void this.welcomeGuideManager.finishSourceFeatureGuide();

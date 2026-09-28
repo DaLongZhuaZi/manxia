@@ -16,11 +16,25 @@ import CookieManager from 'manxia_core/src/main/ets/Framework/Managers/CookieMan
 import { PermanentImageCacheManager } from './PermanentImageCacheManager';
 import { OnlineImageLoader, OnlineLoadOptions, RequestHeaders as OnlineRequestHeaders } from './OnlineImageLoader';
 import { SuwayomiCacheManager } from '../Source/SuwayomiCacheManager';
-import { KomgaCacheManager } from '../Source/KomgaCacheManager';
+import { KomgaCacheManager, KomgaPageFetchOptions } from '../Source/KomgaCacheManager';
 import fs from '@ohos.file.fs';
+import { AvifDecoder, isAvifFormat } from '../Image/AvifDecoder';
+import { getMangaLoadStageReporter, MangaLoadStage } from '../Reader/MangaLoadStageReporter';
 
 export { RequestHeaderEntry, RequestHeaders };
 const TAG = 'ImageCacheManager';
+
+/**
+ * 图片解码失败（与网络无关）。
+ *
+ * 单独定义该错误类型，是为了让 loadFromNetwork 的重试逻辑能区分"网络失败"与"解码失败"：
+ * 同一份字节重试多少次都会得到同样的解码结果，重试只会造成无意义的重复下载。
+ */
+class ImageDecodeError extends Error {
+  constructor(message: string) {
+    super(message);
+  }
+}
 
 // 内存缓存配置接口
 export interface MemoryCacheConfig {
@@ -160,6 +174,12 @@ export class ImageCacheManager {
       retryDelay: 500  // 优化：500ms重试延迟
     } as NetworkConfig
   };
+
+  /**
+   * 同一页正在进行的取页请求（单飞去重）。
+   * 预加载与可见页经常同时命中同一页，没有它会对同一个 URL 并发下载多次。
+   */
+  private remoteProviderPageInflight: Map<string, Promise<string | null>> = new Map<string, Promise<string | null>>();
 
   private constructor() {
     this.sandboxManager = SandboxManager.getInstance();
@@ -510,76 +530,53 @@ export class ImageCacheManager {
     }
 
     logger.debug(TAG, `使用远程源章节缓存加载图片: ${cachedPath.substring(0, 120)}`);
+    getMangaLoadStageReporter().report(url, MangaLoadStage.DECODING, '正在解码');
     const cachedPixelMap = await this.loadLocalFile(cachedPath, cacheKey, options);
     if (cachedPixelMap || options?.forceRefresh) {
       return cachedPixelMap;
     }
 
-    logger.warn(TAG, `远程源章节缓存解码失败，强制刷新缓存: ${cachedPath.substring(0, 120)}`);
-    const forceRefreshOptions = this.buildForceRefreshLoadOptions(options);
-    const refreshedPath = await this.ensureRemoteProviderPageCached(url, forceRefreshOptions);
-    if (!refreshedPath || refreshedPath.length <= 0) {
-      return null;
-    }
-    return await this.loadLocalFile(refreshedPath, cacheKey, forceRefreshOptions);
+    logger.warn(TAG, `远程源章节缓存解码失败，作废缓存文件: ${cachedPath.substring(0, 120)}`);
+    // 解码失败说明缓存文件本身不可用（截断、损坏或格式不支持）。
+    // 旧实现会在这里立刻再下载一次同一个 URL，等于同一页连下两遍；
+    // 现在只作废缓存文件，把下载交给上层唯一的一次网络加载。
+    this.invalidateRemoteProviderPageCache(options);
+    return null;
   }
 
-  private buildForceRefreshLoadOptions(options?: LoadOptions): LoadOptions {
-    const forced: LoadOptions = {};
-    if (options?.width !== undefined) {
-      forced.width = options.width;
+  /**
+   * 仅作废远程源章节页缓存文件，不触发任何下载。
+   */
+  private invalidateRemoteProviderPageCache(options?: LoadOptions): void {
+    if (!this.hasRemoteProviderCacheContext(options)) {
+      return;
     }
-    if (options?.height !== undefined) {
-      forced.height = options.height;
+    const mangaKey = String(options?.mangaId || '').trim();
+    const chapterKey = String(options?.chapterId || '').trim();
+    const pageIndex = options?.pageIndex;
+    if (mangaKey.length <= 0 || chapterKey.length <= 0 || pageIndex === undefined) {
+      return;
     }
-    if (options?.quality !== undefined) {
-      forced.quality = options.quality;
+    try {
+      const providerType = this.resolveRemoteProviderCacheType(options);
+      if (providerType === 'suwayomi') {
+        SuwayomiCacheManager.getInstance().invalidatePageCache(mangaKey, chapterKey, pageIndex);
+      } else if (providerType === 'komga') {
+        KomgaCacheManager.getInstance().invalidatePageCache(mangaKey, chapterKey, pageIndex);
+      }
+    } catch (error) {
+      logger.warn(TAG, `作废远程源章节缓存失败: ${String(error)}`);
     }
-    if (options?.placeholder !== undefined) {
-      forced.placeholder = options.placeholder;
-    }
-    if (options?.errorImage !== undefined) {
-      forced.errorImage = options.errorImage;
-    }
-    if (options?.skipMemoryCache !== undefined) {
-      forced.skipMemoryCache = options.skipMemoryCache;
-    }
-    if (options?.skipDiskCache !== undefined) {
-      forced.skipDiskCache = options.skipDiskCache;
-    }
-    if (options?.headers !== undefined) {
-      forced.headers = options.headers;
-    }
-    if (options?.sourceId !== undefined) {
-      forced.sourceId = options.sourceId;
-    }
-    if (options?.loadingMethod !== undefined) {
-      forced.loadingMethod = options.loadingMethod;
-    }
-    if (options?.partitionKey !== undefined) {
-      forced.partitionKey = options.partitionKey;
-    }
-    if (options?.mangaId !== undefined) {
-      forced.mangaId = options.mangaId;
-    }
-    if (options?.chapterId !== undefined) {
-      forced.chapterId = options.chapterId;
-    }
-    if (options?.pageIndex !== undefined) {
-      forced.pageIndex = options.pageIndex;
-    }
-    if (options?.priority !== undefined) {
-      forced.priority = options.priority;
-    }
-    if (options?.contentType !== undefined) {
-      forced.contentType = options.contentType;
-    }
-    forced.forceRefresh = true;
-    forced.skipFailureTtl = true;
-    return forced;
   }
 
-  private async ensureRemoteProviderPageCached(url: string, options?: LoadOptions): Promise<string | null> {
+
+  /**
+   * 确保远程源章节页已缓存到本地。
+   *
+   * @param isPrefetch true = 后台预加载（走低优先级通道，积压时会被主动放弃）；
+   *                   false = 用户可见页（独占通道，永远不会被预加载堵住）。
+   */
+  private async ensureRemoteProviderPageCached(url: string, options?: LoadOptions, isPrefetch: boolean = false): Promise<string | null> {
     if (!this.hasRemoteProviderCacheContext(options)) {
       return null;
     }
@@ -591,6 +588,33 @@ export class ImageCacheManager {
       return null;
     }
 
+    // 单飞去重：同一页的并发请求共享同一次下载。
+    const inflightKey: string =
+      `${mangaKey}|${chapterKey}|${pageIndex}|${options?.forceRefresh ? 'refresh' : 'normal'}`;
+    const existing: Promise<string | null> | undefined = this.remoteProviderPageInflight.get(inflightKey);
+    if (existing) {
+      logger.debug(TAG, `复用进行中的远程源取页: key=${inflightKey}`);
+      return await existing;
+    }
+
+    const task: Promise<string | null> =
+      this.fetchRemoteProviderPageCached(url, options, mangaKey, chapterKey, pageIndex, isPrefetch);
+    this.remoteProviderPageInflight.set(inflightKey, task);
+    try {
+      return await task;
+    } finally {
+      this.remoteProviderPageInflight.delete(inflightKey);
+    }
+  }
+
+  private async fetchRemoteProviderPageCached(
+    url: string,
+    options: LoadOptions | undefined,
+    mangaKey: string,
+    chapterKey: string,
+    pageIndex: number,
+    isPrefetch: boolean
+  ): Promise<string | null> {
     const providerType = this.resolveRemoteProviderCacheType(options);
     const headers = this.buildRemoteProviderHeaders(options?.headers);
 
@@ -627,7 +651,12 @@ export class ImageCacheManager {
         if (options?.forceRefresh && !cacheManager.invalidatePageCache(mangaKey, chapterKey, pageIndex)) {
           return null;
         }
-        return await cacheManager.cachePage(mangaKey, chapterKey, pageIndex, url, headers);
+        const fetchOptions: KomgaPageFetchOptions = {
+          headers: headers,
+          visible: !isPrefetch,
+          forceRefresh: options?.forceRefresh === true
+        };
+        return await cacheManager.cachePage(mangaKey, chapterKey, pageIndex, url, fetchOptions);
       }
     } catch (error) {
       logger.warn(TAG, `访问远程源章节缓存失败: ${String(error)}`);
@@ -776,6 +805,80 @@ export class ImageCacheManager {
   }
 
   /**
+   * 统一图片解码入口（AVIF 优先）。
+   *
+   * HarmonyOS 系统 image 解码器不支持 AVIF，而部分图源（如嗶哩漫畫）会直接返回 AVIF 字节；
+   * 因此所有"从字节解码"的入口统一走这里：
+   * - 内容嗅探为 AVIF 时交给 Native libavif 解码器（后台线程解码，不阻塞主线程）；
+   * - AVIF 解码失败或非 AVIF 时回退系统解码器。
+   *
+   * 注意：不能用文件扩展名判断格式——Suwayomi 等图源的章节缓存文件名是 .jpg，内容却是 AVIF。
+   *
+   * @param buffer 图片原始字节
+   * @param decodingOptions 系统解码参数
+   * @param maxWidth AVIF 解码后的最大宽度（0 表示不限制），避免长条漫全分辨率占满内存
+   * @throws ImageDecodeError 两种解码器都失败时抛出
+   */
+  private async decodeImageBuffer(
+    buffer: ArrayBuffer,
+    decodingOptions: image.DecodingOptions,
+    maxWidth: number = 0
+  ): Promise<image.PixelMap> {
+    if (isAvifFormat(buffer)) {
+      logger.info(TAG, `检测到 AVIF 格式，使用 Native 解码器: bytes=${buffer.byteLength}`);
+      const avifDecoder = AvifDecoder.getInstance();
+      if (avifDecoder.isSupported()) {
+        const avifPixelMap = await avifDecoder.decode(buffer);
+        if (avifPixelMap) {
+          await this.applyMaxWidthToPixelMap(avifPixelMap, maxWidth);
+          logger.info(TAG, 'AVIF 解码成功');
+          return avifPixelMap;
+        }
+        logger.warn(TAG, 'AVIF 解码返回 null，回退系统解码器');
+      } else {
+        logger.warn(TAG, 'AVIF Native 解码器不可用（libavif 未就绪），回退系统解码器');
+      }
+    }
+
+    let imageSource: image.ImageSource | null = null;
+    try {
+      imageSource = image.createImageSource(buffer);
+      return await imageSource.createPixelMap(decodingOptions);
+    } catch (error) {
+      throw new ImageDecodeError(`图片解码失败: ${String(error)}`);
+    } finally {
+      if (imageSource) {
+        try {
+          imageSource.release();
+        } catch (_releaseError) {
+        }
+      }
+    }
+  }
+
+  /**
+   * AVIF 解码结果为全分辨率，按需缩放到 maxWidth 以内，
+   * 避免与系统解码器的降采样能力产生内存差距。缩放失败不影响解码结果。
+   */
+  private async applyMaxWidthToPixelMap(pixelMap: image.PixelMap, maxWidth: number): Promise<void> {
+    if (maxWidth <= 0) {
+      return;
+    }
+    try {
+      const info = await pixelMap.getImageInfo();
+      const originalWidth = info.size.width;
+      if (originalWidth <= maxWidth) {
+        return;
+      }
+      const ratio = maxWidth / originalWidth;
+      await pixelMap.scale(ratio, ratio);
+      logger.debug(TAG, `AVIF 解码结果已缩放: ${originalWidth} -> ${maxWidth}`);
+    } catch (error) {
+      logger.warn(TAG, `AVIF 解码结果缩放失败（忽略）: ${String(error)}`);
+    }
+  }
+
+  /**
    * 从文件加载PixelMap
    * [性能修复] 支持降采样，防止全分辨率解码导致内存爆炸
    * @param filePath 文件路径
@@ -783,21 +886,36 @@ export class ImageCacheManager {
    */
   private async loadImageFromFile(filePath: string, maxWidth: number = 0): Promise<image.PixelMap | null> {
     try {
-      const directSource = image.createImageSource(filePath);
-      const directPixelMap = await this.decodePixelMapFromSource(directSource, maxWidth, filePath);
-      if (directPixelMap) {
-        return directPixelMap;
+      // 先尝试按文件路径直接解码（不额外占内存，非 AVIF 走这条快路）。
+      // 必须单独 try：系统解码器遇到 AVIF 会直接抛错，若让它冒泡到外层 catch，
+      // 就会跳过下面的 Buffer 兜底，导致 AVIF 永远解不出来。
+      try {
+        const directSource = image.createImageSource(filePath);
+        const directPixelMap = await this.decodePixelMapFromSource(directSource, maxWidth, filePath);
+        if (directPixelMap) {
+          return directPixelMap;
+        }
+        logger.warn(TAG, `[本地] 文件路径解码失败，尝试Buffer兜底: ${filePath}`);
+      } catch (directError) {
+        logger.warn(TAG, `[本地] 文件路径解码异常，尝试Buffer兜底: ${filePath}, ${String(directError)}`);
       }
-
-      logger.warn(TAG, `[本地] 文件路径解码失败，尝试Buffer兜底: ${filePath}`);
 
       const file = await fs.open(filePath, fs.OpenMode.READ_ONLY);
       try {
         const stat = await fs.stat(filePath);
         const buffer = new ArrayBuffer(stat.size);
         await fs.read(file.fd, buffer);
-        const bufferSource = image.createImageSource(buffer);
-        return await this.decodePixelMapFromSource(bufferSource, maxWidth, filePath);
+        // 兜底统一走 decodeImageBuffer：内容为 AVIF 时交给 Native 解码器
+        // （Suwayomi 等图源的章节缓存文件名是 .jpg，内容实际为 AVIF，必须按内容嗅探）
+        try {
+          const decodingOptions: image.DecodingOptions = {
+            desiredPixelFormat: image.PixelMapFormat.RGBA_8888
+          };
+          return await this.decodeImageBuffer(buffer, decodingOptions, maxWidth);
+        } catch (decodeError) {
+          logger.warn(TAG, `[本地] Buffer兜底解码失败: ${filePath}, ${String(decodeError)}`);
+          return null;
+        }
       } finally {
         await fs.close(file);
       }
@@ -936,16 +1054,15 @@ export class ImageCacheManager {
       
       // 读取图片文件
       const imageBuffer = await this.sandboxManager.readFile(cacheInfo.filePath);
-      const imageSource = image.createImageSource(imageBuffer);
-      
-      // 创建PixelMap
+
+      // 创建PixelMap（统一解码入口：内容为 AVIF 时走 Native 解码器）
       const decodingOptions: image.DecodingOptions = {
         desiredSize: options?.width && options?.height ? 
           { width: options.width, height: options.height } : undefined,
         desiredPixelFormat: image.PixelMapFormat.RGBA_8888
       };
-      
-      const pixelMap = await imageSource.createPixelMap(decodingOptions);
+
+      const pixelMap = await this.decodeImageBuffer(imageBuffer, decodingOptions, options?.width);
       
       // 更新访问时间
       cacheInfo.lastAccessTime = now;
@@ -1172,23 +1289,19 @@ export class ImageCacheManager {
           
           const bytesLen: number = imageBuffer.byteLength;
           logger.info(TAG, `HTTP响应成功: code=${response.responseCode}, bytes=${bytesLen}, headers=${respHeaderKeys.length}, duration=${duration}`);
+          getMangaLoadStageReporter().report(url, MangaLoadStage.DECODING, '正在解码');
           
-          // 创建图片源
-          const imageSource = image.createImageSource(imageBuffer);
-          
-          // 创建PixelMap
+          // 创建PixelMap（统一解码入口：AVIF 走 Native 解码器，其余回退系统解码器）
           const decodingOptions: image.DecodingOptions = {
             desiredSize: options?.width && options?.height ? 
               { width: options.width, height: options.height } : undefined,
             desiredPixelFormat: image.PixelMapFormat.RGBA_8888
           };
-          
-          const pixelMap = await imageSource.createPixelMap(decodingOptions);
-          
-          // 清理HTTP请求
+
+          // 响应体已完整读入内存，先释放HTTP请求，避免解码异常时连接泄漏
           httpRequest.destroy();
-          
-          return pixelMap;
+
+          return await this.decodeImageBuffer(imageBuffer, decodingOptions, options?.width);
         } else {
           const durationFail: number = Date.now() - startTs;
           logger.warn(TAG, `HTTP响应失败: code=${response.responseCode}, duration=${durationFail}`);
@@ -1196,6 +1309,12 @@ export class ImageCacheManager {
         }
         
       } catch (error) {
+        // 解码失败与网络无关：同一份字节重试多少次结果都一样，直接抛出交由上层降级
+        if (error instanceof ImageDecodeError) {
+          logger.error(TAG, `图片解码失败，跳过网络重试: url=${url.substring(0, 80)}, msg=${error.message}`);
+          throw error as Error;
+        }
+
         const errCode = (error as Record<string, Object>)['code'];
         let errMsg: string = '';
         if (error instanceof Error) {
@@ -1788,9 +1907,13 @@ export class ImageCacheManager {
       }
 
       if (this.hasRemoteProviderCacheContext(options)) {
-        const cachedPath = await this.ensureRemoteProviderPageCached(url, options);
+        // 标记为预加载：走低优先级通道，积压时会被主动放弃，
+        // 避免开屏一次排队 9 页、把用户当前要看的页挤在后面。
+        const cachedPath = await this.ensureRemoteProviderPageCached(url, options, true);
         if (cachedPath && cachedPath.length > 0) {
           logger.debug(TAG, `远程源章节缓存预热完成: ${cachedPath.substring(0, 120)}`);
+        } else {
+          logger.debug(TAG, `远程源章节预取未完成（积压或失败），留给可见页按需加载: ${url.substring(0, 80)}`);
         }
         return;
       }

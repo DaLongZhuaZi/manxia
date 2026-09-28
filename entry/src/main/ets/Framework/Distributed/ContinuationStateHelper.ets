@@ -109,8 +109,15 @@ export class ContinuationStateHelper {
     const targetContext = (this.entryAbilityContext && context !== this.entryAbilityContext)
       ? this.entryAbilityContext
       : context;
+    // [合规] 接续阅读总开关关闭时，任何来源的"显示接续入口"请求都降级为隐藏，
+    // 保证关闭开关后系统接续入口不会残留（不影响应用其他功能）
+    const continuationEnabled = ContinuationReadingSettingsManager.getInstance().isContinuationEnabled();
+    const effectiveActive = active && continuationEnabled;
+    if (active && !continuationEnabled) {
+      logger.info(TAG, 'setMissionContinueState: 接续阅读总开关已关闭，接续入口降级为隐藏');
+    }
     try {
-      const state: AbilityConstant.ContinueState = active
+      const state: AbilityConstant.ContinueState = effectiveActive
         ? AbilityConstant.ContinueState.ACTIVE
         : AbilityConstant.ContinueState.INACTIVE;
       targetContext.setMissionContinueState(state).then(() => {
@@ -133,19 +140,32 @@ export class ContinuationStateHelper {
   }
 
   /**
-   * [修复] 激活接续入口（阅读器/听书前台场景调用）：
+   * 激活接续入口（阅读器/听书前台场景调用）：
    * 入口统一挂在入口 Ability 的 mission 上（见 setMissionContinueState 说明）；
    * 同时记住当前阅读器上下文（源端接续后自动拉起遥控器使用）。
-   * 权限在"触发接续"时（packContinuationWant）才做前置校验，此处异步确保权限就绪。
+   *
+   * [合规] 接续总开关关闭时不显示入口；权限缺失时只做静默检查并给出"功能不可用"提示，
+   * 绝不主动弹出授权弹窗。权限在"触发接续"时（packContinuationWant）才做前置校验。
    */
   public activateMissionContinueEntry(context: common.UIAbilityContext): void {
     this.activeReaderContext = context;
+
+    // [合规] 总开关关闭：不显示接续入口，并明确告知用户功能不可用
+    if (!ContinuationReadingSettingsManager.getInstance().isContinuationEnabled()) {
+      this.setMissionContinueState(context, false);
+      distributedPermissionManager.notifyContinuationUnavailable(context, 'disabled', '接续入口激活');
+      return;
+    }
+
+    // 入口按场景显示（保持可发现性），权限在"触发接续"时校验。
+    // [合规] 这里只做静默检查：权限缺失时提示用户原因与开启路径，绝不主动弹出授权弹窗
     this.setMissionContinueState(context, true);
-    void distributedPermissionManager.ensurePermission(context).then((granted: boolean) => {
+    void distributedPermissionManager.refreshPermissionState().then((granted: boolean): void => {
       if (granted) {
-        logger.info(TAG, '分布式数据同步权限就绪（接续入口场景）');
+        logger.info(TAG, '「设备发现和连接」权限就绪（接续入口场景）');
       } else {
-        logger.warn(TAG, '分布式数据同步权限未授权：入口已显示，触发接续将被拒绝并再次请求权限');
+        logger.warn(TAG, '未获取「设备发现和连接」权限：接续入口仍显示，但触发接续会被拒绝，已提示用户原因');
+        distributedPermissionManager.notifyContinuationUnavailable(context, 'permission_missing', '接续入口激活');
       }
     });
   }
@@ -153,7 +173,7 @@ export class ContinuationStateHelper {
   /**
    * 源端接续状态打包（EntryAbility 与阅读器/听书 Ability 共用）
    * @param wantParam 系统传入的接续参数容器（须写入业务状态）
-   * @param context 当前 Ability 上下文（用于权限请求弹窗）
+   * @param context 当前 Ability 上下文（用于展示"接续不可用"提示）
    * @param source 可选外部状态来源（如听书会话快照）；缺省使用 AppStorage currentRead*（阅读器）
    */
   public packContinuationWant(
@@ -161,11 +181,19 @@ export class ContinuationStateHelper {
     context: common.UIAbilityContext,
     source?: ContinuationPackSource
   ): AbilityConstant.OnContinueResult {
-    // [修复] 权限前置：进入接续流转前必须确保分布式数据同步权限完整，
-    // 未授权则拒绝流转并异步弹出权限请求（不进入接续状态）
+    // [合规] 接续阅读总开关关闭：不进入接续流转，并明确告知用户功能已关闭
+    if (!ContinuationReadingSettingsManager.getInstance().isContinuationEnabled()) {
+      logger.warn(TAG, 'packContinuationWant: 接续阅读总开关已关闭，拒绝进入接续流转');
+      distributedPermissionManager.notifyContinuationUnavailable(context, 'disabled', 'packContinuationWant', true);
+      return AbilityConstant.OnContinueResult.REJECT;
+    }
+
+    // [合规] 权限前置：未获取「设备发现和连接」权限时无法建立跨设备流转，
+    // 此处拒绝并明确告知用户"功能无法正常使用"及开启路径，
+    // 但绝不自动弹出授权弹窗（避免"频繁弹窗"，由用户在设置页主动开启）
     if (!distributedPermissionManager.isPermissionGrantedSync()) {
-      logger.warn(TAG, 'packContinuationWant: 分布式数据同步权限未授权，拒绝进入接续流转（异步请求权限中）');
-      void distributedPermissionManager.ensurePermission(context);
+      logger.warn(TAG, 'packContinuationWant: 未获取「设备发现和连接」权限，拒绝进入接续流转');
+      distributedPermissionManager.notifyContinuationUnavailable(context, 'permission_missing', 'packContinuationWant', true);
       return AbilityConstant.OnContinueResult.REJECT;
     }
 
@@ -252,13 +280,6 @@ export class ContinuationStateHelper {
       logger.info(TAG, `接续打包已附带独立连接通道地址: ${remoteControlLanIp}:${remoteControlLanPort}`);
     } else {
       logger.warn(TAG, '无法获取本机局域网IP，独立连接通道不可用（仅依赖分布式数据对象通道）');
-    }
-
-    // 未授权时异步提起权限请求（不阻塞本次流转；快照通道不依赖权限）
-    try {
-      void distributedPermissionManager.ensurePermission(context);
-    } catch (error) {
-      logger.warn(TAG, `接续时权限请求异常: ${String(error)}`);
     }
 
     // 触发全局接续事件（源端已不再弹窗询问，改为自动拉起遥控器；事件仅用于通知与日志）
@@ -510,7 +531,7 @@ export class ContinuationStateHelper {
     // 目标端权限确保 + 会话重试：权限未授权时 setSessionId 会以 201 失败，
     // 授权/组网就绪后通过 retryJoinSession 重建同步通道（遥控器连接的前提）。
     if (context) {
-      void distributedPermissionManager.ensurePermission(context).then((granted: boolean): void => {
+      void distributedPermissionManager.refreshPermissionState().then((granted: boolean): void => {
         if (granted) {
           logger.info(TAG, 'restoreContinuationState: 目标端分布式数据同步权限就绪，检查会话是否需要重建');
           distributedDataSyncManager.retryJoinSession();

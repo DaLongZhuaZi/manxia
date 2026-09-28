@@ -10,6 +10,7 @@ import { SharedPageBackgroundLayer } from 'manxia_theme/src/main/ets/Framework/C
 import { logger } from 'manxia_core/src/main/ets/Utils/Logger';
 import { ContinuationCacheManager } from '../../Framework/Distributed/ContinuationCacheManager';
 import { ContinuationReadingSettingsManager } from '../../Framework/Distributed/ContinuationReadingSettingsManager';
+import { distributedPermissionManager } from '../../Framework/Distributed/DistributedPermissionManager';
 import {
   ContinuationReadingSettings,
   ContinuationTransferMode
@@ -29,12 +30,17 @@ export struct ContinuationReadingSettingsPage {
   @State private themeState: ThemeAwareState = new ThemeAwareState();
   @State private fontState: FontAwareState = new FontAwareState();
   @State private settings: ContinuationReadingSettings = {
+    enabled: true,
     readOnlyEnabled: true,
     importToLibraryEnabled: true,
     defaultMode: ContinuationTransferMode.READ_ONLY
   };
   @State private cacheSizeBytes: number = 0;
   @State private isClearingCache: boolean = false;
+  /** 「设备发现和连接」权限是否已开启 */
+  @State private permissionGranted: boolean = false;
+  /** 权限请求是否在途（防止重复弹窗） */
+  @State private permissionRequesting: boolean = false;
   @State private responsiveContentPadding: number = 16;
   @State private responsiveMaxContentWidth: number = 1200;
   private deviceManager: DeviceAdaptationManager = DeviceAdaptationManager.getInstance();
@@ -43,6 +49,7 @@ export struct ContinuationReadingSettingsPage {
   private cacheManager: ContinuationCacheManager = ContinuationCacheManager.getInstance();
 
   aboutToAppear(): void {
+    void this.refreshPermissionState();
     this.updateResponsiveLayout();
     this.deviceChangeListener = (_deviceInfo: DeviceInfo): void => {
       this.updateResponsiveLayout();
@@ -70,6 +77,7 @@ export struct ContinuationReadingSettingsPage {
       await this.cacheManager.initialize(context);
       this.settings = this.settingsManager.getSnapshot();
       this.cacheSizeBytes = await this.cacheManager.getCacheSize();
+      await this.refreshPermissionState();
     } catch (error) {
       logger.error(TAG, `加载接续阅读设置失败: ${String(error)}`);
       this.getUIContext().getPromptAction().showToast({ message: '接续阅读设置加载失败' });
@@ -106,6 +114,105 @@ export struct ContinuationReadingSettingsPage {
         this.responsiveMaxContentWidth = 1200;
         break;
     }
+  }
+
+  /**
+   * 接续能力当前是否可用：需要总开关开启 **且** 已获得「设备发现和连接」权限。
+   * 任一条件不满足时，接续方式/默认方式配置区置灰，并明确提示"功能无法正常使用"。
+   */
+  private isContinuationUsable(): boolean {
+    return this.settings.enabled && this.permissionGranted;
+  }
+
+  private getUnavailableReasonText(): string {
+    if (!this.settings.enabled) {
+      return '接续阅读总开关已关闭，跨设备接续功能无法正常使用。';
+    }
+    if (!this.permissionGranted) {
+      return '未开启「设备发现和连接」权限，跨设备接续功能无法正常使用。';
+    }
+    return '';
+  }
+
+  /**
+   * 静默刷新「设备发现和连接」权限状态（不弹窗、不跳转设置）。
+   */
+  private async refreshPermissionState(): Promise<void> {
+    try {
+      this.permissionGranted = await distributedPermissionManager.isPermissionGranted();
+    } catch (error) {
+      logger.warn(TAG, `刷新「设备发现和连接」权限状态失败: ${String(error)}`);
+      this.permissionGranted = false;
+    }
+  }
+
+  /**
+   * 接续阅读总开关变更。
+   * [合规] 关闭时立即停止接续能力与权限申请；开启时不自动弹权限弹窗，
+   * 由下方权限卡片中的"开启权限"按钮（用户主动点击）发起。
+   */
+  private async onMasterSwitchChange(value: boolean): Promise<void> {
+    try {
+      await this.settingsManager.setContinuationEnabled(value);
+      this.settings = this.settingsManager.getSnapshot();
+      if (!value) {
+        distributedPermissionManager.resetUnavailableHintThrottle();
+        this.getUIContext().getPromptAction().showToast({
+          message: '接续阅读已关闭，不再申请「设备发现和连接」权限'
+        });
+        return;
+      }
+      await this.refreshPermissionState();
+      if (!this.permissionGranted) {
+        this.getUIContext().getPromptAction().showToast({
+          message: '还需开启「设备发现和连接」权限才能使用跨设备接续'
+        });
+      }
+    } catch (error) {
+      logger.error(TAG, `更新接续阅读总开关失败: ${String(error)}`);
+      this.settings = this.settingsManager.getSnapshot();
+      this.getUIContext().getPromptAction().showToast({ message: '设置保存失败' });
+    }
+  }
+
+  /**
+   * 用户主动点击"开启权限"：此时才发起系统授权弹窗。
+   */
+  private async onRequestPermissionByUser(): Promise<void> {
+    if (this.permissionRequesting) {
+      return;
+    }
+    const context = this.resolveAbilityContext();
+    if (!context) {
+      this.getUIContext().getPromptAction().showToast({ message: '无法获取页面上下文，请稍后重试' });
+      return;
+    }
+    this.permissionRequesting = true;
+    try {
+      const result = await distributedPermissionManager.requestPermission(context, 'ContinuationReadingSettingsPage');
+      let message: string = '未授予权限，跨设备接续阅读暂时无法使用';
+      if (result === 'granted') {
+        message = '「设备发现和连接」权限已开启';
+      } else if (result === 'busy') {
+        message = '权限请求正在处理中，请稍候再试';
+      }
+      this.getUIContext().getPromptAction().showToast({ message: message });
+      await this.refreshPermissionState();
+    } finally {
+      this.permissionRequesting = false;
+    }
+  }
+
+  /**
+   * 用户主动点击"前往系统设置"：跳转系统设置应用信息页开启权限。
+   */
+  private onOpenPermissionSettings(): void {
+    const context = this.resolveAbilityContext();
+    if (!context) {
+      this.getUIContext().getPromptAction().showToast({ message: '无法打开系统设置' });
+      return;
+    }
+    distributedPermissionManager.openAppPermissionSettings(context);
   }
 
   private async setModeEnabled(mode: ContinuationTransferMode, enabled: boolean): Promise<void> {
@@ -194,6 +301,9 @@ export struct ContinuationReadingSettingsPage {
         .accessibilityText(title)
         .selectedColor(ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme))
         .switchPointColor(Color.White)
+        // 接续能力不可用（总开关关闭或缺少「设备发现和连接」权限）时不允许配置
+        .enabled(this.isContinuationUsable())
+        .opacity(this.isContinuationUsable() ? 1.0 : 0.5)
         .onChange((value: boolean) => {
           void this.setModeEnabled(mode, value);
         })
@@ -283,24 +393,117 @@ export struct ContinuationReadingSettingsPage {
     })
   }
 
+  /**
+   * 接续阅读总开关（本页唯一的"功能开关"）。
+   * 关闭后：不再使用跨设备接续、不再申请「设备发现和连接」权限，也不影响应用其他功能。
+   */
+  @Builder
+  private buildMasterSwitchRow() {
+    Row() {
+      Column({ space: 4 }) {
+        Text('跨设备接续阅读')
+          .fontSize(16)
+          .fontWeight(FontWeight.Medium)
+          .fontFamily(this.appFontFamily)
+          .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
+        Text('关闭后不再使用跨设备接续，也不会申请「设备发现和连接」权限；不影响其他功能。')
+          .fontSize(13)
+          .fontFamily(this.appFontFamily)
+          .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_muted', this.themeState.currentTheme))
+          .maxLines(2)
+          .textOverflow({ overflow: TextOverflow.Ellipsis })
+      }
+      .layoutWeight(1)
+      .alignItems(HorizontalAlign.Start)
+
+      Toggle({ type: ToggleType.Switch, isOn: this.settings.enabled })
+        .accessibilityText('跨设备接续阅读')
+        .selectedColor(ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme))
+        .switchPointColor(Color.White)
+        .onChange((value: boolean) => {
+          void this.onMasterSwitchChange(value);
+        })
+    }
+    .width('100%')
+    .padding({ top: 14, bottom: 14 })
+  }
+
+  /**
+   * 「设备发现和连接」权限状态卡片：明确说明缺少权限会导致接续功能无法正常使用，
+   * 并提供由用户主动触发的"开启权限 / 前往系统设置"入口（不做任何自动弹窗）。
+   */
+  @Builder
+  private buildPermissionStatusSection() {
+    Column({ space: 8 }) {
+      Row({ space: 8 }) {
+        Text('「设备发现和连接」权限')
+          .fontSize(15)
+          .fontWeight(FontWeight.Medium)
+          .fontFamily(this.appFontFamily)
+          .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
+          .layoutWeight(1)
+        Text(this.permissionGranted ? '已开启' : '未开启')
+          .fontSize(13)
+          .fontFamily(this.appFontFamily)
+          .fontColor(this.permissionGranted
+            ? ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme)
+            : ThemeAwareHelper.getTestManagementThemedColor('text_muted', this.themeState.currentTheme))
+      }
+      .width('100%')
+
+      Text(this.permissionGranted
+        ? '权限已开启，跨设备接续阅读可以正常使用。'
+        : '未开启该权限时，接续到其他设备继续阅读、跨设备翻页等功能无法正常使用；应用其他功能不受影响。')
+        .fontSize(13)
+        .fontFamily(this.appFontFamily)
+        .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_muted', this.themeState.currentTheme))
+        .width('100%')
+        .textAlign(TextAlign.Start)
+
+      if (!this.permissionGranted) {
+        Row({ space: 12 }) {
+          Button(this.permissionRequesting ? '正在请求...' : '开启权限')
+            .fontSize(14)
+            .fontFamily(this.appFontFamily)
+            .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_white', this.themeState.currentTheme))
+            .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('accent_blue', this.themeState.currentTheme))
+            .borderRadius(10)
+            .height(36)
+            .enabled(!this.permissionRequesting)
+            .opacity(this.permissionRequesting ? 0.6 : 1.0)
+            .accessibilityText('开启设备发现和连接权限')
+            .onClick(() => {
+              void this.onRequestPermissionByUser();
+            })
+
+          Button('前往系统设置')
+            .fontSize(14)
+            .fontFamily(this.appFontFamily)
+            .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
+            .backgroundColor($r('app.color.background_secondary'))
+            .borderRadius(10)
+            .height(36)
+            .accessibilityText('前往系统设置开启权限')
+            .onClick(() => {
+              this.onOpenPermissionSettings();
+            })
+        }
+        .width('100%')
+      }
+    }
+    .width('100%')
+    .padding({ top: 14, bottom: 14 })
+    .alignItems(HorizontalAlign.Start)
+  }
+
   @Builder
   private buildContent() {
     Column({ space: 18 }) {
-      this.buildSectionHeading('接续方式', '开启可用方式后，发起接续时会使用下面选定的默认方式。')
+      this.buildSectionHeading('接续阅读', '跨设备接续阅读是可选功能，关闭后不影响应用其他功能使用。')
       Column() {
-        this.buildSettingRow(
-          '仅阅读接续',
-          '内容仅保存在接收设备缓存，不加入书库。',
-          this.settings.readOnlyEnabled,
-          ContinuationTransferMode.READ_ONLY
-        )
+        this.buildMasterSwitchRow()
         Divider().color($r('sys.color.comp_divider'))
-        this.buildSettingRow(
-          '导入书库+接续',
-          '完整传输内容并导入书库后继续阅读。',
-          this.settings.importToLibraryEnabled,
-          ContinuationTransferMode.IMPORT_TO_LIBRARY
-        )
+        this.buildPermissionStatusSection()
       }
       .width('100%')
       .padding({ left: 16, right: 16 })
@@ -324,23 +527,67 @@ export struct ContinuationReadingSettingsPage {
         offsetY: 8
       })
 
-      this.buildSectionHeading('默认方式', '关闭当前默认方式时，会自动切换到仍启用的方式。')
+      this.buildSectionHeading('接续方式', this.isContinuationUsable()
+        ? '开启可用方式后，发起接续时会使用下面选定的默认方式。'
+        : `${this.getUnavailableReasonText()}请先开启上方总开关并授予权限。`)
+      Column() {
+        this.buildSettingRow(
+          '仅阅读接续',
+          '内容仅保存在接收设备缓存，不加入书库。',
+          this.settings.readOnlyEnabled,
+          ContinuationTransferMode.READ_ONLY
+        )
+        Divider().color($r('sys.color.comp_divider'))
+        this.buildSettingRow(
+          '导入书库+接续',
+          '完整传输内容并导入书库后继续阅读。',
+          this.settings.importToLibraryEnabled,
+          ContinuationTransferMode.IMPORT_TO_LIBRARY
+        )
+      }
+      .width('100%')
+      .padding({ left: 16, right: 16 })
+      .opacity(this.isContinuationUsable() ? 1.0 : 0.55)
+      .backgroundColor(SettingsPanelSurfaceHelper.getBackground(this.themeState.currentTheme))
+      .linearGradient(SettingsPanelSurfaceHelper.getSurfaceGradient(this.themeState.currentTheme))
+      .backgroundBlurStyle(
+        SettingsPanelSurfaceHelper.getBlurStyle(this.themeState.currentTheme),
+        SettingsPanelSurfaceHelper.getBlurOptions(this.themeState.currentTheme)
+      )
+      .backgroundEffect(SettingsPanelSurfaceHelper.getBackgroundEffect(this.themeState.currentTheme))
+      .borderRadius(SettingsPanelSurfaceHelper.getRadius(this.themeState.currentTheme))
+      .clip(true)
+      .border({
+        width: SettingsPanelSurfaceHelper.getBorderWidth(this.themeState.currentTheme),
+        color: SettingsPanelSurfaceHelper.getBorderColor(this.themeState.currentTheme)
+      })
+      .shadow({
+        radius: SettingsPanelSurfaceHelper.getRadius(this.themeState.currentTheme) + 4,
+        color: SettingsPanelSurfaceHelper.getShadowColor(this.themeState.currentTheme),
+        offsetX: 0,
+        offsetY: 8
+      })
+
+      this.buildSectionHeading('默认方式', this.isContinuationUsable()
+        ? '关闭当前默认方式时，会自动切换到仍启用的方式。'
+        : '接续功能不可用，无法选择默认方式。')
       Column({ space: 4 }) {
         this.buildModeOption(
           ContinuationTransferMode.READ_ONLY,
           '仅阅读',
           '文件放在接收设备缓存，不加入书库。',
-          this.settings.readOnlyEnabled
+          this.isContinuationUsable() && this.settings.readOnlyEnabled
         )
         this.buildModeOption(
           ContinuationTransferMode.IMPORT_TO_LIBRARY,
           '导入书库',
           '完整导入书籍，再按原位置继续阅读。',
-          this.settings.importToLibraryEnabled
+          this.isContinuationUsable() && this.settings.importToLibraryEnabled
         )
       }
       .width('100%')
       .padding(8)
+      .opacity(this.isContinuationUsable() ? 1.0 : 0.55)
       .backgroundColor(SettingsPanelSurfaceHelper.getBackground(this.themeState.currentTheme))
       .linearGradient(SettingsPanelSurfaceHelper.getSurfaceGradient(this.themeState.currentTheme))
       .backgroundBlurStyle(

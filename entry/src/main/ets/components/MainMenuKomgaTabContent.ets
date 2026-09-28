@@ -1,4 +1,4 @@
-﻿import { SafeUtils } from 'manxia_core/src/main/ets/Utils/SafeUtils';
+import { SafeUtils } from 'manxia_core/src/main/ets/Utils/SafeUtils';
 import { preferences } from '@kit.ArkData';
 import { promptAction } from '@kit.ArkUI';
 import { common } from '@kit.AbilityKit';
@@ -1047,7 +1047,9 @@ export struct MainMenuKomgaTabContent {
           src: this.getCoverUrl(item),
           imageWidth: '100%',
           imageHeight: 168,
-          objectFit: ImageFit.Cover,
+          // 固定高度 + 随列数变化的宽度下，Cover 会按宽度铺满并裁掉封面上下约四分之一；
+          // 改为 Contain 完整显示整张封面（两侧留白），符合"直接显示"的预期。
+          objectFit: ImageFit.Contain,
           imgBorderRadius: 10,
           requestHeaders: this.executor.getImageHeaders(item.instanceId),
           cacheKey: this.getItemCacheKey(item)
@@ -1089,7 +1091,8 @@ export struct MainMenuKomgaTabContent {
         src: this.getCoverUrl(item),
         imageWidth: 60,
         imageHeight: 84,
-        objectFit: ImageFit.Cover,
+        // 同网格卡片：列表缩略图也按完整封面显示，避免裁切。
+        objectFit: ImageFit.Contain,
         imgBorderRadius: 8,
         requestHeaders: this.executor.getImageHeaders(item.instanceId),
         cacheKey: this.getItemCacheKey(item)

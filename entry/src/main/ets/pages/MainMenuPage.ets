@@ -2217,10 +2217,6 @@ struct MainMenuPage {
   }
 
   aboutToAppear() {
-    // 主页已就绪：解除「设备发现和连接」权限后台检查点抑制。
-    // 首次启动时新手引导的权限步骤负责首次请求（引导完成后进入主页即解除）；
-    // 非首次启动（无引导）直接进入主页，由本页 onPageShow 检查点接管请求
-    distributedPermissionManager.setOnboardingGuideActive(false);
     uiContextManager.setUIContext(this.uiContext);
     void FontManager.getInstance().registerCustomFontsForCurrentUIContext();
     this.startNavStackReturnWatch();
@@ -11314,31 +11310,34 @@ struct MainMenuPage {
    * 使用静默刷新避免闪屏
    */
   /**
-   * [修复] 稳定提起分布式数据同步权限请求（主页检查点）
-   * 窗口已完全就绪，弹窗不会被启动时序打断；未授权时每次回到主页都会再次请求
-   * （权限被系统固定拒绝时会自动引导前往设置开启）
+   * [合规修复] 「设备发现和连接」权限的主页静默检查点。
+   *
+   * 该权限只服务于可选的"跨设备接续阅读"能力，主页**不申请权限**：
+   * 不弹授权弹窗、不跳转系统设置，用户拒绝后回到主页不会被打扰，应用也不会退出或关闭。
+   * 权限申请只发生在用户主动点击时（引导页权限步骤、接续阅读设置页、接续失败提示卡片）。
    */
-  private requestDistributedDataSyncPermission(): void {
+  private refreshDistributedDataSyncPermissionState(): void {
     try {
       const hostContext = this.getUIContext().getHostContext() as common.UIAbilityContext;
       if (!hostContext) {
-        logger.warn(TAG, '分布式权限请求跳过：无法获取 UIAbilityContext');
+        logger.warn(TAG, '「设备发现和连接」权限检查跳过：无法获取 UIAbilityContext');
         return;
       }
       setTimeout(() => {
-        void distributedPermissionManager.ensurePermission(hostContext);
+        void distributedPermissionManager.refreshPermissionState().then((granted: boolean): void => {
+          logger.debug(TAG, `「设备发现和连接」权限静默检查完成: granted=${granted}`);
+        });
       }, 600);
     } catch (error) {
-      logger.warn(TAG, `分布式权限请求异常: ${String(error)}`);
+      logger.warn(TAG, `「设备发现和连接」权限检查异常: ${String(error)}`);
     }
   }
 
   onPageShow(): void {
     logger.lifecycle(TAG, '📱 页面显示，静默刷新数据');
-    // [修复] 主页显示是窗口完全就绪的可靠时机：稳定提起分布式数据同步权限请求。
-    // DistributedPermissionManager 无冷却：未授权即请求；权限被系统固定拒绝时
-    // 自动引导前往设置开启；新手引导期间由引导页权限步骤统一负责（此处会被抑制）。
-    this.requestDistributedDataSyncPermission();
+    // [合规修复] 主页显示只做「设备发现和连接」权限的静默检查（不弹窗、不跳设置）：
+    // 该权限服务于可选的跨设备接续阅读，拒绝后应用其他功能完全不受影响。
+    this.refreshDistributedDataSyncPermissionState();
     this.scheduleLegadoCloudUpdateCheckAfterShow('onPageShow');
     void this.holdingAwarenessManager.resume();
     this.logHoldingAwareFloatingSearchDecision('页面显示');

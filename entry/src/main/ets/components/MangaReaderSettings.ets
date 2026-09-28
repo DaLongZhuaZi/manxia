@@ -1,4 +1,4 @@
-﻿// 文件路径: src/main/ets/components/MangaReaderSettings.ets
+// 文件路径: src/main/ets/components/MangaReaderSettings.ets
 /**
  * 漫画阅读器设置面板组件
  * 提供阅读模式、阅读方向、亮度调节、滤镜效果、页面间距等配置选项
@@ -50,6 +50,8 @@ interface MangaReaderSettingsCallbacks {
 
 @Component
 export struct MangaReaderSettings {
+  /** 跟随全局字体设置：本项目统一通过 @StorageLink('appFontFamily') 广播字体 */
+  @StorageLink('appFontFamily') appFontFamily: string = 'HarmonyOS Sans';
   @Prop readingSettings: ReadingSettings;
   @Prop isVisible: boolean;
   @Prop callbacks: MangaReaderSettingsCallbacks;
@@ -629,6 +631,7 @@ export struct MangaReaderSettings {
   @Builder
   buildSectionTitle(title: string) {
     Text(title)
+      .fontFamily(this.appFontFamily)
       .fontSize(16)
       .fontWeight(FontWeight.Bold)
       .fontColor($r('app.color.text_primary'))
@@ -643,6 +646,7 @@ export struct MangaReaderSettings {
   buildReadingModeSelector() {
     Column() {
       Text('阅读模式')
+        .fontFamily(this.appFontFamily)
         .fontSize(16)
         .fontWeight(FontWeight.Medium)
         .fontColor($r('app.color.text_primary'))
@@ -660,6 +664,7 @@ export struct MangaReaderSettings {
               $r('app.color.accent') : $r('app.color.text_secondary'))
 
           Text('左→右')
+            .fontFamily(this.appFontFamily)
             .fontSize(10)
             .fontColor(this.currentSettings.readingMode === ReadingMode.SINGLE_PAGE_LTR ? 
               $r('app.color.accent') : $r('app.color.text_secondary'))
@@ -681,6 +686,7 @@ export struct MangaReaderSettings {
               $r('app.color.accent') : $r('app.color.text_secondary'))
 
           Text('右→左')
+            .fontFamily(this.appFontFamily)
             .fontSize(10)
             .fontColor(this.currentSettings.readingMode === ReadingMode.SINGLE_PAGE_RTL ? 
               $r('app.color.accent') : $r('app.color.text_secondary'))
@@ -702,6 +708,7 @@ export struct MangaReaderSettings {
               $r('app.color.accent') : $r('app.color.text_secondary'))
 
           Text('上→下')
+            .fontFamily(this.appFontFamily)
             .fontSize(10)
             .fontColor(this.currentSettings.readingMode === ReadingMode.SINGLE_PAGE_TTB ? 
               $r('app.color.accent') : $r('app.color.text_secondary'))
@@ -729,6 +736,7 @@ export struct MangaReaderSettings {
               $r('app.color.accent') : $r('app.color.text_secondary'))
 
           Text('双页')
+            .fontFamily(this.appFontFamily)
             .fontSize(10)
             .fontColor(this.currentSettings.readingMode === ReadingMode.DOUBLE_PAGE ? 
               $r('app.color.accent') : $r('app.color.text_secondary'))
@@ -750,6 +758,7 @@ export struct MangaReaderSettings {
               $r('app.color.accent') : $r('app.color.text_secondary'))
 
           Text('条漫')
+            .fontFamily(this.appFontFamily)
             .fontSize(10)
             .fontColor(this.currentSettings.readingMode === ReadingMode.WEBTOON ? 
               $r('app.color.accent') : $r('app.color.text_secondary'))
@@ -771,6 +780,7 @@ export struct MangaReaderSettings {
               $r('app.color.accent') : $r('app.color.text_secondary'))
 
           Text('间隙')
+            .fontFamily(this.appFontFamily)
             .fontSize(10)
             .fontColor(this.currentSettings.readingMode === ReadingMode.WEBTOON_WITH_GAP ? 
               $r('app.color.accent') : $r('app.color.text_secondary'))
@@ -797,6 +807,7 @@ export struct MangaReaderSettings {
   buildReadingDirectionSelector() {
     Column() {
       Text('阅读方向')
+        .fontFamily(this.appFontFamily)
         .fontSize(16)
         .fontWeight(FontWeight.Medium)
         .fontColor($r('app.color.text_primary'))
@@ -805,6 +816,7 @@ export struct MangaReaderSettings {
 
       if (this.getReadingDirectionHint().length > 0) {
         Text(this.getReadingDirectionHint())
+          .fontFamily(this.appFontFamily)
           .fontSize(12)
           .fontColor($r('app.color.text_secondary'))
           .width('100%')
@@ -821,6 +833,7 @@ export struct MangaReaderSettings {
               $r('app.color.accent') : $r('app.color.text_secondary'))
 
           Text('左→右')
+            .fontFamily(this.appFontFamily)
             .fontSize(12)
             .fontColor(this.getSelectedReadingDirection() === ReadingDirection.LEFT_TO_RIGHT ? 
               $r('app.color.accent') : $r('app.color.text_secondary'))
@@ -847,6 +860,7 @@ export struct MangaReaderSettings {
               $r('app.color.accent') : $r('app.color.text_secondary'))
 
           Text('右→左')
+            .fontFamily(this.appFontFamily)
             .fontSize(12)
             .fontColor(this.getSelectedReadingDirection() === ReadingDirection.RIGHT_TO_LEFT ? 
               $r('app.color.accent') : $r('app.color.text_secondary'))
@@ -873,6 +887,7 @@ export struct MangaReaderSettings {
               $r('app.color.accent') : $r('app.color.text_secondary'))
 
           Text('从上到下')
+            .fontFamily(this.appFontFamily)
             .fontSize(12)
             .fontColor(this.getSelectedReadingDirection() === ReadingDirection.TOP_TO_BOTTOM ? 
               $r('app.color.accent') : $r('app.color.text_secondary'))
@@ -904,6 +919,7 @@ export struct MangaReaderSettings {
   buildFilterToggle() {
     Row() {
       Text('启用滤镜')
+        .fontFamily(this.appFontFamily)
         .fontSize(16)
         .fontWeight(FontWeight.Medium)
         .fontColor($r('app.color.text_primary'))
@@ -931,12 +947,14 @@ export struct MangaReaderSettings {
     Column() {
       Row() {
         Text('滤镜亮度')
+          .fontFamily(this.appFontFamily)
           .fontSize(14)
           .fontColor($r('app.color.text_primary'))
 
         Blank()
 
         Text(`${this.currentSettings.filterSettings.brightness}%`)
+          .fontFamily(this.appFontFamily)
           .fontSize(14)
           .fontColor($r('app.color.text_secondary'))
       }
@@ -972,12 +990,14 @@ export struct MangaReaderSettings {
     Column() {
       Row() {
         Text('对比度')
+          .fontFamily(this.appFontFamily)
           .fontSize(14)
           .fontColor($r('app.color.text_primary'))
 
         Blank()
 
         Text(`${this.currentSettings.filterSettings.contrast}%`)
+          .fontFamily(this.appFontFamily)
           .fontSize(14)
           .fontColor($r('app.color.text_secondary'))
       }
@@ -1013,12 +1033,14 @@ export struct MangaReaderSettings {
     Column() {
       Row() {
         Text('饱和度')
+          .fontFamily(this.appFontFamily)
           .fontSize(14)
           .fontColor($r('app.color.text_primary'))
 
         Blank()
 
         Text(`${this.currentSettings.filterSettings.saturation}%`)
+          .fontFamily(this.appFontFamily)
           .fontSize(14)
           .fontColor($r('app.color.text_secondary'))
       }
@@ -1054,12 +1076,14 @@ export struct MangaReaderSettings {
     Column() {
       Row() {
         Text('复古色调')
+          .fontFamily(this.appFontFamily)
           .fontSize(14)
           .fontColor($r('app.color.text_primary'))
 
         Blank()
 
         Text(`${this.currentSettings.filterSettings.sepia}%`)
+          .fontFamily(this.appFontFamily)
           .fontSize(14)
           .fontColor($r('app.color.text_secondary'))
       }
@@ -1096,6 +1120,7 @@ export struct MangaReaderSettings {
       // 灰度模式
       Row() {
         Text('灰度模式')
+          .fontFamily(this.appFontFamily)
           .fontSize(14)
           .fontColor($r('app.color.text_primary'))
         
@@ -1116,6 +1141,7 @@ export struct MangaReaderSettings {
       // 反色模式
       Row() {
         Text('反色模式')
+          .fontFamily(this.appFontFamily)
           .fontSize(14)
           .fontColor($r('app.color.text_primary'))
         
@@ -1143,6 +1169,7 @@ export struct MangaReaderSettings {
   @Builder
   buildFilterResetButton() {
     Button('重置滤镜')
+      .fontFamily(this.appFontFamily)
       .fontSize(14)
       .fontColor($r('app.color.accent'))
       .backgroundColor(Color.Transparent)
@@ -1196,6 +1223,7 @@ export struct MangaReaderSettings {
     Column() {
       Row() {
         Text('屏幕亮度')
+          .fontFamily(this.appFontFamily)
           .fontSize(16)
           .fontWeight(FontWeight.Medium)
           .fontColor($r('app.color.text_primary'))
@@ -1203,6 +1231,7 @@ export struct MangaReaderSettings {
         Blank()
 
         Text(`${Math.round(this.currentSettings.brightness * 100)}%`)
+          .fontFamily(this.appFontFamily)
           .fontSize(14)
           .fontColor($r('app.color.text_secondary'))
       }
@@ -1246,6 +1275,7 @@ export struct MangaReaderSettings {
     Column() {
       Row() {
         Text('页面间距')
+          .fontFamily(this.appFontFamily)
           .fontSize(16)
           .fontWeight(FontWeight.Medium)
           .fontColor($r('app.color.text_primary'))
@@ -1253,6 +1283,7 @@ export struct MangaReaderSettings {
         Blank()
 
         Text(`${this.currentSettings.pageSpacing}px`)
+          .fontFamily(this.appFontFamily)
           .fontSize(14)
           .fontColor($r('app.color.text_secondary'))
       }
@@ -1282,6 +1313,7 @@ export struct MangaReaderSettings {
     Column() {
       Row() {
         Text('跳过前情提要')
+          .fontFamily(this.appFontFamily)
           .fontSize(16)
           .fontWeight(FontWeight.Medium)
           .fontColor($r('app.color.text_primary'))
@@ -1291,6 +1323,7 @@ export struct MangaReaderSettings {
         Text(this.currentSettings.skipIntroPages > 0 
           ? `${this.currentSettings.skipIntroPages}页` 
           : '不跳过')
+          .fontFamily(this.appFontFamily)
           .fontSize(14)
           .fontColor($r('app.color.text_secondary'))
       }
@@ -1320,6 +1353,7 @@ export struct MangaReaderSettings {
     Column({ space: 8 }) {
       Row() {
         Text('上下专属')
+          .fontFamily(this.appFontFamily)
           .fontSize(textSize)
           .fontColor($r('app.color.accent'))
       }
@@ -1330,6 +1364,7 @@ export struct MangaReaderSettings {
       .justifyContent(FlexAlign.Center)
 
       Text('上下双页使用触顶/触底翻页，只支持专属上下滑动动画。')
+        .fontFamily(this.appFontFamily)
         .fontSize(12)
         .fontColor($r('app.color.text_secondary'))
         .width('100%')
@@ -1341,6 +1376,7 @@ export struct MangaReaderSettings {
   buildPageTurnAnimationSettings() {
     Column() {
       Text('翻页动画')
+        .fontFamily(this.appFontFamily)
         .fontSize(16)
         .fontWeight(FontWeight.Medium)
         .fontColor($r('app.color.text_primary'))
@@ -1354,6 +1390,7 @@ export struct MangaReaderSettings {
         // 无动画
         Column() {
           Text('无')
+            .fontFamily(this.appFontFamily)
             .fontSize(12)
             .fontColor(this.currentSettings.pageTurnAnimation === PageTurnAnimationType.NONE ? 
               $r('app.color.accent') : $r('app.color.text_secondary'))
@@ -1368,6 +1405,7 @@ export struct MangaReaderSettings {
         // 滑动
         Column() {
           Text('滑动')
+            .fontFamily(this.appFontFamily)
             .fontSize(12)
             .fontColor(this.currentSettings.pageTurnAnimation === PageTurnAnimationType.SLIDE ? 
               $r('app.color.accent') : $r('app.color.text_secondary'))
@@ -1382,6 +1420,7 @@ export struct MangaReaderSettings {
         // 淡入淡出
         Column() {
           Text('淡入淡出')
+            .fontFamily(this.appFontFamily)
             .fontSize(12)
             .fontColor(this.currentSettings.pageTurnAnimation === PageTurnAnimationType.FADE ? 
               $r('app.color.accent') : $r('app.color.text_secondary'))
@@ -1401,6 +1440,7 @@ export struct MangaReaderSettings {
         // 卷页
         Column() {
           Text('卷页')
+            .fontFamily(this.appFontFamily)
             .fontSize(12)
             .fontColor(this.currentSettings.pageTurnAnimation === PageTurnAnimationType.CURL ? 
               $r('app.color.accent') : $r('app.color.text_secondary'))
@@ -1415,6 +1455,7 @@ export struct MangaReaderSettings {
         // 缩放
         Column() {
           Text('缩放')
+            .fontFamily(this.appFontFamily)
             .fontSize(12)
             .fontColor(this.currentSettings.pageTurnAnimation === PageTurnAnimationType.ZOOM ? 
               $r('app.color.accent') : $r('app.color.text_secondary'))
@@ -1429,6 +1470,7 @@ export struct MangaReaderSettings {
         // 翻转
         Column() {
           Text('翻转')
+            .fontFamily(this.appFontFamily)
             .fontSize(12)
             .fontColor(this.currentSettings.pageTurnAnimation === PageTurnAnimationType.FLIP ? 
               $r('app.color.accent') : $r('app.color.text_secondary'))
@@ -1449,6 +1491,7 @@ export struct MangaReaderSettings {
         // 立方体
         Column() {
           Text('立方体')
+            .fontFamily(this.appFontFamily)
             .fontSize(12)
             .fontColor(this.currentSettings.pageTurnAnimation === PageTurnAnimationType.CUBE ? 
               $r('app.color.accent') : $r('app.color.text_secondary'))
@@ -1463,6 +1506,7 @@ export struct MangaReaderSettings {
         // 覆盖
         Column() {
           Text('覆盖')
+            .fontFamily(this.appFontFamily)
             .fontSize(12)
             .fontColor(this.currentSettings.pageTurnAnimation === PageTurnAnimationType.COVER ? 
               $r('app.color.accent') : $r('app.color.text_secondary'))
@@ -1477,6 +1521,7 @@ export struct MangaReaderSettings {
         // 景深
         Column() {
           Text('景深')
+            .fontFamily(this.appFontFamily)
             .fontSize(12)
             .fontColor(this.currentSettings.pageTurnAnimation === PageTurnAnimationType.DEPTH ? 
               $r('app.color.accent') : $r('app.color.text_secondary'))
@@ -1496,9 +1541,11 @@ export struct MangaReaderSettings {
         Column() {
           Row() {
             Text('卷页不透明度')
+              .fontFamily(this.appFontFamily)
               .fontSize(14)
               .fontColor($r('app.color.text_secondary'))
             Text(`${this.currentSettings.curlBackOpacity ?? 90}%`)
+              .fontFamily(this.appFontFamily)
               .fontSize(14)
               .fontColor($r('app.color.accent'))
           }
@@ -1564,6 +1611,7 @@ export struct MangaReaderSettings {
   buildDoublePagePortraitLayoutSettings() {
     Column() {
       Text('双页竖屏组合')
+        .fontFamily(this.appFontFamily)
         .fontSize(16)
         .fontColor($r('app.color.text_primary'))
         .margin({ bottom: 12 })
@@ -1572,6 +1620,7 @@ export struct MangaReaderSettings {
         // 上下组合
         Column() {
           Text('上下组合')
+            .fontFamily(this.appFontFamily)
             .fontSize(12)
             .fontColor((this.currentSettings.doublePagePortraitLayout || DoublePagePortraitLayout.VERTICAL) === DoublePagePortraitLayout.VERTICAL ? 
               $r('app.color.accent') : $r('app.color.text_secondary'))
@@ -1586,6 +1635,7 @@ export struct MangaReaderSettings {
         // 左右组合
         Column() {
           Text('左右组合')
+            .fontFamily(this.appFontFamily)
             .fontSize(12)
             .fontColor(this.currentSettings.doublePagePortraitLayout === DoublePagePortraitLayout.HORIZONTAL ? 
               $r('app.color.accent') : $r('app.color.text_secondary'))
@@ -1615,9 +1665,11 @@ export struct MangaReaderSettings {
       Row() {
         Column() {
           Text('显示页面信息')
+            .fontFamily(this.appFontFamily)
             .fontSize(16)
             .fontColor($r('app.color.text_primary'))
           Text('在页面上显示当前页码')
+            .fontFamily(this.appFontFamily)
             .fontSize(12)
             .fontColor($r('app.color.text_secondary'))
             .margin({ top: 2 })
@@ -1645,9 +1697,11 @@ export struct MangaReaderSettings {
       Row() {
         Column() {
           Text('锁定模式')
+            .fontFamily(this.appFontFamily)
             .fontSize(16)
             .fontColor($r('app.color.text_primary'))
           Text(this.getModeLockHint())
+            .fontFamily(this.appFontFamily)
             .fontSize(12)
             .fontColor($r('app.color.text_secondary'))
             .margin({ top: 2 })
@@ -1673,9 +1727,11 @@ export struct MangaReaderSettings {
       Row() {
         Column() {
           Text('锁定方向')
+            .fontFamily(this.appFontFamily)
             .fontSize(16)
             .fontColor($r('app.color.text_primary'))
           Text(this.getDeviceOrientationLockHint())
+            .fontFamily(this.appFontFamily)
             .fontSize(12)
             .fontColor($r('app.color.text_secondary'))
             .margin({ top: 2 })
@@ -1702,9 +1758,11 @@ export struct MangaReaderSettings {
       Row() {
         Column() {
           Text('保持屏幕常亮')
+            .fontFamily(this.appFontFamily)
             .fontSize(16)
             .fontColor($r('app.color.text_primary'))
           Text('阅读时防止屏幕自动关闭')
+            .fontFamily(this.appFontFamily)
             .fontSize(12)
             .fontColor($r('app.color.text_secondary'))
             .margin({ top: 2 })
@@ -1737,6 +1795,7 @@ export struct MangaReaderSettings {
     Row() {
       // 重置按钮
       Button('重置')
+        .fontFamily(this.appFontFamily)
         .fontSize(16)
         .fontColor($r('app.color.text_secondary'))
         .backgroundColor($r('app.color.background_secondary'))
@@ -1748,6 +1807,7 @@ export struct MangaReaderSettings {
 
       // 关闭按钮
       Button('关闭')
+        .fontFamily(this.appFontFamily)
         .fontSize(16)
         .fontColor($r('app.color.text_on_accent'))
         .backgroundColor($r('app.color.accent'))
@@ -1775,6 +1835,7 @@ export struct MangaReaderSettings {
         // 面板标题
         Row() {
           Text('高级设置')
+            .fontFamily(this.appFontFamily)
             .fontSize(16)
             .fontWeight(FontWeight.Bold)
             .fontColor($r('app.color.text_primary'))
@@ -1786,6 +1847,7 @@ export struct MangaReaderSettings {
               .height(20)
               .fillColor($r('app.color.text_secondary'))
           }
+          .fontFamily(this.appFontFamily)
           .width(36)
           .height(36)
           .backgroundColor(Color.Transparent)
@@ -1816,6 +1878,7 @@ export struct MangaReaderSettings {
         // 操作按钮
         Row() {
           Button('重置')
+            .fontFamily(this.appFontFamily)
             .fontSize(12)
             .fontColor($r('app.color.text_secondary'))
             .backgroundColor($r('app.color.background_secondary'))
@@ -1826,6 +1889,7 @@ export struct MangaReaderSettings {
           Blank().width(8)
 
           Button('关闭')
+            .fontFamily(this.appFontFamily)
             .fontSize(12)
             .fontColor($r('app.color.text_on_accent'))
             .backgroundColor($r('app.color.accent'))
@@ -1856,6 +1920,7 @@ export struct MangaReaderSettings {
   buildLandscapeFilterSettings() {
     Column() {
       Text('显示设置')
+        .fontFamily(this.appFontFamily)
         .fontSize(14)
         .fontWeight(FontWeight.Bold)
         .fontColor($r('app.color.text_primary'))
@@ -1865,6 +1930,7 @@ export struct MangaReaderSettings {
       // 滤镜开关
       Row() {
         Text('启用滤镜')
+          .fontFamily(this.appFontFamily)
           .fontSize(12)
           .fontColor($r('app.color.text_primary'))
           .layoutWeight(1)
@@ -1890,6 +1956,7 @@ export struct MangaReaderSettings {
   buildLandscapePageTurnAnimation() {
     Column() {
       Text('翻页动画')
+        .fontFamily(this.appFontFamily)
         .fontSize(14)
         .fontWeight(FontWeight.Bold)
         .fontColor($r('app.color.text_primary'))
@@ -1940,6 +2007,7 @@ export struct MangaReaderSettings {
   @Builder
   buildCompactAnimButton(label: string, type: PageTurnAnimationType) {
     Text(label)
+      .fontFamily(this.appFontFamily)
       .fontSize(10)
       .fontColor(this.currentSettings.pageTurnAnimation === type ? 
         $r('app.color.accent') : $r('app.color.text_secondary'))
@@ -1959,6 +2027,7 @@ export struct MangaReaderSettings {
   buildLandscapeToggleSettings() {
     Column() {
       Text('其他设置')
+        .fontFamily(this.appFontFamily)
         .fontSize(14)
         .fontWeight(FontWeight.Bold)
         .fontColor($r('app.color.text_primary'))
@@ -1971,6 +2040,7 @@ export struct MangaReaderSettings {
         Column() {
           Row() {
             Text('页面信息')
+              .fontFamily(this.appFontFamily)
               .fontSize(11)
               .fontColor($r('app.color.text_primary'))
               .layoutWeight(1)
@@ -1989,6 +2059,7 @@ export struct MangaReaderSettings {
 
           Row() {
             Text('锁定方向')
+              .fontFamily(this.appFontFamily)
               .fontSize(11)
               .fontColor($r('app.color.text_primary'))
               .layoutWeight(1)
@@ -2006,6 +2077,7 @@ export struct MangaReaderSettings {
 
           Row() {
             Text('锁定模式')
+              .fontFamily(this.appFontFamily)
               .fontSize(11)
               .fontColor($r('app.color.text_primary'))
               .layoutWeight(1)
@@ -2027,6 +2099,7 @@ export struct MangaReaderSettings {
         Column() {
           Row() {
             Text('屏幕常亮')
+              .fontFamily(this.appFontFamily)
               .fontSize(11)
               .fontColor($r('app.color.text_primary'))
               .layoutWeight(1)
@@ -2044,6 +2117,7 @@ export struct MangaReaderSettings {
 
           Row() {
             Text('音量翻页')
+              .fontFamily(this.appFontFamily)
               .fontSize(11)
               .fontColor($r('app.color.text_primary'))
               .layoutWeight(1)
@@ -2089,10 +2163,12 @@ export struct MangaReaderSettings {
             Row() {
               Column() {
                 Text('显示效果设置')
+                  .fontFamily(this.appFontFamily)
                 .fontSize(20)
                 .fontWeight(FontWeight.Bold)
                 .fontColor($r('app.color.text_primary'))
                 Text('滤镜等显示效果配置')
+                  .fontFamily(this.appFontFamily)
                   .fontSize(12)
                   .fontColor($r('app.color.text_secondary'))
                   .margin({ top: 4 })
@@ -2106,6 +2182,7 @@ export struct MangaReaderSettings {
                   .height(24)
                   .fillColor($r('app.color.text_secondary'))
               }
+              .fontFamily(this.appFontFamily)
               .width(40)
               .height(40)
               .backgroundColor(Color.Transparent)

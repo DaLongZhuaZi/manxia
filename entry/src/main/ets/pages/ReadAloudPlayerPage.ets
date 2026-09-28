@@ -115,8 +115,10 @@ export struct ReadAloudPlayerPage {
   }
 
   /**
-   * [修复] 激活接续入口（页面检查点）：
-   * 入口按场景无条件显示；权限在触发接续时校验，此处异步确保权限就绪
+   * 激活接续入口（页面检查点）。
+   *
+   * [合规] 由 ContinuationStateHelper 统一处理：总开关关闭时不显示入口；
+   * 权限缺失时只做静默检查并提示"功能不可用"，绝不主动弹出授权弹窗。
    */
   private applyMissionContinueStateWithPermission(): void {
     try {
