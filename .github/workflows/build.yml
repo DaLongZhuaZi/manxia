@@ -6,8 +6,9 @@ name: Build HAP (构建 / Build)
 #     (command-line-tools 6.1.0.818); 模板默认的 api26r 与本工程 SDK 不匹配。
 #   - 无 git 子模块依赖(4 个 submodule 未被任何 oh-package.json5 引用),
 #     故 checkout 不开 submodules: recursive。
-#   - build-profile.json5 带本机 signingConfigs(F:/DevEcoStudioKey/...),
-#     必须靠 .github/scripts/strip_signing.py 剥离后再构建。
+#   - build-profile.json5 被 .gitignore 忽略(DevEco Studio 会把本机签名材料写进去),
+#     CI 缺失时由 build-profile.json5.example 生成;.github/scripts/strip_signing.py
+#     作为兜底,剥离任何残留的 signingConfigs,产出未签名 HAP。
 # -----------------------------------------------------------------------------
 # =============================================================================
 # 消费方模板 / CONSUMER TEMPLATE
@@ -77,12 +78,16 @@ jobs:
       - name: 判定工程标志文件 / Check project markers
         id: check
         run: |
-          if [ -f build-profile.json5 ] && [ -f oh-package.json5 ]; then
+          # build-profile.json5 在本仓库被 .gitignore 忽略(含本机签名材料),
+          # 因此同时接受 build-profile.json5.example 作为工程标志。
+          # build-profile.json5 is git-ignored here (machine-local signing data),
+          # so build-profile.json5.example also counts as the project marker.
+          if [ -f oh-package.json5 ] && { [ -f build-profile.json5 ] || [ -f build-profile.json5.example ]; }; then
             echo "is_project=true" >> "$GITHUB_OUTPUT"
             echo "OK: HarmonyOS 工程 / project detected"
           else
             echo "is_project=false" >> "$GITHUB_OUTPUT"
-            echo "::notice::未找到 build-profile.json5 + oh-package.json5, 跳过构建。本 workflow 需复制到 HarmonyOS 应用工程仓库使用。/ Not a HarmonyOS project - skipping."
+            echo "::notice::未找到 oh-package.json5 + build-profile.json5(或 .example), 跳过构建。本 workflow 需复制到 HarmonyOS 应用工程仓库使用。/ Not a HarmonyOS project - skipping."
           fi
 
   prepare:
@@ -118,6 +123,18 @@ jobs:
         # 引入 git 子模块时打开 / enable when the project uses submodules
         # with:
         #   submodules: recursive
+
+      - name: 准备工程配置 / Prepare build-profile.json5
+        run: |
+          if [ -f build-profile.json5 ]; then
+            echo "OK: build-profile.json5 已存在 / already present"
+          elif [ -f build-profile.json5.example ]; then
+            cp -v build-profile.json5.example build-profile.json5
+            echo "::notice::build-profile.json5 未入库(本机签名配置不入库),已由 .example 生成 / generated from .example"
+          else
+            echo "::error::缺少 build-profile.json5 与 build-profile.json5.example / build config missing"
+            exit 1
+          fi
 
       - name: 剥离本机签名配置 / Strip local signing config
         run: |
