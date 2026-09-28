@@ -1,0 +1,210 @@
+name: Build HAP (构建 / Build)
+
+# -----------------------------------------------------------------------------
+# 本仓库适配说明 / Manxia adaptation
+#   - CI_IMAGE 用 :api23 —— 本工程 compatibleSdkVersion/targetSdkVersion = 6.1.0(23)
+#     (command-line-tools 6.1.0.818); 模板默认的 api26r 与本工程 SDK 不匹配。
+#   - 无 git 子模块依赖(4 个 submodule 未被任何 oh-package.json5 引用),
+#     故 checkout 不开 submodules: recursive。
+#   - build-profile.json5 带本机 signingConfigs(F:/DevEcoStudioKey/...),
+#     必须靠 .github/scripts/strip_signing.py 剥离后再构建。
+# -----------------------------------------------------------------------------
+# =============================================================================
+# 消费方模板 / CONSUMER TEMPLATE
+# -----------------------------------------------------------------------------
+# 这是「在 HarmonyOS 工程里云端构建 .hap」的模板: 复制到你的工程
+# .github/workflows/build.yml 即可用, 全程无需 DevEco Studio。
+# This is the "build a .hap in the cloud" template: copy it to your project's
+# .github/workflows/build.yml and you are done - no DevEco Studio required.
+#
+# 用法 / Usage
+#   1. 改下面 env.CI_IMAGE 的 tag, 与你工程 compatibleSdkVersion 匹配
+#      (api26 / api26b2 / api24 / api23, 见 harmonyos-ci 仓库 README)。
+#      Set env.CI_IMAGE below to the tag matching your compatibleSdkVersion.
+#   2. 若你的工程 build-profile.json5 带本机 signingConfigs, 一并复制
+#      .github/scripts/strip_signing.py 到同路径(本模板已自动调用; 文件不存在
+#      或无需剥离时会自动跳过, 不会报红)。
+#      Copy .github/scripts/strip_signing.py too if your build-profile.json5
+#      carries machine-local signingConfigs (auto-skipped when not needed).
+#
+# 产出 / Output
+#   - artifact: 未签名 debug HAP / unsigned debug HAP
+#   - push main/master 时额外发布滚动 nightly Release (prerelease)
+# =============================================================================
+
+on:
+  push:
+    branches: [main, master]
+  pull_request:
+  workflow_dispatch:
+    inputs:
+      image:
+        description: '覆盖 CI 镜像 / Override CI image (ghcr.io/owner/harmonyos-ci:<tag>)'
+        required: false
+        default: ''
+
+concurrency:
+  group: build-hap-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+  packages: read
+
+defaults:
+  run:
+    shell: bash
+
+env:
+  # ← 唯一需要按项目修改的地方 / the only line to adapt per project
+  CI_IMAGE: ghcr.io/dalongzhuazi/harmonyos-ci:api23
+
+jobs:
+  # 防呆 / Guard: 本 workflow 属于「HarmonyOS 应用工程仓库」。
+  # 若被留在 harmonyos-ci 这类只有镜像和文档的仓库里, 每次 push 都会因为找不到
+  # build-profile.json5 而变红。这里先判定, 非工程就直接跳过而不是误报失败。
+  # This workflow belongs in an app project repo. In a repo without a HarmonyOS
+  # project it would fail on every push - detect and skip cleanly instead.
+  guard:
+    name: 检查是否 HarmonyOS 工程 / Detect HarmonyOS project
+    runs-on: ubuntu-latest
+    outputs:
+      is_project: ${{ steps.check.outputs.is_project }}
+    steps:
+      - name: Checkout 检出代码 / Checkout
+        uses: actions/checkout@v4
+
+      - name: 判定工程标志文件 / Check project markers
+        id: check
+        run: |
+          if [ -f build-profile.json5 ] && [ -f oh-package.json5 ]; then
+            echo "is_project=true" >> "$GITHUB_OUTPUT"
+            echo "OK: HarmonyOS 工程 / project detected"
+          else
+            echo "is_project=false" >> "$GITHUB_OUTPUT"
+            echo "::notice::未找到 build-profile.json5 + oh-package.json5, 跳过构建。本 workflow 需复制到 HarmonyOS 应用工程仓库使用。/ Not a HarmonyOS project - skipping."
+          fi
+
+  prepare:
+    needs: guard
+    if: needs.guard.outputs.is_project == 'true'
+    name: 解析 CI 镜像 / Resolve CI image
+    runs-on: ubuntu-latest
+    outputs:
+      image: ${{ steps.img.outputs.image }}
+    steps:
+      - name: 计算镜像引用 / Compute image reference
+        id: img
+        env:
+          INPUT_IMAGE: ${{ inputs.image }}
+          DEFAULT_IMAGE: ${{ env.CI_IMAGE }}
+        run: |
+          image="${INPUT_IMAGE:-$DEFAULT_IMAGE}"
+          echo "Use CI image / 使用镜像: $image"
+          echo "image=$image" >> "$GITHUB_OUTPUT"
+
+  build:
+    name: 构建 HAP (debug, 未签名) / Assemble HAP (debug, unsigned)
+    needs: prepare
+    runs-on: ubuntu-latest
+    container:
+      image: ${{ needs.prepare.outputs.image }}
+      credentials:
+        username: ${{ github.actor }}
+        password: ${{ secrets.GITHUB_TOKEN }}
+    steps:
+      - name: Checkout 检出代码 / Checkout
+        uses: actions/checkout@v4
+        # 引入 git 子模块时打开 / enable when the project uses submodules
+        # with:
+        #   submodules: recursive
+
+      - name: 剥离本机签名配置 / Strip local signing config
+        run: |
+          if [ -f .github/scripts/strip_signing.py ]; then
+            python3 .github/scripts/strip_signing.py build-profile.json5
+          else
+            echo "::notice::未找到 .github/scripts/strip_signing.py, 跳过 / not found, skipped"
+          fi
+
+      - name: 缓存 hvigor & oh_modules / Cache hvigor & oh_modules
+        uses: actions/cache@v4
+        with:
+          path: |
+            /root/.hvigor
+            **/oh_modules
+          key: hvigor-${{ runner.os }}-${{ hashFiles('**/oh-package-lock.json5') }}
+          restore-keys: |
+            hvigor-${{ runner.os }}-
+
+      - name: 安装依赖 / Install dependencies (ohpm)
+        run: ohpm install --all
+
+      - name: 构建 HAP / Build HAP (debug)
+        run: hvigorw assembleHap --mode module -p product=default -p buildMode=debug --no-daemon --stacktrace
+
+      - name: 收集并校验产物 / Collect & verify HAP
+        run: |
+          set -eu
+          mkdir -p dist
+          find . -type f -name '*.hap' -path '*/outputs/*' \
+            -not -path './oh_modules/*' -not -path './node_modules/*' \
+            -exec cp -v {} dist/ \;
+          shopt -s nullglob
+          haps=(dist/*.hap)
+          if [ ${#haps[@]} -eq 0 ]; then
+            echo "::error::No .hap produced - check the build log / 未产出 hap, 检查上方构建日志"
+            exit 1
+          fi
+          for h in "${haps[@]}"; do
+            size=$(stat -c%s "$h")
+            if [ "$size" -le 0 ]; then echo "::error::$h is empty / 为空"; exit 1; fi
+            echo "$h : $size bytes"
+          done
+
+      - name: 上传 artifact / Upload HAP artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: hap-unsigned
+          path: dist/
+          if-no-files-found: error
+          retention-days: 14
+
+  release:
+    name: 自动发布滚动 Release / Auto-publish rolling Release
+    needs: build
+    if: github.event_name == 'push' && (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/master')
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Checkout 检出代码 / Checkout
+        uses: actions/checkout@v4
+
+      - name: 下载 HAP / Download HAP artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: hap-unsigned
+          path: dist
+
+      - name: 更新滚动 nightly Release / Refresh rolling nightly Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -eu
+          cat > /tmp/note.md <<'EOF'
+          ## 滚动构建 / Rolling build (nightly)
+
+          由 `main` 分支最新提交自动构建的**未签名** debug HAP。
+          Unsigned debug HAP built automatically from the latest `main` commit.
+
+          > 未签名, 安装前请用 DevEco Studio 或 hap-sign-tool 重新签名。
+          > Unsigned - re-sign it with DevEco Studio or hap-sign-tool before installing.
+          EOF
+          gh release delete nightly --cleanup-tag --yes 2>/dev/null || true
+          gh release create nightly \
+            --target "$GITHUB_SHA" \
+            --title "nightly (滚动构建 / rolling build)" \
+            --prerelease \
+            --notes-file /tmp/note.md \
+            dist/*.hap
