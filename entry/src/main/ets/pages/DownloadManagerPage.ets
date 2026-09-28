@@ -1,4 +1,5 @@
-﻿import { SafeFileUtils } from '../Utils/SafeFileUtils';
+﻿import { SafeFileUtils } from 'manxia_core/src/main/ets/Utils/SafeFileUtils';
+import { IDataManagerFacade, DataManagerHolder } from 'manxia_core/src/main/ets/Framework/Contracts/IDataManagerFacade';
 // 文件路径: entry/src/main/ets/pages/DownloadManagerPage.ets
 /**
  * 下载管理页面
@@ -8,12 +9,12 @@
 import { HdsNavDestination, HdsNavDestinationAttribute, ScrollEffectType } from '@kit.UIDesignKit';
 import { LengthMetrics } from '@kit.ArkUI';
 import { common } from '@kit.AbilityKit';
-import { ThemeAwareState, ThemeAwareHelper } from '../Framework/Components/ThemeAware';
-import { ThemeManager, ThemeType } from '../Framework/Managers/ThemeManager';
-import { FontAwareHelper, FontAwareState } from '../Framework/Components/FontAware';
-import { logger } from '../Utils/Logger';
-import { PageLifecycleManager } from '../Framework/Lifecycle';
-import { DownloadStatus } from '../Framework/Types/StatusEnums';
+import { ThemeAwareState, ThemeAwareHelper } from 'manxia_theme/src/main/ets/Framework/Components/ThemeAware';
+import { ThemeManager, ThemeType } from 'manxia_theme/src/main/ets/Framework/Managers/ThemeManager';
+import { FontAwareHelper, FontAwareState } from 'manxia_theme/src/main/ets/Framework/Components/FontAware';
+import { logger } from 'manxia_core/src/main/ets/Utils/Logger';
+import { PageLifecycleManager } from 'manxia_core/src/main/ets/Framework/Lifecycle/index';
+import { DownloadStatus } from 'manxia_core/src/main/ets/Framework/Types/StatusEnums';
 import { MangaDownloadManager, DownloadTaskInfo, TaskStatus } from '../Framework/Download/DownloadManager';
 import { getCacheStatusService, CacheStatusService, ContentCacheStats, CacheContentType } from '../Framework/Services/CacheStatusService';
 import { getUnifiedDownloadManager, UnifiedDownloadManager, UnifiedDownloadTask, UnifiedTaskStatus, UnifiedDownloadType } from '../Framework/Download/UnifiedDownloadManager';
@@ -22,11 +23,11 @@ import { PermanentImageCacheManager } from '../Framework/Cache/PermanentImageCac
 import { DataManager } from '../Framework/Data/DataManager';
 import { eventBus, GameEvent, IEventPayload, MangaCacheUpdatedPayload } from '../Framework/EventBus';
 import { SettingsImmersiveTitleBar } from './settings/SettingsImmersiveTitleBar';
-import { SettingsPageTitleBarManager } from './settings/SettingsPageTitleBarManager';
-import { GlobalBackgroundLayerMode } from '../Framework/Components/GlobalBackgroundLayer';
-import { SharedPageBackgroundLayer } from '../Framework/Components/SharedPageBackgroundLayer';
-import { SettingsPanelSurfaceHelper } from './settings/SettingsPanelSurfaceHelper';
-import { DownloadDirManager } from '../Framework/Storage/DownloadDirManager';
+import { SettingsPageTitleBarManager } from 'manxia_features_ui/src/main/ets/pages/settings/SettingsPageTitleBarManager';
+import { GlobalBackgroundLayerMode } from 'manxia_theme/src/main/ets/Framework/Components/GlobalBackgroundLayer';
+import { SharedPageBackgroundLayer } from 'manxia_theme/src/main/ets/Framework/Components/SharedPageBackgroundLayer';
+import { SettingsPanelSurfaceHelper } from 'manxia_features_ui/src/main/ets/pages/settings/SettingsPanelSurfaceHelper';
+import { DownloadDirManager } from 'manxia_core/src/main/ets/Framework/Storage/DownloadDirManager';
 import { ManagedContentCacheClearRequest, UnifiedStorageCoordinator } from '../Framework/Storage/UnifiedStorageCoordinator';
 import fs from '@ohos.file.fs';
 
@@ -337,7 +338,7 @@ struct DownloadManagerPage {
     this.isCacheLoading = true;
     try {
       // [改进] 直接从数据库获取所有有缓存的漫画
-      const cachedMangas = await this.dataManager.getAllCachedMangas();
+      const cachedMangas = await DataManagerHolder.get().getAllCachedMangas();
       const mangaCacheList: ContentCacheStats[] = [];
       
       logger.info(TAG, `数据库返回 ${cachedMangas.length} 部漫画，开始获取详细缓存状态...`);

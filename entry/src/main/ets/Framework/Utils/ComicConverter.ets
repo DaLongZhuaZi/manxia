@@ -1,4 +1,4 @@
-﻿import { SafeUtils } from '../../Utils/SafeUtils';
+﻿import { SafeUtils } from 'manxia_core/src/main/ets/Utils/SafeUtils';
 // 文件路径: src/main/ets/Framework/Utils/ComicConverter.ets
 // 职责: 提供ComicInfo与Manga对象之间的转换工具方法
 
@@ -14,13 +14,13 @@ import {
   DoublePagePortraitLayout,
   DoublePageVerticalDirection,
   DEFAULT_READING_SETTINGS
-} from '../../Models/MangaModels';
+} from 'manxia_core/src/main/ets/Models/MangaModels';
 import { ComicInfo, ReadHistory, OnlineComicInfo, UserSettingsDatabaseRecord } from '../Data/DataManager';
-import { ComicSourceDatabaseRecord } from '../Database/DatabaseTypes';
-import { MangaStatus, ReadingStatus, StatusConverter } from '../Types/StatusEnums';
+import { ComicSourceDatabaseRecord } from 'manxia_core/src/main/ets/Framework/Database/DatabaseTypes';
+import { MangaStatus, ReadingStatus, StatusConverter } from 'manxia_core/src/main/ets/Framework/Types/StatusEnums';
 import { DataManager } from '../Data/DataManager';
-import { SettingsManager, SettingKeys } from '../Managers/SettingsManager';
-import { logger } from '../../Utils/Logger';
+import { SettingsManager, SettingKeys } from 'manxia_core/src/main/ets/Framework/Managers/SettingsManager';
+import { logger } from 'manxia_core/src/main/ets/Utils/Logger';
 
 const TAG = 'ComicConverter';
 

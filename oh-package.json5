@@ -4,7 +4,16 @@
   "dependencies": {
     "@ohos/oh7zip": "1.0.3",
     "@ohos/minizip": "1.0.4",
-    "buffer": "^6.0.3"
+    "buffer": "^6.0.3",
+    "manxia_native": "file:./manxia-native",
+    "manxia_core": "file:./manxia-core",
+    "manxia_ui_resources": "file:./manxia-ui-resources",
+    "manxia_source_engine": "file:./manxia-source-engine",
+    "manxia_network": "file:./manxia-network",
+    "manxia_novel": "file:./manxia-novel",
+    "manxia_theme": "file:./manxia-theme",
+    "manxia_reader_ui": "file:./manxia-reader-ui",
+    "manxia_features_ui": "file:./manxia-features-ui"
   },
   "devDependencies": {
     "@ohos/hypium": "1.0.21",

@@ -1,9 +1,9 @@
 import { common } from '@kit.AbilityKit';
 import { fileIo } from '@kit.CoreFileKit';
 import { util } from '@kit.ArkTS';
-import { LogCollector, LogEntry, LogFilter } from '../Debug/LogCollector';
-import { LogLevel } from '../../Utils/Logger';
-import { logger } from '../../Utils/Logger';
+import { LogCollector, LogEntry, LogFilter } from 'manxia_core/src/main/ets/Framework/Debug/LogCollector';
+import { LogLevel } from 'manxia_core/src/main/ets/Utils/Logger';
+import { logger } from 'manxia_core/src/main/ets/Utils/Logger';
 
 const TAG = 'FeedbackLogExportService';
 const LOG_DIRECTORY = 'feedback/pending';

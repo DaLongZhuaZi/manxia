@@ -1,7 +1,7 @@
 import { image } from '@kit.ImageKit';
 import { http } from '@kit.NetworkKit';
 import fs from '@ohos.file.fs';
-import { logger } from '../Utils/Logger';
+import { logger } from 'manxia_core/src/main/ets/Utils/Logger';
 import KomgaCacheManager from '../Framework/Source/KomgaCacheManager';
 import { getKomgaSourceExecutor } from '../Framework/Source/KomgaSourceExecutor';
 import { MangaAssetRetryMode } from '../Framework/Reader/MangaAssetTypes';

@@ -4,20 +4,20 @@
  * 提供书源的导入、搜索、启用/禁用、测试等功能
  */
 
-import { logger } from '../Utils/Logger';
-import { PageLifecycleManager } from '../Framework/Lifecycle';
-import { ThemeAwareHelper, ThemeAwareState } from '../Framework/Components/ThemeAware';
+import { logger } from 'manxia_core/src/main/ets/Utils/Logger';
+import { PageLifecycleManager } from 'manxia_core/src/main/ets/Framework/Lifecycle/index';
+import { ThemeAwareHelper, ThemeAwareState } from 'manxia_theme/src/main/ets/Framework/Components/ThemeAware';
 import { SourceDialogScaffold } from '../Framework/Components/SourceDialogScaffold';
-import { ThemeManager } from '../Framework/Managers/ThemeManager';
+import { ThemeManager } from 'manxia_theme/src/main/ets/Framework/Managers/ThemeManager';
 import { getNovelSourceManager, NovelSourceManager } from '../Framework/Novel/NovelSourceManager';
 import { getNovelDataManager } from '../Framework/Novel/NovelDataManager';
-import { NovelSourceInfo } from '../Models/NovelModels';
+import { NovelSourceInfo } from 'manxia_core/src/main/ets/Models/NovelModels';
 import { promptAction } from '@kit.ArkUI';
 import { picker } from '@kit.CoreFileKit';
 import { pasteboard } from '@kit.BasicServicesKit';
-import { GlobalBackgroundLayerMode } from '../Framework/Components/GlobalBackgroundLayer';
-import { SharedPageBackgroundLayer } from '../Framework/Components/SharedPageBackgroundLayer';
-import { SettingsPanelSurfaceHelper } from './settings/SettingsPanelSurfaceHelper';
+import { GlobalBackgroundLayerMode } from 'manxia_theme/src/main/ets/Framework/Components/GlobalBackgroundLayer';
+import { SharedPageBackgroundLayer } from 'manxia_theme/src/main/ets/Framework/Components/SharedPageBackgroundLayer';
+import { SettingsPanelSurfaceHelper } from 'manxia_features_ui/src/main/ets/pages/settings/SettingsPanelSurfaceHelper';
 
 const TAG = 'BookSourceManagementPage';
 

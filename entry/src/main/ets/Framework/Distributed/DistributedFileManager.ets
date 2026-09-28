@@ -1,5 +1,5 @@
 import fileIo from '@ohos.file.fs';
-import { logger } from '../../Utils/Logger';
+import { logger } from 'manxia_core/src/main/ets/Utils/Logger';
 import common from '@ohos.app.ability.common';
 
 const TAG = 'DistributedFileManager';

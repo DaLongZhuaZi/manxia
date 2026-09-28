@@ -12,17 +12,17 @@ import { BusinessError, deviceInfo } from '@kit.BasicServicesKit';
 import { fileIo, fileUri, picker } from '@kit.CoreFileKit';
 import { util } from '@kit.ArkTS';
 import { webview } from '@kit.ArkWeb';
-import { ThemeAwareState, ThemeAwareHelper } from '../Framework/Components/ThemeAware';
-import { FontAwareHelper, FontAwareState } from '../Framework/Components/FontAware';
-import { DialogSurfaceStyleHelper } from '../Framework/Components/DialogSurfaceStyleHelper';
-import { ThemeType } from '../Framework/Managers/ThemeManager';
-import { AppInfoManager } from '../Framework/Managers/AppInfoManager';
-import { PageLifecycleManager } from '../Framework/Lifecycle';
-import { GlobalBackgroundLayerMode } from '../Framework/Components/GlobalBackgroundLayer';
-import { SharedPageBackgroundLayer } from '../Framework/Components/SharedPageBackgroundLayer';
+import { ThemeAwareState, ThemeAwareHelper } from 'manxia_theme/src/main/ets/Framework/Components/ThemeAware';
+import { FontAwareHelper, FontAwareState } from 'manxia_theme/src/main/ets/Framework/Components/FontAware';
+import { DialogSurfaceStyleHelper } from 'manxia_features_ui/src/main/ets/Framework/Components/DialogSurfaceStyleHelper';
+import { ThemeType } from 'manxia_theme/src/main/ets/Framework/Managers/ThemeManager';
+import { AppInfoManager } from 'manxia_core/src/main/ets/Framework/Managers/AppInfoManager';
+import { PageLifecycleManager } from 'manxia_core/src/main/ets/Framework/Lifecycle/index';
+import { GlobalBackgroundLayerMode } from 'manxia_theme/src/main/ets/Framework/Components/GlobalBackgroundLayer';
+import { SharedPageBackgroundLayer } from 'manxia_theme/src/main/ets/Framework/Components/SharedPageBackgroundLayer';
 import { SettingsImmersiveTitleBar } from './settings/SettingsImmersiveTitleBar';
-import { SettingsPageTitleBarManager } from './settings/SettingsPageTitleBarManager';
-import { SettingsPanelSurfaceHelper } from './settings/SettingsPanelSurfaceHelper';
+import { SettingsPageTitleBarManager } from 'manxia_features_ui/src/main/ets/pages/settings/SettingsPageTitleBarManager';
+import { SettingsPanelSurfaceHelper } from 'manxia_features_ui/src/main/ets/pages/settings/SettingsPanelSurfaceHelper';
 import {
   FeedbackAttachment,
   FeedbackCenterService,
@@ -38,7 +38,7 @@ import {
   FeedbackUploadCategory,
   FeedbackUploadProgress,
   FeedbackUploadCancelledError
-} from '../Framework/Services/FeedbackCenterService';
+} from 'manxia_network/src/main/ets/Framework/Services/FeedbackCenterService';
 import { FeedbackTurnstileBridge } from '../Framework/Services/FeedbackTurnstileBridge';
 import {
   FeedbackLogExportResult,
@@ -49,8 +49,8 @@ import {
   FEEDBACK_DRAFT_PART_FILE_NAME,
   FEEDBACK_MAX_ATTACHMENT_BYTES,
   FEEDBACK_PENDING_DIR_NAME
-} from '../Framework/Cache/FeedbackCenterCacheManager';
-import { logger } from '../Utils/Logger';
+} from 'manxia_network/src/main/ets/Framework/Cache/FeedbackCenterCacheManager';
+import { logger } from 'manxia_core/src/main/ets/Utils/Logger';
 
 const TAG = 'MangaFeedbackPage';
 const DRAFT_FILE_NAME: string = FEEDBACK_DRAFT_FILE_NAME;

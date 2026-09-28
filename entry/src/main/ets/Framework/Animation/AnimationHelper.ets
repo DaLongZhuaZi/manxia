@@ -1,12 +1,12 @@
 // 文件路径: entry/src/main/ets/Framework/Animation/AnimationHelper.ets
 // 职责: 动画集成辅助工具，简化在现有页面中添加动画的过程
 
-import { logger } from '../../Utils/Logger';
+import { logger } from 'manxia_core/src/main/ets/Utils/Logger';
 import { ItemPosition, AnimationType } from './ItemTransitionAnimator';
 import { AnimatedItem, GridLayoutConfig } from './AnimatedGridState';
-import { Manga } from '../../Models/MangaModels';
-import { EBook } from '../../Models/EBookModels';
-import { NovelBook } from '../../Models/NovelModels';
+import { Manga } from 'manxia_core/src/main/ets/Models/MangaModels';
+import { EBook } from 'manxia_core/src/main/ets/Models/EBookModels';
+import { NovelBook } from 'manxia_core/src/main/ets/Models/NovelModels';
 
 const TAG = 'AnimationHelper';
 

@@ -1,0 +1,63 @@
+{
+  "ordinal": 227,
+  "sourceId": "4B33C6BA1A7DC3AA12EFF8FA54B529A7B6510E692892093A38D98A15544119B1",
+  "sourceType": 2,
+  "expectedPostFixDiagnostics": {
+    "bookInfo": {
+      "outputKind": "book_info_metadata_empty",
+      "imageWorkflowOutcome": "image_workflow_book_info_empty"
+    },
+    "toc": {
+      "outputKind": "toc_nonempty_with_url_fallback",
+      "imageWorkflowOutcome": "image_workflow_chapter_url_fallback",
+      "matchedElementCount": 256,
+      "missingChapterUrlCount": 256,
+      "fallbackChapterUrlCount": 256,
+      "droppedChapterUrlCount": 0
+    },
+    "content": {
+      "imageWorkflowOutcome": "image_workflow_invalid_content"
+    }
+  },
+  "detailTraceRecords": [
+    {
+      "workflow": "book_info",
+      "statusCode": 200,
+      "errorCode": "none",
+      "outputKind": "book_info_metadata_empty",
+      "responseClass": "non_html",
+      "responseContentType": "text/html",
+      "responseBodyLength": 77655,
+      "bookInfoRuleCount": 0,
+      "bookInfoResolvedCount": 0
+    },
+    {
+      "workflow": "toc",
+      "statusCode": 200,
+      "errorCode": "none",
+      "outputKind": "toc_empty",
+      "responseClass": "non_html",
+      "responseContentType": "text/html",
+      "responseBodyLength": 77655,
+      "tocMatchedElementCount": 256,
+      "tocMissingChapterUrlCount": 256,
+      "chapterCount": 0
+    },
+    {
+      "workflow": "content",
+      "statusCode": 200,
+      "errorCode": "none",
+      "outputKind": "content_readable",
+      "responseClass": "non_html",
+      "responseContentType": "text/html",
+      "responseBodyLength": 77655,
+      "contentPresentation": "readable",
+      "contentBridgeStatus": "bridge_unavailable",
+      "contentBridgeCharacterCount": 0,
+      "contentCharacterCount": 48,
+      "contentExtractedCharacterCount": 77777,
+      "imageNodeCount": 0,
+      "imageTraceStatus": "absent"
+    }
+  ]
+}

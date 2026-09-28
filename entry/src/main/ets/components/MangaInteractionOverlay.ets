@@ -1,10 +1,10 @@
-import { logger } from '../Utils/Logger';
+import { logger } from 'manxia_core/src/main/ets/Utils/Logger';
 import {
   DoublePagePortraitLayout,
   DoublePageVerticalDirection,
   ReadingDirection,
   ReadingMode
-} from '../Models/MangaModels';
+} from 'manxia_core/src/main/ets/Models/MangaModels';
 
 const TAG = 'MangaInteractionOverlay';
 const OVERLAY_FADE_IN_DELAY_MS: number = 50;
@@ -49,7 +49,7 @@ interface ColorScheme {
 
 @Component
 export struct MangaInteractionOverlay {
-  @Prop params: MangaInteractionOverlayParams;
+  @Prop @Watch('onParamsChanged') params: MangaInteractionOverlayParams;
   @StorageLink('appFontFamily') appFontFamily: string = 'HarmonyOS Sans';
   @State private zones: InteractionZone[] = [];
   @State private overlayOpacity: number = 0;
@@ -62,6 +62,20 @@ export struct MangaInteractionOverlay {
     logger.info(
       TAG,
       `overlay ready: mode=${this.params.readingMode}, direction=${this.params.readingDirection}, zones=${this.zones.length}`
+    );
+  }
+
+  /**
+   * 旋转/模式/尺寸变化时重建提示区域，避免沿用旧尺寸导致位置错乱。
+   */
+  onParamsChanged(): void {
+    this.zones = this.buildZones();
+    logger.debug(
+      TAG,
+      'overlay params changed, zones rebuilt: mode=' + String(this.params.readingMode) +
+        ', orientation=' + String(this.params.deviceOrientation) +
+        ', size=' + this.params.componentWidth + 'x' + this.params.componentHeight +
+        ', zones=' + this.zones.length
     );
   }
 

@@ -1,4 +1,4 @@
-import { ImageSourceType, MangaPage } from '../Models/MangaModels';
+import { ImageSourceType, MangaPage } from 'manxia_core/src/main/ets/Models/MangaModels';
 
 // 职责: 统一解析漫画页面的本地文件路径，不参与加载、缓存或 UI 状态管理。
 export class MangaPagePathResolver {

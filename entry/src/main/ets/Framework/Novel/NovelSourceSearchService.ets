@@ -6,9 +6,9 @@
  * 文件路径: entry/src/main/ets/Framework/Novel/NovelSourceSearchService.ets
  */
 
-import { logger } from '../../Utils/Logger';
+import { logger } from 'manxia_core/src/main/ets/Utils/Logger';
 import { getNovelSourceManager, NovelSourceManager } from './NovelSourceManager';
-import { NovelSearchResult, NovelSourceInfo } from '../../Models/NovelModels';
+import { NovelSearchResult, NovelSourceInfo } from 'manxia_core/src/main/ets/Models/NovelModels';
 
 const TAG = 'NovelSourceSearchService';
 

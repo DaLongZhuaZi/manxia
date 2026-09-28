@@ -2,16 +2,16 @@ import { common, Want } from '@kit.AbilityKit';
 import { LengthMetrics } from '@kit.ArkUI';
 import { fileUri } from '@kit.CoreFileKit';
 import { HdsNavDestination } from '@kit.UIDesignKit';
-import { logger } from '../Utils/Logger';
-import { ThemeAwareHelper, ThemeAwareState } from '../Framework/Components/ThemeAware';
+import { logger } from 'manxia_core/src/main/ets/Utils/Logger';
+import { ThemeAwareHelper, ThemeAwareState } from 'manxia_theme/src/main/ets/Framework/Components/ThemeAware';
 import { getNetworkFolderManager, NetworkFolderManager } from '../Framework/Network/NetworkFolderManager';
-import { BackgroundTaskManager, TaskType, TaskNotificationScene, TaskStatus } from '../Framework/Task/BackgroundTaskManager';
-import type { BackgroundTask, TaskStatusListener } from '../Framework/Task/BackgroundTaskManager';
+import { BackgroundTaskManager, TaskType, TaskNotificationScene, TaskStatus } from 'manxia_network/src/main/ets/Framework/Task/BackgroundTaskManager';
+import type { BackgroundTask, TaskStatusListener } from 'manxia_network/src/main/ets/Framework/Task/BackgroundTaskManager';
 import { SettingsImmersiveTitleBar } from './settings/SettingsImmersiveTitleBar';
-import { SettingsPageTitleBarManager } from './settings/SettingsPageTitleBarManager';
-import { GlobalBackgroundLayerMode } from '../Framework/Components/GlobalBackgroundLayer';
-import { SharedPageBackgroundLayer } from '../Framework/Components/SharedPageBackgroundLayer';
-import { SettingsPanelSurfaceHelper } from './settings/SettingsPanelSurfaceHelper';
+import { SettingsPageTitleBarManager } from 'manxia_features_ui/src/main/ets/pages/settings/SettingsPageTitleBarManager';
+import { GlobalBackgroundLayerMode } from 'manxia_theme/src/main/ets/Framework/Components/GlobalBackgroundLayer';
+import { SharedPageBackgroundLayer } from 'manxia_theme/src/main/ets/Framework/Components/SharedPageBackgroundLayer';
+import { SettingsPanelSurfaceHelper } from 'manxia_features_ui/src/main/ets/pages/settings/SettingsPanelSurfaceHelper';
 import {
   NetworkFolderCacheDetail,
   NetworkFolderDirectoryCacheDetail,
@@ -36,23 +36,23 @@ import {
   NetworkScanHost,
   NetworkScanProgress,
   ProtocolPort
-} from '../Models/NetworkFolderModels';
+} from 'manxia_core/src/main/ets/Models/NetworkFolderModels';
 import { NetworkScannerAdapter } from '../Framework/Network/NetworkScannerAdapter';
-import { openExternalFileTaskInIsolatedAbility } from '../Framework/ExternalFile/ExternalFileTaskLauncher';
+import { openExternalFileTaskInIsolatedAbility } from 'manxia_network/src/main/ets/Framework/ExternalFile/ExternalFileTaskLauncher';
 import {
   ExternalFileTaskFactory,
   ExternalFileTaskKind,
   ExternalFileTaskParams,
   ExternalFileTaskSource
-} from '../Framework/ExternalFile/ExternalFileTaskTypes';
-import { ImportFlowMonitor, getImportFlowMonitor } from '../Framework/Import/ImportFlowMonitor';
+} from 'manxia_network/src/main/ets/Framework/ExternalFile/ExternalFileTaskTypes';
+import { ImportFlowMonitor, getImportFlowMonitor } from 'manxia_core/src/main/ets/Framework/Import/ImportFlowMonitor';
 import {
   ImportFlowContentType,
   ImportFlowEntrySource,
   ImportFlowEvent,
   ImportFlowEventType,
   ImportFlowSessionInfo
-} from '../Framework/Import/ImportFlowTypes';
+} from 'manxia_core/src/main/ets/Framework/Import/ImportFlowTypes';
 
 const TAG = 'NetworkFolderPage';
 const TITLE_BAR_HEIGHT_MINI: number = 56;

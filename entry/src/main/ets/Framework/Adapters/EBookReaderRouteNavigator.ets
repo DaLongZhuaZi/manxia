@@ -1,5 +1,5 @@
 import { UIContext } from '@kit.ArkUI';
-import { logger } from '../../Utils/Logger';
+import { logger } from 'manxia_core/src/main/ets/Utils/Logger';
 import { EBookReaderParams } from '../../pages/EBookReaderRouteTypes';
 import { openEBookReaderInIsolatedAbility } from '../Reader/EBookReaderAbilityLauncher';
 

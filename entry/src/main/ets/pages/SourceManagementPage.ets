@@ -6,11 +6,11 @@
 
 import { HdsNavDestination } from '@kit.UIDesignKit';
 import { promptAction } from '@kit.ArkUI';
-import { logger } from '../Utils/Logger';
-import { PageLifecycleManager } from '../Framework/Lifecycle';
-import { ThemeAwareHelper, ThemeAwareState } from '../Framework/Components/ThemeAware';
-import { ThemeManager, ThemeType } from '../Framework/Managers/ThemeManager';
-import { FontAwareHelper, FontAwareState } from '../Framework/Components/FontAware';
+import { logger } from 'manxia_core/src/main/ets/Utils/Logger';
+import { PageLifecycleManager } from 'manxia_core/src/main/ets/Framework/Lifecycle/index';
+import { ThemeAwareHelper, ThemeAwareState } from 'manxia_theme/src/main/ets/Framework/Components/ThemeAware';
+import { ThemeManager, ThemeType } from 'manxia_theme/src/main/ets/Framework/Managers/ThemeManager';
+import { FontAwareHelper, FontAwareState } from 'manxia_theme/src/main/ets/Framework/Components/FontAware';
 import { WebViewSourceManager } from '../Framework/WebView/WebViewSourceManager';
 import { DataManager } from '../Framework/Data/DataManager';
 import { SourceRepositoryManager } from '../Framework/Source/SourceRepositoryManager';
@@ -21,20 +21,20 @@ import {
   SourceMaintenancePageParams,
   SourceMaintenanceSyncState
 } from '../Framework/Source/SourceMaintenanceManager';
-import { ProxyManager, ProxyConfig, DEFAULT_PROXY_CONFIG } from '../Framework/Network/ProxyManager';
+import { ProxyManager, ProxyConfig, DEFAULT_PROXY_CONFIG } from 'manxia_network/src/main/ets/Framework/Network/ProxyManager';
 import { ProxyConfigDialog } from '../components/source/ProxyConfigDialog';
 import { SourceManager, getSourceManager } from '../Framework/Source/SourceManager';
 import { SourceTester, TestResult, TestItemResult } from '../Framework/Source/SourceTester';
 import { SettingsImmersiveTitleBar } from './settings/SettingsImmersiveTitleBar';
-import { SettingsPageTitleBarManager } from './settings/SettingsPageTitleBarManager';
-import { GlobalBackgroundLayerMode } from '../Framework/Components/GlobalBackgroundLayer';
-import { SharedPageBackgroundLayer } from '../Framework/Components/SharedPageBackgroundLayer';
-import { SettingsPanelSurfaceHelper } from './settings/SettingsPanelSurfaceHelper';
+import { SettingsPageTitleBarManager } from 'manxia_features_ui/src/main/ets/pages/settings/SettingsPageTitleBarManager';
+import { GlobalBackgroundLayerMode } from 'manxia_theme/src/main/ets/Framework/Components/GlobalBackgroundLayer';
+import { SharedPageBackgroundLayer } from 'manxia_theme/src/main/ets/Framework/Components/SharedPageBackgroundLayer';
+import { SettingsPanelSurfaceHelper } from 'manxia_features_ui/src/main/ets/pages/settings/SettingsPanelSurfaceHelper';
 import { sourceDebugLogManager } from '../Framework/Debug/SourceDebugLogManager';
 import {
   SourceDiagnosticPageParams,
   SourceInteractiveEditorPageParams
-} from '../Framework/SourceEditor/SourceEditorTypes';
+} from 'manxia_source_engine/src/main/ets/Framework/SourceEditor/SourceEditorTypes';
 import { LegadoMangaSourceBridge } from '../Framework/Novel/LegadoMangaSourceBridge';
 
 const TAG = 'SourceManagementPage';

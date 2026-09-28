@@ -1,4 +1,5 @@
-import { SafeUtils } from '../Utils/SafeUtils';
+import { ISettingsManagerFacade, SettingsManagerHolder } from 'manxia_core/src/main/ets/Framework/Contracts/ISettingsManagerFacade';
+import { SafeUtils } from 'manxia_core/src/main/ets/Utils/SafeUtils';
 // 文件路径: entry/src/main/ets/pages/EBookReaderPage.ets
 /**
  * 电子书阅读器页面
@@ -6,16 +7,17 @@ import { SafeUtils } from '../Utils/SafeUtils';
  * 采用与漫画阅读器一致的沉浸式设计风格
   */
 
-import { logger } from '../Utils/Logger';
+import { logger } from 'manxia_core/src/main/ets/Utils/Logger';
 import { common } from '@kit.AbilityKit';
 import { ReaderSafeAreaUtils } from '../Utils/ReaderSafeAreaUtils';
-import { ThemeAwareState, ThemeAwareHelper } from '../Framework/Components/ThemeAware';
-import { ThemeManager, ThemeType, GlassEffectContext } from '../Framework/Managers/ThemeManager';
-import { FontAwareHelper, FontAwareState } from '../Framework/Components/FontAware';
-import { PageLifecycleManager } from '../Framework/Lifecycle';
-import { WindowManager, DisplayMode } from '../Utils/WindowManager';
-import { ReaderOrientationLockHelper } from '../Utils/ReaderOrientationLockHelper';
-import { PageWindowCoordinator } from '../Utils/PageWindowCoordinator';
+import { ThemeAwareState, ThemeAwareHelper } from 'manxia_theme/src/main/ets/Framework/Components/ThemeAware';
+import { ThemeManager, ThemeType, GlassEffectContext } from 'manxia_theme/src/main/ets/Framework/Managers/ThemeManager';
+import { FontAwareHelper, FontAwareState } from 'manxia_theme/src/main/ets/Framework/Components/FontAware';
+import { PageLifecycleManager } from 'manxia_core/src/main/ets/Framework/Lifecycle/index';
+import { WindowManager, DisplayMode } from 'manxia_theme/src/main/ets/Utils/WindowManager';
+import { ReaderOrientationLockHelper, ReaderOrientationLockScope } from 'manxia_core/src/main/ets/Utils/ReaderOrientationLockHelper';
+import { ReaderToolbarButton } from '../components/ReaderToolbarButton';
+import { PageWindowCoordinator } from 'manxia_theme/src/main/ets/Utils/PageWindowCoordinator';
 import {
   EBook,
   EBookChapter,
@@ -25,19 +27,23 @@ import {
   EBookFormat,
   EBookContentMode,
   DEFAULT_EBOOK_READING_SETTINGS
-} from '../Models/EBookModels';
-import { SettingsManager, SettingKeys } from '../Framework/Managers/SettingsManager';
-import { EBookDataManager } from '../Framework/Data/EBookDataManager';
+} from 'manxia_core/src/main/ets/Models/EBookModels';
+import { SettingKeys } from 'manxia_core/src/main/ets/Framework/Contracts/SettingKeys';
+import { EBookDataManager } from 'manxia_core/src/main/ets/Framework/Data/EBookDataManager';
 import { PdfViewerComponent } from '../Framework/Components/PdfViewerComponent';
 import { PdfKitViewerComponent, PdfViewerCallbacks, PdfViewerController } from '../Framework/Components/PdfKitViewerComponent';
+import { pdfService } from '@kit.PDFKit';
+import { PdfTextIndexService, PdfTextSearchHit } from '../Framework/Services/PdfTextIndexService';
+import { SafeFileUtils } from 'manxia_core/src/main/ets/Utils/SafeFileUtils';
 import { ReaderKitViewerComponent, ReaderKitViewerController } from '../Framework/Components/ReaderKitViewerComponent';
 import { isReaderKitEnabled } from '../Framework/Initialization/ReaderKitFeatureGate';
 import { EBookParserFactory } from '../Framework/Parsers/EBookParser';
 import { EBookReaderParams } from './EBookReaderRouteTypes';
-import { READER_ABILITY_HOST_MULTITON } from '../Framework/Reader/MangaReaderAbilityConstants';
-import { EBookReadingSettingsPanel } from '../Framework/Components/EBookReadingSettingsPanel';
+import { READER_ABILITY_HOST_MULTITON } from 'manxia_reader_ui/src/main/ets/Framework/Reader/MangaReaderAbilityConstants';
+import { EBookReadingSettingsPanel } from 'manxia_theme/src/main/ets/Framework/Components/EBookReadingSettingsPanel';
 import { curves, UIContext } from '@kit.ArkUI';
 import { display } from '@kit.ArkUI';
+import { resolveMedia } from 'manxia_ui_resources/src/main/ets/ResourceCatalog';
 import { TextReaderComponent, PaginationMode } from '../components/TextReaderComponent';
 import {
   MarkdownViewerComponent,
@@ -46,7 +52,7 @@ import {
   MarkdownReaderStyle,
   MarkdownProgressSnapshot,
   MarkdownPageTurnResult
-} from '../components/editor/MarkdownViewerComponent';
+} from 'manxia_features_ui/src/main/ets/components/editor/MarkdownViewerComponent';
 import { MangaViewer } from '../components/MangaViewer';
 import { PreloadDebugInfo } from '../components/PreloadDebugOverlay';
 import { TextReaderSettingsPanel } from '../components/TextReaderSettingsPanel';
@@ -57,8 +63,8 @@ import {
   ImageSourceType,
   ReadingSettings as MangaReadingSettings,
   DEFAULT_READING_SETTINGS
-} from '../Models/MangaModels';
-import { DownloadStatus } from '../Framework/Types/StatusEnums';
+} from 'manxia_core/src/main/ets/Models/MangaModels';
+import { DownloadStatus } from 'manxia_core/src/main/ets/Framework/Types/StatusEnums';
 import {
   TextReaderSettings,
   TextReadingMode,
@@ -80,7 +86,7 @@ import {
   TextChapter,
   PRESET_BACKGROUNDS,
   PresetBackground
-} from '../Models/TextReaderModels';
+} from 'manxia_core/src/main/ets/Models/TextReaderModels';
 import { eventBus, GameEvent, BasePayload, IEventPayload, ReadAloudStatePayload } from '../Framework/EventBus';
 import { KeyCode, inputConsumer } from '@kit.InputKit';
 import type { KeyEvent as InputKeyEvent } from '@kit.InputKit';
@@ -93,10 +99,10 @@ import {
   persistGlobalReadAloudSettings as persistStoredGlobalReadAloudSettings
 } from '../Framework/ReadAloud/ReadAloudSettingsStore';
 import { ReadAloudSettingsInfoPanel } from '../components/ReadAloudSettingsInfoPanel';
-import { UnifiedContentType } from '../Models/UnifiedContentModels';
-import { getUnifiedAnnotationManager } from '../Framework/Annotations/UnifiedAnnotationManager';
-import { AnnotationAnchor, UnifiedAnnotationType } from '../Models/AnnotationModels';
-import { MangaReadFlowMonitor } from '../Framework/Reader/MangaReadFlowMonitor';
+import { UnifiedContentType } from 'manxia_core/src/main/ets/Models/UnifiedContentModels';
+import { getUnifiedAnnotationManager } from 'manxia_core/src/main/ets/Framework/Annotations/UnifiedAnnotationManager';
+import { AnnotationAnchor, UnifiedAnnotationType } from 'manxia_core/src/main/ets/Models/AnnotationModels';
+import { MangaReadFlowMonitor } from 'manxia_reader_ui/src/main/ets/Framework/Reader/MangaReadFlowMonitor';
 import {
   MangaReadFlowEvent,
   MangaReadFlowEventType,
@@ -104,17 +110,26 @@ import {
   MangaReadFlowSessionInfo,
   MangaReadFlowSeverity,
   MangaReadFlowSourceKind
-} from '../Framework/Reader/MangaReadFlowTypes';
+} from 'manxia_reader_ui/src/main/ets/Framework/Reader/MangaReadFlowTypes';
 import { AnnotationCenterPageParams } from './AnnotationCenterPage';
-import { AppGuideOverlay, GuideHighlightRect } from '../Framework/Components/AppGuideOverlay';
+import { AppGuideOverlay, GuideHighlightRect } from 'manxia_theme/src/main/ets/Framework/Components/AppGuideOverlay';
 import { resolveGuideHighlightRectInRoot } from '../Framework/Components/AppGuideSupport';
-import { AppGuideManager, AppGuidePageId, AppGuideStep } from '../Framework/Managers/AppGuideManager';
+import { AppGuideManager, AppGuidePageId, AppGuideStep } from 'manxia_core/src/main/ets/Framework/Managers/AppGuideManager';
 import { distributedReadingService } from '../Framework/Distributed/DistributedReadingService';
 import { distributedDataSyncManager, SyncReadingState } from '../Framework/Distributed/DistributedDataSyncManager';
 import { distributedPermissionManager } from '../Framework/Distributed/DistributedPermissionManager';
 import { continuationStateHelper } from '../Framework/Distributed/ContinuationStateHelper';
 
 const TAG = 'EBookReaderPage';
+
+/**
+ * PDF 目录（大纲）条目（扁平化后）
+ */
+export interface PdfOutlineEntry {
+  title: string;
+  pageIndex: number;
+  depth: number;
+}
 
 interface EBookBookmarkContext {
   chapterId: string;
@@ -197,6 +212,25 @@ struct EBookReaderPage {
   // UI控制状态 - 默认隐藏工具栏实现完全沉浸式体验
   @State showTopToolbar: boolean = false;
   @State showBottomToolbar: boolean = false;
+  @StorageProp('reader_toolbar_text_hint_enabled') toolbarTextHintEnabled: boolean = true;
+  // [Phase4] PDF 原生阅读增强
+  @State private pdfPanelTab: number = 0;
+  @State private pdfOutline: PdfOutlineEntry[] = [];
+  @State private pdfSearchKeyword: string = '';
+  @State private pdfSearchPanelVisible: boolean = false;
+  @State private pdfSearchCount: number = 0;
+  @State private pdfSearchMatchIndex: number = 0;
+  @State private pdfSearchLastKeyword: string = '';
+  @State private pdfSearchPanelOpacity: number = 0;
+  @State private pdfSearchPanelScale: number = 0.95;
+  @State private pdfSearchHits: PdfTextSearchHit[] = [];
+  @State private pdfSearching: boolean = false;
+  @State private pdfIndexReady: boolean = false;
+  @State private pdfFitMode: number = pdfService.PageFit.FIT_PAGE;
+  @State private pdfContinuous: boolean = false;
+  @State private pdfZoom: number = 1;
+  @State private pdfNight: boolean = false;
+  @State private pdfSelectionMode: boolean = false;
   @State toolbarOpacity: number = 0.0;
   @State private stableToolbarStatusBarHeight: number = -1;
   @State showSettingsPanel: boolean = false;
@@ -277,7 +311,7 @@ struct EBookReaderPage {
   private interactionOverlayDismissTimer: number = -1;
 
   // UI上下文（用于设置沉浸式模式）
-  private settingsManager: SettingsManager = SettingsManager.getInstance();
+  private settingsManager: ISettingsManagerFacade = SettingsManagerHolder.get();
   private ebookDataManager: EBookDataManager = EBookDataManager.getInstance();
   private annotationManager = getUnifiedAnnotationManager();
   private readAloudController: ReadAloudController = ReadAloudController.getInstance();
@@ -1807,7 +1841,7 @@ struct EBookReaderPage {
   * 用于 TXT 格式电子书，优先使用全局设置，除非用户已修改
   */
   private loadTextReaderSettingsWithGlobalDefaults(ebook: EBook): void {
-    const settingsManager = SettingsManager.getInstance();
+    const settingsManager: ISettingsManagerFacade = SettingsManagerHolder.get();
     
     // 获取全局纯文本阅读器设置
     const globalFontSize = clampTextReaderFontSize(settingsManager.getNumber(SettingKeys.GLOBAL_TEXT_FONT_SIZE, DEFAULT_TEXT_READER_SETTINGS.textStyle.fontSize));
@@ -2016,9 +2050,15 @@ struct EBookReaderPage {
     }
     let enabled: boolean = false;
     if (this.isUsingTextReader()) {
-      enabled = this.textReaderSettings.lockDeviceOrientation ?? false;
+      enabled = ReaderOrientationLockHelper.resolveOrientationLockEnabled(
+        ReaderOrientationLockScope.TEXT,
+        this.textReaderSettings.lockDeviceOrientation ?? false
+      );
     } else {
-      enabled = this.ebook?.readingSettings?.lockDeviceOrientation ?? false;
+      enabled = ReaderOrientationLockHelper.resolveOrientationLockEnabled(
+        ReaderOrientationLockScope.EBOOK,
+        this.ebook?.readingSettings?.lockDeviceOrientation ?? false
+      );
     }
     this.orientationLockToken = ReaderOrientationLockHelper.syncCurrentOrientationLock(
       'EBookReaderPage',
@@ -2736,6 +2776,10 @@ struct EBookReaderPage {
     if (this.readerKitController && this.readerKitController.isControllerReady()) {
       this.readerKitController.applyReadingSettings(this.ebook.readingSettings, true);
     }
+    // [对齐完整阅读器] PDF：主题/背景/亮度 -> 页面底色（PDF 无字体 API，字号不适用）
+    if (this.isUsingPdfReader() && this.pdfViewerController) {
+      this.pdfViewerController.applyReadingSettings(this.ebook.readingSettings, false);
+    }
     this.applyMarkdownReaderStyle();
 
   // 当前 DOM 位置（用于 Reader Kit 精确恢复阅读位置）
@@ -3146,6 +3190,10 @@ struct EBookReaderPage {
     this.handleReaderOverlayOpening('chapter_list_open');
     logger.info(TAG, `显示章节列表，当前章节索引: ${this.currentChapterIndex}`);
     this.showChapterList = true;
+    if (this.isUsingPdfReader()) {
+      // PDF：目录使用 PDF 大纲（getRootBookmarks）
+      void this.loadPdfOutline();
+    }
     this.getUIContext().animateTo({
       duration: 250,
       curve: curves.springMotion(0.5, 0.8)
@@ -3420,7 +3468,9 @@ struct EBookReaderPage {
         .width('100%')
         .height('100%')
         .onClick(() => {
-          if (!this.isUsingTextReader() && !this.isUsingMarkdownReader()) {
+          // PDF 的点击区域由 PdfKitViewerComponent 自己处理（左/右翻页、中间切换工具栏），
+          // 这里必须排除，否则每次点击/翻页都会额外弹出工具栏
+          if (!this.isUsingTextReader() && !this.isUsingMarkdownReader() && !this.isUsingPdfReader()) {
             this.toggleToolbar();
           }
         })
@@ -3562,6 +3612,11 @@ struct EBookReaderPage {
               this.handlePageGuideSkip();
             }
           })
+        }
+
+        // PDF 全文搜索面板
+        if (this.pdfSearchPanelVisible) {
+          this.buildPdfSearchPanel()
         }
       }
       .width('100%')
@@ -3768,6 +3823,16 @@ struct EBookReaderPage {
       return false;
     }
     return this.isTextReaderFormat(this.ebook.format);
+  }
+
+  /**
+  * 检查当前是否使用 PDF Kit 原生阅读器
+  */
+  private isUsingPdfReader(): boolean {
+    if (!this.ebook) {
+      return false;
+    }
+    return this.ebook.format === EBookFormat.PDF;
   }
 
   private isUsingMarkdownReader(): boolean {
@@ -4311,17 +4376,401 @@ struct EBookReaderPage {
     }
   }
 
+  // ──── [Phase4] PDF 原生阅读增强 ────
+
+  /**
+   * 目录数据源：PDF 已解析出结构化大纲时，不再显示纯页面目录。
+   */
+  private getCatalogChapters(): EBookChapter[] {
+    if (this.isUsingPdfReader() && this.pdfOutline.length > 0) {
+      return [];
+    }
+    return this.ebook?.chapters || [];
+  }
+
+  private openPdfSearchPanel(): void {
+    this.handleReaderOverlayOpening('pdf_search_open');
+    this.pdfSearchPanelVisible = true;
+    this.pdfSearchPanelOpacity = 0;
+    this.pdfSearchPanelScale = 0.95;
+    this.getUIContext().animateTo({
+      duration: 250,
+      curve: curves.springMotion(0.5, 0.8)
+    }, () => {
+      this.pdfSearchPanelOpacity = 1;
+      this.pdfSearchPanelScale = 1;
+    });
+  }
+
+  private hidePdfSearchPanelWithAnimation(): void {
+    this.getUIContext().animateTo({
+      duration: 200,
+      curve: Curve.EaseOut
+    }, () => {
+      this.pdfSearchPanelOpacity = 0;
+      this.pdfSearchPanelScale = 0.95;
+    });
+    setTimeout(() => {
+      this.pdfSearchPanelVisible = false;
+      this.handleReaderOverlayClosed('pdf_search_close');
+    }, 200);
+  }
+
+  private closePdfSearchPanel(): void {
+    this.pdfSearchPanelVisible = false;
+    this.pdfSearchPanelOpacity = 0;
+    this.pdfSearchPanelScale = 0.95;
+    this.pdfSearchCount = 0;
+    this.pdfSearchMatchIndex = 0;
+    this.pdfSearchLastKeyword = '';
+    this.pdfSearchHits = [];
+    if (this.pdfViewerController) {
+      this.pdfViewerController.clearSearchKeyword();
+    }
+  }
+
+  /**
+   * PDF Kit 视图级全文检索（官方路径）：searchKey 返回匹配总数，
+   * 再通过 setSearchIndex 逐条跳转并高亮。
+   */
+  private async runPdfViewSearch(): Promise<void> {
+    const keyword: string = this.pdfSearchKeyword.trim();
+    this.pdfSearchLastKeyword = keyword;
+    this.pdfSearchHits = [];
+    if (keyword.length <= 0 || !this.pdfViewerController) {
+      this.pdfSearchCount = 0;
+      return;
+    }
+    this.pdfSearching = true;
+    const matches: number = await this.pdfViewerController.searchKeyword(keyword);
+    this.pdfSearchCount = matches;
+    this.pdfSearchMatchIndex = 0;
+    this.pdfSearching = false;
+    logger.info(TAG, 'PDF 视图搜索完成: keyword=' + keyword + ', matches=' + matches);
+    if (matches === 0) {
+      // 回退：PDF Kit 检索对部分中文文档不命中，用自建文本索引定位页码
+      await this.searchPdfByTextIndex(keyword);
+    }
+  }
+
+  private async searchPdfByTextIndex(keyword: string): Promise<void> {
+    const ctx = this.getUIContext().getHostContext() as common.UIAbilityContext;
+    if (!ctx || !this.ebook || this.ebook.filePath.length <= 0) {
+      return;
+    }
+    try {
+      const service = PdfTextIndexService.getInstance();
+      if (!service.hasIndex(ctx, this.ebook.id)) {
+        await service.buildIndex(ctx, this.ebook.id, this.ebook.filePath);
+      }
+      this.pdfSearchHits = await service.search(ctx, this.ebook.id, keyword);
+      logger.info(TAG, 'PDF 索引回退命中页数=' + this.pdfSearchHits.length);
+    } catch (error) {
+      logger.warn(TAG, 'PDF 索引回退失败: ' + String(error));
+      this.pdfSearchHits = [];
+    }
+  }
+
+  private nextPdfMatch(): void {
+    if (!this.pdfViewerController || this.pdfSearchCount <= 0) {
+      return;
+    }
+    this.pdfSearchMatchIndex = this.pdfViewerController.goToNextSearchMatch();
+  }
+
+  private prevPdfMatch(): void {
+    if (!this.pdfViewerController || this.pdfSearchCount <= 0) {
+      return;
+    }
+    this.pdfSearchMatchIndex = this.pdfViewerController.goToPreviousSearchMatch();
+  }
+
+  private async loadPdfOutline(): Promise<void> {
+    const path: string = this.ebook?.filePath ?? '';
+    if (path.length <= 0) {
+      this.pdfOutline = [];
+      return;
+    }
+    const out: PdfOutlineEntry[] = [];
+    const doc: pdfService.PdfDocument = new pdfService.PdfDocument();
+    let loaded: boolean = false;
+    try {
+      loaded = doc.loadDocument(path) === pdfService.ParseResult.PARSE_SUCCESS;
+      if (loaded) {
+        const roots: Array<pdfService.Bookmark> = doc.getRootBookmarks();
+        for (let i = 0; i < roots.length; i++) {
+          this.collectPdfOutline(roots[i], 0, out);
+        }
+      }
+    } catch (error) {
+      logger.warn(TAG, '读取 PDF 目录失败: ' + String(error));
+    }
+    try {
+      if (loaded) {
+        doc.releaseDocument();
+      }
+    } catch (_releaseError) {
+    }
+    this.pdfOutline = out;
+    logger.info(TAG, 'PDF 目录条目数=' + out.length);
+  }
+
+  private collectPdfOutline(node: pdfService.Bookmark, depth: number, out: PdfOutlineEntry[]): void {
+    try {
+      const info: pdfService.BookmarkInfo = node.getBookmarkInfo();
+      const dest: pdfService.DestInfo = node.getDestInfo();
+      out.push({ title: info.title, pageIndex: dest.pageIndex, depth: depth } as PdfOutlineEntry);
+      const children: Array<pdfService.Bookmark> = node.getChildren();
+      for (let i = 0; i < children.length; i++) {
+        if (depth < 6) {
+          this.collectPdfOutline(children[i], depth + 1, out);
+        }
+      }
+    } catch (_error) {
+    }
+  }
+
+  /**
+   * PDF 进度条跳页（点击/拖动进度条）
+   */
+  private seekPdfPage(pageIndex: number): void {
+    if (!this.pdfViewerController) {
+      return;
+    }
+    this.pdfViewerController.goToPage(pageIndex);
+    logger.info(TAG, 'PDF 进度条跳页: pageIndex=' + pageIndex);
+  }
+
+  private jumpToPdfPage(pageIndex: number): void {
+    if (this.pdfViewerController) {
+      this.pdfViewerController.goToPage(pageIndex);
+    }
+  }
+
+  private applyPdfFit(mode: pdfService.PageFit): void {
+    this.pdfFitMode = mode;
+    if (this.pdfViewerController) {
+      this.pdfViewerController.setPageFit(mode);
+    }
+  }
+
+  private togglePdfContinuous(): void {
+    this.pdfContinuous = !this.pdfContinuous;
+    if (this.pdfViewerController) {
+      this.pdfViewerController.setContinuous(this.pdfContinuous);
+    }
+  }
+
+  private changePdfZoom(delta: number): void {
+    const next: number = Math.max(0.5, Math.min(4, this.pdfZoom + delta));
+    this.pdfZoom = next;
+    if (this.pdfViewerController) {
+      this.pdfViewerController.setZoom(next);
+    }
+  }
+
+  private togglePdfNight(): void {
+    this.pdfNight = !this.pdfNight;
+    if (this.pdfViewerController) {
+      this.pdfViewerController.setNightOverlay(this.pdfNight);
+    }
+  }
+
+  private togglePdfSelection(): void {
+    this.pdfSelectionMode = !this.pdfSelectionMode;
+    if (this.pdfViewerController) {
+      this.pdfViewerController.setSelectionMode(this.pdfSelectionMode);
+    }
+  }
+
+  private async savePdfAnnotated(): Promise<void> {
+    const path: string = this.ebook?.filePath ?? '';
+    if (path.length <= 0 || !this.pdfViewerController) {
+      return;
+    }
+    const ok: boolean = await this.pdfViewerController.saveAnnotatedCopy(path);
+    this.getUIContext().getPromptAction().showToast({
+      message: ok ? '批注已写入工作副本' : '批注保存失败',
+      duration: 1800
+    });
+  }
+
+  @Builder
+  private buildPdfSearchPanel() {
+    Stack() {
+      Column()
+        .width('100%')
+        .height('100%')
+        .backgroundColor($r('app.color.background_overlay'))
+        .opacity(0.5 * this.pdfSearchPanelOpacity)
+        .onClick(() => {
+          this.hidePdfSearchPanelWithAnimation();
+        })
+
+      Column({ space: 12 }) {
+        Row() {
+          Text('全文搜索')
+            .fontSize(17)
+            .fontWeight(FontWeight.Bold)
+            .fontColor($r('app.color.text_primary'))
+            .layoutWeight(1)
+            .fontFamily(this.appFontFamily)
+
+          Button() {
+            SymbolGlyph($r('sys.symbol.xmark'))
+              .fontSize(18)
+              .fontColor([$r('app.color.text_secondary')])
+          }
+          .width(36)
+          .height(36)
+          .backgroundColor(Color.Transparent)
+          .onClick(() => {
+            this.hidePdfSearchPanelWithAnimation();
+          })
+        }
+        .width('100%')
+
+        Divider().color($r('app.color.divider'))
+
+        Row({ space: 8 }) {
+          TextInput({ placeholder: '输入要在本文档中查找的文字', text: this.pdfSearchKeyword })
+            .layoutWeight(1)
+            .height(40)
+            .fontSize(14)
+            .fontFamily(this.appFontFamily)
+            .onChange((value: string) => {
+              this.pdfSearchKeyword = value;
+            })
+            .onSubmit(() => {
+              void this.runPdfViewSearch();
+            })
+          Button('搜索')
+            .height(40)
+            .fontSize(14)
+            .fontFamily(this.appFontFamily)
+            .onClick(() => {
+              void this.runPdfViewSearch();
+            })
+        }
+        .width('100%')
+
+        if (this.pdfSearching) {
+          Row({ space: 8 }) {
+            LoadingProgress()
+              .width(18)
+              .height(18)
+              .color($r('app.color.accent_primary'))
+            Text('正在搜索...')
+              .fontSize(13)
+              .fontColor($r('app.color.text_secondary'))
+              .fontFamily(this.appFontFamily)
+          }
+          .width('100%')
+        } else if (this.pdfSearchCount > 0) {
+          Row({ space: 10 }) {
+            Button('上一处')
+              .fontSize(13)
+              .height(34)
+              .layoutWeight(1)
+              .backgroundColor($r('app.color.background_secondary'))
+              .fontColor($r('app.color.text_primary'))
+              .onClick(() => {
+                this.prevPdfMatch();
+              })
+            Text('第 ' + (this.pdfSearchMatchIndex + 1) + ' / ' + this.pdfSearchCount + ' 处')
+              .fontSize(13)
+              .fontColor($r('app.color.accent_primary'))
+              .layoutWeight(1)
+              .textAlign(TextAlign.Center)
+              .fontFamily(this.appFontFamily)
+            Button('下一处')
+              .fontSize(13)
+              .height(34)
+              .layoutWeight(1)
+              .backgroundColor($r('app.color.background_secondary'))
+              .fontColor($r('app.color.text_primary'))
+              .onClick(() => {
+                this.nextPdfMatch();
+              })
+          }
+          .width('100%')
+        } else if (this.pdfSearchLastKeyword.length > 0) {
+          Text('未找到匹配项')
+            .fontSize(13)
+            .fontColor($r('app.color.text_secondary'))
+            .width('100%')
+            .fontFamily(this.appFontFamily)
+
+          if (this.pdfSearchHits.length > 0) {
+            Text('已通过文本索引定位到 ' + this.pdfSearchHits.length + ' 页')
+              .fontSize(13)
+              .fontColor($r('app.color.accent_primary'))
+              .width('100%')
+              .fontFamily(this.appFontFamily)
+
+            List({ space: 6 }) {
+              ForEach(this.pdfSearchHits, (hit: PdfTextSearchHit, index: number) => {
+                ListItem() {
+                  Column({ space: 2 }) {
+                    Text('第 ' + (hit.pageIndex + 1) + ' 页')
+                      .fontSize(12)
+                      .fontColor($r('app.color.accent_primary'))
+                      .fontFamily(this.appFontFamily)
+                    Text(hit.snippet)
+                      .fontSize(12)
+                      .fontColor($r('app.color.text_secondary'))
+                      .maxLines(2)
+                      .textOverflow({ overflow: TextOverflow.Ellipsis })
+                      .fontFamily(this.appFontFamily)
+                  }
+                  .width('100%')
+                  .alignItems(HorizontalAlign.Start)
+                  .padding(8)
+                  .onClick(() => {
+                    this.closePdfSearchPanel();
+                    this.jumpToPdfPage(hit.pageIndex);
+                  })
+                }
+              }, (hit: PdfTextSearchHit, index: number) => 'pdfHit_' + index + '_' + hit.pageIndex)
+            }
+            .width('100%')
+            .height(220)
+            .scrollBar(BarState.Auto)
+          }
+        }
+      }
+      .width(this.isLandscape ? '45%' : '90%')
+      .constraintSize({ maxWidth: 420, maxHeight: this.isLandscape ? undefined : 600, minWidth: 300 })
+      .padding(16)
+      .backgroundColor(this.themeManager.getGlassBackgroundResource())
+      .backgroundBlurStyle(this.themeManager.getGlassBlurStyle())
+      .borderRadius(this.isLandscape ? 0 : 16)
+      .opacity(this.pdfSearchPanelOpacity)
+      .scale({ x: this.pdfSearchPanelScale, y: this.pdfSearchPanelScale })
+      .clip(true)
+    }
+    .width('100%')
+    .height('100%')
+    .alignContent(this.isLandscape ? Alignment.End : Alignment.Center)
+    .zIndex(1200)
+  }
+
   @Builder
   buildPdfReaderView() {
     if (this.ebook) {
-      // 使用 PDF Kit 阅读器组件
-      PdfKitViewerComponent({
+      Stack() {
+        // 使用 PDF Kit 阅读器组件
+        PdfKitViewerComponent({
         ebook: this.ebook,
         readingSettings: this.ebook.readingSettings,
         themeBgColor: this.bgColor,// 传递背景色，响应主题
         onControllerReady: (controller: PdfViewerController): void => {
           this.pdfViewerController = controller;
           logger.info(TAG, 'PDF viewer controller is ready');
+          // [对齐完整阅读器] 初次进入即应用阅读设置（字号->缩放，主题/背景->页面底色）
+          if (this.ebook && this.ebook.readingSettings) {
+            controller.applyReadingSettings(this.ebook.readingSettings, true);
+          }
         },
         callbacks: {
           onPageChange: (currentPage: number, totalPages: number) => {
@@ -4354,6 +4803,16 @@ struct EBookReaderPage {
             this.reportTransitionLoadingProgress(0.96, 'pdf_load_complete');
             this.notifyTransitionReaderReadyOnce('pdf_load_complete');
           },
+          onTextSelected: (text: string, pageIndex: number) => {
+            logger.info(TAG, 'PDF 文本选择: page=' + pageIndex + ', len=' + text.length);
+          },
+          onCenterTap: () => {
+            // 中间点击才切换工具栏，翻页不再弹任何浮层
+            this.toggleToolbar();
+          },
+          onAnnotationChanged: () => {
+            logger.info(TAG, 'PDF 批注发生变更');
+          },
           onLoadError: (error: string) => {
             logger.error(TAG, `PDF 加载失败: ${error}`);
             this.errorMessage = error;
@@ -4362,7 +4821,11 @@ struct EBookReaderPage {
             this.notifyTransitionReaderReadyOnce('pdf_load_error');
           }
         } as PdfViewerCallbacks
-      })
+        })
+        .width('100%')
+        .height('100%')
+
+      }
       .width('100%')
       .height('100%')
     }
@@ -4527,15 +4990,7 @@ struct EBookReaderPage {
     
     // 检查是否为应用资源路径 (app.media.xxx)
     if (raw.startsWith('app.media.')) {
-      const resourceName = raw.substring('app.media.'.length);
-      if (resourceName === 'mangabook') {
-        return $r('app.media.mangabook');
-      } else if (resourceName === 'ic_ebook') {
-        return $r('app.media.ic_ebook');
-      } else if (resourceName === 'icon') {
-        return $r('app.media.icon');
-      }
-      return $r('app.media.ic_ebook');
+      return resolveMedia(raw);
     }
     
     // 本地文件路径
@@ -5262,14 +5717,13 @@ struct EBookReaderPage {
   buildTopToolbar() {
     Row() {
             // 只在用户释放滑块时触发章节切换，避免拖动过程中频繁触发分页导致卡死
-      Button() {
-        SymbolGlyph($r('sys.symbol.arrow_left'))
-          .fontColor([$r('app.color.text_primary')])
-      }
-      .width(48)
-      .height(48)
-      .backgroundColor(Color.Transparent)
-      .onClick(() => this.goBack())
+      ReaderToolbarButton({
+        icon: $r('sys.symbol.arrow_left'),
+        label: '返回',
+        iconColor: $r('app.color.text_primary'),
+        iconSize: 20,
+        onAction: () => this.goBack()
+      })
 
       // 控制按钮区域 - 根据阅读器类型显示不同按钮
       Text(this.ebook?.metadata.title || '电子书阅读器')
@@ -5282,39 +5736,52 @@ struct EBookReaderPage {
         .margin({ left: 12 })
         .fontFamily(this.appFontFamily)
 
-      Button() {
-        SymbolGlyph(this.isCurrentPageBookmarked ? $r('sys.symbol.bookmark_fill') : $r('sys.symbol.bookmark'))
-          .fontColor([this.isCurrentPageBookmarked ? $r('app.color.accent_primary') : $r('app.color.text_primary')])
-      }
-      .width(48)
-      .height(48)
-      .backgroundColor(Color.Transparent)
-      .onClick(() => {
-        this.addCurrentEBookBookmark();
+      ReaderToolbarButton({
+        icon: this.isCurrentPageBookmarked ? $r('sys.symbol.bookmark_fill') : $r('sys.symbol.bookmark'),
+        label: '书签',
+        iconColor: this.isCurrentPageBookmarked ? $r('app.color.accent_primary') : $r('app.color.text_primary'),
+        iconSize: 20,
+        onAction: () => {
+          this.addCurrentEBookBookmark();
+        }
       })
 
-      Button() {
-        SymbolGlyph($r('sys.symbol.highlighter_line'))
-          .fontColor([$r('app.color.text_primary')])
-      }
-      .width(48)
-      .height(48)
-      .backgroundColor(Color.Transparent)
-      .onClick(() => {
-        this.openCurrentEBookAnnotationCenter();
+      ReaderToolbarButton({
+        icon: $r('sys.symbol.highlighter_line'),
+        label: '划线',
+        iconColor: $r('app.color.text_primary'),
+        iconSize: 20,
+        onAction: () => {
+          this.openCurrentEBookAnnotationCenter();
+        }
       })
+
+      // PDF：高亮标注（功能入口，非设置项）
+      if (this.ebook && this.ebook.format === EBookFormat.PDF) {
+        ReaderToolbarButton({
+          icon: $r('sys.symbol.highlighter_line'),
+          label: '高亮',
+          iconColor: this.pdfSelectionMode ? $r('app.color.accent_primary') : $r('app.color.text_primary'),
+          iconSize: 20,
+          onAction: () => {
+            this.togglePdfSelection();
+            if (!this.pdfSelectionMode) {
+              // 退出划重点即把批注写回工作副本
+              void this.savePdfAnnotated();
+            }
+          }
+        })
+      }
 
           // 纯文本阅读器：显示综合设置按钮
-      Button() {
-        SymbolGlyph($r('sys.symbol.more'))
-          .fontColor([$r('app.color.text_primary')])
-
-      }
-      .width(48)
-      .height(48)
-      .backgroundColor(Color.Transparent)
-      .onClick(() => {
-        this.showMoreMenuWithAnimation();
+      ReaderToolbarButton({
+        icon: $r('sys.symbol.more'),
+        label: '更多',
+        iconColor: $r('app.color.text_primary'),
+        iconSize: 20,
+        onAction: () => {
+          this.showMoreMenuWithAnimation();
+        }
       })
     }
     .width('100%')
@@ -5372,6 +5839,22 @@ struct EBookReaderPage {
                 }
               }
             })
+        } else if (this.isUsingPdfReader()) {
+          Slider({
+            value: this.currentChapterIndex,
+            min: 0,
+            max: Math.max(1, (this.ebook?.chapters.length || 1) - 1),
+            step: 1
+          })
+            .layoutWeight(1)
+            .trackColor($r('app.color.divider_primary'))
+            .selectedColor($r('app.color.accent_primary'))
+            .onChange((value: number, mode: SliderChangeMode) => {
+              // PDF：点击/拖动进度条直接跳页
+              if (mode === SliderChangeMode.End) {
+                this.seekPdfPage(Math.round(value));
+              }
+            })
         } else {
           Slider({
             value: this.getReaderKitProgressSliderValue(),
@@ -5395,101 +5878,128 @@ struct EBookReaderPage {
       // 点击遮罩关闭
       Row() {
       // 点击遮罩关闭
-        Button() {
-          SymbolGlyph($r('sys.symbol.list_bullet'))
-            .fontColor([$r('app.color.text_primary')])
-        }
-        .width(64)
-        .height(48)
-        .backgroundColor(Color.Transparent)
-        .onClick(() => {
-          this.showChapterListWithAnimation();
+        ReaderToolbarButton({
+          icon: $r('sys.symbol.list_bullet'),
+          label: '目录',
+          iconColor: $r('app.color.text_primary'),
+          iconSize: 20,
+          buttonWidth: 64,
+          onAction: () => {
+            this.showChapterListWithAnimation();
+          }
         })
 
-        Blank()
+        if (this.isUsingPdfReader()) {
+          ReaderToolbarButton({
+            icon: $r('sys.symbol.magnifyingglass'),
+            label: '搜索',
+            iconColor: $r('app.color.text_primary'),
+            iconSize: 20,
+            buttonWidth: 64,
+            onAction: () => {
+              this.openPdfSearchPanel();
+            }
+          })
+        }
+
+        if (!this.isUsingPdfReader()) {
+          if (!this.isUsingPdfReader()) {
+          Blank()
+        }
+        }
 
       // 点击遮罩关闭
         if (this.isUsingTextReader()) {
       // 菜单面板
-          Button() {
-            SymbolGlyph($r('sys.symbol.eye'))
-              .fontColor([$r('app.color.text_primary')])
-          }
-          .width(64)
-          .height(48)
-          .backgroundColor(Color.Transparent)
-          .onClick(() => {
-            this.showTextReaderSettingsWithAnimation();
-          })
-
-          Blank()
-
-          Row() {
-          Row() {
-            SymbolGlyph(this.textReadAloudPlaying ? $r('sys.symbol.pause_fill') : $r('sys.symbol.play_fill'))
-              .fontSize(18)
-              .fontColor([this.textReadAloudPlaying ? Color.White : $r('app.color.text_primary')])
-          }
-            .width(48)
-            .height('100%')
-            .justifyContent(FlexAlign.Center)
-            .onClick(() => {
-              this.toggleTextReadAloud();
-            })
-
-            Column()
-              .width(1)
-              .height(16)
-              .backgroundColor(this.textReadAloudPlaying ? '#66FFFFFF' : $r('app.color.divider_primary'))
-
-            Row() {
-              SymbolGlyph($r('sys.symbol.gearshape'))
-                .fontSize(16)
-                .fontColor([this.textReadAloudPlaying ? Color.White : $r('app.color.text_primary')])
+          ReaderToolbarButton({
+            icon: $r('sys.symbol.eye'),
+            label: '阅读',
+            iconColor: $r('app.color.text_primary'),
+            iconSize: 20,
+            buttonWidth: 64,
+            onAction: () => {
+              this.showTextReaderSettingsWithAnimation();
             }
-            .width(44)
-            .height('100%')
-            .justifyContent(FlexAlign.Center)
-            .onClick(() => {
-              this.openReadAloudSettingsPanel();
-            })
-          }
-          .height(36)
-          .backgroundColor(this.textReadAloudPlaying ? '#1A1890FF' : $r('app.color.background_secondary'))
-          .borderRadius(18)
-          .clip(true)
-        } else {
-        // 字体调整按钮
-        // 字体调整按钮
-          Button() {
-            SymbolGlyph($r('sys.symbol.textformat'))
-              .fontSize(22)
-              .fontColor([$r('app.color.text_primary')])
-          }
-          .width(48)
-          .height(48)
-          .backgroundColor(Color.Transparent)
-          .onClick(() => {
-            this.showFontSettingsPanelWithAnimation();
           })
 
           Blank()
 
-        // 字体调整按钮
-          Button() {
-            SymbolGlyph($r('sys.symbol.eye'))
-              .fontSize(22)
-              .fontColor([$r('app.color.text_primary')])
+          Column({ space: 1 }) {
+            Row() {
+              Row() {
+                SymbolGlyph(this.textReadAloudPlaying ? $r('sys.symbol.pause_fill') : $r('sys.symbol.play_fill'))
+                  .fontSize(18)
+                  .fontColor([this.textReadAloudPlaying ? Color.White : $r('app.color.text_primary')])
+              }
+              .width(48)
+              .height('100%')
+              .justifyContent(FlexAlign.Center)
+              .onClick(() => {
+                this.toggleTextReadAloud();
+              })
+
+              Column()
+                .width(1)
+                .height(16)
+                .backgroundColor(this.textReadAloudPlaying ? '#66FFFFFF' : $r('app.color.divider_primary'))
+
+              Row() {
+                SymbolGlyph($r('sys.symbol.gearshape'))
+                  .fontSize(16)
+                  .fontColor([this.textReadAloudPlaying ? Color.White : $r('app.color.text_primary')])
+              }
+              .width(44)
+              .height('100%')
+              .justifyContent(FlexAlign.Center)
+              .onClick(() => {
+                this.openReadAloudSettingsPanel();
+              })
+            }
+            .height(36)
+            .backgroundColor(this.textReadAloudPlaying ? '#1A1890FF' : $r('app.color.background_secondary'))
+            .borderRadius(18)
+            .clip(true)
+
+            if (this.toolbarTextHintEnabled) {
+              Text('听书')
+                .fontSize(9)
+                .fontColor($r('app.color.text_primary'))
+                .fontFamily(this.appFontFamily)
+                .maxLines(1)
+                .textOverflow({ overflow: TextOverflow.Ellipsis })
+            }
           }
-          .width(48)
-          .height(48)
-          .backgroundColor(Color.Transparent)
-          .onClick(() => {
-            this.showReadingOptionsPanelWithAnimation();
+          .alignItems(HorizontalAlign.Center)
+        } else {
+        // 字体/阅读设置：统一走标准电子书设置面板（EBookReadingSettingsPanel），PDF 同样适用
+          ReaderToolbarButton({
+            icon: $r('sys.symbol.textformat'),
+            label: '字体',
+            iconColor: $r('app.color.text_primary'),
+            iconSize: 20,
+            onAction: () => {
+              this.showFontSettingsPanelWithAnimation();
+            }
           })
+
+          if (!this.isUsingPdfReader()) {
+            Blank()
+
+          // 「阅读」面板仅文本阅读器适用；PDF 由标准电子书设置面板覆盖
+            ReaderToolbarButton({
+              icon: $r('sys.symbol.eye'),
+              label: '阅读',
+              iconColor: $r('app.color.text_primary'),
+              iconSize: 20,
+              onAction: () => {
+                this.showReadingOptionsPanelWithAnimation();
+              }
+            })
+          }
         }
       }
       .width('100%')
+      .justifyContent(this.isUsingPdfReader() ? FlexAlign.SpaceEvenly : FlexAlign.Start)
       .padding({ left: 16, right: 16, bottom: this.navigationBarHeight })
     }
     .width('100%')
@@ -5537,6 +6047,7 @@ struct EBookReaderPage {
         })
 
         Divider().color($r('app.color.divider'))
+
 
         // 章节列表
         Row() {
@@ -5644,7 +6155,35 @@ struct EBookReaderPage {
 
       // 遮罩
         List({ scroller: this.chapterListScroller }) {
-          ForEach(this.ebook?.chapters || [], (chapter: EBookChapter, index: number) => {
+          if (this.isUsingPdfReader() && this.pdfOutline.length > 0) {
+            ForEach(this.pdfOutline, (item: PdfOutlineEntry, index: number) => {
+              ListItem() {
+                Row() {
+                  Text(item.title)
+                    .fontSize(15)
+                    .fontColor($r('app.color.text_primary'))
+                    .maxLines(2)
+                    .textOverflow({ overflow: TextOverflow.Ellipsis })
+                    .layoutWeight(1)
+                    .margin({ left: item.depth * 12 })
+                    .fontFamily(this.appFontFamily)
+
+                  Text('第 ' + (item.pageIndex + 1) + ' 页')
+                    .fontSize(11)
+                    .fontColor($r('app.color.text_secondary'))
+                    .margin({ left: 8 })
+                    .fontFamily(this.appFontFamily)
+                }
+                .width('100%')
+                .padding({ left: 20, right: 20, top: 12, bottom: 12 })
+                .onClick(() => {
+                  this.hideChapterListWithAnimation();
+                  this.jumpToPdfPage(item.pageIndex);
+                })
+              }
+            }, (item: PdfOutlineEntry, index: number) => 'pdfOutlineItem_' + index + '_' + item.title)
+          }
+          ForEach(this.getCatalogChapters(), (chapter: EBookChapter, index: number) => {
             ListItem() {
               Row() {
                 Text(chapter.title)
@@ -5714,6 +6253,7 @@ struct EBookReaderPage {
         if (this.ebook && this.ebook.readingSettings) {
           EBookReadingSettingsPanel({
             settings: this.ebook.readingSettings,
+            fixedLayout: this.isUsingPdfReader(),
             onSettingsChange: (settings: EBookReadingSettings) => {
               this.updateReadingSettings(settings);
             },

@@ -1,4 +1,4 @@
-import { SafeUtils } from '../../Utils/SafeUtils';
+import { SafeUtils } from 'manxia_core/src/main/ets/Utils/SafeUtils';
 /**
  * 任务执行引擎
  * 负责执行任务定义中的步骤，支持顺序执行、并行执行和条件执行
@@ -14,10 +14,10 @@ import {
   TaskExecutionMode,
   TaskError,
   Action
-} from './MangaSourceTypes';
+} from 'manxia_source_engine/src/main/ets/Framework/WebView/MangaSourceTypes';
 import { MangaSourceActionEngine, ActionContext } from './MangaSourceActionEngine';
-import { AntiCrawlerConfig } from './MangaSourceTypes';
-import { logger } from '../../Utils/Logger';
+import { AntiCrawlerConfig } from 'manxia_source_engine/src/main/ets/Framework/WebView/MangaSourceTypes';
+import { logger } from 'manxia_core/src/main/ets/Utils/Logger';
 
 const TAG = 'TaskExecutor';
 

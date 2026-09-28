@@ -1,6 +1,6 @@
 // Responsibility: choose webtoon boundary edge pages to prewarm.
 
-import { MangaPage } from '../Models/MangaModels';
+import { MangaPage } from 'manxia_core/src/main/ets/Models/MangaModels';
 
 export class MangaWebtoonPrewarmInput {
   public chapterId: string = '';

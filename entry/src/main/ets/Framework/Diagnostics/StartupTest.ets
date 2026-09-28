@@ -1,6 +1,6 @@
 // 文件路径: src/main/ets/Framework/Diagnostics/StartupTest.ets
 
-import { logger } from '../../Utils/Logger';
+import { logger } from 'manxia_core/src/main/ets/Utils/Logger';
 import { startupController } from './StartupController';
 import { StartupPhase } from './StartupDiagnostics';
 

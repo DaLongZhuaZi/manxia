@@ -1,0 +1,49 @@
+{
+  "schemaVersion": 1,
+  "contract": "legado_jsoup_index_pseudo_selectors",
+  "html": "<div class=\"container\"><span class=\"one\">span-1</span><p>para-1</p><span class=\"two\">span-2</span><span class=\"three\">span-3</span><p>para-2</p></div>",
+  "cases": [
+    {
+      "id": "nth-of-type-exact",
+      "rule": "div.container span:nth-of-type(2)@text",
+      "semantics": "nth_of_type_exact",
+      "expected": ["span-2"]
+    },
+    {
+      "id": "nth-of-type-formula",
+      "rule": "div.container span:nth-of-type(n+2)@text",
+      "semantics": "nth_of_type_formula",
+      "expected": ["span-2", "span-3"]
+    },
+    {
+      "id": "eq-sibling-index",
+      "rule": "div.container span:eq(2)@text",
+      "semantics": "eq_zero_based_element_sibling_index",
+      "expected": ["span-2"]
+    },
+    {
+      "id": "lt-sibling-index",
+      "rule": "div.container span:lt(3)@text",
+      "semantics": "lt_zero_based_element_sibling_index",
+      "expected": ["span-1", "span-2"]
+    },
+    {
+      "id": "mixed-sibling-type",
+      "rule": "div.container span:nth-of-type(odd)@text",
+      "semantics": "nth_of_type_ignores_other_tags",
+      "expected": ["span-1", "span-3"]
+    },
+    {
+      "id": "invalid-index-argument",
+      "rule": "div.container span:eq(foo)@text",
+      "semantics": "invalid_index_fails_closed",
+      "expected": []
+    }
+  ],
+  "legado": {
+    "implementation": "AnalyzeByJSoup -> Element.select -> Jsoup 1.16.2 QueryParser/Evaluator",
+    "nthOfType": "1-based same-tag sibling position with odd/even/an+b support",
+    "eq": "0-based elementSiblingIndex equality",
+    "lt": "elementSiblingIndex less than the numeric argument"
+  }
+}

@@ -1,3 +1,4 @@
+import { ISettingsManagerFacade, SettingsManagerHolder } from 'manxia_core/src/main/ets/Framework/Contracts/ISettingsManagerFacade';
 // 文件路径: entry/src/main/ets/pages/settings/MainMenuSettingsSubPage.ets
 /**
  * 主页面设置子页面
@@ -7,28 +8,28 @@
 import { HdsNavDestination, HdsNavDestinationAttribute, ScrollEffectType } from '@kit.UIDesignKit';
 import { LengthMetrics, promptAction } from '@kit.ArkUI';
 import { common, Want } from '@kit.AbilityKit';
-import { logger } from '../../Utils/Logger';
-import { PageLifecycleManager } from '../../Framework/Lifecycle';
-import { ThemeAwareState, ThemeAwareHelper } from '../../Framework/Components/ThemeAware';
-import { ThemeManager, ThemeType } from '../../Framework/Managers/ThemeManager';
-import { FontAwareHelper, FontAwareState } from '../../Framework/Components/FontAware';
+import { logger } from 'manxia_core/src/main/ets/Utils/Logger';
+import { PageLifecycleManager } from 'manxia_core/src/main/ets/Framework/Lifecycle/index';
+import { ThemeAwareState, ThemeAwareHelper } from 'manxia_theme/src/main/ets/Framework/Components/ThemeAware';
+import { ThemeManager, ThemeType } from 'manxia_theme/src/main/ets/Framework/Managers/ThemeManager';
+import { FontAwareHelper, FontAwareState } from 'manxia_theme/src/main/ets/Framework/Components/FontAware';
 import { DataManager } from '../../Framework/Data/DataManager';
-import { DeviceAdaptationManager, DeviceInfo, DeviceChangeListener, Breakpoint } from '../../Framework/Managers/DeviceAdaptationManager';
-import { ResponsiveLayoutHelper } from '../../Framework/Utils/ResponsiveLayout';
-import { SettingsManager, SettingKeys } from '../../Framework/Managers/SettingsManager';
+import { DeviceAdaptationManager, DeviceInfo, DeviceChangeListener, Breakpoint } from 'manxia_theme/src/main/ets/Framework/Managers/DeviceAdaptationManager';
+import { ResponsiveLayoutHelper } from 'manxia_theme/src/main/ets/Framework/Utils/ResponsiveLayout';
+import { SettingKeys } from 'manxia_core/src/main/ets/Framework/Contracts/SettingKeys';
 import {
   AnimationSettingsManager,
   DEFAULT_ANIMATION_SETTINGS
-} from '../../Framework/Animation/AnimationSettingsManager';
+} from 'manxia_core/src/main/ets/Framework/Animation/AnimationSettingsManager';
 import { getSuwayomiTracker, SuwayomiTracker, SuwayomiConfig } from '../../Framework/Tracking/trackers/SuwayomiTracker';
 import { getKomgaTracker, KomgaTracker } from '../../Framework/Tracking/trackers/KomgaTracker';
 import { KomgaConfig } from '../../Framework/Source/KomgaModels';
-import { SettingsSearchSupport } from './SettingsSearchSupport';
-import { SettingsPanelSurfaceHelper } from './SettingsPanelSurfaceHelper';
-import { GlobalBackgroundLayerMode } from '../../Framework/Components/GlobalBackgroundLayer';
-import { SharedPageBackgroundLayer } from '../../Framework/Components/SharedPageBackgroundLayer';
+import { SettingsSearchSupport } from 'manxia_features_ui/src/main/ets/pages/settings/SettingsSearchSupport';
+import { SettingsPanelSurfaceHelper } from 'manxia_features_ui/src/main/ets/pages/settings/SettingsPanelSurfaceHelper';
+import { GlobalBackgroundLayerMode } from 'manxia_theme/src/main/ets/Framework/Components/GlobalBackgroundLayer';
+import { SharedPageBackgroundLayer } from 'manxia_theme/src/main/ets/Framework/Components/SharedPageBackgroundLayer';
 import { SettingsImmersiveTitleBar } from './SettingsImmersiveTitleBar';
-import { SettingsPageTitleBarManager } from './SettingsPageTitleBarManager';
+import { SettingsPageTitleBarManager } from 'manxia_features_ui/src/main/ets/pages/settings/SettingsPageTitleBarManager';
 
 const TAG = 'MainMenuSettingsSubPage';
 const TITLE_BAR_HEIGHT = 56;
@@ -141,7 +142,7 @@ export struct MainMenuSettingsSubPage {
   @State bottomBarStyle: string = 'custom';
 
   // 设置管理器
-  private settingsManager: SettingsManager = SettingsManager.getInstance();
+  private settingsManager: ISettingsManagerFacade = SettingsManagerHolder.get();
   private animationSettingsManager: AnimationSettingsManager = AnimationSettingsManager.getInstance();
   private suwayomiTracker: SuwayomiTracker = getSuwayomiTracker();
   private komgaTracker: KomgaTracker = getKomgaTracker();
@@ -181,12 +182,11 @@ export struct MainMenuSettingsSubPage {
   }
 
   private getDefaultTabIndices(): number[] {
+    // Suwayomi 与 Komga 默认不在底栏显示，可在对应设置页或欢迎引导中开启
     const preferredOrder: number[] = [
       TabIndex.LIBRARY,
       TabIndex.SOURCE,
       TabIndex.BOOK_SOURCE,
-      TabIndex.SUWAYOMI,
-      TabIndex.KOMGA,
       TabIndex.SETTINGS
     ];
     const availableIndices = this.getAvailableTabConfigs().map((cfg: TabConfig) => cfg.index);
@@ -2035,7 +2035,7 @@ export struct MainMenuSettingsSubPage {
  * 重要：如果全局强制模式启用，所有场景都将使用统一详情页
  */
 export class PageSettingsHelper {
-  private static settingsManager: SettingsManager = SettingsManager.getInstance();
+  private static get settingsManager(): ISettingsManagerFacade { return SettingsManagerHolder.get(); }
   
   // 强制模式设置键
   private static readonly FORCE_UNIFIED_KEY = 'force_unified_detail_page_enabled';

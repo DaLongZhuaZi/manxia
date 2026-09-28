@@ -1,6 +1,6 @@
 import { image } from '@kit.ImageKit';
-import { logger } from '../../Utils/Logger';
-import { ImageSourceType } from '../../Models/MangaModels';
+import { logger } from 'manxia_core/src/main/ets/Utils/Logger';
+import { ImageSourceType } from 'manxia_core/src/main/ets/Models/MangaModels';
 import {
   ImageCacheManager,
   RequestHeaderEntry as ImageRequestHeaderEntry,
@@ -12,15 +12,15 @@ import {
   RequestHeaderEntry as OnlineRequestHeaderEntry,
   RequestHeaders as OnlineRequestHeaders
 } from '../Cache/OnlineImageLoader';
-import { LocalImageCacheManager } from '../Cache/LocalImageCacheManager';
+import { LocalImageCacheManager } from 'manxia_network/src/main/ets/Framework/Cache/LocalImageCacheManager';
 import {
   LegadoImageTransportTrace,
   LegadoImageTransportTraceContext
-} from '../Network/LegadoImageTransportTrace';
+} from 'manxia_network/src/main/ets/Framework/Network/LegadoImageTransportTrace';
 import {
   getNetworkTransportFailureCoordinator,
   NetworkTransportFailureCoordinator
-} from '../Network/NetworkTransportFailureCoordinator';
+} from 'manxia_network/src/main/ets/Framework/Network/NetworkTransportFailureCoordinator';
 import {
   MangaAssetLoadReason,
   MangaAssetLoadRequest,

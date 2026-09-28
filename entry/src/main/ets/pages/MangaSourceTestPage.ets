@@ -7,13 +7,13 @@
 import { HdsNavDestination, HdsNavDestinationAttribute, ScrollEffectType } from '@kit.UIDesignKit';
 import { curves, UIContext, LengthMetrics } from '@kit.ArkUI';
 import { webview } from '@kit.ArkWeb';
-import { logger } from '../Utils/Logger';
-import { PageLifecycleManager } from '../Framework/Lifecycle';
-import { ThemeManager, ThemeType } from '../Framework/Managers/ThemeManager';
-import { ThemeAwareState, ThemeAwareHelper } from '../Framework/Components/ThemeAware';
+import { logger } from 'manxia_core/src/main/ets/Utils/Logger';
+import { PageLifecycleManager } from 'manxia_core/src/main/ets/Framework/Lifecycle/index';
+import { ThemeManager, ThemeType } from 'manxia_theme/src/main/ets/Framework/Managers/ThemeManager';
+import { ThemeAwareState, ThemeAwareHelper } from 'manxia_theme/src/main/ets/Framework/Components/ThemeAware';
 // 已弃用自定义 AnimatedButton，改用原生 ArkUI Button
 import { MangaSourceEngine, SearchResult, EngineResult, EngineConfig } from '../Framework/WebView/MangaSourceEngine';
-import { MangaSourceConfig, MangaInfo, ChapterInfo, AntiCrawlerConfig } from '../Framework/WebView/MangaSourceTypes';
+import { MangaSourceConfig, MangaInfo, ChapterInfo, AntiCrawlerConfig } from 'manxia_source_engine/src/main/ets/Framework/WebView/MangaSourceTypes';
 
 const TAG = 'MangaSourceTestPage';
 

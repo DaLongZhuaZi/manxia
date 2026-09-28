@@ -1,4 +1,4 @@
-import { EBook, EBookReadingSettings, DEFAULT_EBOOK_READING_SETTINGS, EBookPageMode } from '../../Models/EBookModels';
+import { EBook, EBookReadingSettings, DEFAULT_EBOOK_READING_SETTINGS, EBookPageMode } from 'manxia_core/src/main/ets/Models/EBookModels';
 import {
   TextReaderSettings,
   DEFAULT_TEXT_READER_SETTINGS,
@@ -8,7 +8,7 @@ import {
   TextAlignment,
   SavedBackgroundImage,
   clampTextReaderFontSize
-} from '../../Models/TextReaderModels';
+} from 'manxia_core/src/main/ets/Models/TextReaderModels';
 import { NovelReaderPageParams } from '../../pages/NovelBookshelfPage';
 
 export const LOCAL_TXT_NOVEL_SOURCE_ID: string = 'local_txt_ebook';
@@ -151,6 +151,13 @@ const DEFAULT_LOCAL_TXT_EBOOK_READING_SETTINGS: EBookReadingSettings =
 
 export function buildLocalTextNovelBookId(ebookId: string): string {
   return `${LOCAL_TXT_NOVEL_BOOK_ID_PREFIX}${ebookId}`;
+}
+
+export function getLocalTextNovelEBookId(novelBookId: string): string {
+  if (!novelBookId.startsWith(LOCAL_TXT_NOVEL_BOOK_ID_PREFIX)) {
+    return '';
+  }
+  return novelBookId.substring(LOCAL_TXT_NOVEL_BOOK_ID_PREFIX.length);
 }
 
 export function isLocalTxtNovelReaderSource(sourceId: string): boolean {

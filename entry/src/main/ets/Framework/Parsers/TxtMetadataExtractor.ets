@@ -3,8 +3,8 @@
 // 支持从 TXT 文件中智能识别：标题、作者、简介、标签等信息
 // 支持多种常见格式：网络小说、经典文学、翻译作品等
 
-import { EBookMetadata, EBookChapter } from '../../Models/EBookModels';
-import { logger } from '../../Utils/Logger';
+import { EBookMetadata, EBookChapter } from 'manxia_core/src/main/ets/Models/EBookModels';
+import { logger } from 'manxia_core/src/main/ets/Utils/Logger';
 
 const TAG = 'TxtMetadataExtractor';
 

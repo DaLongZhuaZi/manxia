@@ -1,0 +1,50 @@
+{
+  "schemaVersion": 1,
+  "contract": "legado_trace_graph_construction_audit",
+  "issueId": "ISSUE-COMPAT-242-TRACE-BRIDGE-PRESERVATION",
+  "baseline": {
+    "sourceCount": 458,
+    "sourcePackageSha256": "473048A191DE4749FA9C15E0A2F2328A3E86B385A5FCE23EA30432D598D03A67",
+    "legadoCommit": "95973d186b147fb9ab43a9240021d688e4304fbd"
+  },
+  "runtimePath": "entry/src/main/ets/Framework/Novel/LegadoWorkflowOrchestrator.ets",
+  "typesPath": "entry/src/main/ets/Framework/Novel/LegadoCompatibilityTypes.ets",
+  "analyzerPath": "entry/src/main/ets/Framework/Novel/LegadoRuleAnalyzer.ets",
+  "runtimeV2Path": "entry/src/main/ets/Framework/Novel/LegadoRuntimeV2.ets",
+  "sourceScriptRuntimePath": "entry/src/main/ets/Framework/Novel/LegadoSourceScriptRuntime.ets",
+  "serializerPath": "entry/src/main/ets/Framework/Novel/LegadoTraceSerializer.ets",
+  "testOnlyConformancePagePath": "entry/src/main/ets/pages/LegadoArkWebConformancePage.ets",
+  "testOnlyConformanceAbilityPath": "entry/src/main/ets/LegadoArkWebConformanceAbility.ets",
+  "traceConstructionCount": 7,
+  "testOnlyTraceConstructionCount": 1,
+  "sameTraceMutationMethods": [
+    "markWorkflowException",
+    "syncVariables",
+    "refreshTraceOutput",
+    "blockProtectedResponse",
+    "markBookInfoRuleFailure"
+  ],
+  "newTraceMethods": [
+    "blockForJsContracts",
+    "execute",
+    "createPlanningFailureResponse",
+    "createExecutionFailureResponse"
+  ],
+  "bridgeProducingTraceMethods": [
+    "recordExploreKindsScriptTrace"
+  ],
+  "testOnlyTraceMethods": [
+    "emitTrace"
+  ],
+  "semantics": {
+    "sameTrace": "A mutation of an existing workflow trace must use replaceTrace and preserve the existing or merged bridgeTraces.",
+    "newTrace": "A trace created before a request exists starts with empty bridge evidence and must not inherit a prior workflow request.",
+    "bridgeProducing": "A script result that already owns bridge evidence passes it into the immutable trace constructor.",
+    "serializer": "Trace serialization reads and copies evidence; it never mutates the persisted trace graph.",
+    "testOnly": "LegadoArkWebConformancePage.emitTrace is hosted by the dedicated conformance Ability, consumes only deterministic local fixtures and is excluded from normal source workflows."
+  },
+  "runtimeActionsPerformed": [],
+  "semanticMatchAllowed": false,
+  "runtimeRegression": "not_run",
+  "deviceRegression": "not_run"
+}

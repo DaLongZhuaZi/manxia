@@ -1,0 +1,37 @@
+{
+  "ordinal": 96,
+  "sourceId": "0EE99B647B7AC47241184FFC294723C4475FF1B5945F88A00A035A936FAE362B",
+  "runnerStatus": "failed",
+  "driverClosed": true,
+  "workflowResults": {
+    "book_info": "passed",
+    "toc": "passed",
+    "content": "passed"
+  },
+  "detailTraceRecords": [
+    {
+      "workflow": "book_info",
+      "statusCode": 200,
+      "errorCode": "none",
+      "outputKind": "book_info_metadata_resolved",
+      "outputSummarySha256": "DF85D8D8672A6AE9A02C9D6709F2D000C9473A9505281AD595F8C3CE2C2ECF35",
+      "outputSummaryLength": 626
+    },
+    {
+      "workflow": "toc",
+      "statusCode": 200,
+      "errorCode": "none",
+      "outputKind": "toc_nonempty",
+      "outputSummarySha256": "E39873FDF901BA5A152ABFF40473B691008C726BB750192F085F2C2EF24209AB",
+      "outputSummaryLength": 296
+    },
+    {
+      "workflow": "content",
+      "statusCode": 200,
+      "errorCode": "none",
+      "outputKind": "content_readable",
+      "outputSummarySha256": "DCB2B2999DB93E117D3F5C7F3BF90E372031FF68F011B826C01B05C40CC8708A",
+      "outputSummaryLength": 998
+    }
+  ]
+}

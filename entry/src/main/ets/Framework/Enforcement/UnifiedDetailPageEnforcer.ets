@@ -10,8 +10,8 @@
  * 4. 记录执行日志便于调试
  */
 
-import { logger } from '../../Utils/Logger';
-import { SettingsManager, SettingKeys } from '../Managers/SettingsManager';
+import { logger } from 'manxia_core/src/main/ets/Utils/Logger';
+import { SettingsManager, SettingKeys } from 'manxia_core/src/main/ets/Framework/Managers/SettingsManager';
 import { DetailPageType, PageSettingKeys } from '../../pages/settings/PageSettingsSubPage';
 
 const TAG = 'UnifiedDetailPageEnforcer';

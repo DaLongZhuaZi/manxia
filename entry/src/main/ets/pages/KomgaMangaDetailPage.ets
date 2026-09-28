@@ -1,10 +1,10 @@
 ﻿import { common } from '@kit.AbilityKit';
 import { promptAction } from '@kit.ArkUI';
-import { logger } from '../Utils/Logger';
-import { Manga } from '../Models/MangaModels';
-import { ThemeAwareState, ThemeAwareHelper } from '../Framework/Components/ThemeAware';
-import { FontAwareHelper, FontAwareState } from '../Framework/Components/FontAware';
-import { ThemeManager, ThemeType } from '../Framework/Managers/ThemeManager';
+import { logger } from 'manxia_core/src/main/ets/Utils/Logger';
+import { Manga } from 'manxia_core/src/main/ets/Models/MangaModels';
+import { ThemeAwareState, ThemeAwareHelper } from 'manxia_theme/src/main/ets/Framework/Components/ThemeAware';
+import { FontAwareHelper, FontAwareState } from 'manxia_theme/src/main/ets/Framework/Components/FontAware';
+import { ThemeManager, ThemeType } from 'manxia_theme/src/main/ets/Framework/Managers/ThemeManager';
 import { DataManager, FavoriteInfo, ReadHistory } from '../Framework/Data/DataManager';
 import { ChapterInfo, ComicDetailInfo } from '../Framework/Source/SourceExecutor';
 import { RemoteLibraryMangaBridge } from '../Framework/Source/RemoteLibraryMangaBridge';
@@ -13,7 +13,7 @@ import { getKomgaSourceExecutor, KomgaSourceExecutor } from '../Framework/Source
 import { KomgaContentType } from '../Framework/Source/KomgaModels';
 import KomgaCacheManager from '../Framework/Source/KomgaCacheManager';
 import { KomgaImage } from '../components/KomgaImage';
-import { SettingsImmersiveTitleActionItem, SettingsPageTitleBarManager } from './settings/SettingsPageTitleBarManager';
+import { SettingsImmersiveTitleActionItem, SettingsPageTitleBarManager } from 'manxia_features_ui/src/main/ets/pages/settings/SettingsPageTitleBarManager';
 import { SettingsImmersiveTitleBar } from './settings/SettingsImmersiveTitleBar';
 import { MangaReaderContentType, MangaReaderPageParams } from './MangaReaderPage';
 import { openMangaReaderInIsolatedAbility } from '../Framework/Reader/MangaReaderAbilityLauncher';

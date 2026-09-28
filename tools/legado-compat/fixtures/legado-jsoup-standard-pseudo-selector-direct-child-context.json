@@ -1,0 +1,39 @@
+{
+  "schemaVersion": 1,
+  "contract": "legado_jsoup_standard_css_pseudo_selector_direct_child_context",
+  "issueId": "ISSUE-COMPAT-243-JSOUP-STANDARD-CSS-PSEUDO-SELECTORS",
+  "baseline": {
+    "sourceCount": 458,
+    "sourcePackageSha256": "473048A191DE4749FA9C15E0A2F2328A3E86B385A5FCE23EA30432D598D03A67",
+    "legadoCommit": "95973d186b147fb9ab43a9240021d688e4304fbd"
+  },
+  "html": "<section><p>first</p><p>second</p><p>third</p></section><article><p>only</p></article>",
+  "selectionPath": "getElementsByCSSWithBridge -> getElementsByCSSChain -> findElementsBySingleSelector -> findElementsByDirectChildSelector -> findElementsBySimpleSelector -> filterElementsByPseudoClasses",
+  "cases": [
+    {
+      "id": "first-child",
+      "selector": "section > p:first-child",
+      "semantics": "direct_child_standard_first_element_child",
+      "expected": ["<p>first</p>"]
+    },
+    {
+      "id": "last-child",
+      "selector": "section > p:last-child",
+      "semantics": "direct_child_standard_last_element_child",
+      "expected": ["<p>third</p>"]
+    },
+    {
+      "id": "nth-child",
+      "selector": "section > p:nth-child(2)",
+      "semantics": "direct_child_one_based_element_child_index",
+      "expected": ["<p>second</p>"]
+    },
+    {
+      "id": "only-child",
+      "selector": "article > p:only-child",
+      "semantics": "direct_child_only_element_child",
+      "expected": ["<p>only</p>"]
+    }
+  ],
+  "failureCondition": "The direct-child string fallback evaluates each child in isolation, so siblingPosition cannot be resolved for standard child pseudo classes."
+}

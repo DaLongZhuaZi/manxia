@@ -6,16 +6,16 @@
 import { HdsNavDestination } from '@kit.UIDesignKit';
 import { LengthMetrics, promptAction } from '@kit.ArkUI';
 import { common } from '@kit.AbilityKit';
-import { logger } from '../Utils/Logger';
-import { PageLifecycleManager } from '../Framework/Lifecycle';
-import { ThemeAwareState, ThemeAwareHelper } from '../Framework/Components/ThemeAware';
-import { ThemeType } from '../Framework/Managers/ThemeManager';
-import { FontAwareHelper, FontAwareState } from '../Framework/Components/FontAware';
-import { RssFeedItem, RssSubscriptionSource } from '../Models/RssSubscriptionModels';
+import { logger } from 'manxia_core/src/main/ets/Utils/Logger';
+import { PageLifecycleManager } from 'manxia_core/src/main/ets/Framework/Lifecycle/index';
+import { ThemeAwareState, ThemeAwareHelper } from 'manxia_theme/src/main/ets/Framework/Components/ThemeAware';
+import { ThemeType } from 'manxia_theme/src/main/ets/Framework/Managers/ThemeManager';
+import { FontAwareHelper, FontAwareState } from 'manxia_theme/src/main/ets/Framework/Components/FontAware';
+import { RssFeedItem, RssSubscriptionSource } from 'manxia_core/src/main/ets/Models/RssSubscriptionModels';
 import { getRssSubscriptionInitializer } from '../Framework/Rss/RssSubscriptionInitializer';
 import { getRssSubscriptionManager, RssSubscriptionManager } from '../Framework/Rss/RssSubscriptionManager';
-import { DisplayMode } from '../Utils/WindowManager';
-import { PageWindowCoordinator } from '../Utils/PageWindowCoordinator';
+import { DisplayMode } from 'manxia_theme/src/main/ets/Utils/WindowManager';
+import { PageWindowCoordinator } from 'manxia_theme/src/main/ets/Utils/PageWindowCoordinator';
 
 const TAG = 'RssSubscriptionDetailPage';
 const TITLE_BAR_HEIGHT_MINI = 56;

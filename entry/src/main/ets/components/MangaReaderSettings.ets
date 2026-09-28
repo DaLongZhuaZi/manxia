@@ -4,8 +4,8 @@
  * 提供阅读模式、阅读方向、亮度调节、滤镜效果、页面间距等配置选项
  */
 
-import { logger } from '../Utils/Logger';
-import { ThemeManager } from '../Framework/Managers/ThemeManager';
+import { logger } from 'manxia_core/src/main/ets/Utils/Logger';
+import { ThemeManager } from 'manxia_theme/src/main/ets/Framework/Managers/ThemeManager';
 import { 
   GlobalAnimationManager, 
   AnimationType, 
@@ -21,10 +21,10 @@ import {
   DoublePagePortraitLayout,
   DEFAULT_READING_SETTINGS,
   DEFAULT_FILTER_SETTINGS
-} from '../Models/MangaModels';
+} from 'manxia_core/src/main/ets/Models/MangaModels';
 import { curves, UIContext, display } from '@kit.ArkUI';
-import { ThemeAwareState, ThemeAwareHelper } from '../Framework/Components/ThemeAware';
-import { ThemeType } from '../Framework/Managers/ThemeManager';
+import { ThemeAwareState, ThemeAwareHelper } from 'manxia_theme/src/main/ets/Framework/Components/ThemeAware';
+import { ThemeType } from 'manxia_theme/src/main/ets/Framework/Managers/ThemeManager';
 
 const TAG = 'MangaReaderSettings';
 

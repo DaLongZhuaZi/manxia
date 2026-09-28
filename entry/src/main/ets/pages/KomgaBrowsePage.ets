@@ -1,14 +1,14 @@
-﻿import { SafeUtils } from '../Utils/SafeUtils';
+﻿import { SafeUtils } from 'manxia_core/src/main/ets/Utils/SafeUtils';
 import { preferences } from '@kit.ArkData';
 import { promptAction } from '@kit.ArkUI';
 import { common } from '@kit.AbilityKit';
-import { logger } from '../Utils/Logger';
-import { ThemeAwareState, ThemeAwareHelper } from '../Framework/Components/ThemeAware';
-import { FontAwareHelper, FontAwareState } from '../Framework/Components/FontAware';
-import { ThemeType } from '../Framework/Managers/ThemeManager';
-import { AppGuideOverlay, GuideHighlightRect } from '../Framework/Components/AppGuideOverlay';
+import { logger } from 'manxia_core/src/main/ets/Utils/Logger';
+import { ThemeAwareState, ThemeAwareHelper } from 'manxia_theme/src/main/ets/Framework/Components/ThemeAware';
+import { FontAwareHelper, FontAwareState } from 'manxia_theme/src/main/ets/Framework/Components/FontAware';
+import { ThemeType } from 'manxia_theme/src/main/ets/Framework/Managers/ThemeManager';
+import { AppGuideOverlay, GuideHighlightRect } from 'manxia_theme/src/main/ets/Framework/Components/AppGuideOverlay';
 import { resolveGuideHighlightRectInRoot } from '../Framework/Components/AppGuideSupport';
-import { AppGuideManager, AppGuidePageId, AppGuideStep } from '../Framework/Managers/AppGuideManager';
+import { AppGuideManager, AppGuidePageId, AppGuideStep } from 'manxia_core/src/main/ets/Framework/Managers/AppGuideManager';
 import { TabContentCacheManager, KomgaCacheData } from '../Framework/Cache/TabContentCacheManager';
 import { ComicInfo } from '../Framework/Source/SourceExecutor';
 import KomgaCacheManager from '../Framework/Source/KomgaCacheManager';
@@ -252,7 +252,7 @@ export struct KomgaBrowsePage {
 
   private async loadPreferences(): Promise<void> {
     try {
-      const store = preferences.getPreferencesSync(this.getHostContext(), { name: this.prefsName });
+      const store = await preferences.getPreferences(this.getHostContext(), { name: this.prefsName });
       const savedDisplayMode: string = store.getSync('displayMode', 'grid') as string;
       const savedBrowseMode: string = store.getSync('browseMode', 'library') as string;
       const savedContentType: string = store.getSync('contentType', 'SERIES') as string;
@@ -282,7 +282,7 @@ export struct KomgaBrowsePage {
 
   private async savePreferences(): Promise<void> {
     try {
-      const store = preferences.getPreferencesSync(this.getHostContext(), { name: this.prefsName });
+      const store = await preferences.getPreferences(this.getHostContext(), { name: this.prefsName });
       store.putSync('displayMode', this.displayMode);
       store.putSync('browseMode', this.browseMode);
       store.putSync('contentType', this.contentType);

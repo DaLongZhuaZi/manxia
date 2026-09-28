@@ -1,6 +1,6 @@
 import common from '@ohos.app.ability.common';
 import { abilityAccessCtrl, bundleManager, Permissions, Want } from '@kit.AbilityKit';
-import { logger } from '../../Utils/Logger';
+import { logger } from 'manxia_core/src/main/ets/Utils/Logger';
 import { distributedDataSyncManager } from './DistributedDataSyncManager';
 
 const TAG = 'DistributedPermissionManager';

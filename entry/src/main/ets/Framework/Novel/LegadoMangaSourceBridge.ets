@@ -2,12 +2,12 @@
  * Bridges Legado IMAGE book sources into the existing online manga pipeline.
  */
 
-import { logger } from '../../Utils/Logger';
-import { md5Hash } from '../../Utils/CryptoUtils';
+import { logger } from 'manxia_core/src/main/ets/Utils/Logger';
+import { md5Hash } from 'manxia_core/src/main/ets/Utils/CryptoUtils';
 import { DataManager, OnlineComicSourceSaveInput, OnlineChapterInfoInput, OnlinePageInfoInput } from '../Data/DataManager';
-import { ComicSourceDatabaseRecord } from '../Database/DatabaseTypes';
+import { ComicSourceDatabaseRecord } from 'manxia_core/src/main/ets/Framework/Database/DatabaseTypes';
 import { ComicInfo } from '../Source/SourceExecutor';
-import { DownloadStatus, MangaStatus, ReadingStatus } from '../Types/StatusEnums';
+import { DownloadStatus, MangaStatus, ReadingStatus } from 'manxia_core/src/main/ets/Framework/Types/StatusEnums';
 import {
   ImageSourceType,
   Manga,
@@ -16,17 +16,17 @@ import {
   MangaMetadata,
   MangaPage,
   ReadingProgress
-} from '../../Models/MangaModels';
-import { DEFAULT_READING_SETTINGS } from '../../Models/MangaModels';
-import { NovelSearchResult } from '../../Models/NovelModels';
-import { PageInfo as SourcePageInfo, PageRequestHeader } from '../WebView/MangaSourceTypes';
-import { SafeUtils } from '../../Utils/SafeUtils';
+} from 'manxia_core/src/main/ets/Models/MangaModels';
+import { DEFAULT_READING_SETTINGS } from 'manxia_core/src/main/ets/Models/MangaModels';
+import { NovelSearchResult } from 'manxia_core/src/main/ets/Models/NovelModels';
+import { PageInfo as SourcePageInfo, PageRequestHeader } from 'manxia_source_engine/src/main/ets/Framework/WebView/MangaSourceTypes';
+import { SafeUtils } from 'manxia_core/src/main/ets/Utils/SafeUtils';
 import {
   LegadoBook,
   LegadoBookSource,
   LegadoBookSourceType,
   LegadoChapter
-} from './LegadoSourceTypes';
+} from 'manxia_novel/src/main/ets/Framework/Novel/LegadoSourceTypes';
 import { LegadoUrlAnalyzer, ParsedUrlRequest } from './LegadoUrlAnalyzer';
 import { LegadoJsSourceEffects } from './LegadoJsEngine';
 import { getNovelDataManager } from './NovelDataManager';
@@ -34,11 +34,11 @@ import { getNovelSourceManager, NovelSourceManager } from './NovelSourceManager'
 import {
   LegadoWorkflowContentResult,
   LegadoWorkflowOutputKind
-} from './LegadoCompatibilityTypes';
+} from 'manxia_novel/src/main/ets/Framework/Novel/LegadoCompatibilityTypes';
 import { getNovelLoginManager } from './NovelLoginManager';
-import { getCookieStore } from './LegadoCookieStore';
-import { LegadoMangaExtractedImage, LegadoMangaImageExtractor } from './LegadoMangaImageExtractor';
-import { HtmlFormatter } from './HtmlFormatter';
+import { getCookieStore } from 'manxia_novel/src/main/ets/Framework/Novel/LegadoCookieStore';
+import { LegadoMangaExtractedImage, LegadoMangaImageExtractor } from 'manxia_novel/src/main/ets/Framework/Novel/LegadoMangaImageExtractor';
+import { HtmlFormatter } from 'manxia_novel/src/main/ets/Framework/Novel/HtmlFormatter';
 
 const TAG = 'LegadoMangaSourceBridge';
 const LEGADO_MANGA_PKG_PREFIX = 'legado.image.';
@@ -172,6 +172,14 @@ export class LegadoMangaSourceBridge {
       LegadoMangaSourceBridge.instance = new LegadoMangaSourceBridge();
     }
     return LegadoMangaSourceBridge.instance;
+  }
+
+  /**
+   * 重置单例状态，清理长生命周期 Map
+   * 应用退出、用户注销或图源全量重置时调用
+   */
+  reset(): void {
+    this.virtualSourceSyncTasks.clear();
   }
 
   static isLegadoMangaPkg(pkg: string | undefined | null): boolean {

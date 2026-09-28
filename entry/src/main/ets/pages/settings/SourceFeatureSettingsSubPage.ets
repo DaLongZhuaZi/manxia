@@ -1,16 +1,18 @@
+import { ISettingsManagerFacade, SettingsManagerHolder } from 'manxia_core/src/main/ets/Framework/Contracts/ISettingsManagerFacade';
 import { HdsNavDestination } from '@kit.UIDesignKit';
 import { LengthMetrics } from '@kit.ArkUI';
-import { ThemeAwareHelper, ThemeAwareState } from '../../Framework/Components/ThemeAware';
-import { ThemeManager, ThemeType } from '../../Framework/Managers/ThemeManager';
-import { FontAwareHelper, FontAwareState } from '../../Framework/Components/FontAware';
-import { SettingsManager, SettingKeys } from '../../Framework/Managers/SettingsManager';
-import { GuideStep, WelcomeGuideManager } from '../../Framework/Managers/WelcomeGuideManager';
-import { logger } from '../../Utils/Logger';
-import { GlobalBackgroundLayerMode } from '../../Framework/Components/GlobalBackgroundLayer';
-import { SharedPageBackgroundLayer } from '../../Framework/Components/SharedPageBackgroundLayer';
+import { ThemeAwareHelper, ThemeAwareState } from 'manxia_theme/src/main/ets/Framework/Components/ThemeAware';
+import { ThemeManager, ThemeType } from 'manxia_theme/src/main/ets/Framework/Managers/ThemeManager';
+import { FontAwareHelper, FontAwareState } from 'manxia_theme/src/main/ets/Framework/Components/FontAware';
+import { SettingKeys } from 'manxia_core/src/main/ets/Framework/Contracts/SettingKeys';
+// (removed direct SettingsManager import)
+import { GuideStep, WelcomeGuideManager } from 'manxia_core/src/main/ets/Framework/Managers/WelcomeGuideManager';
+import { logger } from 'manxia_core/src/main/ets/Utils/Logger';
+import { GlobalBackgroundLayerMode } from 'manxia_theme/src/main/ets/Framework/Components/GlobalBackgroundLayer';
+import { SharedPageBackgroundLayer } from 'manxia_theme/src/main/ets/Framework/Components/SharedPageBackgroundLayer';
 import { SettingsImmersiveTitleBar } from './SettingsImmersiveTitleBar';
-import { SettingsPageTitleBarManager } from './SettingsPageTitleBarManager';
-import { SettingsPanelSurfaceHelper } from './SettingsPanelSurfaceHelper';
+import { SettingsPageTitleBarManager } from 'manxia_features_ui/src/main/ets/pages/settings/SettingsPageTitleBarManager';
+import { SettingsPanelSurfaceHelper } from 'manxia_features_ui/src/main/ets/pages/settings/SettingsPanelSurfaceHelper';
 
 const TAG = 'SourceFeatureSettingsSubPage';
 const TITLE_BAR_HEIGHT_MINI: number = 56;
@@ -31,7 +33,7 @@ export struct SourceFeatureSettingsSubPage {
   @StorageLink('source_detail_multi_window_enabled') sourceDetailMultiWindowEnabled: boolean = false;
 
   private readonly componentId: string = 'SourceFeatureSettingsSubPage';
-  private readonly settingsManager: SettingsManager = SettingsManager.getInstance();
+  private readonly settingsManager: ISettingsManagerFacade = SettingsManagerHolder.get();
   private readonly welcomeGuideManager: WelcomeGuideManager = WelcomeGuideManager.getInstance();
 
   aboutToAppear(): void {

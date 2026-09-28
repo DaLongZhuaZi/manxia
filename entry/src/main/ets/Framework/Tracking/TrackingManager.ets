@@ -4,10 +4,10 @@
  * 为后续第三方服务同步提供基础
  */
 
-import { logger } from '../../Utils/Logger';
-import { DatabaseManager } from '../Database/DatabaseManager';
-import { DatabaseRecord, DatabaseValue, TrackRecordDatabaseRecord } from '../Database/DatabaseTypes';
-import { generateUUID } from '../Utils/UUIDGenerator';
+import { logger } from 'manxia_core/src/main/ets/Utils/Logger';
+import { DatabaseManager } from 'manxia_core/src/main/ets/Framework/Database/DatabaseManager';
+import { DatabaseRecord, DatabaseValue, TrackRecordDatabaseRecord } from 'manxia_core/src/main/ets/Framework/Database/DatabaseTypes';
+import { generateUUID } from 'manxia_core/src/main/ets/Framework/Utils/UUIDGenerator';
 import {
   TrackRecord,
   TrackerId,

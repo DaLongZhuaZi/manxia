@@ -1,0 +1,43 @@
+{
+  "contract": "legado_rule_composition_embedded_runtime",
+  "source": {
+    "title": "title-value",
+    "author": "author-value",
+    "fallback": "fallback-value",
+    "rows": [
+      { "url": "row-1" },
+      { "url": "row-2" }
+    ]
+  },
+  "cases": [
+    {
+      "id": "first-or",
+      "rule": "$.missing||$.title&&$.author",
+      "api": "getString",
+      "firstOperator": "||",
+      "expected": "title-value"
+    },
+    {
+      "id": "first-and",
+      "rule": "$.title&&$.author||$.fallback",
+      "api": "getString",
+      "firstOperator": "&&",
+      "expected": "title-value\nauthor-value"
+    },
+    {
+      "id": "percent-list",
+      "rule": "$.rows[*].url%%$.title",
+      "api": "getStringList",
+      "firstOperator": "%%",
+      "expected": ["row-1", "title-value", "row-2"]
+    },
+    {
+      "id": "quoted-operator",
+      "rule": "$.rows[?(@.url == \"a||b\")].url&&$.fallback",
+      "api": "getStringList",
+      "firstOperator": "&&",
+      "expected": ["fallback-value"]
+    }
+  ],
+  "requiredPaths": ["buildScript", "buildNativeScript"]
+}

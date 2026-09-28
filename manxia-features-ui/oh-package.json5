@@ -1,0 +1,13 @@
+{
+  "name": "manxia_features_ui",
+  "version": "1.0.0",
+  "description": "漫匣功能设置 UI 层：settings 帮助类 + backup/editor/source 组件",
+  "main": "./src/main/ets/index.ets",
+  "author": "",
+  "license": "",
+  "dependencies": {
+    "manxia_core": "file:../manxia-core",
+    "manxia_theme": "file:../manxia-theme"
+  },
+  "devDependencies": {}
+}

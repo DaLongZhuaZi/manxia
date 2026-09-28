@@ -20,10 +20,10 @@
  * {source} 支持: 图源名称、图源ID、图源pkg、别名（jm/pica/pixiv）
  */
 
-import { logger } from '../../Utils/Logger';
+import { logger } from 'manxia_core/src/main/ets/Utils/Logger';
 import { SourceManager, SourceInfo } from '../Source/SourceManager';
 import { NovelSourceManager } from '../Novel/NovelSourceManager';
-import { NovelSourceInfo } from '../../Models/NovelModels';
+import { NovelSourceInfo } from 'manxia_core/src/main/ets/Models/NovelModels';
 
 const TAG = 'DeepLinkRouter';
 

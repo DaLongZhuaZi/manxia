@@ -1,0 +1,76 @@
+{
+  "schemaVersion": 1,
+  "contract": "legado_jsoup_text_rule_own_context",
+  "issueId": "ISSUE-COMPAT-243-JSOUP-STANDARD-CSS-PSEUDO-SELECTORS",
+  "baseline": {
+    "sourceCount": 458,
+    "sourcePackageSha256": "473048A191DE4749FA9C15E0A2F2328A3E86B385A5FCE23EA30432D598D03A67",
+    "legadoCommit": "95973d186b147fb9ab43a9240021d688e4304fbd"
+  },
+  "cases": [
+    {
+      "id": "direct_own_text_link",
+      "html": "<nav><a id=\"next\" href=\"/next\">下一页</a></nav>",
+      "contextSelector": "synthetic-root",
+      "rule": "text.下一页",
+      "expectedIds": ["next"],
+      "expectedCount": 1,
+      "semantics": "A direct text node on the link is selectable and retains its href consumer."
+    },
+    {
+      "id": "nested_text_does_not_promote_ancestor",
+      "html": "<nav><a id=\"wrapper\" href=\"/wrong\"><span id=\"label\">下一页</span></a></nav>",
+      "contextSelector": "synthetic-root",
+      "rule": "text.下一页",
+      "expectedIds": ["label"],
+      "expectedCount": 1,
+      "semantics": "Jsoup getElementsContainingOwnText does not select an ancestor merely because a descendant contains the text."
+    },
+    {
+      "id": "context_element_own_text_matches_self",
+      "html": "<a id=\"self\" href=\"/author\">作者</a>",
+      "contextSelector": "#self",
+      "rule": "text.作者",
+      "expectedIds": ["self"],
+      "expectedCount": 1,
+      "semantics": "The supplied Element is included by the Jsoup collector when its own text matches."
+    },
+    {
+      "id": "synthetic_document_root_is_not_text_candidate",
+      "html": "<article id=\"body\">正文</article>",
+      "contextSelector": "synthetic-root",
+      "rule": "text.正文",
+      "expectedIds": ["body"],
+      "expectedCount": 1,
+      "semantics": "The parser synthetic root remains a Document boundary even when the descendant text matches."
+    }
+  ],
+  "selectionPath": [
+    "LegadoRuleAnalyzer.getElementsByCSSWithBridge",
+    "LegadoHtmlBridge.parseChainRuleToElements",
+    "LegadoHtmlBridge.findByTextInContext",
+    "HTMLElement.select('*') -> HTMLElement.ownText"
+  ],
+  "affectedSourceSet": {
+    "ruleOccurrenceCount": 144,
+    "sourceCount": 96,
+    "uniqueRuleCount": 48,
+    "representativeSourceOrdinals": [8, 14, 55],
+    "rulePaths": [
+      "$[7].ruleContent.nextContentUrl",
+      "$[13].ruleBookInfo.author",
+      "$[54].ruleBookInfo.downloadUrls"
+    ],
+    "ruleStrings": [
+      "text.下一页@href",
+      "text.作者@text",
+      "text.TXT下载@href"
+    ],
+    "scanScope": "All recursively reachable string fields in the frozen 458-source package were scanned using the text.xxx@attribute rule shape."
+  },
+  "legadoSemantics": {
+    "implementation": "AnalyzeByJSoup.ElementsSingle maps text.xxx to Element.getElementsContainingOwnText.",
+    "collector": "Jsoup's element collector evaluates the supplied context element and each descendant against own text, not aggregate text."
+  },
+  "failureCondition": "V2 findByText and findByTextInContext scan descendants only and compare elem.text, which includes nested descendant text and omits a matching current context element."
+}

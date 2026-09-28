@@ -1,6 +1,6 @@
 ﻿import { common } from '@kit.AbilityKit';
 import { UIContext } from '@ohos.arkui.UIContext';
-import { SafeUtils } from '../Utils/SafeUtils';
+import { SafeUtils } from 'manxia_core/src/main/ets/Utils/SafeUtils';
 /**
  * Suwayomi 浏览页面
  * 浏览 Suwayomi 服务器上的漫画源和漫画列表
@@ -9,21 +9,21 @@ import { SafeUtils } from '../Utils/SafeUtils';
 import { HdsNavDestination, HdsNavDestinationAttribute, ScrollEffectType } from '@kit.UIDesignKit';
 import { LengthMetrics } from '@kit.ArkUI';
 import { preferences } from '@kit.ArkData';
-import { logger } from '../Utils/Logger';
-import { ThemeAwareState, ThemeAwareHelper } from '../Framework/Components/ThemeAware';
-import { FontAwareState } from '../Framework/Components/FontAware';
-import { ThemeType, ThemeManager } from '../Framework/Managers/ThemeManager';
+import { logger } from 'manxia_core/src/main/ets/Utils/Logger';
+import { ThemeAwareState, ThemeAwareHelper } from 'manxia_theme/src/main/ets/Framework/Components/ThemeAware';
+import { FontAwareState } from 'manxia_theme/src/main/ets/Framework/Components/FontAware';
+import { ThemeType, ThemeManager } from 'manxia_theme/src/main/ets/Framework/Managers/ThemeManager';
 import { getSuwayomiSourceExecutor, SuwayomiSourceExecutor, SuwayomiExtensionSource } from '../Framework/Source/SuwayomiSourceExecutor';
 import { ComicInfo } from '../Framework/Source/SourceExecutor';
 import { SuwayomiCategory, PaginatedResult, MangaSortType, SortDirection, MangaSortOption, MANGA_SORT_OPTIONS } from '../Framework/Source/SuwayomiSource';
 import { SuwayomiSourceBrowseParams } from './SuwayomiSourceBrowsePage';
 import SuwayomiCacheManager from '../Framework/Source/SuwayomiCacheManager';
-import DownloadDirManager from '../Framework/Storage/DownloadDirManager';
+import DownloadDirManager from 'manxia_core/src/main/ets/Framework/Storage/DownloadDirManager';
 import { SuwayomiImage } from '../components/SuwayomiImage';
-import { AppGuideOverlay, GuideHighlightRect } from '../Framework/Components/AppGuideOverlay';
+import { AppGuideOverlay, GuideHighlightRect } from 'manxia_theme/src/main/ets/Framework/Components/AppGuideOverlay';
 import { resolveGuideHighlightRectInRoot } from '../Framework/Components/AppGuideSupport';
-import { AppGuideManager, AppGuidePageId, AppGuideStep } from '../Framework/Managers/AppGuideManager';
-import { BasicDataSource } from '../Utils/BasicDataSource';
+import { AppGuideManager, AppGuidePageId, AppGuideStep } from 'manxia_core/src/main/ets/Framework/Managers/AppGuideManager';
+import { BasicDataSource } from 'manxia_core/src/main/ets/Utils/BasicDataSource';
 
 const TAG = 'SuwayomiBrowsePage';
 const TITLE_BAR_HEIGHT: number = 56;
@@ -219,7 +219,7 @@ export struct SuwayomiBrowsePage {
 
   private async loadPreferences(): Promise<void> {
     try {
-      const store = preferences.getPreferencesSync((this.getUIContext().getHostContext() as common.UIAbilityContext), { name: this.PREFS_NAME });
+      const store = await preferences.getPreferences((this.getUIContext().getHostContext() as common.UIAbilityContext), { name: this.PREFS_NAME });
       this.displayMode = (store.getSync('displayMode', 'grid') as string) === 'list' ? 'list' : 'grid';
       const pinnedStr = store.getSync('pinnedSourceIds', '[]') as string;
       this.pinnedSourceIds = SafeUtils.parseArr(pinnedStr) as string[];
@@ -236,7 +236,7 @@ export struct SuwayomiBrowsePage {
 
   private async savePreferences(): Promise<void> {
     try {
-      const store = preferences.getPreferencesSync((this.getUIContext().getHostContext() as common.UIAbilityContext), { name: this.PREFS_NAME });
+      const store = await preferences.getPreferences((this.getUIContext().getHostContext() as common.UIAbilityContext), { name: this.PREFS_NAME });
       store.putSync('displayMode', this.displayMode);
       store.putSync('pinnedSourceIds', JSON.stringify(this.pinnedSourceIds));
       store.putSync('selectedLanguage', this.selectedLanguage);

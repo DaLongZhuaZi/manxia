@@ -1,4 +1,4 @@
-﻿import { SafeFileUtils } from '../Utils/SafeFileUtils';
+﻿import { SafeFileUtils } from 'manxia_core/src/main/ets/Utils/SafeFileUtils';
 // 文件路径: entry/src/main/ets/pages/MangaSettingsPage.ets
 /*
 职责: 漫画设置页面，提供针对单部漫画的阅读设置配置（独立页面，不再复用阅读设置对话框）
@@ -9,11 +9,11 @@ import { UIContext } from '@kit.ArkUI';
 import { photoAccessHelper } from '@kit.MediaLibraryKit';
 import fs from '@ohos.file.fs';
 import { common } from '@kit.AbilityKit';
-import { ThemeAwareState, ThemeAwareHelper } from '../Framework/Components/ThemeAware';
-import { ThemeType } from '../Framework/Managers/ThemeManager';
-import { FontAwareHelper, FontAwareState } from '../Framework/Components/FontAware';
-import { logger } from '../Utils/Logger';
-import { PageLifecycleManager } from '../Framework/Lifecycle';
+import { ThemeAwareState, ThemeAwareHelper } from 'manxia_theme/src/main/ets/Framework/Components/ThemeAware';
+import { ThemeType } from 'manxia_theme/src/main/ets/Framework/Managers/ThemeManager';
+import { FontAwareHelper, FontAwareState } from 'manxia_theme/src/main/ets/Framework/Components/FontAware';
+import { logger } from 'manxia_core/src/main/ets/Utils/Logger';
+import { PageLifecycleManager } from 'manxia_core/src/main/ets/Framework/Lifecycle/index';
 import {
   ReadingSettings,
   DEFAULT_READING_SETTINGS,
@@ -23,25 +23,25 @@ import {
   ImageSourceType,
   PageTurnAnimationType,
   DoublePagePortraitLayout
-} from '../Models/MangaModels';
+} from 'manxia_core/src/main/ets/Models/MangaModels';
 import { DataManager, ComicInfo, ChapterInfo, PageInfo, ComicBasicInfoUpdate } from '../Framework/Data/DataManager';
 import { DataService } from '../Framework/Services/DataService';
 import { ComicConverter } from '../Framework/Utils/ComicConverter';
-import { DeviceAdaptationManager, DeviceInfo, DeviceChangeListener, Breakpoint } from '../Framework/Managers/DeviceAdaptationManager';
-import { ResponsiveLayoutHelper } from '../Framework/Utils/ResponsiveLayout';
+import { DeviceAdaptationManager, DeviceInfo, DeviceChangeListener, Breakpoint } from 'manxia_theme/src/main/ets/Framework/Managers/DeviceAdaptationManager';
+import { ResponsiveLayoutHelper } from 'manxia_theme/src/main/ets/Framework/Utils/ResponsiveLayout';
 import { eventBus, GameEvent, MangaDeletedPayload } from '../Framework/EventBus';
-import { SandboxManager } from '../Framework/Storage/SandboxManager';
+import { SandboxManager } from 'manxia_core/src/main/ets/Framework/Storage/SandboxManager';
 import { ScraperDialog, ScraperDialogConfig, ScraperDialogResult } from '../Framework/Components/ScraperDialog';
-import { ScraperContentType } from '../Framework/Scraper/ScraperTypes';
-import { getHelpPanelManagerV2 } from '../Framework/Components/HelpPanelV2';
+import { ScraperContentType } from 'manxia_core/src/main/ets/Framework/Scraper/ScraperTypes';
+import { getHelpPanelManagerV2 } from 'manxia_features_ui/src/main/ets/Framework/Components/HelpPanelV2';
 import { getCoverImageManager } from '../Framework/Image/CoverImageManager';
 import { image } from '@kit.ImageKit';
-import { PageWindowCoordinator } from '../Utils/PageWindowCoordinator';
-import { SettingsPanelSurfaceHelper } from './settings/SettingsPanelSurfaceHelper';
-import { GlobalBackgroundLayerMode } from '../Framework/Components/GlobalBackgroundLayer';
-import { SharedPageBackgroundLayer } from '../Framework/Components/SharedPageBackgroundLayer';
+import { PageWindowCoordinator } from 'manxia_theme/src/main/ets/Utils/PageWindowCoordinator';
+import { SettingsPanelSurfaceHelper } from 'manxia_features_ui/src/main/ets/pages/settings/SettingsPanelSurfaceHelper';
+import { GlobalBackgroundLayerMode } from 'manxia_theme/src/main/ets/Framework/Components/GlobalBackgroundLayer';
+import { SharedPageBackgroundLayer } from 'manxia_theme/src/main/ets/Framework/Components/SharedPageBackgroundLayer';
 import { SettingsImmersiveTitleBar } from './settings/SettingsImmersiveTitleBar';
-import { SettingsImmersiveTitleActionItem, SettingsPageTitleBarManager } from './settings/SettingsPageTitleBarManager';
+import { SettingsImmersiveTitleActionItem, SettingsPageTitleBarManager } from 'manxia_features_ui/src/main/ets/pages/settings/SettingsPageTitleBarManager';
 import { SourceDialogScaffold } from '../Framework/Components/SourceDialogScaffold';
 
 const TAG: string = 'MangaSettingsPage';

@@ -1,5 +1,6 @@
-import { SafeUtils } from '../Utils/SafeUtils';
-import { sha256Hash } from '../Utils/CryptoUtils';
+import { ISettingsManagerFacade, SettingsManagerHolder } from 'manxia_core/src/main/ets/Framework/Contracts/ISettingsManagerFacade';
+import { SafeUtils } from 'manxia_core/src/main/ets/Utils/SafeUtils';
+import { sha256Hash } from 'manxia_core/src/main/ets/Utils/CryptoUtils';
 /**
  * 小说阅读器页面
  * 使用 TextReaderComponent 实现专业的文本阅读体验
@@ -9,21 +10,21 @@ import { sha256Hash } from '../Utils/CryptoUtils';
  * 文件路径: entry/src/main/ets/pages/NovelReaderPage.ets
   */
 
-import { logger } from '../Utils/Logger';
+import { logger } from 'manxia_core/src/main/ets/Utils/Logger';
 import { ReaderSafeAreaUtils } from '../Utils/ReaderSafeAreaUtils';
 import { getNovelSourceManager } from '../Framework/Novel/NovelSourceManager';
 import { getNovelDataManager } from '../Framework/Novel/NovelDataManager';
 import { getNovelChapterCacheManager } from '../Framework/Novel/NovelChapterCacheManager';
 import { getNovelContentProcessor, ContentProcessConfig } from '../Framework/Novel/NovelContentProcessor';
 import { ReplaceScope, NovelReplaceRuleManager, AddRuleParams } from '../Framework/Novel/NovelReplaceRuleManager';
-import { LegadoChapter, LegadoBook, LegadoBookSourceType } from '../Framework/Novel/LegadoSourceTypes';
+import { LegadoChapter, LegadoBook, LegadoBookSourceType } from 'manxia_novel/src/main/ets/Framework/Novel/LegadoSourceTypes';
 import {
   LegadoCompatibilityEngineMode,
   LegadoWorkflowKind,
   LegadoWorkflowOutputKind
-} from '../Framework/Novel/LegadoCompatibilityTypes';
+} from 'manxia_novel/src/main/ets/Framework/Novel/LegadoCompatibilityTypes';
 import { NovelReaderPageParams } from './NovelBookshelfPage';
-import { NovelBook, NovelReadStatus } from '../Models/NovelModels';
+import { NovelBook, NovelChapter, NovelReadStatus } from 'manxia_core/src/main/ets/Models/NovelModels';
 import {
   TextReaderComponent,
   PaginationMode,
@@ -49,9 +50,9 @@ import {
   SavedBackgroundImage,
   normalizeReadAloudSettings,
   clampTextReaderFontSize
-} from '../Models/TextReaderModels';
-import { NovelReadProgress } from '../Models/NovelModels';
-import { UnifiedContentType } from '../Models/UnifiedContentModels';
+} from 'manxia_core/src/main/ets/Models/TextReaderModels';
+import { NovelReadProgress } from 'manxia_core/src/main/ets/Models/NovelModels';
+import { UnifiedContentType } from 'manxia_core/src/main/ets/Models/UnifiedContentModels';
 import {
   AnnotationAnchor,
   HighlightLineType,
@@ -59,16 +60,17 @@ import {
   UnifiedAnnotationType,
   UnifiedAnnotationRecord,
   CreateThoughtInput
-} from '../Models/AnnotationModels';
-import { SettingsManager, SettingKeys } from '../Framework/Managers/SettingsManager';
-import { getNovelSettingsManager, BrowseHistoryInput } from '../Framework/Novel/NovelSettingsManager';
-import { ThemeManager, ThemeType } from '../Framework/Managers/ThemeManager';
-import { ThemeAwareState, ThemeAwareHelper } from '../Framework/Components/ThemeAware';
-import { FontAwareHelper, FontAwareState } from '../Framework/Components/FontAware';
-import { PageLifecycleManager } from '../Framework/Lifecycle';
-import { WindowManager, DisplayMode } from '../Utils/WindowManager';
-import { ReaderOrientationLockHelper } from '../Utils/ReaderOrientationLockHelper';
-import { PageWindowCoordinator } from '../Utils/PageWindowCoordinator';
+} from 'manxia_core/src/main/ets/Models/AnnotationModels';
+import { SettingKeys } from 'manxia_core/src/main/ets/Framework/Contracts/SettingKeys';
+import { getNovelSettingsManager, BrowseHistoryInput } from 'manxia_core/src/main/ets/Framework/Novel/NovelSettingsManager';
+import { ThemeManager, ThemeType } from 'manxia_theme/src/main/ets/Framework/Managers/ThemeManager';
+import { ThemeAwareState, ThemeAwareHelper } from 'manxia_theme/src/main/ets/Framework/Components/ThemeAware';
+import { FontAwareHelper, FontAwareState } from 'manxia_theme/src/main/ets/Framework/Components/FontAware';
+import { PageLifecycleManager } from 'manxia_core/src/main/ets/Framework/Lifecycle/index';
+import { WindowManager, DisplayMode } from 'manxia_theme/src/main/ets/Utils/WindowManager';
+import { ReaderOrientationLockHelper, ReaderOrientationLockScope } from 'manxia_core/src/main/ets/Utils/ReaderOrientationLockHelper';
+import { ReaderToolbarButton } from '../components/ReaderToolbarButton';
+import { PageWindowCoordinator } from 'manxia_theme/src/main/ets/Utils/PageWindowCoordinator';
 import { curves, promptAction } from '@kit.ArkUI';
 import { webview } from '@kit.ArkWeb';
 import { preferences } from '@kit.ArkData';
@@ -78,10 +80,10 @@ import { NovelDictRuleManager, DictRule } from '../Framework/Novel/NovelDictRule
 import { ReadAloudController } from '../Framework/ReadAloud/ReadAloudController';
 import { ReadAloudPlaybackState } from '../Framework/ReadAloud/ReadAloudTypes';
 import { eventBus, GameEvent, IEventPayload, ReadAloudStatePayload } from '../Framework/EventBus';
-import { getUnifiedAnnotationManager } from '../Framework/Annotations/UnifiedAnnotationManager';
+import { getUnifiedAnnotationManager } from 'manxia_core/src/main/ets/Framework/Annotations/UnifiedAnnotationManager';
 import { AnnotationCenterPageParams } from './AnnotationCenterPage';
-import { EBook, EBookReadingProgress } from '../Models/EBookModels';
-import { EBookDataManager } from '../Framework/Data/EBookDataManager';
+import { EBook, EBookReadingProgress } from 'manxia_core/src/main/ets/Models/EBookModels';
+import { EBookDataManager } from 'manxia_core/src/main/ets/Framework/Data/EBookDataManager';
 import {
   buildLocalTextNovelBookId,
   buildTextReaderSettingsFromEBookSettings,
@@ -89,26 +91,27 @@ import {
   isLocalTxtNovelReaderSource,
   syncTextReaderSettingsToEBookSettings
 } from '../Framework/Adapters/LocalTextNovelAdapter';
-import { AppGuideOverlay, GuideHighlightRect } from '../Framework/Components/AppGuideOverlay';
+import { AppGuideOverlay, GuideHighlightRect } from 'manxia_theme/src/main/ets/Framework/Components/AppGuideOverlay';
 import { resolveGuideHighlightRectInRoot } from '../Framework/Components/AppGuideSupport';
-import { AppGuideManager, AppGuidePageId, AppGuideStep } from '../Framework/Managers/AppGuideManager';
-import { READER_ABILITY_HOST_MULTITON } from '../Framework/Reader/MangaReaderAbilityConstants';
+import { AppGuideManager, AppGuidePageId, AppGuideStep } from 'manxia_core/src/main/ets/Framework/Managers/AppGuideManager';
+import { READER_ABILITY_HOST_MULTITON } from 'manxia_reader_ui/src/main/ets/Framework/Reader/MangaReaderAbilityConstants';
 import { openReadAloudPlayerInIsolatedAbility } from '../Framework/ReadAloud/ReadAloudPlayerAbilityLauncher';
 import { distributedReadingService } from '../Framework/Distributed/DistributedReadingService';
+import { ContinuationCacheManager } from '../Framework/Distributed/ContinuationCacheManager';
 import { distributedDataSyncManager, SyncReadingState } from '../Framework/Distributed/DistributedDataSyncManager';
 import { distributedPermissionManager } from '../Framework/Distributed/DistributedPermissionManager';
 import { continuationStateHelper } from '../Framework/Distributed/ContinuationStateHelper';
-import { DetailOpenFlowMonitor } from '../Framework/Reader/DetailOpenFlowMonitor';
+import { DetailOpenFlowMonitor } from 'manxia_reader_ui/src/main/ets/Framework/Reader/DetailOpenFlowMonitor';
 import {
   DetailOpenFlowEventType,
   DetailOpenFlowTargetKind
-} from '../Framework/Reader/DetailOpenFlowTypes';
-import { NovelReadFlowMonitor } from '../Framework/Reader/NovelReadFlowMonitor';
+} from 'manxia_reader_ui/src/main/ets/Framework/Reader/DetailOpenFlowTypes';
+import { NovelReadFlowMonitor } from 'manxia_reader_ui/src/main/ets/Framework/Reader/NovelReadFlowMonitor';
 import {
   NovelReadFlowEventType,
   NovelReadFlowSessionInfo,
   NovelReadFlowSeverity
-} from '../Framework/Reader/NovelReadFlowTypes';
+} from 'manxia_reader_ui/src/main/ets/Framework/Reader/NovelReadFlowTypes';
 
 const TAG = 'NovelReaderPage';
 const NOVEL_SETTINGS_STORE = 'novel_settings';
@@ -203,6 +206,7 @@ export struct NovelReaderPage {
   // 3个独立设置面板
   @State showTopToolbar: boolean = false;
   @State showBottomToolbar: boolean = false;
+  @StorageProp('reader_toolbar_text_hint_enabled') toolbarTextHintEnabled: boolean = true;
   @State toolbarOpacity: number = 0.0;
   @State showInteractionOverlay: boolean = false;
   @State showChapterList: boolean = false;
@@ -238,6 +242,8 @@ export struct NovelReaderPage {
 
   private sourceId: string = '';
   private bookUrl: string = '';
+  private continuationCacheId: string = '';
+  private continuationImportedSnapshot: boolean = false;
   private bookName: string = '';
   private author: string = '';
   private bookCoverUrl: string = '';
@@ -257,7 +263,7 @@ export struct NovelReaderPage {
   private ebookDataManager: EBookDataManager = EBookDataManager.getInstance();
   private annotationManager = getUnifiedAnnotationManager();
   private cacheManager = getNovelChapterCacheManager();
-  private settingsManager: SettingsManager = SettingsManager.getInstance();
+  private settingsManager: ISettingsManagerFacade = SettingsManagerHolder.get();
   private readAloudController: ReadAloudController = ReadAloudController.getInstance();
   private readStartTime: number = 0;
   private lastSaveTime: number = 0;
@@ -471,6 +477,8 @@ export struct NovelReaderPage {
     this.applyMissionContinueStateWithPermission();
     this.setupFullscreenMode();
     this.scheduleFullscreenRestore('page_show');
+    // 兜底重申方向锁：从设置页/后台返回时按最新全局开关重新评估
+    this.syncDeviceOrientationLock('page_show');
     this.tryShowQueuedInteractionHint('page_show', 260);
     AppStorage.setOrCreate('ReadAloudCurrentHostPage', 'NovelReaderPage');
     this.syncReadAloudStateFromController();
@@ -1294,9 +1302,10 @@ export struct NovelReaderPage {
     if (!this.uiContext) {
       this.uiContext = this.getUIContext();
     }
-    const enabled: boolean = this.settings.lockDeviceOrientation ??
-      DEFAULT_TEXT_READER_SETTINGS.lockDeviceOrientation ??
-      false;
+    const enabled: boolean = ReaderOrientationLockHelper.resolveOrientationLockEnabled(
+      ReaderOrientationLockScope.TEXT,
+      this.settings.lockDeviceOrientation ?? DEFAULT_TEXT_READER_SETTINGS.lockDeviceOrientation ?? false
+    );
     this.orientationLockToken = ReaderOrientationLockHelper.syncCurrentOrientationLock(
       'NovelReaderPage',
       this.orientationLockToken,
@@ -1355,7 +1364,9 @@ export struct NovelReaderPage {
     }
 
     try {
-      const ebook = await this.ebookDataManager.getEBookById(this.localEbookId);
+      const ebook = this.continuationCacheId.length > 0
+        ? await ContinuationCacheManager.getInstance().getEBook(this.continuationCacheId)
+        : await this.ebookDataManager.getEBookById(this.localEbookId);
       if (!ebook) {
         logger.warn(TAG, `Local TXT ebook data not found: ebookId=${this.localEbookId}`);
         return null;
@@ -1849,6 +1860,16 @@ export struct NovelReaderPage {
   }
 
   private async getRawChapterContent(chapterIndex: number): Promise<string | null> {
+    if (this.continuationCacheId.length > 0) {
+      const cachedContinuationContent = await ContinuationCacheManager.getInstance().getNovelChapterContent(
+        this.continuationCacheId,
+        chapterIndex
+      );
+      if (cachedContinuationContent && cachedContinuationContent.length > 0) {
+        logger.info(TAG, `接续章节命中专用缓存: cacheId=${this.continuationCacheId}, chapter=${chapterIndex}`);
+        return cachedContinuationContent;
+      }
+    }
     if (this.isLocalTxtNovelMode()) {
       const ebook = await this.ensureLocalEbookLoaded();
       const chapter = ebook?.chapters[chapterIndex];
@@ -1877,6 +1898,10 @@ export struct NovelReaderPage {
 
     const chapter = this.chapterList[chapterIndex];
     if (!chapter) {
+      return null;
+    }
+    if (this.continuationCacheId.length > 0 && !this.sourceManager.getSource(this.sourceId)) {
+      this.getUIContext().getPromptAction().showToast({ message: '目标设备未配置原书源，当前缓存章节仍可阅读' });
       return null;
     }
 
@@ -2127,7 +2152,9 @@ export struct NovelReaderPage {
       // Keep V2 reads single-flight until the scheduler owns isolated source
       // contexts; legacy prefetch behavior remains unchanged.
       const contentEngine = this.sourceManager.getEffectiveCompatibilityEngineMode(this.sourceId);
-      if (contentEngine === LegadoCompatibilityEngineMode.V2_ENABLED) {
+      if (this.continuationCacheId.length > 0) {
+        logger.info(TAG, '仅阅读接续缓存不会预取缓存包外的章节');
+      } else if (contentEngine === LegadoCompatibilityEngineMode.V2_ENABLED) {
         logger.info(TAG, 'skip cross-chapter prefetch for V2 source-scoped execution');
       } else {
         this.scheduleCrossChapterPrefetch();
@@ -2168,6 +2195,74 @@ export struct NovelReaderPage {
 
   async loadChapterList(): Promise<void> {
     try {
+      if (this.continuationCacheId.length > 0 ||
+        (this.continuationImportedSnapshot && !this.isLocalTxtNovelMode())) {
+        const cacheManager = ContinuationCacheManager.getInstance();
+        const cachedBook = this.continuationCacheId.length > 0
+          ? await cacheManager.getNovelBook(this.continuationCacheId)
+          : null;
+        let cachedChapters: NovelChapter[] = [];
+        if (this.continuationCacheId.length > 0) {
+          cachedChapters = await cacheManager.getNovelChapters(this.continuationCacheId);
+        } else {
+          const legadoChapters = await this.cacheManager.getCachedChapterList(this.bookId, 876000);
+          if (legadoChapters) {
+            cachedChapters = legadoChapters.map((chapter: LegadoChapter): NovelChapter => ({
+              id: chapter.id || `${this.bookId}_${chapter.index}`,
+              bookId: this.bookId,
+              url: chapter.url,
+              title: chapter.title,
+              index: chapter.index,
+              isVolume: chapter.isVolume || false,
+              isVip: chapter.isVip || false,
+              isPay: chapter.isPay || false,
+              isDownloaded: true,
+              contentPath: '',
+              wordCount: 0,
+              updateTime: chapter.updateTime,
+              createTime: Date.now()
+            }));
+          }
+        }
+        if (cachedChapters.length <= 0) {
+          throw new Error('接续小说快照中没有章节目录');
+        }
+        this.chapterList = cachedChapters.map((chapter: NovelChapter): LegadoChapter => ({
+          id: chapter.id,
+          bookUrl: this.bookUrl,
+          url: chapter.url,
+          title: chapter.title,
+          index: chapter.index,
+          isVolume: chapter.isVolume,
+          isVip: chapter.isVip,
+          isPay: chapter.isPay,
+          updateTime: chapter.updateTime
+        }));
+        this.totalChapters = this.chapterList.length;
+        this.chapters = this.chapterList.map((chapter: LegadoChapter, index: number): TextChapter => ({
+          id: chapter.id || `chapter_${index}`,
+          title: chapter.title,
+          content: '',
+          wordCount: 0,
+          index: index,
+          startPosition: 0,
+          endPosition: 0
+        }));
+        const record = this.continuationCacheId.length > 0
+          ? await cacheManager.getRecord(this.continuationCacheId)
+          : null;
+        const requestedIndex = record ? record.chapterIndex : this.currentChapterIndex;
+        this.currentChapterIndex = Math.max(0, Math.min(requestedIndex, this.chapterList.length - 1));
+        const currentChapter = this.chapterList[this.currentChapterIndex];
+        this.chapterUrl = currentChapter.url;
+        this.chapterTitle = currentChapter.title;
+        this.chapterId = `${this.bookId}_${this.currentChapterIndex}`;
+        this.bookName = cachedBook?.name || this.bookName;
+        this.bookCoverUrl = cachedBook?.coverLocalPath || cachedBook?.coverUrl || this.bookCoverUrl;
+        logger.info(TAG, `从接续缓存恢复小说目录: cacheId=${this.continuationCacheId}, chapters=${this.chapterList.length}`);
+        this.syncOverallReadProgress('continuation_cache_chapter_list');
+        return;
+      }
       if (this.isLocalTxtNovelMode()) {
         const ebook = await this.ensureLocalEbookLoaded();
         if (!ebook) {
@@ -2235,6 +2330,7 @@ export struct NovelReaderPage {
       };
       const chapters = await this.sourceManager.getChapterList(this.sourceId, book);
       if (chapters && chapters.length > 0) {
+        await this.cacheManager.saveChapterList(this.bookId, chapters);
         this.chapterList = chapters;
         this.totalChapters = chapters.length;
         let matchedChapterIndex = -1;
@@ -2289,7 +2385,11 @@ export struct NovelReaderPage {
     if (this.isLocalTxtNovelMode() && this.localEbookId.length > 0) {
       const ebook = await this.ensureLocalEbookLoaded();
       const ebookSettings = syncTextReaderSettingsToEBookSettings(snapshot, ebook?.readingSettings);
-      await this.ebookDataManager.saveReadingSettings(this.localEbookId, ebookSettings);
+      if (this.continuationCacheId.length > 0) {
+        await ContinuationCacheManager.getInstance().updateEBookSettings(this.continuationCacheId, ebookSettings);
+      } else {
+        await this.ebookDataManager.saveReadingSettings(this.localEbookId, ebookSettings);
+      }
       if (ebook) {
         ebook.readingSettings = ebookSettings;
       }
@@ -2508,9 +2608,10 @@ export struct NovelReaderPage {
       if (!this.uiContext) {
         this.uiContext = this.getUIContext();
       }
-      const deviceOrientationLocked: boolean = this.settings.lockDeviceOrientation ??
-        DEFAULT_TEXT_READER_SETTINGS.lockDeviceOrientation ??
-        false;
+      const deviceOrientationLocked: boolean = ReaderOrientationLockHelper.resolveOrientationLockEnabled(
+        ReaderOrientationLockScope.TEXT,
+        this.settings.lockDeviceOrientation ?? DEFAULT_TEXT_READER_SETTINGS.lockDeviceOrientation ?? false
+      );
       
       if (newMode === TextReadingMode.DUAL_PAGE) {
         // 延迟重载组件，等待横屏旋转完成
@@ -2979,7 +3080,16 @@ export struct NovelReaderPage {
           totalReadingTime: totalReadingTime
         };
 
-        await this.ebookDataManager.saveReadingProgress(progress);
+        if (this.continuationCacheId.length > 0) {
+          await ContinuationCacheManager.getInstance().updateProgress(this.continuationCacheId, {
+            chapterIndex: this.currentChapterIndex,
+            pageIndex: this.currentPageIndex,
+            offset: this.currentPageStartCharIndex,
+            lastReadTime: now
+          });
+        } else {
+          await this.ebookDataManager.saveReadingProgress(progress);
+        }
         ebook.readingProgress.currentChapterId = progress.currentChapterId;
         ebook.readingProgress.currentChapterIndex = progress.currentChapterIndex;
         ebook.readingProgress.currentPosition = progress.currentPosition;
@@ -3005,15 +3115,21 @@ export struct NovelReaderPage {
         progress: this.calculateReadProgressPercent(),
         readTime: now
       };
-      
-      await this.dataManager.saveReadProgress(progress);
-      
-      // 更新阅读时长（秒）
-      if (this.readStartTime > 0) {
-        const readingDuration = Math.floor((now - this.readStartTime) / 1000);
-        if (readingDuration > 0) {
-          await this.dataManager.updateReadingTime(this.bookId, readingDuration);
-          this.readStartTime = now;// 重置开始时间，避免重复计算
+      if (this.continuationCacheId.length > 0) {
+        await ContinuationCacheManager.getInstance().updateProgress(this.continuationCacheId, {
+          chapterIndex: this.currentChapterIndex,
+          pageIndex: this.currentPageIndex,
+          offset: this.currentPageStartCharIndex,
+          lastReadTime: now
+        });
+      } else {
+        await this.dataManager.saveReadProgress(progress);
+        if (this.readStartTime > 0) {
+          const readingDuration = Math.floor((now - this.readStartTime) / 1000);
+          if (readingDuration > 0) {
+            await this.dataManager.updateReadingTime(this.bookId, readingDuration);
+            this.readStartTime = now;
+          }
         }
       }
       
@@ -3052,6 +3168,15 @@ export struct NovelReaderPage {
     if (!this.bookId) return;
     
     try {
+      if (this.continuationCacheId.length > 0) {
+        const record = await ContinuationCacheManager.getInstance().getRecord(this.continuationCacheId);
+        if (record) {
+          this.currentChapterIndex = Math.max(0, record.chapterIndex);
+          this.currentPageIndex = Math.max(0, record.pageIndex);
+          this.currentPageStartCharIndex = Math.max(0, record.offset);
+        }
+        return;
+      }
       if (this.isLocalTxtNovelMode()) {
         const ebook = await this.ensureLocalEbookLoaded();
         const progress = ebook?.readingProgress;
@@ -3372,7 +3497,7 @@ export struct NovelReaderPage {
   }
 
   private async recordBrowseHistory(param: NovelReaderPageParams): Promise<void> {
-    if (this.isLocalTxtNovelMode()) {
+    if (this.isLocalTxtNovelMode() || this.continuationCacheId.length > 0) {
       return;
     }
     try {
@@ -3396,7 +3521,7 @@ export struct NovelReaderPage {
   * [修复] 确保书籍存在于数据库中（用于首页最近阅读显示）
   */
   private async ensureBookInDatabase(param: NovelReaderPageParams): Promise<void> {
-    if (this.isLocalTxtNovelMode()) {
+    if (this.isLocalTxtNovelMode() || this.continuationCacheId.length > 0) {
       return;
     }
     try {
@@ -4648,6 +4773,8 @@ export struct NovelReaderPage {
           TAG,
           `阅读器刷新意图已接收: forceContentRefresh=${this.forceNetworkContentRefresh}`
         );
+        this.continuationCacheId = param.continuationCacheId || '';
+        this.continuationImportedSnapshot = param.continuationImportedSnapshot === true;
         this.sourceId = param.sourceId;
         this.localEbook = null;
         this.localEbookId = param.localEbookId
@@ -4852,15 +4979,13 @@ export struct NovelReaderPage {
   buildTopToolbar() {
     Row() {
       // 返回按钮
-      Button() {
-        SymbolGlyph($r('sys.symbol.arrow_left'))
-          .fontSize(24)
-          .fontColor([$r('app.color.text_primary')])
-      }
-      .width(48)
-      .height(48)
-      .backgroundColor(Color.Transparent)
-      .onClick(() => this.closeReader())
+      ReaderToolbarButton({
+        icon: $r('sys.symbol.arrow_left'),
+        label: '返回',
+        iconColor: $r('app.color.text_primary'),
+        iconSize: 22,
+        onAction: () => this.closeReader()
+      })
 
       // 书名
       Text(this.bookName)
@@ -4873,28 +4998,24 @@ export struct NovelReaderPage {
         .layoutWeight(1)
         .margin({ left: 12 })
 
-      Button() {
-        SymbolGlyph(this.isCurrentPageBookmarked ? $r('sys.symbol.bookmark_fill') : $r('sys.symbol.bookmark'))
-          .fontSize(20)
-          .fontColor([this.isCurrentPageBookmarked ? $r('app.color.accent_primary') : $r('app.color.text_primary')])
-      }
-      .width(48)
-      .height(48)
-      .backgroundColor(Color.Transparent)
-      .onClick(() => {
-        this.addCurrentNovelBookmark();
+      ReaderToolbarButton({
+        icon: this.isCurrentPageBookmarked ? $r('sys.symbol.bookmark_fill') : $r('sys.symbol.bookmark'),
+        label: '书签',
+        iconColor: this.isCurrentPageBookmarked ? $r('app.color.accent_primary') : $r('app.color.text_primary'),
+        iconSize: 20,
+        onAction: () => {
+          this.addCurrentNovelBookmark();
+        }
       })
 
-      Button() {
-        SymbolGlyph($r('sys.symbol.highlighter_line'))
-          .fontSize(20)
-          .fontColor([$r('app.color.text_primary')])
-      }
-      .width(48)
-      .height(48)
-      .backgroundColor(Color.Transparent)
-      .onClick(() => {
-        this.openCurrentNovelAnnotationCenter();
+      ReaderToolbarButton({
+        icon: $r('sys.symbol.highlighter_line'),
+        label: '划线',
+        iconColor: $r('app.color.text_primary'),
+        iconSize: 20,
+        onAction: () => {
+          this.openCurrentNovelAnnotationCenter();
+        }
       })
     }
     .width('100%')
@@ -4954,100 +5075,105 @@ export struct NovelReaderPage {
       // 控制按钮
       Row() {
         // 目录按钮
-        Button() {
-          SymbolGlyph($r('sys.symbol.list_bullet'))
-            .fontColor([$r('app.color.text_primary')])
-
-        }
-        .width(48)
-        .height(48)
-        .backgroundColor(Color.Transparent)
-        .onClick(() => {
-          this.hideToolbarWithAnimation();
-          this.showChapterListWithAnimation();
+        ReaderToolbarButton({
+          icon: $r('sys.symbol.list_bullet'),
+          label: '目录',
+          iconColor: $r('app.color.text_primary'),
+          iconSize: 20,
+          onAction: () => {
+            this.hideToolbarWithAnimation();
+            this.showChapterListWithAnimation();
+          }
         })
 
         Blank()
 
         // 字体设置按钮
-        Button() {
-          SymbolGlyph($r('sys.symbol.textformat'))
-            .fontColor([$r('app.color.text_primary')])
-
-        }
-        .width(48)
-        .height(48)
-        .backgroundColor(Color.Transparent)
-        .onClick(() => {
-          this.showFontSettingsPanel();
+        ReaderToolbarButton({
+          icon: $r('sys.symbol.textformat'),
+          label: '字体',
+          iconColor: $r('app.color.text_primary'),
+          iconSize: 20,
+          onAction: () => {
+            this.showFontSettingsPanel();
+          }
         })
 
         Blank()
 
         // 背景设置按钮
-        Button() {
-          SymbolGlyph($r('sys.symbol.paintbrush'))
-            .fontColor([$r('app.color.text_primary')])
-
-        }
-        .width(48)
-        .height(48)
-        .backgroundColor(Color.Transparent)
-        .onClick(() => {
-          this.showBackgroundSettingsPanel();
+        ReaderToolbarButton({
+          icon: $r('sys.symbol.paintbrush'),
+          label: '背景',
+          iconColor: $r('app.color.text_primary'),
+          iconSize: 20,
+          onAction: () => {
+            this.showBackgroundSettingsPanel();
+          }
         })
 
         Blank()
 
         // 阅读设置按钮
-        Button() {
-          SymbolGlyph($r('sys.symbol.gearshape'))
-            .fontColor([$r('app.color.text_primary')])
-        }
-        .width(48)
-        .height(48)
-        .backgroundColor(Color.Transparent)
-        .onClick(() => {
-          this.showReadingSettingsPanel();
+        ReaderToolbarButton({
+          icon: $r('sys.symbol.gearshape'),
+          label: '设置',
+          iconColor: $r('app.color.text_primary'),
+          iconSize: 20,
+          onAction: () => {
+            this.showReadingSettingsPanel();
+          }
         })
 
         Blank()
 
         // 听书胶囊区域
-        Row() {
+        Column({ space: 1 }) {
           Row() {
-            SymbolGlyph(this.readAloudPlaying ? $r('sys.symbol.pause_fill') : $r('sys.symbol.play_fill'))
-              .fontSize(18)
-              .fontColor([this.readAloudPlaying ? Color.White : $r('app.color.text_primary')])
-          }
-          .width(48)
-          .height('100%')
-          .justifyContent(FlexAlign.Center)
-          .onClick(() => {
-            this.toggleReadAloudFromToolbar();
-          })
+            Row() {
+              SymbolGlyph(this.readAloudPlaying ? $r('sys.symbol.pause_fill') : $r('sys.symbol.play_fill'))
+                .fontSize(18)
+                .fontColor([this.readAloudPlaying ? Color.White : $r('app.color.text_primary')])
+            }
+            .width(48)
+            .height('100%')
+            .justifyContent(FlexAlign.Center)
+            .onClick(() => {
+              this.toggleReadAloudFromToolbar();
+            })
 
-          Column()
-            .width(1)
-            .height(16)
-            .backgroundColor(this.readAloudPlaying ? '#66FFFFFF' : $r('app.color.divider_primary'))
+            Column()
+              .width(1)
+              .height(16)
+              .backgroundColor(this.readAloudPlaying ? '#66FFFFFF' : $r('app.color.divider_primary'))
 
-          Row() {
-            SymbolGlyph($r('sys.symbol.gearshape'))
-              .fontSize(16)
-              .fontColor([this.readAloudPlaying ? Color.White : $r('app.color.text_primary')])
+            Row() {
+              SymbolGlyph($r('sys.symbol.gearshape'))
+                .fontSize(16)
+                .fontColor([this.readAloudPlaying ? Color.White : $r('app.color.text_primary')])
+            }
+            .width(44)
+            .height('100%')
+            .justifyContent(FlexAlign.Center)
+            .onClick(() => {
+              this.openReadAloudSettingsPanelFromToolbar();
+            })
           }
-          .width(44)
-          .height('100%')
-          .justifyContent(FlexAlign.Center)
-          .onClick(() => {
-            this.openReadAloudSettingsPanelFromToolbar();
-          })
+          .height(36)
+          .backgroundColor(this.readAloudPlaying ? '#1A1890FF' : $r('app.color.background_secondary'))
+          .borderRadius(18)
+          .clip(true)
+
+          if (this.toolbarTextHintEnabled) {
+            Text('听书')
+              .fontSize(9)
+              .fontColor($r('app.color.text_primary'))
+              .fontFamily(this.appFontFamily)
+              .maxLines(1)
+              .textOverflow({ overflow: TextOverflow.Ellipsis })
+          }
         }
-        .height(36)
-        .backgroundColor(this.readAloudPlaying ? '#1A1890FF' : $r('app.color.background_secondary'))
-        .borderRadius(18)
-        .clip(true)
+        .alignItems(HorizontalAlign.Center)
 
 
       }

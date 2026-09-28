@@ -1,0 +1,44 @@
+{
+  "schemaVersion": 1,
+  "contract": "arkweb_legado_jsoup_not_argument_context",
+  "issueId": "ISSUE-COMPAT-243-JSOUP-STANDARD-CSS-PSEUDO-SELECTORS",
+  "baseline": {
+    "sourceCount": 458,
+    "sourcePackageSha256": "473048A191DE4749FA9C15E0A2F2328A3E86B385A5FCE23EA30432D598D03A67",
+    "legadoCommit": "95973d186b147fb9ab43a9240021d688e4304fbd"
+  },
+  "cases": [
+    {
+      "id": "not-ancestor-combinator",
+      "html": "<section><div><p class=\"skip\"><a>skip</a></p><p class=\"keep\"><a>keep</a></p></div></section><aside><div><p class=\"other\"><a>other</a></p></div></aside>",
+      "rule": "div > p:not(section > div > p.skip) > a@text",
+      "expected": ["keep", "other"],
+      "semantics": "not_argument_must_use_the_full_ancestor_context"
+    },
+    {
+      "id": "not-selector-list-ancestor-combinators",
+      "html": "<section><div><p class=\"skip\"><a>skip</a></p><p class=\"keep\"><a>keep</a></p></div></section><aside><div><p class=\"other\"><a>other</a></p></div></aside>",
+      "rule": "div > p:not(section > div > p.skip, aside > div > p.other) > a@text",
+      "expected": ["keep"],
+      "semantics": "not_argument_selector_lists_are_logical_or_in_full_context"
+    },
+    {
+      "id": "not-nested-has-ancestor-combinator",
+      "html": "<section><div><p><a class=\"skip\">skip</a></p><p><a class=\"keep\">keep</a></p></div></section><aside><div><p><a class=\"other\">other</a></p></div></aside>",
+      "rule": "div > p:not(section > div > p:has(> a.skip)) > a@text",
+      "expected": ["keep", "other"],
+      "semantics": "nested_has_argument_keeps_the_candidate_ancestor_identity"
+    }
+  ],
+  "affectedSourceOrdinals": [402],
+  "affectedRuleStrings": [
+    "a:not(:matches(^$)>img)>*",
+    ":has(>a):not(:has(p:matchesOwn(",
+    ":not(br,p,a,:matches("
+  ],
+  "consumerContract": {
+    "holder": "legadoGetStringListSingle creates a detached div and assigns response HTML",
+    "requiredFix": "Nested :not arguments must be evaluated by selecting against the complete available root and projecting the candidate node, not by node.matches alone.",
+    "legadoReference": "AnalyzeByJSoup delegates CSS selection to Jsoup Element.select, preserving ancestor and selector-list context for :not arguments."
+  }
+}

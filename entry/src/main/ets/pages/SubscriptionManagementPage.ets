@@ -1,12 +1,13 @@
+import { ISettingsManagerFacade, SettingsManagerHolder } from 'manxia_core/src/main/ets/Framework/Contracts/ISettingsManagerFacade';
 ﻿import { HdsNavDestination } from '@kit.UIDesignKit';
 import { promptAction, UIContext, curves } from '@kit.ArkUI';
 import { common } from '@kit.AbilityKit';
-import { logger } from '../Utils/Logger';
-import { PageLifecycleManager } from '../Framework/Lifecycle';
-import { ThemeAwareHelper, ThemeAwareState } from '../Framework/Components/ThemeAware';
-import { ThemeType } from '../Framework/Managers/ThemeManager';
-import { FontAwareHelper, FontAwareState } from '../Framework/Components/FontAware';
-import { SettingsManager } from '../Framework/Managers/SettingsManager';
+import { logger } from 'manxia_core/src/main/ets/Utils/Logger';
+import { PageLifecycleManager } from 'manxia_core/src/main/ets/Framework/Lifecycle/index';
+import { ThemeAwareHelper, ThemeAwareState } from 'manxia_theme/src/main/ets/Framework/Components/ThemeAware';
+import { ThemeType } from 'manxia_theme/src/main/ets/Framework/Managers/ThemeManager';
+import { FontAwareHelper, FontAwareState } from 'manxia_theme/src/main/ets/Framework/Components/FontAware';
+
 import { getTypeShelfManager, ShelfType, TypeShelf, TypeShelfManager } from '../Framework/Data/TypeShelfManager';
 import {
   getSubscriptionInitializer,
@@ -34,11 +35,11 @@ import {
   splitSubscriptionIntervalMinutesForDisplay
 } from '../Framework/Subscription';
 import { SourceDialogScaffold } from '../Framework/Components/SourceDialogScaffold';
-import { GlobalBackgroundLayerMode } from '../Framework/Components/GlobalBackgroundLayer';
-import { SharedPageBackgroundLayer } from '../Framework/Components/SharedPageBackgroundLayer';
+import { GlobalBackgroundLayerMode } from 'manxia_theme/src/main/ets/Framework/Components/GlobalBackgroundLayer';
+import { SharedPageBackgroundLayer } from 'manxia_theme/src/main/ets/Framework/Components/SharedPageBackgroundLayer';
 import { SettingsImmersiveTitleBar } from './settings/SettingsImmersiveTitleBar';
-import { SettingsImmersiveTitleActionItem, SettingsPageTitleBarManager } from './settings/SettingsPageTitleBarManager';
-import { SettingsPanelSurfaceHelper } from './settings/SettingsPanelSurfaceHelper';
+import { SettingsImmersiveTitleActionItem, SettingsPageTitleBarManager } from 'manxia_features_ui/src/main/ets/pages/settings/SettingsPageTitleBarManager';
+import { SettingsPanelSurfaceHelper } from 'manxia_features_ui/src/main/ets/pages/settings/SettingsPanelSurfaceHelper';
 
 const TAG = 'SubscriptionManagementPage';
 const TRACKING_PAGE_MAX_WIDTH = 1080;
@@ -124,7 +125,7 @@ export struct SubscriptionManagementPage {
 
   private readonly lifecycle: PageLifecycleManager = new PageLifecycleManager('SubscriptionManagementPage', { enableDebug: true });
   private readonly createDialogScroller: Scroller = new Scroller();
-  private readonly settingsManager: SettingsManager = SettingsManager.getInstance();
+  private readonly settingsManager: ISettingsManagerFacade = SettingsManagerHolder.get();
   private readonly typeShelfManager: TypeShelfManager = getTypeShelfManager();
   private readonly manager: SubscriptionManager = getSubscriptionManager();
   private uiContext: UIContext | undefined = undefined;

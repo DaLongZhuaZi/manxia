@@ -1,4 +1,4 @@
-﻿import { SafeFileUtils } from '../../Utils/SafeFileUtils';
+﻿import { SafeFileUtils } from 'manxia_core/src/main/ets/Utils/SafeFileUtils';
 // 文件路径: src/main/ets/Framework/Storage/StorageAnalyzer.ets
 /**
  * 存储分析器
@@ -7,13 +7,13 @@
 
 import { fileIo, storageStatistics } from '@kit.CoreFileKit';
 import fs from '@ohos.file.fs';
-import { logger } from '../../Utils/Logger';
-import { SandboxManager } from './SandboxManager';
+import { logger } from 'manxia_core/src/main/ets/Utils/Logger';
+import { SandboxManager } from 'manxia_core/src/main/ets/Framework/Storage/SandboxManager';
 import { ImageCacheManager } from '../Cache/ImageCacheManager';
-import { DatabaseManager } from '../Database/DatabaseManager';
-import { uiContextManager } from '../Managers/UIContextManager';
+import { DatabaseManager } from 'manxia_core/src/main/ets/Framework/Database/DatabaseManager';
+import { uiContextManager } from 'manxia_theme/src/main/ets/Framework/Managers/UIContextManager';
 import { BusinessError } from '@kit.BasicServicesKit';
-import DownloadDirManager from './DownloadDirManager';
+import DownloadDirManager from 'manxia_core/src/main/ets/Framework/Storage/DownloadDirManager';
 
 const TAG = 'StorageAnalyzer';
 

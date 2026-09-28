@@ -1,0 +1,39 @@
+{
+  "schemaVersion": 1,
+  "contract": "legado_jsoup_sibling_combinator_context",
+  "issueId": "ISSUE-COMPAT-243-JSOUP-STANDARD-CSS-PSEUDO-SELECTORS",
+  "baseline": {
+    "sourceCount": 458,
+    "sourcePackageSha256": "473048A191DE4749FA9C15E0A2F2328A3E86B385A5FCE23EA30432D598D03A67",
+    "legadoCommit": "95973d186b147fb9ab43a9240021d688e4304fbd"
+  },
+  "html": "<section><span>first</span><span>second</span><em>third</em></section><aside><span>outside</span></aside>",
+  "cases": [
+    {
+      "id": "not-adjacent-sibling",
+      "rule": "span:not(span + span)@text",
+      "semantics": "not_must_evaluate_adjacent_sibling_combinator",
+      "expectedTexts": ["first", "outside"],
+      "expectedCount": 2
+    },
+    {
+      "id": "not-general-sibling",
+      "rule": "span:not(span ~ span)@text",
+      "semantics": "not_must_evaluate_general_sibling_combinator",
+      "expectedTexts": ["first", "outside"],
+      "expectedCount": 2
+    },
+    {
+      "id": "not-mixed-parent-adjacent",
+      "rule": "span:not(section > span + span)@text",
+      "semantics": "not_must_evaluate_mixed_child_and_adjacent_sibling_combinators",
+      "expectedTexts": ["first", "outside"],
+      "expectedCount": 2
+    }
+  ],
+  "legadoSemantics": {
+    "implementation": "AnalyzeByJSoup delegates CSS selection to Jsoup Element.select; adjacent and general sibling combinators are evaluated in document context.",
+    "siblingPositions": "+ requires the immediately preceding element sibling; ~ requires any preceding element sibling."
+  },
+  "verificationPolicy": "static_failure_witness_then_source_fix;runtime_regression_build_device_and_legado_diff_deferred"
+}

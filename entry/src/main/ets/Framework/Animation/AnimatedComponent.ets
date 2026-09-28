@@ -4,7 +4,7 @@
  * 提供统一的动画接口和状态管理，支持传统动画系统
  */
 
-import { logger } from '../../Utils/Logger';
+import { logger } from 'manxia_core/src/main/ets/Utils/Logger';
 import { UIContext } from '@kit.ArkUI';
 import { 
   AnimationType, 

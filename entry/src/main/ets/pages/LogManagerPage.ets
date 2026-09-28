@@ -1,4 +1,4 @@
-﻿import { SafeFileUtils } from '../Utils/SafeFileUtils';
+﻿import { SafeFileUtils } from 'manxia_core/src/main/ets/Utils/SafeFileUtils';
 // 文件路径: entry/src/main/ets/pages/LogManagerPage.ets
 /**
  * 日志管理页面
@@ -10,18 +10,18 @@ import { LengthMetrics } from '@kit.ArkUI';
 import { picker } from '@kit.CoreFileKit';
 import { common } from '@kit.AbilityKit';
 import { fileIo as fs } from '@kit.CoreFileKit';
-import { ThemeAwareState, ThemeAwareHelper } from '../Framework/Components/ThemeAware';
-import { FontAwareHelper, FontAwareState } from '../Framework/Components/FontAware';
-import { ThemeManager, ThemeType } from '../Framework/Managers/ThemeManager';
-import { logger, LogLevel } from '../Utils/Logger';
-import { PageLifecycleManager } from '../Framework/Lifecycle';
-import { DeviceAdaptationManager, DeviceInfo, DeviceChangeListener } from '../Framework/Managers/DeviceAdaptationManager';
-import { LogCollector, LogEntry, LogFilter, LogStats } from '../Framework/Debug/LogCollector';
+import { ThemeAwareState, ThemeAwareHelper } from 'manxia_theme/src/main/ets/Framework/Components/ThemeAware';
+import { FontAwareHelper, FontAwareState } from 'manxia_theme/src/main/ets/Framework/Components/FontAware';
+import { ThemeManager, ThemeType } from 'manxia_theme/src/main/ets/Framework/Managers/ThemeManager';
+import { logger, LogLevel } from 'manxia_core/src/main/ets/Utils/Logger';
+import { PageLifecycleManager } from 'manxia_core/src/main/ets/Framework/Lifecycle/index';
+import { DeviceAdaptationManager, DeviceInfo, DeviceChangeListener } from 'manxia_theme/src/main/ets/Framework/Managers/DeviceAdaptationManager';
+import { LogCollector, LogEntry, LogFilter, LogStats } from 'manxia_core/src/main/ets/Framework/Debug/LogCollector';
 import { deviceInfo } from '@kit.BasicServicesKit';
 import { SettingsImmersiveTitleBar } from './settings/SettingsImmersiveTitleBar';
-import { SettingsPageTitleBarManager } from './settings/SettingsPageTitleBarManager';
-import { GlobalBackgroundLayerMode } from '../Framework/Components/GlobalBackgroundLayer';
-import { SharedPageBackgroundLayer } from '../Framework/Components/SharedPageBackgroundLayer';
+import { SettingsPageTitleBarManager } from 'manxia_features_ui/src/main/ets/pages/settings/SettingsPageTitleBarManager';
+import { GlobalBackgroundLayerMode } from 'manxia_theme/src/main/ets/Framework/Components/GlobalBackgroundLayer';
+import { SharedPageBackgroundLayer } from 'manxia_theme/src/main/ets/Framework/Components/SharedPageBackgroundLayer';
 
 const TAG = 'LogManagerPage';
 const TITLE_BAR_HEIGHT_MINI: number = 56;

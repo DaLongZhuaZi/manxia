@@ -1,0 +1,73 @@
+{
+  "schemaVersion": 1,
+  "contract": "legado_jsoup_element_select_context_self",
+  "issueId": "ISSUE-COMPAT-243-JSOUP-STANDARD-CSS-PSEUDO-SELECTORS",
+  "baseline": {
+    "sourceCount": 458,
+    "sourcePackageSha256": "473048A191DE4749FA9C15E0A2F2328A3E86B385A5FCE23EA30432D598D03A67",
+    "legadoCommit": "95973d186b147fb9ab43a9240021d688e4304fbd"
+  },
+  "cases": [
+    {
+      "id": "id_context_matches_self",
+      "html": "<div id=\"alist\"><span id=\"alistbox\">item</span></div>",
+      "contextSelector": "#alist",
+      "selector": "#alist",
+      "expectedIds": ["alist"],
+      "expectedCount": 1,
+      "semantics": "Jsoup Element.select evaluates the current Element before its descendants."
+    },
+    {
+      "id": "css_class_context_matches_self",
+      "html": "<section class=\"post-info post-info-box\"><span>meta</span></section>",
+      "contextSelector": ".post-info",
+      "selector": ".post-info-box",
+      "expectedClass": "post-info-box",
+      "expectedCount": 1,
+      "semantics": "A compound context that has both classes remains selectable by its second Legado chain segment."
+    },
+    {
+      "id": "legado_class_context_matches_self",
+      "html": "<header class=\"detail__header detail__header-detail__author-link\">author</header>",
+      "contextSelector": ".detail__header",
+      "selector": ".detail__header-detail__author-link",
+      "expectedClass": "detail__header-detail__author-link",
+      "expectedCount": 1,
+      "semantics": "Legado class.xxx segments use Jsoup Element.getElementsByClass, whose collector includes the current context element."
+    },
+    {
+      "id": "synthetic_document_root_is_not_selected",
+      "html": "<article id=\"document-child\">body</article>",
+      "contextSelector": "synthetic-root",
+      "selector": "root",
+      "expectedCount": 0,
+      "semantics": "The V2 parser's synthetic root represents a Jsoup Document boundary and must never be exposed as a selectable HTML element."
+    }
+  ],
+  "selectionPath": [
+    "LegadoRuleAnalyzer.getElementsByCSSWithBridge",
+    "LegadoHtmlBridge.parseChainRuleToElements",
+    "LegadoHtmlBridge.findElementsInContext",
+    "HTMLElement.select"
+  ],
+  "representativeSourceSet": {
+    "sourceOrdinals": [158, 228, 376],
+    "rulePaths": [
+      "$[157].ruleSearch.bookList",
+      "$[227].ruleContent.content",
+      "$[375].ruleBookInfo.author"
+    ],
+    "ruleStrings": [
+      "id.alist@id.alistbox",
+      ".post-info@.post-info-box",
+      "class.detail__header@class.detail__header-detail__author-link"
+    ],
+    "classification": "These frozen rules contain context-prefix chains. They are static consumers of the boundary, not claims that their live HTML currently places both selectors on the same node."
+  },
+  "legadoSemantics": {
+    "analyzer": "AnalyzeByJSoup calls Element.select for CSS rules and ElementsSingle uses Element.getElementsByClass, Element.getElementsByTag and Collector.collect for class/tag/id segments.",
+    "collector": "Jsoup Collector.collect starts traversal at the supplied root element.",
+    "documentBoundary": "Document selection does not expose the synthetic V2 root as an ordinary HTML element."
+  },
+  "failureCondition": "V2 HTMLElement.querySelectorAll only traverses descendants. LegadoHtmlBridge used it for each chained context, so a selector that should match the current Element was silently omitted."
+}

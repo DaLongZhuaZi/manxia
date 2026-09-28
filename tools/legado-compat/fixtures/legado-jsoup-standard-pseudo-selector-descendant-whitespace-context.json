@@ -1,0 +1,45 @@
+{
+  "schemaVersion": 1,
+  "contract": "legado_jsoup_standard_css_descendant_whitespace_context",
+  "issueId": "ISSUE-COMPAT-243-JSOUP-STANDARD-CSS-PSEUDO-SELECTORS",
+  "baseline": {
+    "sourceCount": 458,
+    "sourcePackageSha256": "473048A191DE4749FA9C15E0A2F2328A3E86B385A5FCE23EA30432D598D03A67",
+    "legadoCommit": "95973d186b147fb9ab43a9240021d688e4304fbd"
+  },
+  "html": "<div class=\"root\"><p class=\"collapse\">  A   B  </p><p data-label=\"A B\">attribute space</p><section class=\"has-container\"><div><span class=\"nested\">inside</span></div><p class=\"tail\">tail</p></section></div>",
+  "selectionPath": "getElementsByCSSWithBridge -> getElementsByCSSChain -> findElementsBySingleSelector -> top-level descendant splitting",
+  "cases": [
+    {
+      "id": "contains-argument-space",
+      "selector": "p.collapse:contains(A B)@text",
+      "semantics": "whitespace inside a pseudo argument is not a descendant combinator",
+      "expected": ["A B"]
+    },
+    {
+      "id": "attribute-value-space",
+      "selector": "p[data-label=\"A B\"]@text",
+      "semantics": "whitespace inside a quoted attribute value is not a descendant combinator",
+      "expected": ["attribute space"]
+    },
+    {
+      "id": "nested-has-followed-by-descendant",
+      "selector": "section:has(>div) p@text",
+      "semantics": "greater-than inside :has is nested while the following space is a top-level descendant combinator",
+      "expected": ["tail"]
+    },
+    {
+      "id": "nested-has-descendant-followed-by-descendant",
+      "selector": "section:has(>div span) span.nested@text",
+      "semantics": "relative :has argument keeps its own whitespace while the outer chain continues",
+      "expected": ["inside"]
+    },
+    {
+      "id": "nested-not-has-followed-by-descendant",
+      "selector": "section:not(:has(>p.missing)) p@text",
+      "semantics": "nested :not/:has arguments do not consume the outer descendant boundary",
+      "expected": ["tail"]
+    }
+  ],
+  "failureCondition": "The string fallback uses selector.includes('>') and selector.trim().split(/\\s+/) without top-level parser state. Spaces in :contains and quoted attributes are split as descendants, and a > nested inside :has incorrectly dispatches through the direct-child path before the outer descendant chain can be evaluated."
+}

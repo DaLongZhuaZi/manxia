@@ -1,7 +1,7 @@
-﻿import { SafeFileUtils } from '../../Utils/SafeFileUtils';
+﻿import { SafeFileUtils } from 'manxia_core/src/main/ets/Utils/SafeFileUtils';
 import fs from '@ohos.file.fs';
 import { fileUri } from '@kit.CoreFileKit';
-import { logger } from '../../Utils/Logger';
+import { logger } from 'manxia_core/src/main/ets/Utils/Logger';
 import {
   DataManager,
   ComicInfoInput,
@@ -9,7 +9,7 @@ import {
   PageInfoInput,
   FavoriteInfoInput
 } from '../Data/DataManager';
-import { MangaStatus } from '../Types/StatusEnums';
+import { MangaStatus } from 'manxia_core/src/main/ets/Framework/Types/StatusEnums';
 import {
   PdfToMangaImporter,
   PdfImportResult,
@@ -20,10 +20,10 @@ import {
   PdfImportDialogResult,
   PdfImportMode as DialogImportMode
 } from '../Components/PdfImportDialog';
-import { TaskCancelSignal } from '../Task/BackgroundTaskManager';
-import { ImportFilenameIntelligenceService } from './ImportFilenameIntelligenceService';
-import { MangaReadFlowImportReport, MangaReadFlowImportReporter } from '../Reader/MangaReadFlowImportReporter';
-import { ImportFlowMonitor, getImportFlowMonitor } from '../Import/ImportFlowMonitor';
+import { TaskCancelSignal } from 'manxia_network/src/main/ets/Framework/Task/BackgroundTaskManager';
+import { ImportFilenameIntelligenceService } from 'manxia_core/src/main/ets/Framework/Services/ImportFilenameIntelligenceService';
+import { MangaReadFlowImportReport, MangaReadFlowImportReporter } from 'manxia_reader_ui/src/main/ets/Framework/Reader/MangaReadFlowImportReporter';
+import { ImportFlowMonitor, getImportFlowMonitor } from 'manxia_core/src/main/ets/Framework/Import/ImportFlowMonitor';
 import {
   ImportFlowContentType,
   ImportFlowEntrySource,
@@ -31,7 +31,7 @@ import {
   ImportFlowEventType,
   ImportFlowSessionInfo,
   ImportFlowSeverity
-} from '../Import/ImportFlowTypes';
+} from 'manxia_core/src/main/ets/Framework/Import/ImportFlowTypes';
 
 const TAG = 'PdfImportService';
 const PDF_IMPORT_DIR_NAME = 'pdf_import';

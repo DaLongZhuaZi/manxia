@@ -1,6 +1,6 @@
 import { distributedFileManager } from './DistributedFileManager';
 import { distributedDataSyncManager, SyncReadingState } from './DistributedDataSyncManager';
-import { logger } from '../../Utils/Logger';
+import { logger } from 'manxia_core/src/main/ets/Utils/Logger';
 import { MangaDownloadManager } from '../Download/DownloadManager';
 import { DataManager } from '../Data/DataManager';
 import { DataService } from '../Services/DataService';

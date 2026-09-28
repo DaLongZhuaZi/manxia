@@ -1,4 +1,4 @@
-import { SafeUtils } from '../../Utils/SafeUtils';
+import { SafeUtils } from 'manxia_core/src/main/ets/Utils/SafeUtils';
 // 文件路径: src/main/ets/Framework/WebView/MangaSourceEngine.ets
 /**
  * 漫画图源引擎主控制器
@@ -6,12 +6,12 @@ import { SafeUtils } from '../../Utils/SafeUtils';
  */
 
 import { webview } from '@kit.ArkWeb';
-import { logger } from '../../Utils/Logger';
+import { logger } from 'manxia_core/src/main/ets/Utils/Logger';
 import { MangaSourceActionEngine, ActionContext } from './MangaSourceActionEngine';
-import { MangaSourceSelectorEngine, SelectorContext } from './MangaSourceSelectorEngine';
-import { MangaSourceConfigParser, ParseResult, WorkflowContext, ConfigSummaryResult, ConfigSummarySettings } from './MangaSourceConfigParser';
+import { MangaSourceSelectorEngine, SelectorContext } from 'manxia_source_engine/src/main/ets/Framework/WebView/MangaSourceSelectorEngine';
+import { MangaSourceConfigParser, ParseResult, WorkflowContext, ConfigSummaryResult, ConfigSummarySettings } from 'manxia_source_engine/src/main/ets/Framework/WebView/MangaSourceConfigParser';
 import { DataManager, UserSettingsDatabaseRecord } from '../Data/DataManager';
-import { FilterParams } from './TabConfig';
+import { FilterParams } from 'manxia_source_engine/src/main/ets/Framework/WebView/TabConfig';
 import {
   MangaSourceConfig,
   Action,
@@ -32,10 +32,10 @@ import {
   APIRequestAction,
   ExtractConfig,
   APIPaginationConfig
-} from './MangaSourceTypes';
+} from 'manxia_source_engine/src/main/ets/Framework/WebView/MangaSourceTypes';
 import { TaskExecutor, TaskExecutorConfig } from './TaskExecutor';
-import { sourceDiagnosticManager } from '../SourceEditor/SourceDiagnosticManager';
-import { SourceDiagnosticEvent, SourceExecutionTrace } from '../SourceEditor/SourceDiagnosticTypes';
+import { sourceDiagnosticManager } from 'manxia_source_engine/src/main/ets/Framework/SourceEditor/SourceDiagnosticManager';
+import { SourceDiagnosticEvent, SourceExecutionTrace } from 'manxia_source_engine/src/main/ets/Framework/SourceEditor/SourceDiagnosticTypes';
 
 const TAG = 'MangaSourceEngine';
 

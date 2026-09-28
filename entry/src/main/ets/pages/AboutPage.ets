@@ -6,29 +6,29 @@
 
 import { HdsNavDestination, HdsNavDestinationAttribute, ScrollEffectType } from '@kit.UIDesignKit';
 import { LengthMetrics } from '@kit.ArkUI';
-import { ThemeAwareState, ThemeAwareHelper } from '../Framework/Components/ThemeAware';
-import { ThemeManager, ThemeType } from '../Framework/Managers/ThemeManager';
-import { FontAwareHelper, FontAwareState } from '../Framework/Components/FontAware';
-import { logger } from '../Utils/Logger';
-import { PageLifecycleManager } from '../Framework/Lifecycle';
-import { DeviceAdaptationManager, DeviceInfo, DeviceChangeListener, Breakpoint } from '../Framework/Managers/DeviceAdaptationManager';
-import { ResponsiveLayoutHelper } from '../Framework/Utils/ResponsiveLayout';
-import { AppInfoManager } from '../Framework/Managers/AppInfoManager';
+import { ThemeAwareState, ThemeAwareHelper } from 'manxia_theme/src/main/ets/Framework/Components/ThemeAware';
+import { ThemeManager, ThemeType } from 'manxia_theme/src/main/ets/Framework/Managers/ThemeManager';
+import { FontAwareHelper, FontAwareState } from 'manxia_theme/src/main/ets/Framework/Components/FontAware';
+import { logger } from 'manxia_core/src/main/ets/Utils/Logger';
+import { PageLifecycleManager } from 'manxia_core/src/main/ets/Framework/Lifecycle/index';
+import { DeviceAdaptationManager, DeviceInfo, DeviceChangeListener, Breakpoint } from 'manxia_theme/src/main/ets/Framework/Managers/DeviceAdaptationManager';
+import { ResponsiveLayoutHelper } from 'manxia_theme/src/main/ets/Framework/Utils/ResponsiveLayout';
+import { AppInfoManager } from 'manxia_core/src/main/ets/Framework/Managers/AppInfoManager';
 import { pasteboard } from '@kit.BasicServicesKit';
 import { promptAction } from '@kit.ArkUI';
 import { common } from '@kit.AbilityKit';
-import { getChangelogManager } from '../Framework/Managers/ChangelogManager';
+import { getChangelogManager } from 'manxia_features_ui/src/main/ets/Framework/Managers/ChangelogManager';
 import { SettingsImmersiveTitleBar } from './settings/SettingsImmersiveTitleBar';
-import { SettingsPageTitleBarManager } from './settings/SettingsPageTitleBarManager';
-import { GlobalBackgroundLayerMode } from '../Framework/Components/GlobalBackgroundLayer';
-import { SharedPageBackgroundLayer } from '../Framework/Components/SharedPageBackgroundLayer';
-import { SettingsPanelSurfaceHelper } from './settings/SettingsPanelSurfaceHelper';
-import { SupporterDataManager } from '../Framework/Managers/SupporterDataManager';
+import { SettingsPageTitleBarManager } from 'manxia_features_ui/src/main/ets/pages/settings/SettingsPageTitleBarManager';
+import { GlobalBackgroundLayerMode } from 'manxia_theme/src/main/ets/Framework/Components/GlobalBackgroundLayer';
+import { SharedPageBackgroundLayer } from 'manxia_theme/src/main/ets/Framework/Components/SharedPageBackgroundLayer';
+import { SettingsPanelSurfaceHelper } from 'manxia_features_ui/src/main/ets/pages/settings/SettingsPanelSurfaceHelper';
+import { SupporterDataManager } from 'manxia_core/src/main/ets/Framework/Managers/SupporterDataManager';
 
 const TAG = 'AboutPage';
 const TITLE_BAR_HEIGHT_MINI: number = 56;
-const APP_TEST_INVITE_URL = 'https://appgallery.huawei.com/apptest/4PlqU4ygat3';
-const APP_GALLERY_INVITE_URL = 'https://appgallery.huawei.com/apptest/join/b38068c67248de9fa6d71a3d0b728399?invitationCode=8vTXct0EstJ';
+const APP_TEST_INVITE_URL = 'https://appgallery.huawei.com/apptest/7D3tpdQlW2f';
+const APP_GALLERY_INVITE_URL = 'https://appgallery.huawei.com/apptest/join/04dd51398acc864727bea24ab096cf7c?invitationCode=A5z7QwcajlY';
 
 interface InviteTestLinkOption {
   label: string;

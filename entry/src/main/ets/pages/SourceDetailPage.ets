@@ -1,5 +1,5 @@
-import { SafeFileUtils } from '../Utils/SafeFileUtils';
-import { SafeUtils } from '../Utils/SafeUtils';
+import { SafeFileUtils } from 'manxia_core/src/main/ets/Utils/SafeFileUtils';
+import { SafeUtils } from 'manxia_core/src/main/ets/Utils/SafeUtils';
 /**
  * 图源详情页面
  * 显示图源的热门、最新、搜索等内容
@@ -11,41 +11,42 @@ import { webview } from '@kit.ArkWeb';
 import { picker } from '@kit.CoreFileKit';
 import { common, Want } from '@kit.AbilityKit';
 import { fileIo as fs } from '@kit.CoreFileKit';
-import { logger } from '../Utils/Logger';
-import { PageLifecycleManager } from '../Framework/Lifecycle';
-import { ThemeAwareHelper, ThemeAwareState } from '../Framework/Components/ThemeAware';
-import { ThemeManager, ThemeType } from '../Framework/Managers/ThemeManager';
-import { FontAwareHelper, FontAwareState } from '../Framework/Components/FontAware';
+import { logger } from 'manxia_core/src/main/ets/Utils/Logger';
+import { PageLifecycleManager } from 'manxia_core/src/main/ets/Framework/Lifecycle/index';
+import { ThemeAwareHelper, ThemeAwareState } from 'manxia_theme/src/main/ets/Framework/Components/ThemeAware';
+import { ThemeManager, ThemeType } from 'manxia_theme/src/main/ets/Framework/Managers/ThemeManager';
+import { FontAwareHelper, FontAwareState } from 'manxia_theme/src/main/ets/Framework/Components/FontAware';
 import { SourceManager, SourceInfo } from '../Framework/Source/SourceManager';
 import { ComicInfo } from '../Framework/Source/SourceExecutor';
 import { DataManager } from '../Framework/Data/DataManager';
 import { MangaSourceEngine, SearchResult, EngineResult, EngineConfig } from '../Framework/WebView/MangaSourceEngine';
-import { MangaSourceConfig, MangaInfo, AntiCrawlerConfig, SearchTypeOption, SearchConfig } from '../Framework/WebView/MangaSourceTypes';
+import { MangaSourceConfig, MangaInfo, AntiCrawlerConfig, SearchTypeOption, SearchConfig } from 'manxia_source_engine/src/main/ets/Framework/WebView/MangaSourceTypes';
 import { WebViewSourceManager } from '../Framework/WebView/WebViewSourceManager';
 import { WebViewAuthManager } from '../Framework/WebView/WebViewAuthManager';
-import { TabConfig, TabType, SourceTabsConfig, getDefaultTabsConfig, filterTabsByLoginStatus, sortTabs, parseTabsFromSourceConfig, FilterConfig, FilterGroup, FilterOption } from '../Framework/WebView/TabConfig';
+import { TabConfig, TabType, SourceTabsConfig, getDefaultTabsConfig, filterTabsByLoginStatus, sortTabs, parseTabsFromSourceConfig, FilterConfig, FilterGroup, FilterOption } from 'manxia_source_engine/src/main/ets/Framework/WebView/TabConfig';
 import { MangaDetailPageParams } from './MangaDetailPage';
 import { OnlineEBookDetailPageParams } from './OnlineEBookDetailPage';
 import { SourceSettingsPageParams } from './SourceSettingsPage';
-import CookieManager from '../Framework/Managers/CookieManager';
-import { ComicSourceDatabaseRecord } from '../Framework/Database/DatabaseTypes';
+import CookieManager from 'manxia_core/src/main/ets/Framework/Managers/CookieManager';
+import { ComicSourceDatabaseRecord } from 'manxia_core/src/main/ets/Framework/Database/DatabaseTypes';
 import { image } from '@kit.ImageKit';
 import { ImageCacheManager, LoadOptions, RequestHeaderEntry, RequestHeaders } from '../Framework/Cache/ImageCacheManager';
-import { CoverCacheManager } from '../Framework/Cache/CoverCacheManager';
-import { DeviceAdaptationManager, DeviceInfo, DeviceChangeListener, Breakpoint } from '../Framework/Managers/DeviceAdaptationManager';
-import { AppNotificationManager } from '../Framework/Managers/NotificationManager';
-import { CredentialLoginDialog } from '../Framework/Components/CredentialLoginDialog';
+import { CoverCacheManager } from 'manxia_theme/src/main/ets/Framework/Cache/CoverCacheManager';
+import { WebViewContainer } from 'manxia_source_engine/src/main/ets/Framework/WebView/WebViewContainerPage';
+import { DeviceAdaptationManager, DeviceInfo, DeviceChangeListener, Breakpoint } from 'manxia_theme/src/main/ets/Framework/Managers/DeviceAdaptationManager';
+import { AppNotificationManager } from 'manxia_core/src/main/ets/Framework/Managers/NotificationManager';
+import { CredentialLoginDialog } from 'manxia_theme/src/main/ets/Framework/Components/CredentialLoginDialog';
 import { SourceCredentials } from '../Framework/Data/DataManager';
-import { ProxyManager } from '../Framework/Network/ProxyManager';
+import { ProxyManager } from 'manxia_network/src/main/ets/Framework/Network/ProxyManager';
 import { PageSettingsHelper, DetailPageType } from './settings/PageSettingsSubPage';
-import { UnifiedDetailPageParams, UnifiedContentType } from '../Models/UnifiedContentModels';
+import { UnifiedDetailPageParams, UnifiedContentType } from 'manxia_core/src/main/ets/Models/UnifiedContentModels';
 import { SourceContentCache, SourceContentCacheFreshness, SourceContentCacheSnapshot } from '../Framework/Cache/SourceContentCache';
 import { SettingsImmersiveTitleBar } from './settings/SettingsImmersiveTitleBar';
-import { SettingsImmersiveTitleActionItem, SettingsPageTitleBarManager } from './settings/SettingsPageTitleBarManager';
-import { SettingsPageSurfaceManager } from './settings/SettingsPageSurfaceManager';
+import { SettingsImmersiveTitleActionItem, SettingsPageTitleBarManager } from 'manxia_features_ui/src/main/ets/pages/settings/SettingsPageTitleBarManager';
+import { SettingsPageSurfaceManager } from 'manxia_features_ui/src/main/ets/pages/settings/SettingsPageSurfaceManager';
 import { OnlineImageLoader } from '../Framework/Cache/OnlineImageLoader';
 import { sourceDebugLogManager } from '../Framework/Debug/SourceDebugLogManager';
-import { LabelUtils } from '../Utils/LabelUtils';
+import { LabelUtils } from 'manxia_core/src/main/ets/Utils/LabelUtils';
 import {
   SourceDetailSearchExecutor,
   SourceDetailSearchResult,
@@ -54,23 +55,23 @@ import {
 } from '../Framework/Services/SourceDetailSearchExecutor';
 import { getLegadoMangaSourceBridge } from '../Framework/Novel/LegadoMangaSourceBridge';
 import { eventBus, GameEvent, IEventPayload, MangaFavoriteChangedPayload } from '../Framework/EventBus';
-import { GlobalSearchFlowMonitor, getGlobalSearchFlowMonitor } from '../Framework/Search/GlobalSearchFlowMonitor';
+import { GlobalSearchFlowMonitor, getGlobalSearchFlowMonitor } from 'manxia_source_engine/src/main/ets/Framework/Search/GlobalSearchFlowMonitor';
 import {
   GlobalSearchFlowEvent,
   GlobalSearchFlowEventType,
   GlobalSearchFlowSeverity
-} from '../Framework/Search/GlobalSearchFlowTypes';
+} from 'manxia_source_engine/src/main/ets/Framework/Search/GlobalSearchFlowTypes';
 import {
   buildGlobalSearchCacheKey,
   buildLegacyGlobalSearchCacheKey,
   GlobalSearchCacheData,
   GlobalSearchCachedComicInfo
-} from '../Framework/Search/GlobalSearchCacheBridge';
-import { SOURCE_DETAIL_ABILITY_HOST_MULTITON } from '../Framework/Source/SourceDetailAbilityConstants';
+} from 'manxia_source_engine/src/main/ets/Framework/Search/GlobalSearchCacheBridge';
+import { SOURCE_DETAIL_ABILITY_HOST_MULTITON } from 'manxia_source_engine/src/main/ets/Framework/Source/SourceDetailAbilityConstants';
 import {
   SourceDiagnosticPageParams,
   SourceInteractiveEditorPageParams
-} from '../Framework/SourceEditor/SourceEditorTypes';
+} from 'manxia_source_engine/src/main/ets/Framework/SourceEditor/SourceEditorTypes';
 
 
 const TAG = 'SourceDetailPage';
@@ -329,6 +330,7 @@ interface SourceLoginConfig {
 
 interface SourceNetworkUserAgentConfig {
   userAgent?: string;
+  ignoreSslErrors?: boolean;
 }
 
 interface SourceFilterOptionConfig {
@@ -450,6 +452,7 @@ export struct SourceDetailPage {
   @State selectedSearchType: string = 'search'; // 当前选中的搜索类型
   @State searchPlaceholder: string = '搜索漫画名称、粘贴URL、或输入 id:作品ID'; // 搜索框占位符
   @State sourceUserAgent: string = 'Mozilla/5.0 (Linux; Android 13; Pixel 7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Mobile Safari/537.36'; // 图源UA配置
+  @State sourceIgnoreSslErrors: boolean = false; // 仅图源显式声明时放行过期/自签证书
   @State isLegadoMangaBridgeSource: boolean = false;
   
   // 显示模式相关状态
@@ -1736,19 +1739,19 @@ export struct SourceDetailPage {
    * 等待WebView准备就绪
    */
   private async waitForWebViewReady(): Promise<void> {
-    const maxWaitTime = 5000;
+    const maxWaitTime = 15000;
     const checkInterval = 100;
     let waited = 0;
-    
+
     while (!this.webViewControllerAttached && waited < maxWaitTime) {
       await new Promise<void>((resolve) => setTimeout(resolve, checkInterval));
       waited += checkInterval;
     }
-    
+
     if (this.webViewControllerAttached) {
       logger.info(TAG, `WebView已就绪，等待时间: ${waited}ms`);
     } else {
-      logger.warn(TAG, `WebView等待超时(${maxWaitTime}ms)，继续执行`);
+      logger.error(TAG, `WebView等待超时(${maxWaitTime}ms)，controller 仍未挂载，后续 loadUrl/JS 可能失败`);
     }
   }
 
@@ -2013,6 +2016,12 @@ export struct SourceDetailPage {
     
     // 尝试从 network.userAgent 读取
     const network: SourceNetworkUserAgentConfig | undefined = sourceConfig.network;
+    if (network) {
+      this.sourceIgnoreSslErrors = network.ignoreSslErrors === true;
+      if (this.sourceIgnoreSslErrors) {
+        logger.warn(TAG, '图源已声明 ignoreSslErrors，WebView 将放行证书错误');
+      }
+    }
     if (network && network.userAgent && network.userAgent.length > 0) {
       this.sourceUserAgent = network.userAgent;
       logger.info(TAG, `使用图源配置的UserAgent: ${this.sourceUserAgent.substring(0, 50)}...`);
@@ -4737,8 +4746,9 @@ export struct SourceDetailPage {
         .height('100%')
         .expandSafeArea([SafeAreaType.SYSTEM], [SafeAreaEdge.TOP, SafeAreaEdge.BOTTOM])
 
-        // 后台WebView组件：调试/验证窗口未展开时保持离屏承接，避免影响工作流
-        if (this.useWebView && !this.isDebugWebViewExpanded()) {
+        // 后台WebView组件：始终挂载，避免 useWebView 异步置真前 controller 无法关联
+        // 调试/验证窗口展开时也保留此实例，防止同一 controller 被卸载重挂导致竞态
+        if (!this.isDebugWebViewExpanded()) {
           this.buildSourceWebView(false, false)
         }
 
@@ -4781,6 +4791,13 @@ export struct SourceDetailPage {
         if (this.showAmbiguousDialog) {
           this.buildAmbiguousDialog()
         }
+
+        // 后台 WebView 容器（封面 SSL 降级等）；必须可挂载，不能 Visibility.None
+        WebViewContainer()
+          .width(1)
+          .height(1)
+          .opacity(0)
+          .position({ x: -10000, y: -10000 })
       }
       .width('100%')
       .height('100%')
@@ -6044,6 +6061,16 @@ export struct SourceDetailPage {
         const requestUrl: string = event.request.getRequestUrl();
         const isMainFrame: boolean = event.request.isMainFrame();
         this.handleDebugWebViewResourceError(errorCode, errorInfo, requestUrl, isMainFrame);
+      })
+      .onSslErrorEventReceive((event) => {
+        const sslError: string = event?.error ? String(event.error) : 'unknown';
+        if (this.sourceIgnoreSslErrors) {
+          logger.warn(TAG, `图源声明 ignoreSslErrors，放行 SSL 错误: ${sslError}`);
+          event.handler.handleConfirm();
+          return;
+        }
+        logger.warn(TAG, `SSL错误已拒绝: ${sslError}`);
+        event.handler.handleCancel();
       })
       .position(this.getDebugWebViewPosition(expanded, embedded))
       .width(this.getDebugWebViewWidth(expanded, embedded))

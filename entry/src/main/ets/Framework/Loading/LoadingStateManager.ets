@@ -4,7 +4,7 @@
  * 负责管理应用启动和初始化过程中的加载状态，与C++生命周期状态同步
  */
 
-import { logger } from '../../Utils/Logger';
+import { logger } from 'manxia_core/src/main/ets/Utils/Logger';
 // 移除对Game目录的依赖，使用简单的事件系统
 export interface EventPayload {
   timestamp: number;

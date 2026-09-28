@@ -4,8 +4,8 @@
  * 用于在应用启动阶段进行诊断和监控，提供性能分析、健康检查和问题定位功能。
  */
 
-import { logger } from '../../Utils/Logger';
-import { isInitialized as isGlobalContextInitialized } from '../../GlobalContext';
+import { logger } from 'manxia_core/src/main/ets/Utils/Logger';
+import { isInitialized as isGlobalContextInitialized } from 'manxia_core/src/main/ets/GlobalContext';
 
 /**
  * 启动阶段枚举

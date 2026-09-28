@@ -1,33 +1,33 @@
 ﻿// 文件路径: src/main/ets/Framework/Components/BookSourceTabContent.ets
 // 职责: 书源标签页内容组件，从MainMenuPage提取的独立组件
 
-import { logger } from '../../Utils/Logger';
+import { logger } from 'manxia_core/src/main/ets/Utils/Logger';
 import { common } from '@kit.AbilityKit';
 import { promptAction, curves } from '@kit.ArkUI';
-import { ThemeAwareState, ThemeAwareHelper } from './ThemeAware';
-import { ThemeType } from '../Managers/ThemeManager';
+import { ThemeAwareState, ThemeAwareHelper } from 'manxia_theme/src/main/ets/Framework/Components/ThemeAware';
+import { ThemeType } from 'manxia_theme/src/main/ets/Framework/Managers/ThemeManager';
 import { TabContentCacheManager, BookSourceCacheData } from '../Cache/TabContentCacheManager';
-import { ContentFilterManager } from '../Managers/ContentFilterManager';
+import { ContentFilterManager } from 'manxia_core/src/main/ets/Framework/Managers/ContentFilterManager';
 import { getNovelSourceManager, NovelSourceManager } from '../Novel/NovelSourceManager';
-import { LegadoBookSourceType } from '../Novel/LegadoSourceTypes';
+import { LegadoBookSourceType } from 'manxia_novel/src/main/ets/Framework/Novel/LegadoSourceTypes';
 import {
   LegadoCompatibilityEngineMode,
   LegadoCompatibilityStatus,
   LegadoExecutionTraceSummary,
   LegadoWorkflowKind
-} from '../Novel/LegadoCompatibilityTypes';
+} from 'manxia_novel/src/main/ets/Framework/Novel/LegadoCompatibilityTypes';
 import { getNovelInitializer } from '../Novel/NovelInitializer';
-import { NovelBook, NovelReadStatus, NovelSearchResult, NovelSourceInfo } from '../../Models/NovelModels';
+import { NovelBook, NovelReadStatus, NovelSearchResult, NovelSourceInfo } from 'manxia_core/src/main/ets/Models/NovelModels';
 import { NovelSearchPageParams } from '../../pages/NovelBookshelfPage';
 import {
   LegadoExploreDetailOpenResult,
   LegadoExploreDetailOpenStatus,
   openLegadoExploreDetail
 } from '../Novel/LegadoExploreDetailNavigator';
-import { SettingsPageSurfaceManager } from '../../pages/settings/SettingsPageSurfaceManager';
+import { SettingsPageSurfaceManager } from 'manxia_features_ui/src/main/ets/pages/settings/SettingsPageSurfaceManager';
 import { AvifImage } from '../../components/AvifImage';
 import { DataManager } from '../Data/DataManager';
-import { SettingsManager, SettingKeys } from '../Managers/SettingsManager';
+import { SettingsManager, SettingKeys } from 'manxia_core/src/main/ets/Framework/Managers/SettingsManager';
 
 const TAG = 'BookSourceTabContent';
 

@@ -5,13 +5,13 @@
  */
 
 import { HdsNavDestination, HdsNavDestinationAttribute, ScrollEffectType } from '@kit.UIDesignKit';
-import { logger } from '../Utils/Logger';
+import { logger } from 'manxia_core/src/main/ets/Utils/Logger';
 import { ReaderSafeAreaUtils } from '../Utils/ReaderSafeAreaUtils';
-import { ThemeAwareState, ThemeAwareHelper } from '../Framework/Components/ThemeAware';
-import { ThemeType } from '../Framework/Managers/ThemeManager';
+import { ThemeAwareState, ThemeAwareHelper } from 'manxia_theme/src/main/ets/Framework/Components/ThemeAware';
+import { ThemeType } from 'manxia_theme/src/main/ets/Framework/Managers/ThemeManager';
 import { webview } from '@kit.ArkWeb';
 import { promptAction } from '@kit.ArkUI';
-import { WindowManager, DisplayMode } from '../Utils/WindowManager';
+import { WindowManager, DisplayMode } from 'manxia_theme/src/main/ets/Utils/WindowManager';
 
 const TAG = 'ZLibraryReaderPage';
 
@@ -158,7 +158,7 @@ export struct ZLibraryReaderPage {
           Column() {
             Row() {
               Button() {
-                Image($r('app.media.ic_back'))
+                Image($r('app.media.ic_arrow_back'))
                   .width(24)
                   .height(24)
                   .fillColor(Color.White)

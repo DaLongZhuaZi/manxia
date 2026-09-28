@@ -1,4 +1,4 @@
-import { SafeUtils } from '../../Utils/SafeUtils';
+import { SafeUtils } from 'manxia_core/src/main/ets/Utils/SafeUtils';
 // 文件路径: src/main/ets/Framework/Plugin/HSPPluginManager.ets
 /**
  * HSP插件管理器
@@ -6,8 +6,8 @@ import { SafeUtils } from '../../Utils/SafeUtils';
  */
 
 import { bundleManager } from '@kit.AbilityKit';
-import { logger } from '../../Utils/Logger';
-import { SandboxManager } from '../Storage/SandboxManager';
+import { logger } from 'manxia_core/src/main/ets/Utils/Logger';
+import { SandboxManager } from 'manxia_core/src/main/ets/Framework/Storage/SandboxManager';
 import { BusinessError } from '@kit.BasicServicesKit';
 import { util } from '@kit.ArkTS';
 

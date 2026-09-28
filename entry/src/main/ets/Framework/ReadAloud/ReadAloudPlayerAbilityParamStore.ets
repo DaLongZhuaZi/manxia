@@ -1,5 +1,5 @@
 import type { NovelReaderPageParams } from '../../pages/NovelBookshelfPage';
-import type { DisplayMode } from '../../Utils/WindowManager';
+import type { DisplayMode } from 'manxia_theme/src/main/ets/Utils/WindowManager';
 
 const TAG_PREFIX: string = 'read_aloud_player';
 

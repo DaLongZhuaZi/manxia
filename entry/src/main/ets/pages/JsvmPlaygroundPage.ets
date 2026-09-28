@@ -1,4 +1,4 @@
-import { SafeUtils } from '../Utils/SafeUtils';
+import { SafeUtils } from 'manxia_core/src/main/ets/Utils/SafeUtils';
 /**
  * JSVM Playground - JavaScript 代码运行测试页面
  * 提供类似IDE的代码编辑和执行环境，用于测试JSVM引擎功能
@@ -10,16 +10,16 @@ import { HdsNavDestination } from '@kit.UIDesignKit';
 import { promptAction } from '@kit.ArkUI';
 import { pasteboard } from '@kit.BasicServicesKit';
 import { webview } from '@kit.ArkWeb';
-import { logger } from '../Utils/Logger';
-import { ThemeAwareHelper, ThemeAwareState } from '../Framework/Components/ThemeAware';
-import { PageLifecycleManager, Disposable, CancellationError } from '../Framework/Lifecycle';
-import { ThemeManager, ThemeType } from '../Framework/Managers/ThemeManager';
+import { logger } from 'manxia_core/src/main/ets/Utils/Logger';
+import { ThemeAwareHelper, ThemeAwareState } from 'manxia_theme/src/main/ets/Framework/Components/ThemeAware';
+import { PageLifecycleManager, Disposable, CancellationError } from 'manxia_core/src/main/ets/Framework/Lifecycle/index';
+import { ThemeManager, ThemeType } from 'manxia_theme/src/main/ets/Framework/Managers/ThemeManager';
 import { NativeJsEngine, JsContext, JsResult, getNativeJsEngine } from '../Framework/Novel/NativeJsEngine';
-import { testHtmlParser } from '../libs/htmlparser/index';
+import { testHtmlParser } from 'manxia_core/src/main/ets/libs/htmlparser/index';
 import { getLegadoRhinoEngine, JsEngineType, LegadoRhinoEngine } from '../Framework/Novel/LegadoRhinoEngine';
 import { getLegadoJsEngine } from '../Framework/Novel/LegadoJsEngine';
 import { SettingsImmersiveTitleBar } from './settings/SettingsImmersiveTitleBar';
-import { SettingsPageTitleBarManager } from './settings/SettingsPageTitleBarManager';
+import { SettingsPageTitleBarManager } from 'manxia_features_ui/src/main/ets/pages/settings/SettingsPageTitleBarManager';
 import quickjs from 'libquickjs_engine.so';
 
 const TAG = 'JsvmPlaygroundPage';

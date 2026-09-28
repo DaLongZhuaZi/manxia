@@ -1,0 +1,27 @@
+{
+  "schemaVersion": 1,
+  "contract": "legado_jsoup_standard_css_direct_child_regex_character_class_context",
+  "issueId": "ISSUE-COMPAT-243-JSOUP-STANDARD-CSS-PSEUDO-SELECTORS",
+  "baseline": {
+    "sourceCount": 458,
+    "sourcePackageSha256": "473048A191DE4749FA9C15E0A2F2328A3E86B385A5FCE23EA30432D598D03A67",
+    "legadoCommit": "95973d186b147fb9ab43a9240021d688e4304fbd"
+  },
+  "html": "<section class=\"regex\">)>foo<p class=\"regex-match\">selected</p></section><section class=\"other\"><p>other</p></section>",
+  "selectionPath": "getElementsByCSSWithBridge -> getElementsByCSSChain -> findElementsBySingleSelector -> findElementsByDirectChildSelector -> splitTopLevelDirectChildSelectors",
+  "cases": [
+    {
+      "id": "matches-regex-character-class-parenthesis",
+      "selector": "section.regex:matches([)]>foo) > p",
+      "semantics": "ignore_parenthesis_and_greater_than_inside_regex_character_class_and_pseudo_argument",
+      "expected": ["<p class=\"regex-match\">selected</p>"]
+    },
+    {
+      "id": "matches-regex-character-class-with-escaped-close",
+      "selector": "section.regex:matches([\\)])>foo) > p",
+      "semantics": "preserve_escaped_regex_character_class_context_before_outer_child_combinator",
+      "expected": ["<p class=\"regex-match\">selected</p>"]
+    }
+  ],
+  "failureCondition": "The splitter decrements parenthesisDepth for a closing parenthesis inside bracketDepth, so a greater-than in the remaining :matches argument is mistaken for a top-level child combinator."
+}

@@ -9,7 +9,7 @@
  * 5. 使用 4 张 PixelMap：当前左/右 + 底层左/右
  */
 
-import { logger } from '../Utils/Logger';
+import { logger } from 'manxia_core/src/main/ets/Utils/Logger';
 import { image } from '@kit.ImageKit';
 import { PageCurlConfigV2, CurlStartPosition } from './PageCurlEffectV2';
 

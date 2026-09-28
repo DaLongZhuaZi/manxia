@@ -1,4 +1,5 @@
-import { SafeUtils } from '../Utils/SafeUtils';
+import { ISettingsManagerFacade, SettingsManagerHolder } from 'manxia_core/src/main/ets/Framework/Contracts/ISettingsManagerFacade';
+import { SafeUtils } from 'manxia_core/src/main/ets/Utils/SafeUtils';
 /**
  * 小说书源管理页面
  * 导入、删除、测试书源
@@ -12,24 +13,24 @@ import { promptAction } from '@kit.ArkUI';
 import { picker } from '@kit.CoreFileKit';
 import { common } from '@kit.AbilityKit';
 import { http } from '@kit.NetworkKit';
-import { logger } from '../Utils/Logger';
-import { PageLifecycleManager } from '../Framework/Lifecycle';
+import { logger } from 'manxia_core/src/main/ets/Utils/Logger';
+import { PageLifecycleManager } from 'manxia_core/src/main/ets/Framework/Lifecycle/index';
 import { getNovelSourceManager, NovelSourceManager } from '../Framework/Novel/NovelSourceManager';
 import { getNovelInitializer } from '../Framework/Novel/NovelInitializer';
 import { getNovelDataManager } from '../Framework/Novel/NovelDataManager';
 import { getNovelSourceValidator, ValidationConfig, NovelSourceValidator, SourceValidationResult, SPECIAL_GROUP_NAMES } from '../Framework/Novel/NovelSourceValidator';
-import { NovelSourceInfo } from '../Models/NovelModels';
-import { LegadoSourceImportResult, LegadoBookSource, LegadoBookSourceType } from '../Framework/Novel/LegadoSourceTypes';
-import { ThemeAwareState, ThemeAwareHelper } from '../Framework/Components/ThemeAware';
-import { ThemeManager, ThemeType } from '../Framework/Managers/ThemeManager';
-import { SettingKeys, SettingsManager } from '../Framework/Managers/SettingsManager';
-import { FontAwareHelper, FontAwareState } from '../Framework/Components/FontAware';
+import { NovelSourceInfo } from 'manxia_core/src/main/ets/Models/NovelModels';
+import { LegadoSourceImportResult, LegadoBookSource, LegadoBookSourceType } from 'manxia_novel/src/main/ets/Framework/Novel/LegadoSourceTypes';
+import { ThemeAwareState, ThemeAwareHelper } from 'manxia_theme/src/main/ets/Framework/Components/ThemeAware';
+import { ThemeManager, ThemeType } from 'manxia_theme/src/main/ets/Framework/Managers/ThemeManager';
+import { SettingKeys } from 'manxia_core/src/main/ets/Framework/Contracts/SettingKeys';
+import { FontAwareHelper, FontAwareState } from 'manxia_theme/src/main/ets/Framework/Components/FontAware';
 import { SourceDialogScaffold } from '../Framework/Components/SourceDialogScaffold';
 import { NovelSearchPageParams } from './NovelBookshelfPage';
-import { ValidationProgressDialog, ValidationProgressController, ValidationProgressInfo } from '../Framework/Components/ValidationProgressDialog';
-import { GroupManagementDialog, GroupInfo, SplitCondition } from '../Framework/Components/GroupManagementDialog';
-import { LegadoCompatibilityStatus, LegadoV2ExecutionPolicy } from '../Framework/Novel/LegadoCompatibilityTypes';
-import { getLegadoSourceAutomationToken } from '../Framework/Novel/LegadoSourceAutomationIdentity';
+import { ValidationProgressDialog, ValidationProgressController, ValidationProgressInfo } from 'manxia_features_ui/src/main/ets/Framework/Components/ValidationProgressDialog';
+import { GroupManagementDialog, GroupInfo, SplitCondition } from 'manxia_features_ui/src/main/ets/Framework/Components/GroupManagementDialog';
+import { LegadoCompatibilityStatus, LegadoV2ExecutionPolicy } from 'manxia_novel/src/main/ets/Framework/Novel/LegadoCompatibilityTypes';
+import { getLegadoSourceAutomationToken } from 'manxia_novel/src/main/ets/Framework/Novel/LegadoSourceAutomationIdentity';
 import { LegadoV2QualificationResult, LegadoV2QualificationRunner } from '../Framework/Novel/LegadoV2QualificationRunner';
 import {
   DEFAULT_NOVEL_SOURCE_REPOSITORY_URL,
@@ -53,11 +54,11 @@ import {
 import { openFileEditorInIsolatedAbility } from '../Framework/Editor/FileEditorAbilityLauncher';
 import { eventBus, GameEvent, IEventPayload, FileEditorDocumentPayload } from '../Framework/EventBus';
 import { SettingsImmersiveTitleBar } from './settings/SettingsImmersiveTitleBar';
-import { SettingsImmersiveTitleActionItem, SettingsPageTitleBarManager } from './settings/SettingsPageTitleBarManager';
-import { GlobalBackgroundLayerMode } from '../Framework/Components/GlobalBackgroundLayer';
-import { SharedPageBackgroundLayer } from '../Framework/Components/SharedPageBackgroundLayer';
-import { SettingsPanelSurfaceHelper } from './settings/SettingsPanelSurfaceHelper';
-import { SettingsPageSurfaceManager } from './settings/SettingsPageSurfaceManager';
+import { SettingsImmersiveTitleActionItem, SettingsPageTitleBarManager } from 'manxia_features_ui/src/main/ets/pages/settings/SettingsPageTitleBarManager';
+import { GlobalBackgroundLayerMode } from 'manxia_theme/src/main/ets/Framework/Components/GlobalBackgroundLayer';
+import { SharedPageBackgroundLayer } from 'manxia_theme/src/main/ets/Framework/Components/SharedPageBackgroundLayer';
+import { SettingsPanelSurfaceHelper } from 'manxia_features_ui/src/main/ets/pages/settings/SettingsPanelSurfaceHelper';
+import { SettingsPageSurfaceManager } from 'manxia_features_ui/src/main/ets/pages/settings/SettingsPageSurfaceManager';
 
 const TAG = 'NovelSourceManagementPage';
 
@@ -242,7 +243,7 @@ export struct NovelSourceManagementPage {
   private isLoadingMore: boolean = false;
   private sourceManager: NovelSourceManager = getNovelSourceManager();
   private v2QualificationRunner: LegadoV2QualificationRunner = new LegadoV2QualificationRunner(this.sourceManager);
-  private settingsManager: SettingsManager = SettingsManager.getInstance();
+  private settingsManager: ISettingsManagerFacade = SettingsManagerHolder.get();
   private listScroller: Scroller = new Scroller();
   // 校验进度对话框
   private validationProgressController: ValidationProgressController | null = null;

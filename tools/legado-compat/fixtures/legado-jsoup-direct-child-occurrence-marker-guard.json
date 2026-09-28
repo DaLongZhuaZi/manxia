@@ -1,0 +1,41 @@
+{
+  "schemaVersion": 1,
+  "contract": "legado_jsoup_direct_child_occurrence_marker_guard",
+  "issueId": "ISSUE-COMPAT-243-JSOUP-STANDARD-CSS-PSEUDO-SELECTORS",
+  "baseline": {
+    "sourceCount": 458,
+    "sourcePackageSha256": "473048A191DE4749FA9C15E0A2F2328A3E86B385A5FCE23EA30432D598D03A67",
+    "legadoCommit": "95973d186b147fb9ab43a9240021d688e4304fbd"
+  },
+  "cases": [
+    {
+      "id": "direct-child-pseudo-group",
+      "selector": "section > p:first-child, section > p:last-child",
+      "semantics": "direct-child pseudo evaluation must preserve occurrence markers until selector-group union completes",
+      "expected": ["first", "last"],
+      "failurePath": "getElementsByCSSChain -> findElementsBySingleSelector -> findElementsByDirectChildSelector"
+    },
+    {
+      "id": "direct-child-pseudo-chain-output",
+      "selector": "section > p:first-child@all",
+      "semantics": "workflow output must strip internal occurrence markers only after the final selector chain",
+      "expected": "<p>first</p>",
+      "failurePath": "getElementsByCSSChain final return"
+    }
+  ],
+  "affectedSourceOrdinals": [26, 70, 97, 144, 145, 158, 201, 223, 231, 251, 255, 452],
+  "representativeRules": [
+    "div[id = chapterList] >a:last-child@text",
+    "body > table:nth-child(4) > tbody > tr > td > span > a",
+    ".row:nth-child(2) > .col-12:nth-child(n+1)",
+    "#info > p:nth-child(2) > a@text",
+    "#chapterlist>p:nth-child(n+2)>a",
+    "div.book-name > div > ul.types > li:nth-child(3) > a@text",
+    "@css:#page>div>ul>li:nth-child(2)>img@src"
+  ],
+  "legadoSemantics": {
+    "implementation": "AnalyzeByJSoup -> Element.select -> Jsoup 1.16.2",
+    "markerPolicy": "internal source occurrence identity is an implementation detail; it must not appear in workflow output",
+    "selectorGroupPolicy": "different matching Element instances remain distinct; the same Element matched by multiple groups is emitted once in document order"
+  }
+}

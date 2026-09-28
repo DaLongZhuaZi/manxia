@@ -1,29 +1,29 @@
-﻿import { SafeFileUtils } from '../../Utils/SafeFileUtils';
-import { SafeUtils } from '../../Utils/SafeUtils';
+﻿import { SafeFileUtils } from 'manxia_core/src/main/ets/Utils/SafeFileUtils';
+import { SafeUtils } from 'manxia_core/src/main/ets/Utils/SafeUtils';
 import { media } from '@kit.MediaKit';
 import { fileIo } from '@kit.CoreFileKit';
-import { logger } from '../../Utils/Logger';
+import { logger } from 'manxia_core/src/main/ets/Utils/Logger';
 import { getNovelSourceManager } from '../Novel/NovelSourceManager';
 import { getNovelChapterCacheManager } from '../Novel/NovelChapterCacheManager';
-import { LegadoBook, LegadoBookSourceType, LegadoChapter } from '../Novel/LegadoSourceTypes';
-import { DEFAULT_READ_ALOUD_SETTINGS, ReadAloudSettings } from '../../Models/TextReaderModels';
+import { LegadoBook, LegadoBookSourceType, LegadoChapter } from 'manxia_novel/src/main/ets/Framework/Novel/LegadoSourceTypes';
+import { DEFAULT_READ_ALOUD_SETTINGS, ReadAloudSettings } from 'manxia_core/src/main/ets/Models/TextReaderModels';
 import { loadGlobalReadAloudSettings } from './ReadAloudSettingsStore';
-import { SettingsManager } from '../Managers/SettingsManager';
+import { SettingsManager } from 'manxia_core/src/main/ets/Framework/Managers/SettingsManager';
 import { ReadAloudMediaCommandListener, ReadAloudMediaSession } from './ReadAloudMediaSession';
 import { ReadAloudPlaybackState, ReadAloudSessionContext, ReadAloudStateSnapshot } from './ReadAloudTypes';
-import { ReadAloudFlowMonitor } from './ReadAloudFlowMonitor';
+import { ReadAloudFlowMonitor } from 'manxia_novel/src/main/ets/Framework/ReadAloud/ReadAloudFlowMonitor';
 import {
   ReadAloudFlowEventType,
   ReadAloudFlowMode,
   ReadAloudFlowSessionInfo,
   ReadAloudFlowSeverity
-} from './ReadAloudFlowTypes';
-import { DetailOpenFlowMonitor } from '../Reader/DetailOpenFlowMonitor';
-import { LegadoWorkflowOutputKind } from '../Novel/LegadoCompatibilityTypes';
+} from 'manxia_novel/src/main/ets/Framework/ReadAloud/ReadAloudFlowTypes';
+import { DetailOpenFlowMonitor } from 'manxia_reader_ui/src/main/ets/Framework/Reader/DetailOpenFlowMonitor';
+import { LegadoWorkflowOutputKind } from 'manxia_novel/src/main/ets/Framework/Novel/LegadoCompatibilityTypes';
 import {
   DetailOpenFlowEventType,
   DetailOpenFlowTargetKind
-} from '../Reader/DetailOpenFlowTypes';
+} from 'manxia_reader_ui/src/main/ets/Framework/Reader/DetailOpenFlowTypes';
 
 const TAG = 'NovelAudioSessionManager';
 const CHAPTER_LIST_CACHE_MAX_AGE_HOURS: number = 48;

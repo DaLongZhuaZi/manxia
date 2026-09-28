@@ -5,8 +5,8 @@ import { EBookParserFactory } from './EBookParser';
 import { TxtParser } from './TxtParser';
 import { EpubParser } from './EpubParser';
 import { GenericEBookParser } from './GenericEBookParser';
-import { EBookFormat } from '../../Models/EBookModels';
-import { logger } from '../../Utils/Logger';
+import { EBookFormat } from 'manxia_core/src/main/ets/Models/EBookModels';
+import { logger } from 'manxia_core/src/main/ets/Utils/Logger';
 
 const TAG = 'ParserInitializer';
 

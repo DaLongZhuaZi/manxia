@@ -1,4 +1,4 @@
-import { logger } from '../../Utils/Logger';
+import { logger } from 'manxia_core/src/main/ets/Utils/Logger';
 import { display } from '@kit.ArkUI';
 import { ReadAloudController } from '../ReadAloud/ReadAloudController';
 import { eventBus, GameEvent, IEventPayload } from '../EventBus';
@@ -8,14 +8,14 @@ import {
   NovelAudioReadAloudSnapshot,
   NovelAudioReadAloudStateListener
 } from '../ReadAloud/NovelAudioReadAloudSessionManager';
-import { WindowManager, DisplayMode } from '../../Utils/WindowManager';
+import { WindowManager, DisplayMode } from 'manxia_theme/src/main/ets/Utils/WindowManager';
 import { openReadAloudPlayerInIsolatedAbility } from '../ReadAloud/ReadAloudPlayerAbilityLauncher';
 import {
   getHoldingAwarenessManager,
   HoldingAwarenessFeature,
   HoldingAwarenessManager,
   HoldingUiAnchor
-} from '../Managers/HoldingAwarenessManager';
+} from 'manxia_core/src/main/ets/Framework/Managers/HoldingAwarenessManager';
 
 const TAG = 'ReadAloudFloatingBall';
 const FLOATING_BALL_REFRESH_INTERVAL_MS: number = 400;

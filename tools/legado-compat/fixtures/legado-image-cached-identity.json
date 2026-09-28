@@ -1,0 +1,29 @@
+{
+  "schemaVersion": 1,
+  "contract": "legado_image_cached_identity",
+  "request": {
+    "sourceId": 4,
+    "sourcePkg": "legado.image.bbfcb830dee4ce07",
+    "externalMangaId": "detail-227"
+  },
+  "cases": [
+    {
+      "name": "same_virtual_source",
+      "expected": "accept",
+      "cachedSourceId": "4",
+      "cachedSourcePkg": "legado.image.bbfcb830dee4ce07"
+    },
+    {
+      "name": "neighbor_virtual_source",
+      "expected": "reject",
+      "cachedSourceId": "4",
+      "cachedSourcePkg": "legado.image.8b7740886d50429b"
+    },
+    {
+      "name": "stale_numeric_id",
+      "expected": "reject",
+      "cachedSourceId": "9",
+      "cachedSourcePkg": "legado.image.bbfcb830dee4ce07"
+    }
+  ]
+}

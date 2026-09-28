@@ -1,0 +1,48 @@
+{
+  "schemaVersion": 1,
+  "contract": "legado_jsoup_dom_document_root_child_pseudo",
+  "issueId": "ISSUE-COMPAT-243-JSOUP-STANDARD-CSS-PSEUDO-SELECTORS",
+  "baseline": {
+    "sourceCount": 458,
+    "sourcePackageSha256": "473048A191DE4749FA9C15E0A2F2328A3E86B385A5FCE23EA30432D598D03A67",
+    "legadoCommit": "95973d186b147fb9ab43a9240021d688e4304fbd"
+  },
+  "htmlCases": [
+    {
+      "id": "top-level-first-child",
+      "html": "<p>top</p><section><p>nested</p></section>",
+      "selector": "p:first-child",
+      "expected": [],
+      "semantics": "Jsoup Document children are not element children for child pseudo evaluation"
+    },
+    {
+      "id": "nested-first-child",
+      "html": "<p>top</p><section><p>nested</p></section>",
+      "selector": "section > p:first-child",
+      "expected": ["nested"],
+      "semantics": "real element parents retain standard child pseudo semantics"
+    },
+    {
+      "id": "top-level-nth-of-type",
+      "html": "<p>one</p><p>two</p>",
+      "selector": "p:nth-of-type(1)",
+      "expected": [],
+      "semantics": "Jsoup rejects :nth-of-type under Document"
+    }
+  ],
+  "affectedSourceOrdinals": [26, 70, 97, 144, 145, 158, 201, 223, 231, 251, 255, 402, 452],
+  "representativeRules": [
+    "div[id = chapterList] >a:last-child@text",
+    "body > table:nth-child(4) > tbody > tr > td > span > a",
+    ".row:nth-child(2) > .col-12:nth-child(n+1)",
+    "#info > p:nth-child(2) > a@text",
+    "#chapterlist>p:nth-child(n+2)>a",
+    ".a_666:nth-child(1) > .a_666@text",
+    "@css:#page>div>ul>li:nth-child(2)>img@src"
+  ],
+  "consumerContract": {
+    "domParserRoot": "Parser.parse creates HTMLElement('root', null, ...)",
+    "legadoReference": "Jsoup Evaluator CssNthEvaluator and IsFirstChild/IsLastChild/IsOnlyChild return false when parent is Document",
+    "requiredFix": "Treat the parser's detached root wrapper as a synthetic Document for all child and of-type pseudo classes, while leaving eq/lt sibling indexing unchanged"
+  }
+}

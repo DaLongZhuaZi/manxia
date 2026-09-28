@@ -4,12 +4,12 @@
  */
 import { HdsNavDestination, HdsNavDestinationAttribute, ScrollEffectType } from '@kit.UIDesignKit';
 import { LengthMetrics, curves } from '@kit.ArkUI';
-import { colorMap } from '../Data/ResourceMap';
-import { logger } from '../Utils/Logger';
+import { getColorResourceKeys, resolveColor } from 'manxia_ui_resources/src/main/ets/ResourceCatalog';
+import { logger } from 'manxia_core/src/main/ets/Utils/Logger';
 import { AnimatedComponent, AnimationType } from '../Framework/Animation/AnimatedComponent';
-import { ThemeManager, ThemeType } from '../Framework/Managers/ThemeManager';
-import { ThemeToggle } from '../Framework/Components/ThemeToggle';
-import { ThemeAwareState, ThemeAwareHelper } from '../Framework/Components/ThemeAware';
+import { ThemeManager, ThemeType } from 'manxia_theme/src/main/ets/Framework/Managers/ThemeManager';
+import { ThemeToggle } from 'manxia_theme/src/main/ets/Framework/Components/ThemeToggle';
+import { ThemeAwareState, ThemeAwareHelper } from 'manxia_theme/src/main/ets/Framework/Components/ThemeAware';
 
 // 添加必要的类型导入
 interface NavDestinationContext {
@@ -145,10 +145,12 @@ struct SystemResourceDemoPage {
   private initializeColorResources() {
     const colors: Array<GeneratedTypeLiteralInterface_6> = [];
     
-    // 从colorMap中提取所有颜色资源
-    Object.keys(colorMap).forEach(key => {
+    // 从共享资源目录提取所有颜色资源
+    const colorKeys: string[] = getColorResourceKeys();
+    for (let i = 0; i < colorKeys.length; i++) {
+      const key: string = colorKeys[i];
       const name = key.replace('app.color.', '');
-      const resource = colorMap[key];
+      const resource: Resource = resolveColor(key);
       let category = '其他';
       
       // 根据颜色名称分类
@@ -207,7 +209,7 @@ struct SystemResourceDemoPage {
         resource: resource,
         category: category
       });
-    });
+    }
     
     // 按分类和名称排序
     colors.sort((a, b) => {

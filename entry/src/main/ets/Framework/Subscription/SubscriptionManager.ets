@@ -1,5 +1,5 @@
 import { common } from '@kit.AbilityKit';
-import { logger } from '../../Utils/Logger';
+import { logger } from 'manxia_core/src/main/ets/Utils/Logger';
 import {
   createAutoDownloadAction,
   createCheckAction,
@@ -29,30 +29,30 @@ import {
   SubscriptionTargetPreviewCandidate,
   SubscriptionTargetPreviewCounter,
   SubscriptionTargetType
-} from '../../Models/SubscriptionModels';
+} from 'manxia_core/src/main/ets/Models/SubscriptionModels';
 import { getSubscriptionDataManager, SubscriptionDataManager } from './SubscriptionDataManager';
 import { getNovelInitializer } from '../Novel/NovelInitializer';
 import { getNovelDataManager, NovelBook } from '../Novel/NovelDataManager';
 import { getNovelSourceManager, NovelSourceManager } from '../Novel/NovelSourceManager';
-import { LegadoBook, LegadoBookSource, LegadoBookSourceType, LegadoChapter } from '../Novel/LegadoSourceTypes';
+import { LegadoBook, LegadoBookSource, LegadoBookSourceType, LegadoChapter } from 'manxia_novel/src/main/ets/Framework/Novel/LegadoSourceTypes';
 import {
   getUnifiedDownloadManager,
   UnifiedDownloadManager,
   MangaChapterDownloadItem,
   MangaBatchDownloadResult
 } from '../Download/UnifiedDownloadManager';
-import { AppNotificationManager, NotificationType } from '../Managers/NotificationManager';
-import { Manga, MangaChapter, MangaPage } from '../../Models/MangaModels';
+import { AppNotificationManager, NotificationType } from 'manxia_core/src/main/ets/Framework/Managers/NotificationManager';
+import { Manga, MangaChapter, MangaPage } from 'manxia_core/src/main/ets/Models/MangaModels';
 import { ParsedRemoteMangaId, RemoteLibraryMangaBridge } from '../Source/RemoteLibraryMangaBridge';
 import { BookshelfCategoryManager, CategoryItem, ContentType } from '../Data/BookshelfCategoryManager';
 import { DynamicMatchItem, DynamicShelfFilter, getTypeShelfManager, matchesDynamicFilter, ShelfContentType, ShelfType, TypeShelf, TypeShelfManager } from '../Data/TypeShelfManager';
-import { SettingsManager } from '../Managers/SettingsManager';
+import { SettingsManager } from 'manxia_core/src/main/ets/Framework/Managers/SettingsManager';
 import { ComicInfo, DataManager, FavoriteInfo, OnlineChapterInfoInput } from '../Data/DataManager';
-import { EBookDataManager } from '../Data/EBookDataManager';
-import { EBook } from '../../Models/EBookModels';
+import { EBookDataManager } from 'manxia_core/src/main/ets/Framework/Data/EBookDataManager';
+import { EBook } from 'manxia_core/src/main/ets/Models/EBookModels';
 import { WebViewSourceManager } from '../WebView/WebViewSourceManager';
 import { MangaSourceEngine } from '../WebView/MangaSourceEngine';
-import { ChapterInfo as WebViewChapterInfo, PageInfo as WebViewPageInfo } from '../WebView/MangaSourceTypes';
+import { ChapterInfo as WebViewChapterInfo, PageInfo as WebViewPageInfo } from 'manxia_source_engine/src/main/ets/Framework/WebView/MangaSourceTypes';
 import { eventBus, GameEvent, IEventPayload } from '../EventBus';
 
 const TAG = 'SubscriptionManager';

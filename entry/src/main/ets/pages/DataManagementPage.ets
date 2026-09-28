@@ -1,5 +1,5 @@
-import { SafeFileUtils } from '../Utils/SafeFileUtils';
-import { SafeUtils } from '../Utils/SafeUtils';
+import { SafeFileUtils } from 'manxia_core/src/main/ets/Utils/SafeFileUtils';
+import { SafeUtils } from 'manxia_core/src/main/ets/Utils/SafeUtils';
 // 文件路径：entry/src/main/ets/pages/DataManagementPage.ets
 /**
  * 数据管理页面
@@ -7,49 +7,50 @@ import { SafeUtils } from '../Utils/SafeUtils';
  */
 import { HdsNavDestination, HdsNavDestinationAttribute, ScrollEffectType } from '@kit.UIDesignKit';
 import { LengthMetrics, UIContext, promptAction } from '@kit.ArkUI';
-import { ThemeManager, ThemeType } from '../Framework/Managers/ThemeManager';
-import { ThemeAwareState, ThemeAwareHelper } from '../Framework/Components/ThemeAware';
-import { FontAwareHelper, FontAwareState } from '../Framework/Components/FontAware';
-import { logger } from '../Utils/Logger';
-import { removeFileExtension } from '../Utils/FileNameUtils';
-import { ThemeToggle } from '../Framework/Components/ThemeToggle';
-import { PageLifecycleManager } from '../Framework/Lifecycle';
+import { ThemeManager, ThemeType } from 'manxia_theme/src/main/ets/Framework/Managers/ThemeManager';
+import { ThemeAwareState, ThemeAwareHelper } from 'manxia_theme/src/main/ets/Framework/Components/ThemeAware';
+import { FontAwareHelper, FontAwareState } from 'manxia_theme/src/main/ets/Framework/Components/FontAware';
+import { logger } from 'manxia_core/src/main/ets/Utils/Logger';
+import { removeFileExtension } from 'manxia_core/src/main/ets/Utils/FileNameUtils';
+import { ThemeToggle } from 'manxia_theme/src/main/ets/Framework/Components/ThemeToggle';
+import { PageLifecycleManager } from 'manxia_core/src/main/ets/Framework/Lifecycle/index';
 
 import { picker, Environment } from '@kit.CoreFileKit';
 import { common, abilityAccessCtrl, bundleManager, Permissions } from '@kit.AbilityKit';
 
 import { DataManager, ComicInfoInput, ChapterInfoInput, ChapterInfoCreationResult, PageInfoInput, ComicInfo as ComicRecord, ChapterInfo as ChapterRecord, PageInfo as PageRecord, FavoriteInfoInput } from '../Framework/Data/DataManager';
 import { DataService } from '../Framework/Services/DataService';
-import { DownloadStatus, MangaStatus, StatusConverter } from '../Framework/Types/StatusEnums';
-import { Manga, MangaChapter } from '../Models/MangaModels';
-import { CompressionUtils, ExtractionResult, RecursiveExtractionResult } from '../Utils/CompressionUtils';
-import { ComicInfoParser, ComicInfo } from '../Utils/ComicInfoParser';
-import { SandboxManager } from '../Framework/Storage/SandboxManager';
-import DownloadDirManager from '../Framework/Storage/DownloadDirManager';
+import { DownloadStatus, MangaStatus, StatusConverter } from 'manxia_core/src/main/ets/Framework/Types/StatusEnums';
+import { Manga, MangaChapter } from 'manxia_core/src/main/ets/Models/MangaModels';
+import { CompressionUtils, ExtractionResult, RecursiveExtractionResult } from 'manxia_core/src/main/ets/Utils/CompressionUtils';
+import { ComicInfoParser, ComicInfo } from 'manxia_core/src/main/ets/Utils/ComicInfoParser';
+import { SandboxManager } from 'manxia_core/src/main/ets/Framework/Storage/SandboxManager';
+import DownloadDirManager from 'manxia_core/src/main/ets/Framework/Storage/DownloadDirManager';
 import { CoverSelectionData, showCoverSelectionDialog } from '../Framework/Components/CoverSelectionDialog';
 import { eventBus, GameEvent, MangaImportCompletedPayload, FileImportRequestedPayload, IEventPayload } from '../Framework/EventBus';
 
 import fs from '@ohos.file.fs';
 import { fileIo, fileUri } from '@kit.CoreFileKit';
 
-import { UpdateRecordData } from '../Framework/Database/DatabaseTypes';
+import { UpdateRecordData } from 'manxia_core/src/main/ets/Framework/Database/DatabaseTypes';
 import { UniversalDialogManager, ButtonStyle, DialogButton, UniversalDialogOptions, UniversalDialogCustomContentParam } from '../Framework/Components/UniversalDialog';
-import { EBook, EBookMetadata } from '../Models/EBookModels';
+import { EBook, EBookMetadata, EBookFormat } from 'manxia_core/src/main/ets/Models/EBookModels';
 import { EBookParserFactory, EBookCoverExtractor } from '../Framework/Parsers/EBookParser';
-import { generateUUID } from '../Framework/Utils/UUIDGenerator';
-import { createLocalMangaChapterExternalId, createPickedImageGroupUri } from '../Utils/LocalMangaImportIdentity';
-import { EBookDataManager } from '../Framework/Data/EBookDataManager';
+import { generateUUID } from 'manxia_core/src/main/ets/Framework/Utils/UUIDGenerator';
+import { createLocalMangaChapterExternalId, createPickedImageGroupUri } from 'manxia_core/src/main/ets/Utils/LocalMangaImportIdentity';
+import { EBookDataManager } from 'manxia_core/src/main/ets/Framework/Data/EBookDataManager';
 import { EBookMetadataDialog, EBookMetadataDialogResult } from '../Framework/Components/EBookMetadataDialog';
 import { PdfImportResult, PdfContentType, PdfImportMode } from '../Framework/Parsers/PdfToMangaImporter';
 import { PdfImportService } from '../Framework/Services/PdfImportService';
+import { PdfTextIndexService } from '../Framework/Services/PdfTextIndexService';
 import { DeviceAdaptationManager, DeviceInfo, DeviceChangeListener, Breakpoint,
-  DeviceType } from '../Framework/Managers/DeviceAdaptationManager';
-import { ResponsiveLayoutHelper } from '../Framework/Utils/ResponsiveLayout';
+  DeviceType } from 'manxia_theme/src/main/ets/Framework/Managers/DeviceAdaptationManager';
+import { ResponsiveLayoutHelper } from 'manxia_theme/src/main/ets/Framework/Utils/ResponsiveLayout';
 import { image } from '@kit.ImageKit';
-import { AvifTranscoder, AvifTranscodeResult } from '../Utils/AvifTranscoder';
-import { BackgroundTaskManager, TaskType, TaskStatus, TaskNotificationScene, BackgroundTask, TaskCancelSignal } from '../Framework/Task/BackgroundTaskManager';
+import { AvifTranscoder, AvifTranscodeResult } from 'manxia_core/src/main/ets/Utils/AvifTranscoder';
+import { BackgroundTaskManager, TaskType, TaskStatus, TaskNotificationScene, BackgroundTask, TaskCancelSignal } from 'manxia_network/src/main/ets/Framework/Task/BackgroundTaskManager';
 import { TaskFloatingBall } from '../Framework/Components/TaskFloatingBall';
-import { PdfImportDialog, PdfImportDialogResult } from '../Framework/Components/PdfImportDialog';
+import { PdfImportDialog, PdfImportDialogResult, PdfReaderMode } from '../Framework/Components/PdfImportDialog';
 import { MangaImportDialog, MangaImportDialogResult, MangaImportMode, ChapterInfo, ParsedArchiveStructure, ExistingMangaCandidate, PrefilledComicInfo } from '../Framework/Components/MangaImportDialog';
 import {
   BatchMangaImportDialog,
@@ -58,24 +59,24 @@ import {
   BatchChapterResult,
   MangaStatus as BatchDialogMangaStatus
 } from '../Framework/Components/BatchMangaImportDialog';
-import { showArchivePasswordDialog } from '../Framework/Components/ArchivePasswordDialog';
-import { ParsedArchiveStructure as CompressionParsedStructure } from '../Utils/CompressionUtils';
-import { getHelpPanelManagerV2 } from '../Framework/Components/HelpPanelV2';
+import { showArchivePasswordDialog } from 'manxia_theme/src/main/ets/Framework/Components/ArchivePasswordDialog';
+import { ParsedArchiveStructure as CompressionParsedStructure } from 'manxia_core/src/main/ets/Utils/CompressionUtils';
+import { getHelpPanelManagerV2 } from 'manxia_features_ui/src/main/ets/Framework/Components/HelpPanelV2';
 import { SettingsImmersiveTitleBar } from './settings/SettingsImmersiveTitleBar';
-import { SettingsImmersiveTitleActionItem, SettingsPageTitleBarManager } from './settings/SettingsPageTitleBarManager';
-import { GlobalBackgroundLayerMode } from '../Framework/Components/GlobalBackgroundLayer';
-import { SharedPageBackgroundLayer } from '../Framework/Components/SharedPageBackgroundLayer';
-import { SettingsPanelSurfaceHelper } from './settings/SettingsPanelSurfaceHelper';
+import { SettingsImmersiveTitleActionItem, SettingsPageTitleBarManager } from 'manxia_features_ui/src/main/ets/pages/settings/SettingsPageTitleBarManager';
+import { GlobalBackgroundLayerMode } from 'manxia_theme/src/main/ets/Framework/Components/GlobalBackgroundLayer';
+import { SharedPageBackgroundLayer } from 'manxia_theme/src/main/ets/Framework/Components/SharedPageBackgroundLayer';
+import { SettingsPanelSurfaceHelper } from 'manxia_features_ui/src/main/ets/pages/settings/SettingsPanelSurfaceHelper';
 import {
   ExternalFileTaskFactory,
   ExternalFileTaskParams,
   ExternalFileTaskSource
-} from '../Framework/ExternalFile/ExternalFileTaskTypes';
-import { openExternalFileTaskInIsolatedAbility } from '../Framework/ExternalFile/ExternalFileTaskLauncher';
-import { MangaReadFlowImportReport, MangaReadFlowImportReporter } from '../Framework/Reader/MangaReadFlowImportReporter';
+} from 'manxia_network/src/main/ets/Framework/ExternalFile/ExternalFileTaskTypes';
+import { openExternalFileTaskInIsolatedAbility } from 'manxia_network/src/main/ets/Framework/ExternalFile/ExternalFileTaskLauncher';
+import { MangaReadFlowImportReport, MangaReadFlowImportReporter } from 'manxia_reader_ui/src/main/ets/Framework/Reader/MangaReadFlowImportReporter';
 import { ImportArchiveParseCache, getImportArchiveParseCache } from '../Framework/Import/ImportArchiveParseCache';
 import { ImportDuplicateDetectionCache, getImportDuplicateDetectionCache } from '../Framework/Import/ImportDuplicateDetectionCache';
-import { ImportFlowMonitor, getImportFlowMonitor } from '../Framework/Import/ImportFlowMonitor';
+import { ImportFlowMonitor, getImportFlowMonitor } from 'manxia_core/src/main/ets/Framework/Import/ImportFlowMonitor';
 import {
   ImportFlowContentType,
   ImportFlowEntrySource,
@@ -83,7 +84,7 @@ import {
   ImportFlowEventType,
   ImportFlowSessionInfo,
   ImportFlowSeverity
-} from '../Framework/Import/ImportFlowTypes';
+} from 'manxia_core/src/main/ets/Framework/Import/ImportFlowTypes';
 
 const TAG = 'DataManagementPage';
 const APP_STORAGE_TRANSFER_RECORD_ID = 'pendingTransferRecordId';
@@ -4037,9 +4038,15 @@ struct DataManagementPage {
         return;
       }
       
-      logger.info(TAG, `用户确认PDF导入: 类型=${dialogResult.contentType}, 标题=${dialogResult.title}`);
-      
-      // 开始后台导入任务
+      logger.info(TAG, `用户确认PDF导入: readerMode=${dialogResult.readerMode}, 类型=${dialogResult.contentType}, 标题=${dialogResult.title}`);
+
+      if (dialogResult.readerMode === PdfReaderMode.NATIVE) {
+        // 原生阅读：直接使用第一个对话框已确认的元数据完成导入，不再弹第二个确认框
+        await this.importNativePdf(fileUri, dialogResult);
+        return;
+      }
+
+      // 兼容模式：后台图片化导入任务
       await this.startPdfImportTask(fileUri, dialogResult, preferredOutputDir, sourceId);
       
     } catch (error) {
@@ -4056,6 +4063,90 @@ struct DataManagementPage {
       this.showToast('PDF导入失败: ' + String(error instanceof Error ? error.message : error));
       this.finalizeTrackedTransferImport('import_failed');
       this.endCurrentImportFlow('pdf_import_prepare_failed');
+    }
+  }
+
+  /**
+   * 去掉文件名可能叠加的时间戳前缀（如 1789134506423_1789134494150_原文件名.pdf）
+   */
+  private stripTimestampPrefixes(name: string): string {
+    let result: string = name;
+    for (let i = 0; i < 4; i++) {
+      const next: string = result.replace(/^\d{10,}_/, '');
+      if (next === result) {
+        break;
+      }
+      result = next;
+    }
+    return result;
+  }
+
+  /**
+   * 原生 PDF 导入：复制工作副本 → PdfParser 解析 → 用第一个对话框确认的元数据入库。
+   * 不再弹出第二个元数据确认框，避免两次悬浮窗的糟糕体验。
+   */
+  private async importNativePdf(fileUri: string, dialogResult: PdfImportDialogResult): Promise<void> {
+    try {
+      this.updateProgress(ImportStatus.PROCESSING, '正在复制 PDF 工作副本...', 20);
+      const sandboxPath: string = await this.copyFileToSandbox(fileUri);
+      logger.info(TAG, '原生 PDF 工作副本: ' + sandboxPath);
+
+      this.updateProgress(ImportStatus.PARSING, '正在解析 PDF...', 40);
+      const parser = EBookParserFactory.createParser(sandboxPath);
+      if (parser === null) {
+        throw new Error('不支持的电子书格式');
+      }
+      const ebook = await parser.parse();
+
+      // [修复] 用用户确认的元数据覆盖文件名推导结果，避免出现"时间戳随机文本"标题
+      const dialogTitle: string = dialogResult.title.trim();
+      const rawName: string = this.getFileNameFromUri(sandboxPath).replace(/\.(pdf|epub|mobi|azw|azw3)$/i, '');
+      const fallbackTitle: string = this.stripTimestampPrefixes(rawName);
+      ebook.metadata.title = dialogTitle.length > 0
+        ? dialogTitle
+        : (fallbackTitle.length > 0 ? fallbackTitle : '未命名 PDF');
+      const dialogAuthor: string = dialogResult.author.trim();
+      ebook.metadata.author = dialogAuthor.length > 0 ? dialogAuthor : '未知作者';
+      const dialogDescription: string = dialogResult.description.trim();
+      if (dialogDescription.length > 0) {
+        ebook.metadata.description = dialogDescription;
+      }
+      ebook.isFavorite = true;
+      logger.info(TAG, '原生 PDF 元数据已应用: title=' + ebook.metadata.title + ', author=' + ebook.metadata.author);
+
+      this.updateProgress(ImportStatus.PROCESSING, '正在处理封面...', 65);
+      await this.tryExtractEBookCover(ebook, sandboxPath);
+
+      await this.ebookDataManager.saveEBook(ebook);
+      logger.info(TAG, '原生 PDF 导入成功: ' + ebook.metadata.title + ', id=' + ebook.id);
+
+      if (ebook.format === EBookFormat.PDF) {
+        try {
+          const indexCtx = this.uiContext?.getHostContext() as common.UIAbilityContext;
+          if (indexCtx && ebook.filePath.length > 0) {
+            void PdfTextIndexService.getInstance().buildIndex(indexCtx, ebook.id, ebook.filePath);
+          }
+        } catch (_indexError) {
+        }
+      }
+
+      this.updateProgress(ImportStatus.COMPLETED, '导入成功: ' + ebook.metadata.title, 100);
+      this.showToast('导入成功: ' + ebook.metadata.title);
+      this.finalizeTrackedTransferImport('imported');
+      const refreshEvent: ImportFlowEvent = new ImportFlowEvent();
+      refreshEvent.eventType = ImportFlowEventType.BOOKSHELF_REFRESH_PUBLISHED;
+      refreshEvent.reason = 'ebook_bookshelf_refresh_published';
+      refreshEvent.contentType = ImportFlowContentType.EBOOK;
+      refreshEvent.displayName = ebook.metadata.title;
+      this.recordImportFlowEvent(refreshEvent);
+      this.endCurrentImportFlow('native_pdf_import_completed');
+    } catch (error) {
+      const errorMsg = error instanceof Error ? error.message : String(error);
+      logger.error(TAG, '原生 PDF 导入失败: ' + errorMsg);
+      this.updateProgress(ImportStatus.ERROR, '导入失败: ' + errorMsg, 0);
+      this.showToast('导入失败: ' + errorMsg);
+      this.finalizeTrackedTransferImport('import_failed');
+      this.endCurrentImportFlow('native_pdf_import_failed');
     }
   }
 
@@ -4519,10 +4610,10 @@ struct DataManagementPage {
       // 创建文档选择器
       const documentPicker = new picker.DocumentViewPicker(context);
       
-      // 设置选择选项 - 电子书格式（不包含PDF，PDF有单独的导入入口）
+      // 设置选择选项 - 电子书格式（PDF 默认走原生阅读；PDF 标签页提供"原生/图片化"选择）
       const selectOptions: picker.DocumentSelectOptions = {
         maxSelectNumber: 10,
-        fileSuffixFilters: ['.txt', '.epub', '.mobi', '.azw', '.azw3'],
+        fileSuffixFilters: ['.txt', '.epub', '.mobi', '.azw', '.azw3', '.pdf'],
       };
 
       // 使用 .then() 回调模式，在回调中直接处理文件
@@ -5000,11 +5091,20 @@ struct DataManagementPage {
       // 获取封面保存目录
       const context = (this.getUIContext().getHostContext() as common.UIAbilityContext);
       const coverDir = `${context.filesDir}/ebook_covers`;
-      
-      logger.info(TAG, `尝试提取电子书封面: ${ebook.metadata.title}`);
-      
+      try {
+        SafeFileUtils.mkdirSync(coverDir, true);
+      } catch (_mkdirCover) {
+      }
+
+      // [修复] PDF 封面提取器把 savePath 当"文件"处理，必须传具体文件名，
+      // 否则会把 ebook_covers 目录当成文件去 open/write，报 Invalid fd
+      const isPdf: boolean = filePath.toLowerCase().endsWith('.pdf');
+      const coverTarget: string = isPdf ? `${coverDir}/${ebook.id}_cover.webp` : coverDir;
+
+      logger.info(TAG, `尝试提取电子书封面: ${ebook.metadata.title}, pdf=${isPdf}, target=${coverTarget}`);
+
       // 使用封面提取器
-      const result = await EBookCoverExtractor.extractCover(filePath, coverDir);
+      const result = await EBookCoverExtractor.extractCover(filePath, coverTarget);
       
       if (result.success && result.coverPath) {
         ebook.metadata.coverImagePath = result.coverPath;
@@ -5547,6 +5647,20 @@ struct DataManagementPage {
             dbStartedEvent.chapterCount = ebook.chapters.length;
             this.recordImportFlowEvent(dbStartedEvent);
             await this.ebookDataManager.saveEBook(ebook);
+
+            // [Phase1] 原生 PDF：后台构建自建文本索引（中文搜索用），基于导入后的工作副本
+            if (ebook.format === EBookFormat.PDF) {
+              try {
+                const indexCtx = this.uiContext?.getHostContext() as common.UIAbilityContext;
+                if (indexCtx && ebook.filePath.length > 0) {
+                  logger.info(TAG, '启动 PDF 文本索引构建: bookId=' + ebook.id);
+                  void PdfTextIndexService.getInstance().buildIndex(indexCtx, ebook.id, ebook.filePath);
+                }
+              } catch (indexError) {
+                logger.warn(TAG, '启动 PDF 文本索引构建失败: ' + String(indexError));
+              }
+            }
+
             const dbCompletedEvent: ImportFlowEvent = new ImportFlowEvent();
             dbCompletedEvent.eventType = ImportFlowEventType.DB_WRITE_COMPLETED;
             dbCompletedEvent.reason = 'ebook_db_write_completed';

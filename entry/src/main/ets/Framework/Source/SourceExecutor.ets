@@ -1,15 +1,15 @@
-import { SafeUtils } from '../../Utils/SafeUtils';
+import { SafeUtils } from 'manxia_core/src/main/ets/Utils/SafeUtils';
 /**
  * 图源执行引擎
  * 负责执行图源的各种操作（搜索、获取详情等）
  */
 
-import { logger } from '../../Utils/Logger';
+import { logger } from 'manxia_core/src/main/ets/Utils/Logger';
 import { DataManager } from '../Data/DataManager';
 import { JSONSourceParser, JSONSourceConfig } from './JSONSourceParser';
 import { http } from '@kit.NetworkKit';
-import { ProxyManager } from '../Network/ProxyManager';
-import { UserAgentManager } from '../Managers/UserAgentManager';
+import { ProxyManager } from 'manxia_network/src/main/ets/Framework/Network/ProxyManager';
+import { UserAgentManager } from 'manxia_core/src/main/ets/Framework/Managers/UserAgentManager';
 
 const TAG = 'SourceExecutor';
 

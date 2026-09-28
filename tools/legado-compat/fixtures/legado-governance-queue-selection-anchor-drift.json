@@ -1,0 +1,15 @@
+{
+  "schemaVersion": 1,
+  "issueId": "ISSUE-AUTO-048-GOVERNANCE-QUEUE-SELECTION-ANCHOR-DRIFT",
+  "sourceOfTruth": "tools/legado-compat/state/full-source-validation-state.json",
+  "objectivePath": "tools/legado-compat/state/refactor-objective.json",
+  "projectionPaths": [
+    "objective.objective.queueSelectionGate",
+    "objective.continuationTarget.queueAudit"
+  ],
+  "staleValue": "ISSUE-COMPAT-009",
+  "expectedRule": "The currentAnchor and selectedIssue fields must equal the machine active issue; historical candidate paths must not drive selection.",
+  "execution": "static_document_contract_only",
+  "runtimeRegression": "not_run",
+  "deviceRegression": "not_run"
+}

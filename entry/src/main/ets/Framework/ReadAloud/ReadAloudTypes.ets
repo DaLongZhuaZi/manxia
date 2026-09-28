@@ -1,4 +1,4 @@
-import { ReadAloudSettings } from '../../Models/TextReaderModels';
+import { ReadAloudSettings } from 'manxia_core/src/main/ets/Models/TextReaderModels';
 
 export enum ReadAloudPlaybackState {
   IDLE = 'IDLE',

@@ -1,5 +1,6 @@
 import { common } from '@kit.AbilityKit';
-import { SafeFileUtils } from '../Utils/SafeFileUtils';
+import { SafeFileUtils } from 'manxia_core/src/main/ets/Utils/SafeFileUtils';
+import { ReaderOrientationLockHelper, ReaderOrientationLockScope } from 'manxia_core/src/main/ets/Utils/ReaderOrientationLockHelper';
 /**
  * 阅读设置面板
   * 统一管理字体、背景、阅读与听书选项。
@@ -29,14 +30,14 @@ import {
   TEXT_READER_FONT_SIZE_MIN,
   TEXT_READER_FONT_SIZE_MAX,
   clampTextReaderFontSize
-} from '../Models/TextReaderModels';
+} from 'manxia_core/src/main/ets/Models/TextReaderModels';
 import { photoAccessHelper } from '@kit.MediaLibraryKit';
 import fs from '@ohos.file.fs';
-import { logger } from '../Utils/Logger';
+import { logger } from 'manxia_core/src/main/ets/Utils/Logger';
 import { promptAction } from '@kit.ArkUI';
-import { EBookDataManager, BackgroundImageInfo } from '../Framework/Data/EBookDataManager';
-import { SettingsManager, SettingKeys } from '../Framework/Managers/SettingsManager';
-import { getFontManager, SystemFont, CustomFont, FontType } from '../Framework/Managers/FontManager';
+import { EBookDataManager, BackgroundImageInfo } from 'manxia_core/src/main/ets/Framework/Data/EBookDataManager';
+import { SettingsManager, SettingKeys } from 'manxia_core/src/main/ets/Framework/Managers/SettingsManager';
+import { getFontManager, SystemFont, CustomFont, FontType } from 'manxia_theme/src/main/ets/Framework/Managers/FontManager';
 import { ReadAloudAvailability, ReadAloudEngineAvailabilityMap } from '../Framework/ReadAloud/ReadAloudAvailability';
 import { ReadAloudController } from '../Framework/ReadAloud/ReadAloudController';
 import { ReadAloudVoiceOption } from '../Framework/ReadAloud/ReadAloudTypes';
@@ -1244,6 +1245,19 @@ export struct TextReaderSettingsPanel {
     .width('100%')
   }
   
+  private resolveDeviceOrientationLockHint(): string {
+    const localEnabled: boolean = this.settings.lockDeviceOrientation ?? false;
+    const globalEnabled: boolean = ReaderOrientationLockHelper.isGlobalOrientationLockEnabled(
+      ReaderOrientationLockScope.TEXT
+    );
+    if (globalEnabled) {
+      return '全局锁定方向已开启：小说阅读会保持当前屏幕方向，旋转设备不会改变方向';
+    }
+    return localEnabled
+      ? '保持当前屏幕方向，阅读时旋转设备不会改变方向'
+      : '关闭后会跟随系统旋转策略；若全局开关已开启，仍会按全局锁定';
+  }
+
   @Builder
   buildDeviceOrientationLockSetting() {
     Row() {
@@ -1251,9 +1265,7 @@ export struct TextReaderSettingsPanel {
         Text('锁定方向')
           .fontSize(16)
           .fontColor($r('app.color.text_primary'))
-        Text((this.settings.lockDeviceOrientation ?? false)
-          ? '保持当前屏幕方向，阅读时旋转设备不会改变方向'
-          : '关闭后会跟随系统旋转策略，适合临时横屏阅读')
+        Text(this.resolveDeviceOrientationLockHint())
           .fontSize(12)
           .fontColor($r('app.color.text_secondary'))
           .margin({ top: 2 })

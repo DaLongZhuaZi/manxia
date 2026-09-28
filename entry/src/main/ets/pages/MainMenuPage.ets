@@ -1,9 +1,11 @@
-import { SafeFileUtils } from '../Utils/SafeFileUtils';
-import { SafeUtils } from '../Utils/SafeUtils';
+import { ISettingsManagerFacade, SettingsManagerHolder } from 'manxia_core/src/main/ets/Framework/Contracts/ISettingsManagerFacade';
+import { SafeFileUtils } from 'manxia_core/src/main/ets/Utils/SafeFileUtils';
+import { SafeUtils } from 'manxia_core/src/main/ets/Utils/SafeUtils';
+import { OrientationLockManager } from 'manxia_core/src/main/ets/Utils/OrientationLockManager';
 // 文件路径: src/main/ets/pages/MainMenuPage.ets
 // 职责: 漫画阅读应用主入口页面，采用底部导航栏设计，参考Mihon、komikku等现代漫画阅读软件
 
-import { logger } from '../Utils/Logger';
+import { logger } from 'manxia_core/src/main/ets/Utils/Logger';
 import { widgetDataSync } from '../Utils/WidgetDataSync';
 import { common } from '@kit.AbilityKit';
 import { deviceInfo, BusinessError, pasteboard } from '@kit.BasicServicesKit';
@@ -12,23 +14,24 @@ import { image } from '@kit.ImageKit';
 import fs from '@ohos.file.fs';
 import { picker, fileUri as coreFileUri } from '@kit.CoreFileKit';
 import { hdsEffect } from '@kit.UIDesignKit';
-import { InteractionManager, VibrationScene } from '../Framework/Managers/InteractionManager';
-import { BasicDataSource, BasicDataSourceStableUpdateResult } from '../Utils/BasicDataSource';
-import { MultiSelectState } from '../Utils/MultiSelectState';
-import { SwipeGestureState } from '../Utils/SwipeGestureState';
-import { ContextMenuState } from '../Utils/ContextMenuState';
-import { LoadingState } from '../Utils/LoadingState';
+import { InteractionManager, VibrationScene } from 'manxia_core/src/main/ets/Framework/Managers/InteractionManager';
+import { BasicDataSource, BasicDataSourceStableUpdateResult } from 'manxia_core/src/main/ets/Utils/BasicDataSource';
+import { MultiSelectState } from 'manxia_core/src/main/ets/Utils/MultiSelectState';
+import { SwipeGestureState } from 'manxia_core/src/main/ets/Utils/SwipeGestureState';
+import { ContextMenuState } from 'manxia_core/src/main/ets/Utils/ContextMenuState';
+import { LoadingState } from 'manxia_core/src/main/ets/Utils/LoadingState';
 import { MoveState } from '../Utils/MoveState';
 
 // 主题相关导入
 import { ComicConverter, PreloadedComicConversionContext } from '../Framework/Utils/ComicConverter';
-import { ThemeAwareState, ThemeAwareHelper } from '../Framework/Components/ThemeAware';
+import { ThemeAwareState, ThemeAwareHelper } from 'manxia_theme/src/main/ets/Framework/Components/ThemeAware';
 import { UniversalDialogManager, ButtonStyle } from '../Framework/Components/UniversalDialog';
 import { DeepLinkRouter, DeepLinkResult, DeepLinkSearchResult, DeepLinkSourceResult, DeepLinkNovelSearchResult, DeepLinkNovelSourceResult, DeepLinkNovelDetailResult } from '../Framework/Utils/DeepLinkRouter';
-import { GlobalBackgroundLayer, GlobalBackgroundLayerMode } from '../Framework/Components/GlobalBackgroundLayer';
-import { SharedPageBackgroundLayer } from '../Framework/Components/SharedPageBackgroundLayer';
-import { AppNotificationManager } from '../Framework/Managers/NotificationManager';
-import { AppGuideOverlay, GuideHighlightRect } from '../Framework/Components/AppGuideOverlay';
+import { GlobalBackgroundLayer, GlobalBackgroundLayerMode } from 'manxia_theme/src/main/ets/Framework/Components/GlobalBackgroundLayer';
+import { SharedPageBackgroundLayer } from 'manxia_theme/src/main/ets/Framework/Components/SharedPageBackgroundLayer';
+import { resolveMedia } from 'manxia_ui_resources/src/main/ets/ResourceCatalog';
+import { AppNotificationManager } from 'manxia_core/src/main/ets/Framework/Managers/NotificationManager';
+import { AppGuideOverlay, GuideHighlightRect } from 'manxia_theme/src/main/ets/Framework/Components/AppGuideOverlay';
 import { ensureGuideAnchorVisibleInScroller, resolveGuideHighlightRectInRoot } from '../Framework/Components/AppGuideSupport';
 import {
   getHoldingAwarenessManager,
@@ -38,8 +41,8 @@ import {
   HoldingAwarenessSide,
   HoldingAwarenessSource,
   HoldingUiAnchor
-} from '../Framework/Managers/HoldingAwarenessManager';
-import { uiContextManager } from '../Framework/Managers/UIContextManager';
+} from 'manxia_core/src/main/ets/Framework/Managers/HoldingAwarenessManager';
+import { uiContextManager } from 'manxia_theme/src/main/ets/Framework/Managers/UIContextManager';
 
 // 导入页面组件
 // 测试页面导入已移除，测试功能仍保留在代码中但不再从主菜单导航
@@ -57,11 +60,14 @@ import { SystemAnimationDemoPage } from './SystemAnimationDemoPage';
 import { SystemResourceDemoPage } from './SystemResourceDemoPage';
 import { HelloWorldPage } from './HelloWorldPage';
 import { SystemStatusPage } from './SystemStatusPage';
+import { PdfKitCapabilityProbePage } from './PdfKitCapabilityProbePage';
+import { TestManagementPage } from './TestManagementPage';
 import { NGFFrameworkStatusPage } from './settings/NGFFrameworkStatusPage';
 import { SearchPage } from './SearchPage';
 import { GlobalSearchPage } from './GlobalSearchPage';
 import { MangaSettingsPage } from './MangaSettingsPage';
 import { GlobalSettingsPage } from './settings/GlobalSettingsPage';
+import { ContinuationReadingSettingsPage } from './settings/ContinuationReadingSettingsPage';
 import { ReadingSettingsSubPage } from './settings/ReadingSettingsSubPage';
 import { NetworkSettingsSubPage } from './settings/NetworkSettingsSubPage';
 import { NotificationSettingsSubPage } from './settings/NotificationSettingsSubPage';
@@ -76,7 +82,7 @@ import {
   AnimationSettingsListener,
   getAnimationSettingsManager,
   isMainPageBottomBarAnimationEnabled
-} from '../Framework/Animation/AnimationSettingsManager';
+} from 'manxia_core/src/main/ets/Framework/Animation/AnimationSettingsManager';
 import { TrackingSettingsSubPage } from './settings/TrackingSettingsSubPage';
 import { AniListLoginPage } from './settings/AniListLoginPage';
 import { SuwayomiSettingsPage } from './settings/SuwayomiSettingsPage';
@@ -116,7 +122,7 @@ import { PrivacyPolicyPage } from './PrivacyPolicyPage';
 import { SourceGuidePage } from './SourceGuidePage';
 import { SourceDetailPage } from './SourceDetailPage';
 import type { SourceDetailParams as SourceDetailPageParams } from './SourceDetailPage';
-import { WebViewContainer, GlobalWebViewContainer } from '../Framework/WebView/WebViewContainerPage';
+import { WebViewContainer, GlobalWebViewContainer } from 'manxia_source_engine/src/main/ets/Framework/WebView/WebViewContainerPage';
 import { BookTransitionOverlay, startBookOpenTransition, startBookOpenTransitionWithComponentId, CoverPosition, EBookBackgroundSettings } from '../components/BookTransitionOverlay';
 import { EBookReaderParams } from './EBookReaderRouteTypes';
 import { EBookReaderRoutePageContent } from './EBookReaderRoutePage';
@@ -134,12 +140,12 @@ import { buildNovelReaderParamsFromTxtEBook } from '../Framework/Adapters/LocalT
 import { ThemeSettingsPage } from './ThemeSettingsPage';
 import { CoverSelectionPage } from './CoverSelectionPage';
 import { LogFloatingWindow } from '../Utils/LogFloatingWindow';
-import { WindowManager, DisplayMode } from '../Utils/WindowManager';
-import { PageWindowCoordinator } from '../Utils/PageWindowCoordinator';
+import { WindowManager, DisplayMode } from 'manxia_theme/src/main/ets/Utils/WindowManager';
+import { PageWindowCoordinator } from 'manxia_theme/src/main/ets/Utils/PageWindowCoordinator';
 import { StorageManagementPage } from './StorageManagementPage';
 import { TaskFloatingBall } from '../Framework/Components/TaskFloatingBall';
 import { ReadAloudFloatingBall } from '../Framework/Components/ReadAloudFloatingBall';
-import { HelpPanelOverlayV2 } from '../Framework/Components/HelpPanelV2';
+import { HelpPanelOverlayV2 } from 'manxia_features_ui/src/main/ets/Framework/Components/HelpPanelV2';
 import { SourceSettingsPage, SourceSettingsPageParams } from './SourceSettingsPage';
 import { SourceLoginPage } from './SourceLoginPage';
 import { BookSourceManagementPage } from './BookSourceManagementPage';
@@ -147,7 +153,7 @@ import { SourceManagementPage } from './SourceManagementPage';
 import { SourceDiagnosticPage } from './SourceDiagnosticPage';
 import { SourceInteractiveEditorPage } from './SourceInteractiveEditorPage';
 import { SourceMaintenancePage } from './SourceMaintenancePage';
-import { SourceInteractiveEditorPageParams } from '../Framework/SourceEditor/SourceEditorTypes';
+import { SourceInteractiveEditorPageParams } from 'manxia_source_engine/src/main/ets/Framework/SourceEditor/SourceEditorTypes';
 import { BackupPage } from './BackupPage';
 
 // 小说页面导入
@@ -182,7 +188,7 @@ import {
   FileEditorSaveTargetType
 } from '../Framework/Editor/FileEditorService';
 import { openFileEditorInIsolatedAbility } from '../Framework/Editor/FileEditorAbilityLauncher';
-import { BackgroundBlurOverlay } from '../Framework/Components/BackgroundBlurOverlay';
+import { BackgroundBlurOverlay } from 'manxia_theme/src/main/ets/Framework/Components/BackgroundBlurOverlay';
 import { WindowModeTransitionOverlay } from '../Framework/Components/WindowModeTransitionOverlay';
 import { SystemResourcePreviewPage } from './SystemResourcePreviewPage';
 import { HelpCenterPage } from './HelpCenterPage';
@@ -191,9 +197,9 @@ import { PageSettingsSubPage, PageSettingsHelper, SceneType, DetailPageType } fr
 import { ShortcutSettingsSubPage } from './settings/ShortcutSettingsSubPage';
 import { MainMenuSettingsSubPage } from './settings/MainMenuSettingsSubPage';
 import { SourceFeatureSettingsSubPage } from './settings/SourceFeatureSettingsSubPage';
-import { SettingsPageSurfaceManager } from './settings/SettingsPageSurfaceManager';
-import { UnifiedDetailPageParams, UnifiedContentType } from '../Models/UnifiedContentModels';
-import { FontAwareHelper, FontAwareState } from '../Framework/Components/FontAware';
+import { SettingsPageSurfaceManager } from 'manxia_features_ui/src/main/ets/pages/settings/SettingsPageSurfaceManager';
+import { UnifiedDetailPageParams, UnifiedContentType } from 'manxia_core/src/main/ets/Models/UnifiedContentModels';
+import { FontAwareHelper, FontAwareState } from 'manxia_theme/src/main/ets/Framework/Components/FontAware';
 import { UnifiedDetailPage } from './UnifiedDetailPage';
 import { AnnotationCenterPage, AnnotationCenterPageParams } from './AnnotationCenterPage';
 import { AvifTestPage, AvifTestPageParams } from './AvifTestPage';
@@ -201,11 +207,11 @@ import {
   ExternalImportNavigationCoordinator,
   ExternalImportNavigationPayload,
   ExternalImportNavigationTarget
-} from '../Framework/ExternalFile/ExternalImportNavigationCoordinator';
-import { getCoverImageManager } from '../Framework/Image/CoverImageManager';
-import { LocalImageCacheManager } from '../Framework/Cache/LocalImageCacheManager';
-import { CoverCacheManager } from '../Framework/Cache/CoverCacheManager';
-import { LibraryCoverManager, LibraryCoverType } from '../Framework/Storage/LibraryCoverManager';
+} from 'manxia_network/src/main/ets/Framework/ExternalFile/ExternalImportNavigationCoordinator';
+import { CoverPreloadResult, getCoverImageManager } from '../Framework/Image/CoverImageManager';
+import { LocalImageCacheManager } from 'manxia_network/src/main/ets/Framework/Cache/LocalImageCacheManager';
+import { CoverCacheManager } from 'manxia_theme/src/main/ets/Framework/Cache/CoverCacheManager';
+import { LibraryCoverManager, LibraryCoverType } from 'manxia_core/src/main/ets/Framework/Storage/LibraryCoverManager';
 import { AvifImage } from '../components/AvifImage';
 import { RemoteControlPage } from './RemoteControlPage';
 import { getHomeLoadFlowMonitor, HomeLoadFlowMonitor } from '../Framework/Home/HomeLoadFlowMonitor';
@@ -219,6 +225,7 @@ import {
   HomeLoadFlowStage
 } from '../Framework/Home/HomeLoadFlowTypes';
 import { getHomeCoverFailureTtlCache, HomeCoverFailureTtlCache } from '../Framework/Home/HomeCoverFailureTtlCache';
+import { HomeCoverPreloadResultProcessor } from '../Framework/Home/HomeCoverPreloadResultProcessor';
 
 // 测试页面导入已移除
 // import { ReaderKitTestPage } from './ReaderKitTestPage';
@@ -232,46 +239,58 @@ import { distributedPermissionManager } from '../Framework/Distributed/Distribut
 import { Manga, MangaChapter, MangaMetadata, ReadingProgress, ReadingSettings, FilterSettings, ImageSourceType,
   ReadingMode,
   ReadingDirection,
-  DEFAULT_READING_SETTINGS} from '../Models/MangaModels';
-import { MangaStatus, ReadingStatus, StatusConverter, DownloadStatus } from '../Framework/Types/StatusEnums';
-import { isOnlineManga, isLocalManga, MangaSourceType } from '../Framework/Types/MangaTypes';
+  DEFAULT_READING_SETTINGS} from 'manxia_core/src/main/ets/Models/MangaModels';
+import { MangaStatus, ReadingStatus, StatusConverter, DownloadStatus } from 'manxia_core/src/main/ets/Framework/Types/StatusEnums';
+import { isOnlineManga, isLocalManga, MangaSourceType } from 'manxia_core/src/main/ets/Framework/Types/MangaTypes';
 
 // 导入图源相关
 import { SourceManager, SourceInfo } from '../Framework/Source/SourceManager';
-import { SearchTypeOption, SearchConfig } from '../Framework/WebView/MangaSourceTypes';
+import { SearchTypeOption, SearchConfig } from 'manxia_source_engine/src/main/ets/Framework/WebView/MangaSourceTypes';
 import { SourceRepositoryManager, SavedRepository, SourceRepositoryEntry, SyncResult, SyncProgressCallback, SyncSourceChangeDetail } from '../Framework/Source/SourceRepositoryManager';
 
 // 导入数据管理器
 import { DataManager, ComicInfo, ReadHistory, ChapterInfo, DeleteComicsResult,
   OnlineComicInfo, OnlineChapterInfo, OnlinePageInfo } from '../Framework/Data/DataManager';
-import { ComicSourceDatabaseRecord } from '../Framework/Database/DatabaseTypes';
-import { DatabaseManager } from '../Framework/Database/DatabaseManager';
+import { ComicSourceDatabaseRecord } from 'manxia_core/src/main/ets/Framework/Database/DatabaseTypes';
+import { DatabaseManager } from 'manxia_core/src/main/ets/Framework/Database/DatabaseManager';
 
-import { ThemeManager, ThemeType, GlassEffectContext } from '../Framework/Managers/ThemeManager';
-import { AppColors, ColorRole } from '../Framework/Theme/AppColors';
-import { USER_THEME_KEYS } from '../Framework/Theme/UserThemeConfig';
+import { ThemeManager, ThemeType, GlassEffectContext } from 'manxia_theme/src/main/ets/Framework/Managers/ThemeManager';
+import { AppColors, ColorRole } from 'manxia_theme/src/main/ets/Framework/Theme/AppColors';
+import { USER_THEME_KEYS } from 'manxia_theme/src/main/ets/Framework/Theme/UserThemeConfig';
 import { DataService } from '../Framework/Services/DataService';
-import { EBookDataManager } from '../Framework/Data/EBookDataManager';
+import { EBookDataManager } from 'manxia_core/src/main/ets/Framework/Data/EBookDataManager';
 import { EBookCoverExtractionResult, EBookCoverExtractor } from '../Framework/Parsers/EBookParser';
+import { OnlineEBookImportService } from '../Framework/Services/OnlineEBookImportService';
 
 // 导入电子书相关模型
-import { EBook, EBookStatus, EBookFormat } from '../Models/EBookModels';
+import { EBook, EBookStatus, EBookFormat } from 'manxia_core/src/main/ets/Models/EBookModels';
 import { EBookDetailPage, EBookDetailPageParams, EBookSettingsPageParams } from './EBookDetailPage';
 import { OnlineEBookDetailPage } from './OnlineEBookDetailPage';
 import { EBookSettingsPage } from './EBookSettingsPage';
 
 // 导入小说相关模型
-import { NovelBook, NovelReadStatus, NovelSearchResult, NovelSourceInfo } from '../Models/NovelModels';
+import { NovelBook, NovelChapter, NovelReadStatus, NovelSearchResult, NovelSourceInfo } from 'manxia_core/src/main/ets/Models/NovelModels';
 import { getNovelDataManager, NovelDataManager } from '../Framework/Novel/NovelDataManager';
+import {
+  getNovelChapterCacheManager,
+  NovelChapterCacheManager,
+  NovelChapterCacheSnapshot
+} from '../Framework/Novel/NovelChapterCacheManager';
 import { RemoteControlSocketChannel } from '../Framework/Distributed/RemoteControlSocketChannel';
+import { ContinuationCacheManager } from '../Framework/Distributed/ContinuationCacheManager';
+import {
+  ContinuationBundleReceiveResult,
+  ContinuationTransferMode,
+  ContinuationTransferRequest
+} from '../Framework/Distributed/ContinuationReadingTypes';
 import { getNovelSourceManager, NovelSourceManager } from '../Framework/Novel/NovelSourceManager';
-import { LegadoBook, LegadoBookSource, LegadoBookSourceType } from '../Framework/Novel/LegadoSourceTypes';
+import { LegadoBook, LegadoBookSource, LegadoBookSourceType, LegadoChapter } from 'manxia_novel/src/main/ets/Framework/Novel/LegadoSourceTypes';
 import { LegadoMangaSourceBridge } from '../Framework/Novel/LegadoMangaSourceBridge';
 import { getNovelInitializer } from '../Framework/Novel/NovelInitializer';
-import { FontManager } from '../Framework/Managers/FontManager';
+import { FontManager } from 'manxia_theme/src/main/ets/Framework/Managers/FontManager';
 import { ReadAloudController } from '../Framework/ReadAloud/ReadAloudController';
 import { ReadAloudPlaybackState } from '../Framework/ReadAloud/ReadAloudTypes';
-import { AppGuideFlowDefinition, AppGuideFlowId, AppGuideManager, AppGuidePageId, AppGuideStep } from '../Framework/Managers/AppGuideManager';
+import { AppGuideFlowDefinition, AppGuideFlowId, AppGuideManager, AppGuidePageId, AppGuideStep } from 'manxia_core/src/main/ets/Framework/Managers/AppGuideManager';
 
 // 导入Suwayomi相关（仅保留非Tab组件使用的导入）
 import SuwayomiCacheManager from '../Framework/Source/SuwayomiCacheManager';
@@ -280,29 +299,29 @@ import { RemoteLibraryMangaBridge } from '../Framework/Source/RemoteLibraryManga
 import { getRemoteLibraryShelfManager, RemoteLibraryShelfManager } from '../Framework/Source/RemoteLibraryShelfManager';
 import { getKomgaSourceExecutor } from '../Framework/Source/KomgaSourceExecutor';
 import { TabContentCacheManager } from '../Framework/Cache/TabContentCacheManager';
-import { HdsStyleBottomBar, HdsBottomBarTabConfig } from '../Framework/Components/HdsStyleBottomBar';
+import { HdsStyleBottomBar, HdsBottomBarTabConfig } from 'manxia_theme/src/main/ets/Framework/Components/HdsStyleBottomBar';
 import { HdsTabsController } from '@kit.UIDesignKit';
 
 // 导入事件总线
 import { eventBus, GameEvent, IEventPayload, ContinuationTriggeredPayload, MangaImportCompletedPayload, FileImportRequestedPayload, MangaDeletedPayload, BasePayload, FileEditorDocumentPayload } from '../Framework/EventBus';
-import { WelcomeGuideManager } from '../Framework/Managers/WelcomeGuideManager';
-import { getChangelogManager } from '../Framework/Managers/ChangelogManager';
-import { SourceUpdateManager } from '../Framework/Managers/SourceUpdateManager';
-import { getVersionHistoryManager, VersionRepositoryUpdateCheckResult, MANXIA_EXTENSIONS_REPOSITORY_KEY } from '../Framework/Managers/VersionHistoryManager';
-import { ContentFilterManager } from '../Framework/Managers/ContentFilterManager';
-import { PrivacyModeManager } from '../Framework/Managers/PrivacyModeManager';
+import { WelcomeGuideManager } from 'manxia_core/src/main/ets/Framework/Managers/WelcomeGuideManager';
+import { getChangelogManager } from 'manxia_features_ui/src/main/ets/Framework/Managers/ChangelogManager';
+import { SourceUpdateManager } from 'manxia_core/src/main/ets/Framework/Managers/SourceUpdateManager';
+import { getVersionHistoryManager, VersionRepositoryUpdateCheckResult, MANXIA_EXTENSIONS_REPOSITORY_KEY } from 'manxia_core/src/main/ets/Framework/Managers/VersionHistoryManager';
+import { ContentFilterManager } from 'manxia_core/src/main/ets/Framework/Managers/ContentFilterManager';
+import { PrivacyModeManager } from 'manxia_theme/src/main/ets/Framework/Managers/PrivacyModeManager';
 import { PrivacyAuthDialogComponent, PrivacyAuthDialogMode } from '../Framework/Components/PrivacyAuthDialogComponent';
 import { SourceDialogScaffold } from '../Framework/Components/SourceDialogScaffold';
-import { ProxyManager, ProxyConfig, DEFAULT_PROXY_CONFIG, ProxyProtocol } from '../Framework/Network/ProxyManager';
+import { ProxyManager, ProxyConfig, DEFAULT_PROXY_CONFIG, ProxyProtocol } from 'manxia_network/src/main/ets/Framework/Network/ProxyManager';
 import { ProxyConfigDialog } from '../components/source/ProxyConfigDialog';
 import { BookshelfCategoryManager, BookshelfCategory, ContentType, CategoryItem } from '../Framework/Data/BookshelfCategoryManager';
-import { SettingsManager, SettingKeys } from '../Framework/Managers/SettingsManager';
+import { SettingKeys } from 'manxia_core/src/main/ets/Framework/Contracts/SettingKeys';
 import { TypeShelfManager, TypeShelf, ShelfType, ShelfContentType, CreateShelfParams, SHELF_COLORS, SHELF_ICONS, getTypeShelfManager, DynamicShelfFilter, smartTokenize, matchesDynamicFilter, DynamicMatchItem } from '../Framework/Data/TypeShelfManager';
 
 // 导入响应式布局
 import { DeviceAdaptationManager, DeviceInfo, DeviceChangeListener,
-  Breakpoint, FoldStatus } from '../Framework/Managers/DeviceAdaptationManager';
-import { ResponsiveLayoutHelper } from '../Framework/Utils/ResponsiveLayout';
+  Breakpoint, FoldStatus } from 'manxia_theme/src/main/ets/Framework/Managers/DeviceAdaptationManager';
+import { ResponsiveLayoutHelper } from 'manxia_theme/src/main/ets/Framework/Utils/ResponsiveLayout';
 import { util } from '@kit.ArkTS';
 
 
@@ -699,6 +718,10 @@ struct MainMenuPage {
     logger.info(TAG, '收到小说列表刷新事件，重新加载小说列表');
     this.loadNovelList();
   };
+  private readonly ebookListRefreshNeededListener = (_payload: IEventPayload): void => {
+    logger.info(TAG, '收到电子书列表刷新事件，静默刷新书库');
+    void this.silentRefreshLibrary();
+  };
   private componentId: string = 'MainMenuPage';
   
   // 隐私模式状态
@@ -735,7 +758,7 @@ struct MainMenuPage {
   @State loadingState: LoadingState = new LoadingState();
   private dataManager: DataManager = DataManager.getInstance();
   private dataService: DataService = DataService.getInstance();
-  private settingsManager: SettingsManager = SettingsManager.getInstance();
+  private settingsManager: ISettingsManagerFacade = SettingsManagerHolder.get();
   private sourceDetailWindowSequence: number = 0;
   @StorageLink('main_menu_bottom_bar_style') @Watch('onBottomBarStyleStorageChanged') private bottomBarStyle: string = 'custom'; // 'custom' | 'hds'
   @State private mainPageBottomBarAnimationEnabled: boolean = false;
@@ -972,6 +995,14 @@ struct MainMenuPage {
   @State recentReadingList: Manga[] = [];
   @State recentEBookList: EBook[] = [];
   @State recentNovelList: NovelBook[] = []; // 最近阅读的小说
+  @State private continuationTransferVisible: boolean = false;
+  @State private continuationTransferCancelled: boolean = false;
+  @State private continuationTransferCancelable: boolean = false;
+  @State private continuationTransferPercent: number = 0;
+  @State private continuationTransferText: string = '';
+  @StorageProp('continuationCacheRevision') @Watch('onContinuationCacheRevisionChanged')
+  private continuationCacheRevision: number = 0;
+  private continuationCacheManager: ContinuationCacheManager = ContinuationCacheManager.getInstance();
   private readonly RECENT_HISTORY_LIMIT: number = 100;
   
   // 后台模糊遮罩相关状态
@@ -1049,6 +1080,7 @@ struct MainMenuPage {
   private startupDiscoverPrepared: boolean = false;
   private homeLoadFlowMonitor: HomeLoadFlowMonitor = getHomeLoadFlowMonitor();
   private homeCoverFailureTtlCache: HomeCoverFailureTtlCache = getHomeCoverFailureTtlCache();
+  private homeCoverPreloadResultProcessor: HomeCoverPreloadResultProcessor = new HomeCoverPreloadResultProcessor();
   private homeLoadFlowId: string = '';
   private homeLoadStartedAt: number = 0;
   private homeLoadEntryReason: HomeLoadFlowEntryReason = HomeLoadFlowEntryReason.NORMAL;
@@ -2291,6 +2323,7 @@ struct MainMenuPage {
 
     // 订阅小说列表刷新事件（换源后触发）
     eventBus.subscribe(GameEvent.NOVEL_LIST_REFRESH_NEEDED, this.novelListRefreshNeededListener);
+    eventBus.subscribe(GameEvent.EBOOK_LIST_REFRESH_NEEDED, this.ebookListRefreshNeededListener);
 
     // 注册隐私模式监听器
     this.privacyModeListener = (isPrivacy: boolean) => {
@@ -2783,37 +2816,35 @@ struct MainMenuPage {
       logger.info(TAG, `继续阅读导航: type=${contentType}, id=${contentId}, isContinuation=${isContinuation}`);
 
       if (contentType === 'manga') {
-        let manga = await this.resolveWidgetManga(contentId);
-        // [修复] 本地漫画跨端接续：目标端没有该漫画记录时，经独立连接通道从源端
-        // 拉取漫画元数据与图片文件并入库，随后按源端 bookId 命中继续阅读。
-        if (!manga && isContinuation) {
-          manga = await this.recoverContinuationManga(contentId);
-        } else if (manga && isContinuation) {
-          // [修复] 目标端残留上次接续的残缺数据（例如旧版本把整章压缩成 1 页）时，
-          // 本地漫画会直接命中而跳过重新传输；这里校验页面完整性，不完整则重新从源端同步。
-          try {
-            const dataManager = DataManager.getInstance();
-            const localComicRow = await dataManager.getComicInfo(contentId);
-            if (localComicRow) {
-              const pagesComplete = await dataManager.hasCompleteChapterPages(contentId);
-              if (!pagesComplete) {
-                logger.warn(TAG, `接续本地漫画页面数据不完整，从源设备重新同步: comicId=${contentId}`);
-                manga = await this.recoverContinuationManga(contentId);
+        const transferMode = AppStorage.get<ContinuationTransferMode>('continuationTransferMode') ??
+          ContinuationTransferMode.READ_ONLY;
+        const shouldTransfer = isContinuation && transferMode !== ContinuationTransferMode.DISABLED;
+        let manga = shouldTransfer
+          ? await this.recoverContinuationManga(contentId, transferMode)
+          : await this.resolveWidgetManga(contentId);
+        if (manga) {
+          if (isContinuation && this.continuationCacheManager.isCacheId(manga.id)) {
+            void this.openMangaReaderWithAnimation(manga, '');
+          } else if (isContinuation) {
+            const continuationIsLocal = AppStorage.get<boolean>('continuationIsLocal') || false;
+            const chapterIndex = Math.max(0, AppStorage.get<number>('continuationChapterIndex') || 0);
+            let chapterId = manga.readingProgress.currentChapterId || '';
+            for (const chapter of manga.chapters) {
+              if (chapter.chapterNumber - 1 === chapterIndex) {
+                chapterId = chapter.id;
+                break;
               }
             }
-          } catch (healthCheckError) {
-            logger.warn(TAG, `接续漫画页面完整性检查异常: ${String(healthCheckError)}`);
-          }
-        }
-        if (manga) {
-          if (isContinuation) {
-            const continuationIsLocal = AppStorage.get<boolean>('continuationIsLocal') || false;
             const readerContentType = continuationIsLocal
               ? MangaReaderContentType.Local
-              : MangaReaderContentType.OnlineUndownloaded;
+              : transferMode === ContinuationTransferMode.IMPORT_TO_LIBRARY
+                ? MangaReaderContentType.OnlineDownloaded
+                : MangaReaderContentType.OnlineUndownloaded;
             const params: MangaReaderPageParams = {
               manga: manga,
               mangaId: manga.id,
+              chapterId: chapterId,
+              pageIndex: Math.max(0, AppStorage.get<number>('continuationPageIndex') || 0),
               contentType: readerContentType
             };
             openMangaReaderInIsolatedAbility(this.getUIContext(), this.pathStack, params, TAG);
@@ -2823,33 +2854,52 @@ struct MainMenuPage {
           return;
         }
       } else if (contentType === 'ebook') {
+        if (isContinuation) {
+          const readerParams: EBookReaderParams = {
+            bookId: contentId
+          };
+          if (!openEBookReaderInIsolatedAbility(this.getUIContext(), this.pathStack, readerParams, TAG)) {
+            this.pathStack.pushPathByName('EBookReaderRoutePage', readerParams);
+          }
+          return;
+        }
         const ebook = await this.resolveWidgetEBook(contentId);
         if (ebook) {
-          if (isContinuation) {
-            const readerParams: EBookReaderParams = {
-              bookId: ebook.id
-            };
-            if (!openEBookReaderInIsolatedAbility(this.getUIContext(), this.pathStack, readerParams, TAG)) {
-              this.pathStack.pushPathByName('EBookReaderRoutePage', readerParams);
-            }
-            return;
-          }
           this.openEBookReaderFromHome(ebook);
           return;
         }
       } else if (contentType === 'novel') {
-        const novel = await this.resolveWidgetNovel(contentId);
+        const transferMode = AppStorage.get<ContinuationTransferMode>('continuationTransferMode') ??
+          ContinuationTransferMode.READ_ONLY;
+        const shouldTransfer = isContinuation && transferMode !== ContinuationTransferMode.DISABLED;
+        const novel = shouldTransfer
+          ? await this.recoverContinuationNovel(contentId, transferMode)
+          : await this.resolveWidgetNovel(contentId);
         if (novel) {
-          if (isContinuation) {
+          if (isContinuation && this.continuationCacheManager.isCacheId(novel.id)) {
+            void this.openNovelReaderWithAnimation(novel, '');
+          } else if (isContinuation) {
+            const isLocalTextEBook = novel.sourceId === 'local_txt_ebook' && novel.bookUrl.startsWith('ebook://');
+            const localEbookId = isLocalTextEBook
+              ? novel.bookUrl.substring('ebook://'.length)
+              : '';
             const params: NovelReaderPageParams = {
               sourceId: novel.sourceId || '',
               bookUrl: novel.bookUrl || novel.id || '',
               bookName: novel.name || '',
-              chapterUrl: '',
-              chapterTitle: '',
-              chapterIndex: 0,
-              totalChapters: 0,
-              coverUrl: novel.coverUrl
+              chapterUrl: novel.lastReadChapterId || '',
+              chapterTitle: novel.latestChapterTitle || '',
+              chapterIndex: Math.max(0, AppStorage.get<number>('continuationChapterIndex') ?? novel.lastReadChapterIndex ?? 0),
+              totalChapters: novel.chapterCount || 0,
+              chapterPageIndex: Math.max(0, AppStorage.get<number>('continuationPageIndex') ?? 0),
+              chapterStartOffset: Math.max(0, AppStorage.get<number>('continuationOffset') ?? 0),
+              tocUrl: novel.tocUrl || novel.bookUrl,
+              author: novel.author || '',
+              coverUrl: novel.coverLocalPath || novel.coverUrl || '',
+              sourceName: novel.sourceName || '',
+              localEbookId: localEbookId,
+              continuationImportedSnapshot: transferMode === ContinuationTransferMode.IMPORT_TO_LIBRARY,
+              readerTitle: novel.name
             };
             this.pathStack.pushPathByName('NovelReaderPage', params);
           } else {
@@ -2931,33 +2981,327 @@ struct MainMenuPage {
    * [跨端接续] 本地漫画在目标端缺失时，经独立连接通道从源端拉取
    * 漫画元数据 + 图片文件并入库，然后重新解析返回可打开的 Manga。
    */
-  private async recoverContinuationManga(comicId: string): Promise<Manga | null> {
+  private async recoverContinuationManga(
+    comicId: string,
+    mode: ContinuationTransferMode
+  ): Promise<Manga | null> {
+    if (mode === ContinuationTransferMode.DISABLED) {
+      return await this.resolveWidgetManga(comicId);
+    }
+    const continuationSessionId = AppStorage.get<string>('continuationSessionId') || '';
+    if (continuationSessionId.length <= 0) {
+      return null;
+    }
+    let receiveResult: ContinuationBundleReceiveResult | null = null;
+    let persistentPackageDirectory = '';
+    this.continuationTransferVisible = true;
+    this.continuationTransferCancelled = false;
+    this.continuationTransferCancelable = true;
+    this.continuationTransferPercent = 0;
+    this.continuationTransferText = mode === ContinuationTransferMode.READ_ONLY
+      ? '正在准备并接收漫画缓存…'
+      : '正在准备完整漫画内容…';
     try {
-      this.showToast('本地漫画正在从源设备传输…');
-      const channel = RemoteControlSocketChannel.getInstance();
-      const receiveResult = await channel.requestMangaBundle(comicId);
-      if (!receiveResult || !receiveResult.bundle) {
-        logger.warn(TAG, `从源设备传输漫画失败: comicId=${comicId}`);
-        this.showToast('本地漫画传输失败，请确认源设备遥控通道正常');
+      const hostContext = this.getUIContext().getHostContext() as common.UIAbilityContext;
+      await this.continuationCacheManager.initialize(hostContext);
+      const request: ContinuationTransferRequest = {
+        schemaVersion: 1,
+        sessionId: continuationSessionId,
+        mode: mode,
+        contentType: 'manga',
+        sourceBookId: comicId,
+        isLocal: AppStorage.get<boolean>('continuationIsLocal') ?? false,
+        chapterIndex: AppStorage.get<number>('continuationChapterIndex') ?? 0,
+        pageIndex: AppStorage.get<number>('continuationPageIndex') ?? 0,
+        offset: AppStorage.get<number>('continuationOffset') ?? 0
+      };
+      receiveResult = await RemoteControlSocketChannel.getInstance().requestContinuationBundle(request, {
+        timeoutMs: 30 * 60 * 1000,
+        onProgress: (receivedBytes: number, totalBytes: number): void => {
+          this.continuationTransferPercent = totalBytes > 0
+            ? Math.min(100, Math.round(receivedBytes * 100 / totalBytes))
+            : 0;
+          this.continuationTransferText = `正在接收漫画内容… ${this.continuationTransferPercent}%`;
+        },
+        onPhase: (phase: string): void => {
+          this.continuationTransferText = phase;
+        }
+      });
+      if (this.continuationTransferCancelled) {
+        this.showToast('已取消漫画接续');
         return null;
+      }
+      if (!receiveResult) {
+        logger.warn(TAG, `从源设备传输漫画接续包失败: comicId=${comicId}, mode=${mode}`);
+        this.showToast(this.getContinuationTransferFailureMessage('漫画接续传输失败'));
+        return null;
+      }
+      this.continuationTransferCancelable = false;
+      if (mode === ContinuationTransferMode.READ_ONLY) {
+        this.continuationTransferText = '正在保存仅阅读缓存…';
+        const cacheId = this.continuationCacheManager.createCacheId();
+        const record = await this.continuationCacheManager.commitReadOnlyPackage(
+          cacheId,
+          receiveResult.manifest,
+          receiveResult.stagingDirectory
+        );
+        const cachedManga = await this.continuationCacheManager.getManga(record.cacheId);
+        if (cachedManga) {
+          cachedManga.id = record.cacheId;
+        }
+        AppStorage.setOrCreate('continuationCacheRevision', Date.now());
+        return cachedManga;
+      }
+
+      this.continuationTransferText = '正在导入完整漫画…';
+      const importDirectory = `${hostContext.filesDir}/continuation_imports/manga_${Date.now()}`;
+      persistentPackageDirectory = importDirectory;
+      this.continuationCacheManager.copyPackageDirectory(receiveResult.stagingDirectory, importDirectory);
+      const bundle = this.continuationCacheManager.materializeMangaBundle(receiveResult.manifest, importDirectory);
+      if (!bundle) {
+        throw new Error('接续漫画数据包缺少完整元数据');
       }
       const dataManager = DataManager.getInstance();
       await dataManager.importRemoteComicData(
-        receiveResult.bundle.comic,
-        receiveResult.bundle.chapters,
-        receiveResult.bundle.chapterPages
+        bundle.comic,
+        bundle.chapters,
+        bundle.chapterPages
       );
       try {
-        await DataService.getInstance().addToFavorites(comicId, receiveResult.bundle.comic.tags || []);
+        await DataService.getInstance().addToFavorites(comicId, bundle.comic.tags || []);
       } catch (favoriteError) {
         logger.warn(TAG, `接续漫画收藏写入失败: ${String(favoriteError)}`);
       }
-      this.showToast('本地漫画已从源设备同步完成');
-      return await this.resolveWidgetManga(comicId);
+      const importedManga = await this.resolveWidgetManga(comicId);
+      await this.silentRefreshLibrary();
+      this.showToast('漫画已完整导入并接续');
+      return importedManga;
     } catch (error) {
       logger.warn(TAG, `恢复接续漫画失败: comicId=${comicId}, error=${String(error)}`);
+      if (persistentPackageDirectory.length > 0) {
+        this.continuationCacheManager.deletePackageDirectory(persistentPackageDirectory);
+      }
+      this.showToast('漫画接续失败，未打开不完整内容');
+      return null;
+    } finally {
+      this.continuationTransferVisible = false;
+      this.continuationTransferCancelable = false;
+      if (receiveResult) {
+        RemoteControlSocketChannel.getInstance().cleanupContinuationBundle(receiveResult);
+      }
+    }
+  }
+
+  private async recoverContinuationNovel(
+    sourceBookId: string,
+    mode: ContinuationTransferMode
+  ): Promise<NovelBook | null> {
+    if (mode === ContinuationTransferMode.DISABLED) {
+      return await this.resolveWidgetNovel(sourceBookId);
+    }
+    const sessionId = AppStorage.get<string>('continuationSessionId') || '';
+    if (sessionId.length <= 0) {
       return null;
     }
+    this.continuationTransferVisible = true;
+    this.continuationTransferCancelled = false;
+    this.continuationTransferCancelable = true;
+    this.continuationTransferPercent = 0;
+    this.continuationTransferText = mode === ContinuationTransferMode.READ_ONLY
+      ? '正在准备并接收当前小说章节…'
+      : '正在准备整本小说内容…';
+    let receiveResult: ContinuationBundleReceiveResult | null = null;
+    let previousBook: NovelBook | null = null;
+    let targetDataManager: NovelDataManager | null = null;
+    let chapterCacheManager: NovelChapterCacheManager | null = null;
+    let chapterCacheSnapshot: NovelChapterCacheSnapshot | null = null;
+    let libraryCommitted = false;
+    try {
+      const hostContext = this.getUIContext().getHostContext() as common.UIAbilityContext;
+      await this.continuationCacheManager.initialize(hostContext);
+      const request: ContinuationTransferRequest = {
+        schemaVersion: 1,
+        sessionId: sessionId,
+        mode: mode,
+        contentType: 'novel',
+        sourceBookId: sourceBookId,
+        isLocal: AppStorage.get<boolean>('continuationIsLocal') ?? false,
+        chapterIndex: AppStorage.get<number>('continuationChapterIndex') ?? 0,
+        pageIndex: AppStorage.get<number>('continuationPageIndex') ?? 0,
+        offset: AppStorage.get<number>('continuationOffset') ?? 0
+      };
+      receiveResult = await RemoteControlSocketChannel.getInstance().requestContinuationBundle(request, {
+        timeoutMs: 30 * 60 * 1000,
+        onProgress: (receivedBytes: number, totalBytes: number): void => {
+          this.continuationTransferPercent = totalBytes > 0
+            ? Math.min(100, Math.round(receivedBytes * 100 / totalBytes))
+            : 0;
+          this.continuationTransferText = `正在接收小说内容… ${this.continuationTransferPercent}%`;
+        },
+        onPhase: (phase: string): void => {
+          this.continuationTransferText = phase;
+        }
+      });
+      if (this.continuationTransferCancelled) {
+        this.showToast('已取消小说接续');
+        return null;
+      }
+      if (!receiveResult) {
+        this.showToast(this.getContinuationTransferFailureMessage('小说接续传输失败'));
+        return null;
+      }
+      this.continuationTransferCancelable = false;
+      const manifest = receiveResult.manifest;
+      if (mode === ContinuationTransferMode.READ_ONLY) {
+        this.continuationTransferText = '正在保存仅阅读缓存…';
+        const cacheId = this.continuationCacheManager.createCacheId();
+        const record = await this.continuationCacheManager.commitReadOnlyPackage(
+          cacheId,
+          manifest,
+          receiveResult.stagingDirectory
+        );
+        const cachedBook = await this.continuationCacheManager.getNovelBook(record.cacheId);
+        if (!cachedBook) {
+          await this.continuationCacheManager.deleteCache(record.cacheId);
+          throw new Error('接续小说缓存索引创建失败');
+        }
+        cachedBook.isFavorite = false;
+        AppStorage.setOrCreate('continuationCacheRevision', Date.now());
+        return cachedBook;
+      }
+
+      if (manifest.contentType !== 'novel' || !manifest.novelBook) {
+        throw new Error('接续小说数据包缺少书籍元数据');
+      }
+      if (manifest.isLocal && manifest.ebook) {
+        this.continuationTransferText = '正在导入本地 TXT 电子书…';
+        await OnlineEBookImportService.getInstance().importContinuationPackage(manifest, receiveResult.stagingDirectory);
+        await this.silentRefreshLibrary();
+        const localNovel = manifest.novelBook;
+        localNovel.isFavorite = false;
+        return localNovel;
+      }
+
+      this.continuationTransferText = '正在导入整本小说…';
+      const dataManager = getNovelDataManager();
+      await dataManager.initialize(hostContext);
+      targetDataManager = dataManager;
+      previousBook = await dataManager.getBook(sourceBookId);
+      const activeChapterCacheManager = getNovelChapterCacheManager();
+      chapterCacheManager = activeChapterCacheManager;
+      chapterCacheSnapshot = await activeChapterCacheManager.createContinuationImportSnapshot(sourceBookId);
+      const sourceBook = manifest.novelBook;
+      const now = Date.now();
+      const importedBook: NovelBook = {
+        id: sourceBookId,
+        sourceId: sourceBook.sourceId,
+        sourceName: sourceBook.sourceName,
+        bookUrl: sourceBook.bookUrl,
+        name: sourceBook.name,
+        author: sourceBook.author,
+        kind: sourceBook.kind,
+        intro: sourceBook.intro,
+        coverUrl: sourceBook.coverUrl,
+        coverLocalPath: sourceBook.coverLocalPath,
+        tocUrl: sourceBook.tocUrl,
+        latestChapterTitle: sourceBook.latestChapterTitle,
+        wordCount: sourceBook.wordCount,
+        chapterCount: manifest.chapterCount,
+        readStatus: NovelReadStatus.READING,
+        lastReadChapterId: manifest.novelChapters[manifest.chapterIndex]?.id || '',
+        lastReadChapterIndex: manifest.chapterIndex,
+        lastReadPosition: manifest.offset,
+        lastReadTime: now,
+        totalReadingTime: previousBook?.totalReadingTime ?? sourceBook.totalReadingTime,
+        isFavorite: true,
+        isPrivate: previousBook?.isPrivate ?? sourceBook.isPrivate,
+        isNSFW: previousBook?.isNSFW ?? sourceBook.isNSFW,
+        createTime: previousBook?.createTime ?? sourceBook.createTime,
+        updateDbTime: now,
+        groupName: previousBook?.groupName ?? sourceBook.groupName
+      };
+      await dataManager.saveBook(importedBook);
+      libraryCommitted = true;
+
+      const legadoChapters: LegadoChapter[] = manifest.novelChapters.map(
+        (chapter: NovelChapter): LegadoChapter => ({
+          id: chapter.id,
+          bookUrl: importedBook.bookUrl,
+          url: chapter.url,
+          title: chapter.title,
+          index: chapter.index,
+          isVolume: chapter.isVolume,
+          isVip: chapter.isVip,
+          isPay: chapter.isPay,
+          updateTime: chapter.updateTime
+        })
+      );
+      await activeChapterCacheManager.saveChapterList(sourceBookId, legadoChapters);
+      const savedChapterList = await activeChapterCacheManager.getCachedChapterList(sourceBookId, 876000);
+      if (!savedChapterList || savedChapterList.length !== legadoChapters.length) {
+        throw new Error('接续小说目录写入不完整');
+      }
+      for (const content of manifest.chapterContents) {
+        const safeRelativePath = content.relativePath.replace(/\\/g, '/');
+        if (safeRelativePath.startsWith('/') || safeRelativePath.indexOf('..') >= 0) {
+          throw new Error('接续小说章节路径越界');
+        }
+        const contentPath = `${receiveResult.stagingDirectory}/${safeRelativePath}`;
+        if (!SafeFileUtils.accessSync(contentPath)) {
+          throw new Error(`接续小说章节文件缺失: ${content.title}`);
+        }
+        const chapterText = SafeFileUtils.readTextSync(contentPath);
+        await activeChapterCacheManager.storeChapterContent(sourceBookId, content.chapterIndex, content.title, chapterText);
+      }
+      const committedSnapshot = chapterCacheSnapshot;
+      if (committedSnapshot) {
+        try {
+          await activeChapterCacheManager.discardContinuationImportSnapshot(committedSnapshot);
+          chapterCacheSnapshot = null;
+        } catch (cleanupError) {
+          logger.warn(TAG, `接续小说缓存快照清理失败: ${String(cleanupError)}`);
+        }
+      }
+      await this.silentRefreshLibrary();
+      return importedBook;
+    } catch (error) {
+      logger.warn(TAG, `恢复接续小说失败: bookId=${sourceBookId}, error=${String(error)}`);
+      if (libraryCommitted && targetDataManager) {
+        try {
+          if (previousBook) {
+            await targetDataManager.saveBook(previousBook);
+          } else {
+            await targetDataManager.deleteBook(sourceBookId);
+          }
+        } catch (rollbackError) {
+          logger.error(TAG, `接续小说导入失败后的书库回滚失败: ${String(rollbackError)}`);
+        }
+      }
+      if (chapterCacheSnapshot && chapterCacheManager) {
+        try {
+          await chapterCacheManager.restoreContinuationImportSnapshot(chapterCacheSnapshot);
+          chapterCacheSnapshot = null;
+        } catch (restoreCacheError) {
+          logger.error(TAG, `接续小说章节缓存回滚失败: ${String(restoreCacheError)}`);
+        }
+      }
+      this.showToast('小说接续失败，未打开不完整内容');
+      return null;
+    } finally {
+      this.continuationTransferVisible = false;
+      this.continuationTransferCancelable = false;
+      if (receiveResult) {
+        RemoteControlSocketChannel.getInstance().cleanupContinuationBundle(receiveResult);
+      }
+    }
+  }
+
+  private getContinuationTransferFailureMessage(fallback: string): string {
+    const detail = RemoteControlSocketChannel.getInstance().getLastContinuationRequestError();
+    if (detail.includes('版本') || detail.includes('不兼容')) {
+      return '接续协议不兼容，请更新两端应用后重试';
+    }
+    return fallback;
   }
 
   private async resolveWidgetEBook(contentId: string): Promise<EBook | null> {
@@ -3503,6 +3847,13 @@ struct MainMenuPage {
   private applyOrientationPreference(): void {
     try {
       const ui = this.getUIContext();
+      // [修复] 阅读器（小说/漫画/电子书）正在持有方向锁时，主界面绝不能覆盖其方向策略，
+      // 否则 display 变化（旋转/折叠）会把阅读器的 LOCK_CURRENT 冲成自动旋转。
+      const activeReaderLock = OrientationLockManager.getActiveRequest(ui);
+      if (activeReaderLock !== null) {
+        logger.info(TAG, `检测到阅读器方向锁生效，跳过主界面方向偏好应用: owner=${activeReaderLock.owner}`);
+        return;
+      }
       if (this.forceLandscapeMode) {
         WindowManager.setPreferredOrientationLandscape(ui);
       } else {
@@ -6951,22 +7302,51 @@ struct MainMenuPage {
    */
   private async loadRecentMangaList(): Promise<Manga[]> {
     try {
+      const hostContext = this.getUIContext().getHostContext() as common.UIAbilityContext;
+      await this.continuationCacheManager.initialize(hostContext);
       const allManga = await this.loadAllMangaFromDatabase();
-      
+      const cacheRecords = await this.continuationCacheManager.listRecords();
+      const cachedSourceIds = new Set<string>();
+      const seenContinuationSourceIds = new Set<string>();
+      const cachedManga: Manga[] = [];
+      for (const record of cacheRecords) {
+        if (record.contentType !== 'manga') {
+          continue;
+        }
+        if (seenContinuationSourceIds.has(record.sourceBookId)) {
+          continue;
+        }
+        const manga = await this.continuationCacheManager.getManga(record.cacheId);
+        if (!manga) {
+          continue;
+        }
+        seenContinuationSourceIds.add(record.sourceBookId);
+        cachedSourceIds.add(record.sourceBookId);
+        manga.id = record.cacheId;
+        manga.isFavorite = false;
+        manga.readingProgress.currentPageIndex = record.pageIndex;
+        manga.readingProgress.lastReadAt = record.lastReadTime;
+        for (const chapter of manga.chapters) {
+          if (chapter.chapterNumber - 1 === record.chapterIndex) {
+            manga.readingProgress.currentChapterId = chapter.id;
+          }
+        }
+        cachedManga.push(manga);
+      }
       // 筛选有阅读记录的漫画并按最后阅读时间排序
-      const recentManga = allManga
+      const recentLibraryManga = allManga
+        .filter((manga: Manga) => !cachedSourceIds.has(manga.id))
         .filter((manga: Manga) => {
           // 有阅读进度或有最后阅读时间
           return manga.readingProgress.lastReadAt > 0 || 
                  manga.readingProgress.currentPageIndex > 0 ||
                  manga.readingProgress.currentChapterId !== '';
-        })
-        .sort((a: Manga, b: Manga) => {
-          // 按最后阅读时间倒序
-          return b.readingProgress.lastReadAt - a.readingProgress.lastReadAt;
-        })
-        .slice(0, 20); // 只取最近20本
-      
+        });
+      const recentManga: Manga[] = cachedManga.concat(recentLibraryManga);
+      recentManga.sort((a: Manga, b: Manga) =>
+        b.readingProgress.lastReadAt - a.readingProgress.lastReadAt
+      );
+      recentManga.splice(20);
       return recentManga;
     } catch (error) {
       logger.warn(TAG, `加载最近阅读漫画失败: ${String(error)}`);
@@ -6979,19 +7359,56 @@ struct MainMenuPage {
    */
   private async loadRecentEBookList(): Promise<EBook[]> {
     try {
+      const hostContext = this.getUIContext().getHostContext() as common.UIAbilityContext;
+      await this.continuationCacheManager.initialize(hostContext);
       const allEbooks = await this.ebookDataManager.getEBookList();
-      
-      // 筛选有阅读记录的电子书并按最后阅读时间排序
-      let recentEbooks = allEbooks
+      const cacheRecords = await this.continuationCacheManager.listRecords();
+      const cachedSourceIds = new Set<string>();
+      const seenContinuationSourceIds = new Set<string>();
+      const cachedEbooks: EBook[] = [];
+      for (const record of cacheRecords) {
+        if (record.contentType === 'novel') {
+          const localTextManifest = await this.continuationCacheManager.getManifest(record.cacheId);
+          if (localTextManifest?.isLocal && localTextManifest.ebook) {
+            const localEBookId = localTextManifest.ebook.id;
+            if (!seenContinuationSourceIds.has(localEBookId)) {
+              seenContinuationSourceIds.add(localEBookId);
+              cachedSourceIds.add(localEBookId);
+            }
+          }
+          continue;
+        }
+        if (record.contentType !== 'ebook') {
+          continue;
+        }
+        if (seenContinuationSourceIds.has(record.sourceBookId)) {
+          continue;
+        }
+        const cachedEBook = await this.continuationCacheManager.getEBook(record.cacheId);
+        if (!cachedEBook) {
+          continue;
+        }
+        seenContinuationSourceIds.add(record.sourceBookId);
+        cachedSourceIds.add(record.sourceBookId);
+        cachedEBook.id = record.cacheId;
+        cachedEBook.isFavorite = false;
+        cachedEBook.readingProgress.bookId = record.sourceBookId;
+        cachedEBook.readingProgress.currentChapterIndex = record.chapterIndex;
+        cachedEBook.readingProgress.currentPosition = record.offset > 0 ? record.offset : record.pageIndex;
+        cachedEBook.readingProgress.lastReadTime = record.lastReadTime;
+        cachedEbooks.push(cachedEBook);
+      }
+      const recentLibraryEbooks = allEbooks
+        .filter((ebook: EBook) => !cachedSourceIds.has(ebook.id))
         .filter((ebook: EBook) => {
           return ebook.readingProgress.lastReadTime > 0 || 
                  ebook.readingProgress.progress > 0;
-        })
-        .sort((a: EBook, b: EBook) => {
-          return b.readingProgress.lastReadTime - a.readingProgress.lastReadTime;
-        })
-        .slice(0, 20);
-        
+        });
+      let recentEbooks: EBook[] = cachedEbooks.concat(recentLibraryEbooks);
+      recentEbooks.sort((a: EBook, b: EBook) =>
+        b.readingProgress.lastReadTime - a.readingProgress.lastReadTime
+      );
+      recentEbooks = recentEbooks.slice(0, 20);
       await this.normalizeEBookCoversForDisplay(recentEbooks);
       
       return recentEbooks;
@@ -7006,12 +7423,44 @@ struct MainMenuPage {
    */
   private async loadRecentNovelList(): Promise<NovelBook[]> {
     try {
+      const hostContext = this.getUIContext().getHostContext() as common.UIAbilityContext;
+      await this.continuationCacheManager.initialize(hostContext);
       if (!this.novelDataManager) {
-        const context = (this.getUIContext().getHostContext() as common.UIAbilityContext) as common.UIAbilityContext;
         this.novelDataManager = getNovelDataManager();
-        await this.novelDataManager.initialize(context);
+        await this.novelDataManager.initialize(hostContext);
       }
-      const novels = await this.novelDataManager.getRecentBooks(20);
+      const libraryNovels = await this.novelDataManager.getRecentBooks(40);
+      const cacheRecords = await this.continuationCacheManager.listRecords();
+      const cachedSourceIds = new Set<string>();
+      const seenContinuationSourceIds = new Set<string>();
+      const cachedNovels: NovelBook[] = [];
+      for (const record of cacheRecords) {
+        if (record.contentType !== 'novel') {
+          continue;
+        }
+        if (seenContinuationSourceIds.has(record.sourceBookId)) {
+          continue;
+        }
+        const novel = await this.continuationCacheManager.getNovelBook(record.cacheId);
+        if (!novel) {
+          continue;
+        }
+        seenContinuationSourceIds.add(record.sourceBookId);
+        cachedSourceIds.add(record.sourceBookId);
+        novel.id = record.cacheId;
+        novel.isFavorite = false;
+        novel.lastReadChapterIndex = record.chapterIndex;
+        novel.lastReadPosition = record.offset;
+        novel.lastReadTime = record.lastReadTime;
+        cachedNovels.push(novel);
+      }
+      const novels: NovelBook[] = cachedNovels.concat(
+        libraryNovels.filter((novel: NovelBook) => !cachedSourceIds.has(novel.id))
+      );
+      novels.sort((first: NovelBook, second: NovelBook) =>
+        (second.lastReadTime ?? 0) - (first.lastReadTime ?? 0)
+      );
+      novels.splice(20);
       await this.normalizeNovelCoversForDisplay(novels);
       return novels;
     } catch (error) {
@@ -7283,6 +7732,8 @@ struct MainMenuPage {
                   imageHeight: '100%',
                   objectFit: ImageFit.Cover,
                   imageBorderRadius: this.getCoverImageRadius(),
+                  placeholder: $r('app.media.mangabook'),
+                  errorHolder: $r('app.media.mangabook'),
                 })
                 .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('background_secondary', this.themeState.currentTheme))
                 .id(`cover_manga_home_${manga.id}`)
@@ -9095,7 +9546,10 @@ struct MainMenuPage {
    * 静默刷新书库（增量更新，避免闪屏）
    * 优化：不加载章节信息，书库只需要基本信息，章节在进入详情页时再加载
    */
-  private async silentRefreshLibrary(enableCollectionLayoutAnimation: boolean = false): Promise<void> {
+  private async silentRefreshLibrary(
+    enableCollectionLayoutAnimation: boolean = false,
+    retryFailedCovers: boolean = false
+  ): Promise<void> {
     try {
       logger.debug(TAG, '静默刷新书库（增量更新，不加载章节）');
 
@@ -9172,6 +9626,10 @@ struct MainMenuPage {
       } else {
         applyUpdates();
         this.refreshRemoteLibraryInBackground();
+      }
+
+      if (retryFailedCovers) {
+        void this.preloadNetworkCovers(this.mangaList, true);
       }
 
       logger.debug(TAG, `静默刷新书库完成：漫画 ${this.mangaList.length} 部，电子书 ${this.ebookList.length} 本，小说 ${this.novelList.length} 本`);
@@ -10592,6 +11050,7 @@ struct MainMenuPage {
     eventBus.unsubscribe(GameEvent.MANGA_IMPORT_COMPLETED, this.mangaImportCompletedListener);
     eventBus.unsubscribe(GameEvent.MANGA_DELETED, this.mangaDeletedListener);
     eventBus.unsubscribe(GameEvent.NOVEL_LIST_REFRESH_NEEDED, this.novelListRefreshNeededListener);
+    eventBus.unsubscribe(GameEvent.EBOOK_LIST_REFRESH_NEEDED, this.ebookListRefreshNeededListener);
   }
 
   /**
@@ -10910,6 +11369,14 @@ struct MainMenuPage {
     }
     this.checkPendingFileImport();
 
+    // [探针] PDF Kit 能力探针自动打开（仅测试用）
+    if (AppStorage.get<boolean>('pdfKitProbeAutoOpen') === true) {
+      AppStorage.setOrCreate('pdfKitProbeAutoOpen', false);
+      logger.info(TAG, 'PDF Kit 能力探针自动打开');
+      this.pathStack.pushPath({ name: 'PdfKitCapabilityProbePage' });
+      return;
+    }
+
     // 检查是否有卡片跳转请求（来自onNewWant或onCreate）
     void this.handleWidgetNavigationIfPresent(this.startupRoutePending);
 
@@ -10923,7 +11390,7 @@ struct MainMenuPage {
         break;
       case TabIndex.LIBRARY:
         // 书库：静默刷新漫画和电子书列表
-        this.silentRefreshLibrary();
+        this.silentRefreshLibrary(false, true);
         break;
       case TabIndex.DISCOVER:
         // 发现页：静默刷新发现页数据
@@ -11090,7 +11557,8 @@ struct MainMenuPage {
   }
   
   private getDefaultVisibleTabIndices(): number[] {
-    return [TabIndex.LIBRARY, TabIndex.SOURCE, TabIndex.BOOK_SOURCE, TabIndex.SUWAYOMI, TabIndex.KOMGA, TabIndex.SETTINGS]
+    // Suwayomi 与 Komga 默认不在底栏显示，可在对应设置页或欢迎引导中开启
+    return [TabIndex.LIBRARY, TabIndex.SOURCE, TabIndex.BOOK_SOURCE, TabIndex.SETTINGS]
       .filter((index: number) => {
         const config = this.tabConfigs.find((item: TabConfig) => item.index === index);
         return config ? this.shouldDisplayTabConfig(config) : false;
@@ -11100,7 +11568,7 @@ struct MainMenuPage {
   private async loadVisibleTabs(): Promise<void> {
     const defaultVisibleTabs = this.getDefaultVisibleTabIndices();
     try {
-      const settingsManager = SettingsManager.getInstance();
+      const settingsManager: ISettingsManagerFacade = SettingsManagerHolder.get();
       const savedTabs = await settingsManager.getVisibleTabs();
       const allowedIndices = this.tabConfigs.map(cfg => cfg.index);
       const filteredDefaultTabs = defaultVisibleTabs.filter((idx: number) => allowedIndices.includes(idx));
@@ -11206,6 +11674,12 @@ struct MainMenuPage {
     void this.refreshMainMenuGuide('source_features_changed');
   }
 
+  onContinuationCacheRevisionChanged(): void {
+    if (this.continuationCacheRevision > 0) {
+      void this.loadRecentReadingList();
+    }
+  }
+
   private onHomeSwitchToLibrary(): void {
     if (this.homeSwitchToLibrary) {
       AppStorage.set<boolean>('home_switch_to_library', false);
@@ -11250,7 +11724,7 @@ struct MainMenuPage {
       // 不再排序，保持用户自定义顺序
       
       // 保存到持久化存储
-      const settingsManager = SettingsManager.getInstance();
+      const settingsManager: ISettingsManagerFacade = SettingsManagerHolder.get();
       await settingsManager.setVisibleTabs(finalIndices);
       // 同步到 AppStorage 以便 UI 响应
       AppStorage.setOrCreate('visible_tabs', finalIndices);
@@ -11501,7 +11975,7 @@ struct MainMenuPage {
    * 优化：不加载章节信息，书库只需要基本信息即可
    * 章节数据在进入详情页时再加载，这样可以大幅提升书库加载速度
    */
-  private async loadMangaList(preloadCovers: boolean = true): Promise<void> {
+  private async loadMangaList(preloadCovers: boolean = true, retryFailedCovers: boolean = false): Promise<void> {
     try {
       this.loadingState.mangaList = true;
       logger.info(TAG, '开始加载漫画列表（不加载章节信息）...');
@@ -11524,7 +11998,7 @@ struct MainMenuPage {
 
       // 预加载网络封面图片（支持AVIF格式）。冷启动首屏路径会延迟到后台补全阶段执行。
       if (preloadCovers) {
-        void this.preloadNetworkCovers(this.mangaList);
+        void this.preloadNetworkCovers(this.mangaList, retryFailedCovers);
       }
 
       // 应用筛选
@@ -11549,16 +12023,16 @@ struct MainMenuPage {
     return `home_cover_preload|${manga.id}|${coverUrl}`;
   }
 
-  private async preloadNetworkCovers(mangaList: Manga[]): Promise<void> {
+  private async preloadNetworkCovers(mangaList: Manga[], userExplicitRequest: boolean = false): Promise<void> {
     const coverManager = getCoverImageManager();
     const networkCovers: string[] = [];
-    const failureKeys: string[] = [];
+    const failureKeysByUrl: Map<string, string[]> = new Map<string, string[]>();
     
     for (const manga of mangaList) {
       const coverUrl = manga.coverImagePath;
       if (coverUrl && (coverUrl.startsWith('http://') || coverUrl.startsWith('https://'))) {
         const failureKey: string = this.buildHomeCoverPreloadFailureKey(manga, coverUrl);
-        if (this.homeCoverFailureTtlCache.shouldSkipBackground(failureKey, false)) {
+        if (this.homeCoverFailureTtlCache.shouldSkipBackground(failureKey, userExplicitRequest)) {
           this.recordHomeLoadFlow(
             HomeLoadFlowEventType.COVER_FAILURE_TTL_HIT,
             HomeLoadFlowStage.COVER,
@@ -11574,7 +12048,12 @@ struct MainMenuPage {
           );
           continue;
         }
-        networkCovers.push(coverUrl);
+        let failureKeys: string[] | undefined = failureKeysByUrl.get(coverUrl);
+        if (!failureKeys) {
+          failureKeys = [];
+          failureKeysByUrl.set(coverUrl, failureKeys);
+          networkCovers.push(coverUrl);
+        }
         failureKeys.push(failureKey);
       }
     }
@@ -11582,15 +12061,40 @@ struct MainMenuPage {
     if (networkCovers.length > 0) {
       logger.info(TAG, `开始预加载 ${networkCovers.length} 个网络封面图片`);
       try {
-        await coverManager.preloadCovers(networkCovers);
-        for (let index: number = 0; index < failureKeys.length; index++) {
-          this.homeCoverFailureTtlCache.clearKey(failureKeys[index]);
-        }
-        logger.info(TAG, `网络封面预加载完成`);
+        await coverManager.preloadCovers(networkCovers, (batchResults: CoverPreloadResult[]) => {
+          const summary = this.homeCoverPreloadResultProcessor.process(
+            batchResults,
+            failureKeysByUrl,
+            this.homeCoverFailureTtlCache
+          );
+          this.localLibraryCoverRenderVersion = this.localLibraryCoverRenderVersion + 1;
+          if (summary.failedCount > 0) {
+            this.recordHomeLoadFlow(
+              HomeLoadFlowEventType.COVER_FAILURE_TTL_RECORDED,
+              HomeLoadFlowStage.COVER,
+              `cover_preload_batch_completed:success=${summary.succeededCount},failed=${summary.failedCount}`,
+              0,
+              false,
+              HomeLoadFlowSeverity.WARN,
+              batchResults.length,
+              summary.succeededCount,
+              summary.failedCount,
+              false,
+              'preload_network_covers'
+            );
+          }
+          logger.info(TAG, `网络封面预加载批次完成: 成功=${summary.succeededCount}, 失败=${summary.failedCount}`);
+        });
       } catch (error) {
-        for (let index: number = 0; index < failureKeys.length; index++) {
-          this.homeCoverFailureTtlCache.recordFailure(failureKeys[index], String(error));
+        for (const coverUrl of networkCovers) {
+          const failureKeys: string[] | undefined = failureKeysByUrl.get(coverUrl);
+          if (failureKeys) {
+            for (const failureKey of failureKeys) {
+              this.homeCoverFailureTtlCache.recordFailure(failureKey, String(error));
+            }
+          }
         }
+        this.localLibraryCoverRenderVersion = this.localLibraryCoverRenderVersion + 1;
         this.recordHomeLoadFlow(
           HomeLoadFlowEventType.COVER_FAILURE_TTL_RECORDED,
           HomeLoadFlowStage.COVER,
@@ -11598,7 +12102,7 @@ struct MainMenuPage {
           0,
           false,
           HomeLoadFlowSeverity.WARN,
-          failureKeys.length,
+          networkCovers.length,
           0,
           0,
           false,
@@ -11620,7 +12124,7 @@ struct MainMenuPage {
     this.loadingState.refreshing = true;
     try {
       await Promise.all([
-        this.loadMangaList(),
+        this.loadMangaList(true, true),
         this.loadEBookList()
       ]);
     } catch (error) {
@@ -11641,7 +12145,7 @@ struct MainMenuPage {
     logger.info(TAG, `[书架视图] 开始下拉刷新 (隐私模式=${this.isPrivacyMode})`);
     try {
       await Promise.all([
-        this.loadMangaList(),
+        this.loadMangaList(true, true),
         this.loadEBookList(),
         this.loadNovelList()
       ]);
@@ -13809,7 +14313,11 @@ struct MainMenuPage {
       return '';
     }
     const normalizedCoverPath: string = coverPath ? coverPath.trim() : '';
-    if (normalizedCoverPath.length > 0 && !this.isNetworkUrl(normalizedCoverPath)) {
+    if (normalizedCoverPath.startsWith('app.media.') || normalizedCoverPath.startsWith('$r(')) {
+      return '';
+    }
+    if (normalizedCoverPath.length > 0 && !this.isNetworkUrl(normalizedCoverPath) &&
+      this.hasAccessibleLocalLibraryCover(normalizedCoverPath)) {
       return '';
     }
     const sourceId: number | undefined = this.getParsedMangaSourceId(manga);
@@ -13878,7 +14386,15 @@ struct MainMenuPage {
       if (persistedCoverPath.length > 0) {
         this.onlineMangaResolvedCoverPaths.set(cacheKey, persistedCoverPath);
         this.onlineMangaDiskCoverMissTimes.delete(cacheKey);
-        if (!this.isNetworkUrl(persistedCoverPath)) {
+        if (this.isNetworkUrl(persistedCoverPath)) {
+          const coverImageManager = getCoverImageManager();
+          if (!coverImageManager.getCachedPixelMap(persistedCoverPath)) {
+            const pixelMap = await coverImageManager.preloadCover(persistedCoverPath);
+            if (!pixelMap) {
+              logger.debug(TAG, `[封面修复] 持久化网络封面暂时无法解码，保留网络路径: ${persistedCoverPath}`);
+            }
+          }
+        } else {
           this.ensureLocalLibraryCoverPrepared(persistedCoverPath);
         }
         this.localLibraryCoverRenderVersion = this.localLibraryCoverRenderVersion + 1;
@@ -14876,23 +15392,7 @@ struct MainMenuPage {
   }
 
   private resolveAppMediaCoverResource(raw: string, fallback: ResourceStr): ResourceStr {
-    const resourceName = raw.substring('app.media.'.length);
-    if (resourceName === 'mangabook') {
-      return $r('app.media.mangabook');
-    }
-    if (resourceName === 'ebook') {
-      return $r('app.media.ebook');
-    }
-    if (resourceName === 'ic_ebook') {
-      return $r('app.media.ic_ebook');
-    }
-    if (resourceName === 'icon') {
-      return $r('app.media.icon');
-    }
-    if (resourceName === 'ic_source_novel' || resourceName === 'ic_novel') {
-      return $r('app.media.ic_source_novel');
-    }
-    return fallback;
+    return resolveMedia(raw);
   }
 
   private normalizeDisplayPathForEBook(ebook: EBook): string {
@@ -17649,6 +18149,8 @@ struct MainMenuPage {
                 imageWidth: '100%',
                 imageHeight: '100%',
                 objectFit: ImageFit.Cover,
+                placeholder: $r('app.media.mangabook'),
+                errorHolder: $r('app.media.mangabook'),
               })
             } else {
               Image(this.getCoverImageSource(manga) || $r('app.media.mangabook'))
@@ -24064,6 +24566,8 @@ struct MainMenuPage {
           imageHeight: '100%',
           objectFit: ImageFit.Cover,
           imageBorderRadius: this.getCoverImageRadius(),
+          placeholder: $r('app.media.mangabook'),
+          errorHolder: $r('app.media.mangabook'),
         })
       } else if (asset.hasRealCover) {
         Image(asset.source)
@@ -24187,7 +24691,8 @@ struct MainMenuPage {
       .hitTestBehavior(this.getMangaSelectionHitTestMode())
       .alignItems(HorizontalAlign.Start)
     }
-    .key(this.getLibraryContentRenderKey(`${anchorScope}_manga_direct_card`, 'manga', manga.id))
+    .key(this.getLibraryContentRenderKey(`${anchorScope}_manga_direct_card`, 'manga', manga.id) +
+      '_cover_' + String(this.localLibraryCoverRenderVersion))
     .width('100%')
     .padding({ left: 2, right: 2, top: 4, bottom: 6 })
     .border({
@@ -24571,6 +25076,8 @@ struct MainMenuPage {
             imageHeight: '100%',
             objectFit: ImageFit.Cover,
             imageBorderRadius: this.getCoverImageRadius(),
+            placeholder: $r('app.media.mangabook'),
+            errorHolder: $r('app.media.mangabook'),
           })
           .backgroundColor(this.getLibraryCoverBackgroundColor('background_secondary'))
           .shadow({
@@ -24712,7 +25219,8 @@ struct MainMenuPage {
       .width('100%')
       .hitTestBehavior(this.getMangaSelectionHitTestMode())
     }
-    .key(this.getLibraryContentRenderKey(`${anchorScope}_manga_grid_card`, 'manga', manga.id))
+    .key(this.getLibraryContentRenderKey(`${anchorScope}_manga_grid_card`, 'manga', manga.id) +
+      '_cover_' + String(this.localLibraryCoverRenderVersion))
     .width('100%')
     .padding(8)
     .backgroundColor(this.getGlassBackground())
@@ -26349,6 +26857,41 @@ struct MainMenuPage {
     logger.info(TAG, `打开漫画阅读器（带翻开动画）: ${manga.title}`);
 
     try {
+      if (this.continuationCacheManager.isCacheId(manga.id)) {
+        const cacheId = manga.id;
+        const record = await this.continuationCacheManager.getRecord(cacheId);
+        const manifest = await this.continuationCacheManager.getManifest(cacheId);
+        const cachedManga = await this.continuationCacheManager.getManga(cacheId);
+        if (!record || !manifest || !cachedManga) {
+          this.showToast('接续缓存已不存在，请刷新最近阅读');
+          return;
+        }
+        let chapterId = cachedManga.readingProgress.currentChapterId;
+        for (const chapter of cachedManga.chapters) {
+          if (chapter.chapterNumber - 1 === record.chapterIndex) {
+            chapterId = chapter.id;
+            break;
+          }
+        }
+        const cacheReaderParams: MangaReaderPageParams = {
+          manga: cachedManga,
+          mangaId: record.sourceBookId,
+          chapterId: chapterId,
+          pageIndex: record.pageIndex,
+          fromPage: 'MainMenuPage',
+          contentType: manifest.isLocal ? MangaReaderContentType.Local : MangaReaderContentType.OnlineUndownloaded,
+          sourceId: this.getParsedMangaSourceId(cachedManga),
+          sourceName: this.getMangaSourceDisplayName(cachedManga),
+          sourcePkg: cachedManga.sourceInfo?.sourcePkg,
+          skipDatabaseLookup: true,
+          continuationCacheId: cacheId,
+          readerTitle: cachedManga.title
+        };
+        if (!openMangaReaderInIsolatedAbility(this.getUIContext(), this.pathStack, cacheReaderParams, TAG, false)) {
+          this.pathStack.pushPathByName('MangaReaderPage', cacheReaderParams);
+        }
+        return;
+      }
       if (this.isRemoteProviderManga(manga)) {
         const target = await this.determineResumeTarget(manga);
         const remoteParams = await this.buildRemoteProviderReaderParams(manga, target, 'MainMenuPage', componentId);
@@ -26567,15 +27110,24 @@ struct MainMenuPage {
   private openEBookReaderWithComponentId(ebook: EBook, componentId: string): void {
     logger.info(TAG, `打开电子书阅读器: ${ebook.metadata.title}`);
 
+    const continuationCacheId = this.continuationCacheManager.isCacheId(ebook.id) ? ebook.id : '';
+    const sourceBookId = continuationCacheId.length > 0
+      ? ebook.readingProgress.bookId
+      : ebook.id;
     const coverPath: string = this.getEBookTransitionCoverPath(ebook);
     const readerParams: EBookReaderParams = {
-      bookId: ebook.id,
+      bookId: sourceBookId,
       coverComponentId: componentId,
-      readerTitle: ebook.metadata.title
+      readerTitle: ebook.metadata.title,
+      continuationCacheId: continuationCacheId
     };
     const txtNovelReaderParams = ebook.format === EBookFormat.TXT
       ? buildNovelReaderParamsFromTxtEBook(ebook, componentId)
       : null;
+    if (txtNovelReaderParams && continuationCacheId.length > 0) {
+      txtNovelReaderParams.continuationCacheId = continuationCacheId;
+      txtNovelReaderParams.localEbookId = sourceBookId;
+    }
 
     const ebookBackground = this.getEBookBackgroundSettings(ebook);
 
@@ -26880,6 +27432,42 @@ struct MainMenuPage {
 
   private async openNovelReaderWithAnimation(novel: NovelBook, coverComponentId: string): Promise<void> {
     try {
+      if (this.continuationCacheManager.isCacheId(novel.id)) {
+        const cacheId = novel.id;
+        const record = await this.continuationCacheManager.getRecord(cacheId);
+        const manifest = await this.continuationCacheManager.getManifest(cacheId);
+        const cachedBook = await this.continuationCacheManager.getNovelBook(cacheId);
+        if (!record || !manifest || !cachedBook) {
+          this.showToast('接续缓存已不存在，请刷新最近阅读');
+          return;
+        }
+        const chapter = manifest.novelChapters.find(
+          (item: NovelChapter): boolean => item.index === record.chapterIndex
+        );
+        const localEbookId = manifest.ebook?.id ||
+          (cachedBook.bookUrl.startsWith('ebook://') ? cachedBook.bookUrl.substring('ebook://'.length) : '');
+        const cachedReaderParams: NovelReaderPageParams = {
+          sourceId: cachedBook.sourceId,
+          bookUrl: cachedBook.bookUrl,
+          bookName: cachedBook.name,
+          chapterUrl: chapter?.url || cachedBook.bookUrl,
+          chapterTitle: chapter?.title || record.title,
+          chapterIndex: record.chapterIndex,
+          totalChapters: manifest.chapterCount,
+          chapterPageIndex: record.pageIndex,
+          chapterStartOffset: record.offset,
+          tocUrl: cachedBook.tocUrl || cachedBook.bookUrl,
+          author: cachedBook.author,
+          coverUrl: cachedBook.coverLocalPath || cachedBook.coverUrl || '',
+          sourceName: cachedBook.sourceName,
+          coverComponentId: coverComponentId,
+          localEbookId: localEbookId,
+          continuationCacheId: cacheId,
+          readerTitle: cachedBook.name
+        };
+        this.pathStack.pushPathByName('NovelReaderPage', cachedReaderParams);
+        return;
+      }
       if (!novel.sourceId || !novel.bookUrl) {
         this.showToast('小说信息不完整，已打开详情页');
         this.openNovelDetail(novel);
@@ -32804,11 +33392,11 @@ struct MainMenuPage {
   @Builder
   buildNavDestination(name: string, param: ESObject) {
     Column() {
-      // 测试页面导航已移除
-      // if (name === 'TestManagementPage') {
-      //   TestManagementPage()
-      // } else
-      if (name === 'DataManagementPage') {
+      if (name === 'TestManagementPage') {
+        TestManagementPage()
+      } else if (name === 'PdfKitCapabilityProbePage') {
+        PdfKitCapabilityProbePage()
+      } else if (name === 'DataManagementPage') {
         DataManagementPage()
       } else if (name === 'RemoteControlPage') {
         RemoteControlPage()
@@ -32848,6 +33436,8 @@ struct MainMenuPage {
         NGFFrameworkStatusPage()
       } else if (name === 'GlobalSettingsPage') {
         GlobalSettingsPage()
+      } else if (name === 'ContinuationReadingSettingsPage') {
+        ContinuationReadingSettingsPage()
       } else if (name === 'ReadingSettingsSubPage') {
         ReadingSettingsSubPage()
       } else if (name === 'NetworkSettingsSubPage') {
@@ -34962,11 +35552,12 @@ struct MainMenuPage {
         // 后台任务悬浮球
         TaskFloatingBall()
 
-        // 全局WebView容器（隐藏，用于后台WebView操作）
+        // 全局WebView容器（不可见，但必须可挂载 Web，否则 controller 无法 loadUrl）
         WebViewContainer()
-          .width(0)
-          .height(0)
-          .visibility(Visibility.None)
+          .width(1)
+          .height(1)
+          .opacity(0)
+          .position({ x: -10000, y: -10000 })
 
         if (this.mainMenuReentryShieldVisible) {
           Stack() {
@@ -35004,7 +35595,54 @@ struct MainMenuPage {
     WindowModeTransitionOverlay()
 
     BookTransitionOverlay()
-    
+
+    if (this.continuationTransferVisible) {
+      Stack({ alignContent: Alignment.Center }) {
+        Column()
+          .width('100%')
+          .height('100%')
+          .backgroundColor($r('app.color.background_overlay'))
+          .opacity(0.72)
+
+        Column({ space: 12 }) {
+          Text('接续阅读')
+            .fontSize(18)
+            .fontWeight(FontWeight.Bold)
+            .fontFamily(this.appFontFamily)
+            .fontColor($r('sys.color.font_primary'))
+          Text(this.continuationTransferText)
+            .fontSize(14)
+            .fontFamily(this.appFontFamily)
+            .fontColor($r('sys.color.font_secondary'))
+            .maxLines(2)
+            .textOverflow({ overflow: TextOverflow.Ellipsis })
+          if (this.continuationTransferPercent <= 0) {
+            LoadingProgress()
+              .width(28)
+              .height(28)
+          }
+          Progress({ value: this.continuationTransferPercent, total: 100 })
+            .width('100%')
+          Button(this.continuationTransferCancelable ? '取消接续' : '正在处理…')
+            .enabled(this.continuationTransferCancelable)
+            .onClick(() => {
+              if (this.continuationTransferCancelable) {
+                this.continuationTransferCancelled = true;
+                RemoteControlSocketChannel.getInstance().cancelFileRequest();
+              }
+            })
+        }
+        .width('82%')
+        .constraintSize({ maxWidth: 420 })
+        .padding(20)
+        .backgroundColor($r('app.color.background_primary'))
+        .borderRadius(8)
+      }
+      .width('100%')
+      .height('100%')
+      .zIndex(9800)
+    }
+
     // 全局帮助面板覆盖层
     HelpPanelOverlayV2({
       themeState: this.themeState,

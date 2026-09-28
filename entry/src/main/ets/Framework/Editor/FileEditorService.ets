@@ -5,12 +5,12 @@
  */
 
 import { fileIo } from '@kit.CoreFileKit';
-import { logger } from '../../Utils/Logger';
+import { logger } from 'manxia_core/src/main/ets/Utils/Logger';
 // 导入util模块
 import { util } from '@kit.ArkTS';
 import { SourceManager } from '../Source/SourceManager';
 import { getNovelSourceManager } from '../Novel/NovelSourceManager';
-import { LegadoSourceImportResult } from '../Novel/LegadoSourceTypes';
+import { LegadoSourceImportResult } from 'manxia_novel/src/main/ets/Framework/Novel/LegadoSourceTypes';
 
 const TAG = 'FileEditorService';
 

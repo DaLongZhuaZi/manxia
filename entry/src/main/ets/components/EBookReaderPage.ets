@@ -1,4 +1,4 @@
-﻿import { SafeUtils } from '../Utils/SafeUtils';
+import { SafeUtils } from 'manxia_core/src/main/ets/Utils/SafeUtils';
 // 文件路径: entry/src/main/ets/pages/EBookReaderPage.ets
 /**
  * 电子书阅读器页面
@@ -6,21 +6,24 @@
  * 采用与漫画阅读器一致的沉浸式设计风格
  */
 
-import { logger } from '../Utils/Logger';
+import { logger } from 'manxia_core/src/main/ets/Utils/Logger';
 import { ReaderSafeAreaUtils } from '../Utils/ReaderSafeAreaUtils';
-import { ReaderOrientationLockHelper } from '../Utils/ReaderOrientationLockHelper';
-import { ThemeAwareState, ThemeAwareHelper } from '../Framework/Components/ThemeAware';
-import { ThemeManager, ThemeType, GlassEffectContext } from '../Framework/Managers/ThemeManager';
-import { WindowManager, DisplayMode } from '../Utils/WindowManager';
-import { EBook, EBookChapter, EBookReadingProgress, EBookReadingSettings, EBookPageMode, EBookFormat, DEFAULT_EBOOK_READING_SETTINGS, EBOOK_THEME_PRESETS, EBookThemePreset } from '../Models/EBookModels';
-import { SettingsManager, SettingKeys } from '../Framework/Managers/SettingsManager';
-import { EBookDataManager } from '../Framework/Data/EBookDataManager';
+import { ReaderOrientationLockHelper, ReaderOrientationLockScope } from 'manxia_core/src/main/ets/Utils/ReaderOrientationLockHelper';
+import { ReaderToolbarImageButton } from './ReaderToolbarButton';
+import { ThemeAwareState, ThemeAwareHelper } from 'manxia_theme/src/main/ets/Framework/Components/ThemeAware';
+import { ThemeManager, ThemeType, GlassEffectContext } from 'manxia_theme/src/main/ets/Framework/Managers/ThemeManager';
+import { WindowManager, DisplayMode } from 'manxia_theme/src/main/ets/Utils/WindowManager';
+import { EBook, EBookChapter, EBookReadingProgress, EBookReadingSettings, EBookPageMode, EBookFormat, DEFAULT_EBOOK_READING_SETTINGS, EBOOK_THEME_PRESETS, EBookThemePreset } from 'manxia_core/src/main/ets/Models/EBookModels';
+import { SettingsManager, SettingKeys } from 'manxia_core/src/main/ets/Framework/Managers/SettingsManager';
+import { EBookDataManager } from 'manxia_core/src/main/ets/Framework/Data/EBookDataManager';
+import { ContinuationCacheManager } from '../Framework/Distributed/ContinuationCacheManager';
 import { PdfViewerComponent } from '../Framework/Components/PdfViewerComponent';
 import { PdfKitViewerComponent, PdfViewerCallbacks } from '../Framework/Components/PdfKitViewerComponent';
 import { isReaderKitEnabled } from '../Framework/Initialization/ReaderKitFeatureGate';
-import { EBookReadingSettingsPanel } from '../Framework/Components/EBookReadingSettingsPanel';
+import { EBookReadingSettingsPanel } from 'manxia_theme/src/main/ets/Framework/Components/EBookReadingSettingsPanel';
 import { curves, UIContext } from '@kit.ArkUI';
 import { display } from '@kit.ArkUI';
+import { resolveMedia } from 'manxia_ui_resources/src/main/ets/ResourceCatalog';
 import { TextReaderComponent } from '../components/TextReaderComponent';
 import { TextReaderSettingsPanel } from '../components/TextReaderSettingsPanel';
 import {
@@ -38,7 +41,7 @@ import {
   TextChapter,
   PRESET_BACKGROUNDS,
   PresetBackground
-} from '../Models/TextReaderModels';
+} from 'manxia_core/src/main/ets/Models/TextReaderModels';
 import { eventBus, GameEvent, BasePayload } from '../Framework/EventBus';
 import { KeyCode, inputConsumer } from '@kit.InputKit';
 import type { KeyEvent as InputKeyEvent } from '@kit.InputKit';
@@ -56,6 +59,7 @@ interface ReaderKitViewerControllerLike {
  */
 export interface EBookReaderParams {
   bookId: string;
+  continuationCacheId?: string;
 }
 
 @Component
@@ -75,6 +79,7 @@ struct EBookReaderPage {
   @State currentChapterIndex: number = 0;
   @State isLoading: boolean = true;
   @State errorMessage: string = '';
+  private continuationCacheId: string = '';
 
   // 阅读设置
   @State fontSize: number = 18;
@@ -419,8 +424,9 @@ struct EBookReaderPage {
 
       logger.info(TAG, `开始加载电子书: ${bookId}`);
       
-      // 从数据库加载电子书
-      const ebook = await this.ebookDataManager.getEBookById(bookId);
+      const ebook = this.continuationCacheId.length > 0
+        ? await ContinuationCacheManager.getInstance().getEBook(this.continuationCacheId)
+        : await this.ebookDataManager.getEBookById(bookId);
       
       if (!ebook) {
         throw new Error('电子书不存在');
@@ -777,9 +783,15 @@ struct EBookReaderPage {
     }
     let enabled: boolean = false;
     if (this.isUsingTextReader()) {
-      enabled = this.textReaderSettings.lockDeviceOrientation ?? false;
+      enabled = ReaderOrientationLockHelper.resolveOrientationLockEnabled(
+        ReaderOrientationLockScope.TEXT,
+        this.textReaderSettings.lockDeviceOrientation ?? false
+      );
     } else {
-      enabled = this.ebook?.readingSettings?.lockDeviceOrientation ?? false;
+      enabled = ReaderOrientationLockHelper.resolveOrientationLockEnabled(
+        ReaderOrientationLockScope.EBOOK,
+        this.ebook?.readingSettings?.lockDeviceOrientation ?? false
+      );
     }
     this.orientationLockToken = ReaderOrientationLockHelper.syncCurrentOrientationLock(
       'EBookReaderPage',
@@ -912,7 +924,7 @@ struct EBookReaderPage {
       }
 
       // 保存到数据库
-      await this.ebookDataManager.saveReadingSettings(this.ebook.id, settings);
+      await this.persistReadingSettings(settings);
       logger.info(TAG, '阅读设置已保存');
     } catch (error) {
       logger.error(TAG, `保存阅读设置失败: ${String(error)}`);
@@ -940,7 +952,7 @@ struct EBookReaderPage {
     }
 
     // 异步保存到数据库
-    this.ebookDataManager.saveReadingSettings(this.ebook.id, this.ebook.readingSettings)
+    this.persistReadingSettings(this.ebook.readingSettings)
       .then(() => logger.debug(TAG, '设置已保存'))
       .catch((error: Error) => logger.error(TAG, `保存设置失败: ${error.message}`));
   }
@@ -1006,7 +1018,16 @@ struct EBookReaderPage {
         totalReadingTime: totalReadingTime
       };
 
-      await this.ebookDataManager.saveReadingProgress(progress);
+      if (this.continuationCacheId.length > 0) {
+        await ContinuationCacheManager.getInstance().updateProgress(this.continuationCacheId, {
+          chapterIndex: this.currentChapterIndex,
+          pageIndex: this.textCurrentPageIndex,
+          offset: currentPosition,
+          lastReadTime: progress.lastReadTime
+        });
+      } else {
+        await this.ebookDataManager.saveReadingProgress(progress);
+      }
       
       // 更新内存中的阅读进度
       if (this.ebook.readingProgress) {
@@ -1017,6 +1038,17 @@ struct EBookReaderPage {
     } catch (error) {
       logger.error(TAG, '保存阅读进度失败', String(error instanceof Error ? error.message : error));
     }
+  }
+
+  private async persistReadingSettings(settings: EBookReadingSettings): Promise<void> {
+    if (!this.ebook) {
+      return;
+    }
+    if (this.continuationCacheId.length > 0) {
+      await ContinuationCacheManager.getInstance().updateEBookSettings(this.continuationCacheId, settings);
+      return;
+    }
+    await this.ebookDataManager.saveReadingSettings(this.ebook.id, settings);
   }
 
   // 上次保存进度的时间戳，用于防抖
@@ -1479,6 +1511,7 @@ struct EBookReaderPage {
       
       const params = context.pathInfo.param as EBookReaderParams | null;
       if (params && params.bookId) {
+        this.continuationCacheId = params.continuationCacheId || '';
         this.loadEBook(params.bookId);
       } else {
         this.errorMessage = '缺少电子书ID参数';
@@ -1745,15 +1778,7 @@ struct EBookReaderPage {
     
     // 检查是否为应用资源路径 (app.media.xxx)
     if (raw.startsWith('app.media.')) {
-      const resourceName = raw.substring('app.media.'.length);
-      if (resourceName === 'mangabook') {
-        return $r('app.media.mangabook');
-      } else if (resourceName === 'ic_ebook') {
-        return $r('app.media.ic_ebook');
-      } else if (resourceName === 'icon') {
-        return $r('app.media.icon');
-      }
-      return $r('app.media.ic_ebook');
+      return resolveMedia(raw);
     }
     
     // 本地文件路径
@@ -1809,7 +1834,16 @@ struct EBookReaderPage {
         totalReadingTime: 0
       };
       
-      await this.ebookDataManager.saveReadingProgress(readingProgress);
+      if (this.continuationCacheId.length > 0) {
+        await ContinuationCacheManager.getInstance().updateProgress(this.continuationCacheId, {
+          chapterIndex: this.currentChapterIndex,
+          pageIndex: pageIndex,
+          offset: pageIndex,
+          lastReadTime: readingProgress.lastReadTime
+        });
+      } else {
+        await this.ebookDataManager.saveReadingProgress(readingProgress);
+      }
       logger.debug(TAG, `保存文本阅读进度: 章节=${this.currentChapterIndex}, 页码=${pageIndex}`);
     } catch (error) {
       logger.error(TAG, `保存文本阅读进度失败: ${String(error)}`);
@@ -1954,7 +1988,7 @@ struct EBookReaderPage {
       settings.showBattery = this.textReaderSettings.showBattery;
 
       // 保存到数据库
-      await this.ebookDataManager.saveReadingSettings(this.ebook.id, settings);
+      await this.persistReadingSettings(settings);
       logger.info(TAG, `文本阅读器设置已保存: volumeKeyNavigation=${settings.volumeKeyNavigation}, bgType=${settings.backgroundType}, bgColor=${settings.backgroundColor}, textColor=${settings.textColor}, bgImagePath=${settings.backgroundImagePath}`);
     } catch (error) {
       logger.error(TAG, `保存文本阅读器设置失败: ${String(error)}`);
@@ -1968,16 +2002,13 @@ struct EBookReaderPage {
   buildTopToolbar() {
     Row() {
       // 返回按钮
-      Button() {
-        Image($r('app.media.ic_arrow_back'))
-          .width(24)
-          .height(24)
-          .fillColor($r('app.color.text_primary'))
-      }
-      .width(48)
-      .height(48)
-      .backgroundColor(Color.Transparent)
-      .onClick(() => this.goBack())
+      ReaderToolbarImageButton({
+        icon: $r('app.media.ic_arrow_back'),
+        label: '返回',
+        fillColor: $r('app.color.text_primary'),
+        iconSize: 24,
+        onAction: () => this.goBack()
+      })
 
       // 标题区域 - 只显示书名，章节信息移到底部
       Text(this.ebook?.metadata.title || '电子书阅读器')
@@ -1990,17 +2021,14 @@ struct EBookReaderPage {
         .margin({ left: 12 })
 
       // 菜单按钮
-      Button() {
-        Image($r('app.media.ic_more_vert'))
-          .width(24)
-          .height(24)
-          .fillColor($r('app.color.text_primary'))
-      }
-      .width(48)
-      .height(48)
-      .backgroundColor(Color.Transparent)
-      .onClick(() => {
-        this.showMoreMenuWithAnimation();
+      ReaderToolbarImageButton({
+        icon: $r('app.media.ic_more_vert'),
+        label: '更多',
+        fillColor: $r('app.color.text_primary'),
+        iconSize: 24,
+        onAction: () => {
+          this.showMoreMenuWithAnimation();
+        }
       })
     }
     .width('100%')
@@ -2058,18 +2086,16 @@ struct EBookReaderPage {
       // 控制按钮区域 - 根据阅读器类型显示不同按钮
       Row() {
         // 目录按钮
-        Button() {
-          Image($r('app.media.ic_reading_settings'))
-            .width(24)
-            .height(24)
-            .fillColor($r('app.color.text_primary'))
-        }
-        .width(64)
-        .height(48)
-        .backgroundColor(Color.Transparent)
-        .onClick(() => {
-          logger.info(TAG, `目录按钮被点击，当前章节: ${this.currentChapterIndex}`);
-          this.showChapterListWithAnimation();
+        ReaderToolbarImageButton({
+          icon: $r('app.media.ic_reading_settings'),
+          label: '目录',
+          fillColor: $r('app.color.text_primary'),
+          iconSize: 24,
+          buttonWidth: 64,
+          onAction: () => {
+            logger.info(TAG, `目录按钮被点击，当前章节: ${this.currentChapterIndex}`);
+            this.showChapterListWithAnimation();
+          }
         })
 
         Blank()
@@ -2077,48 +2103,40 @@ struct EBookReaderPage {
         // 根据文件格式显示不同的设置按钮
         if (this.isUsingTextReader()) {
           // 纯文本阅读器：显示综合设置按钮
-          Button() {
-            Image($r('app.media.ic_brightness_high'))
-              .width(24)
-              .height(24)
-              .fillColor($r('app.color.text_primary'))
-          }
-          .width(64)
-          .height(48)
-          .backgroundColor(Color.Transparent)
-          .onClick(() => {
-            this.showTextReaderSettingsWithAnimation();
+          ReaderToolbarImageButton({
+            icon: $r('app.media.ic_brightness_high'),
+            label: '设置',
+            fillColor: $r('app.color.text_primary'),
+            iconSize: 24,
+            buttonWidth: 64,
+            onAction: () => {
+              this.showTextReaderSettingsWithAnimation();
+            }
           })
         } else {
           // 电子书阅读器：显示字体和阅读设置按钮
           // 字体设置按钮
-          Button() {
-            Image($r('app.media.ic_book'))
-              .width(24)
-              .height(24)
-              .fillColor($r('app.color.text_primary'))
-          }
-          .width(48)
-          .height(48)
-          .backgroundColor(Color.Transparent)
-          .onClick(() => {
-            this.showFontSettingsPanelWithAnimation();
+          ReaderToolbarImageButton({
+            icon: $r('app.media.ic_book'),
+            label: '字体',
+            fillColor: $r('app.color.text_primary'),
+            iconSize: 24,
+            onAction: () => {
+              this.showFontSettingsPanelWithAnimation();
+            }
           })
 
           Blank()
 
           // 阅读设置按钮（主题、翻页等）
-          Button() {
-            Image($r('app.media.ic_brightness_high'))
-              .width(24)
-              .height(24)
-              .fillColor($r('app.color.text_primary'))
-          }
-          .width(48)
-          .height(48)
-          .backgroundColor(Color.Transparent)
-          .onClick(() => {
-            this.showReadingOptionsPanelWithAnimation();
+          ReaderToolbarImageButton({
+            icon: $r('app.media.ic_brightness_high'),
+            label: '阅读',
+            fillColor: $r('app.color.text_primary'),
+            iconSize: 24,
+            onAction: () => {
+              this.showReadingOptionsPanelWithAnimation();
+            }
           })
         }
       }

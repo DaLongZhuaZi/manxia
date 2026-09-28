@@ -1,9 +1,9 @@
 import { describe, beforeAll, beforeEach, afterEach, afterAll, it, expect } from '@ohos/hypium';
 import { ChapterOrderRuleSorter, ChapterRuleSortResult } from '../main/ets/Framework/Services/ChapterOrderRuleSorter';
 import { TxtTocRule } from '../main/ets/Framework/Novel/NovelTxtTocRuleManager';
-import { DEFAULT_TXT_TOC_RULES, TxtTocRule as SettingsTxtTocRule } from '../main/ets/Framework/Novel/NovelSettingsManager';
-import { UnifiedChapter, UnifiedContentType } from '../main/ets/Models/UnifiedContentModels';
-import { getGlobalSearchFlowMonitor, GlobalSearchFlowMonitor } from '../main/ets/Framework/Search/GlobalSearchFlowMonitor';
+import { DEFAULT_TXT_TOC_RULES, TxtTocRule as SettingsTxtTocRule } from 'manxia_core/src/main/ets/Framework/Novel/NovelSettingsManager';
+import { UnifiedChapter, UnifiedContentType } from 'manxia_core/src/main/ets/Models/UnifiedContentModels';
+import { getGlobalSearchFlowMonitor, GlobalSearchFlowMonitor } from 'manxia_source_engine/src/main/ets/Framework/Search/GlobalSearchFlowMonitor';
 import {
   GlobalSearchFlowEvent,
   GlobalSearchFlowEventType,
@@ -11,14 +11,14 @@ import {
   GlobalSearchFlowSeverity,
   GlobalSearchFlowSnapshot,
   GlobalSearchFlowSummary
-} from '../main/ets/Framework/Search/GlobalSearchFlowTypes';
+} from 'manxia_source_engine/src/main/ets/Framework/Search/GlobalSearchFlowTypes';
 import {
   buildGlobalSearchCacheKey,
   createGlobalSearchCacheData,
   GlobalSearchCacheData,
   GlobalSearchCachedComicInfo
-} from '../main/ets/Framework/Search/GlobalSearchCacheBridge';
-import { getImportFlowMonitor, ImportFlowMonitor } from '../main/ets/Framework/Import/ImportFlowMonitor';
+} from 'manxia_source_engine/src/main/ets/Framework/Search/GlobalSearchCacheBridge';
+import { getImportFlowMonitor, ImportFlowMonitor } from 'manxia_core/src/main/ets/Framework/Import/ImportFlowMonitor';
 import {
   ImportFlowContentType,
   ImportFlowEntrySource,
@@ -28,12 +28,11 @@ import {
   ImportFlowSeverity,
   ImportFlowSnapshot,
   ImportFlowSummary
-} from '../main/ets/Framework/Import/ImportFlowTypes';
+} from 'manxia_core/src/main/ets/Framework/Import/ImportFlowTypes';
 import { getImportArchiveParseCache, ImportArchiveParseCache } from '../main/ets/Framework/Import/ImportArchiveParseCache';
 import { getImportDuplicateDetectionCache, ImportDuplicateDetectionCache } from '../main/ets/Framework/Import/ImportDuplicateDetectionCache';
-import { ParsedArchiveStructure as CompressionParsedStructure } from '../main/ets/Utils/CompressionUtils';
 import { ExistingMangaCandidate } from '../main/ets/Framework/Components/MangaImportDialog';
-import { getDownloadCacheFlowMonitor, DownloadCacheFlowMonitor } from '../main/ets/Framework/Download/DownloadCacheFlowMonitor';
+import { getDownloadCacheFlowMonitor, DownloadCacheFlowMonitor } from 'manxia_network/src/main/ets/Framework/Download/DownloadCacheFlowMonitor';
 import {
   DownloadCacheContentType,
   DownloadCacheEntrySource,
@@ -44,13 +43,13 @@ import {
   DownloadCacheFlowSnapshot,
   DownloadCacheFlowStage,
   DownloadCacheFlowSummary
-} from '../main/ets/Framework/Download/DownloadCacheFlowTypes';
-import { getDownloadCacheFailureTtlCache, DownloadCacheFailureTtlCache } from '../main/ets/Framework/Download/DownloadCacheFailureTtlCache';
+} from 'manxia_network/src/main/ets/Framework/Download/DownloadCacheFlowTypes';
+import { getDownloadCacheFailureTtlCache, DownloadCacheFailureTtlCache } from 'manxia_network/src/main/ets/Framework/Download/DownloadCacheFailureTtlCache';
 import {
   DownloadCacheLimiterPermit,
   DownloadCacheSourceLimiter,
   getDownloadCacheSourceLimiter
-} from '../main/ets/Framework/Download/DownloadCacheSourceLimiter';
+} from 'manxia_network/src/main/ets/Framework/Download/DownloadCacheSourceLimiter';
 import {
   CacheStatusIncrementalChapter,
   CacheStatusIncrementalStats,
@@ -71,6 +70,7 @@ import {
   HomeLoadFlowSummary
 } from '../main/ets/Framework/Home/HomeLoadFlowTypes';
 import { getHomeCoverFailureTtlCache, HomeCoverFailureTtlCache } from '../main/ets/Framework/Home/HomeCoverFailureTtlCache';
+import { HomeCoverPreloadResultProcessor } from '../main/ets/Framework/Home/HomeCoverPreloadResultProcessor';
 import {
   buildMangaImageRetryKey,
   MangaImageRetryCoordinator,
@@ -87,8 +87,30 @@ import {
   MangaAssetRequestContext,
   MangaAssetRequestFactory
 } from '../main/ets/Framework/Reader/MangaAssetRequestFactory';
-import { ImageSourceType, MangaChapter, MangaPage } from '../main/ets/Models/MangaModels';
+import { DEFAULT_READING_SETTINGS, ImageSourceType, MangaChapter, MangaPage } from 'manxia_core/src/main/ets/Models/MangaModels';
 import { MangaPageLoadResolver, MangaPageResolveContext } from '../main/ets/components/MangaPageLoadResolver';
+import { MangaImageFitLayout, MangaImageFitMode, MangaImageFitPlanner, resolveMangaImageFitMode } from '../main/ets/components/MangaImageFitPlanner';
+import { CoverPreloadResult } from '../main/ets/Framework/Image/CoverImageManager';
+import { TransferredBookValidation } from '../main/ets/Framework/Services/TransferredBookValidation';
+import {
+  ContinuationReadingSettings,
+  ContinuationTransferFile,
+  ContinuationTransferManifest,
+  ContinuationTransferMode,
+  ContinuationTransferRequest,
+  normalizeContinuationReadingSettings,
+  resolveContinuationTransferMode
+} from '../main/ets/Framework/Distributed/ContinuationReadingTypes';
+import {
+  isContinuationManifestCompatible,
+  normalizeContinuationPackagePath
+} from '../main/ets/Framework/Distributed/ContinuationTransferManifestValidator';
+import {
+  MangaTransferBundle,
+  RemoteComicMetadata
+} from '../main/ets/Framework/Distributed/MangaTransferTypes';
+import { EBook, EBookChapter, EBookFormat, EBookMetadata } from 'manxia_core/src/main/ets/Models/EBookModels';
+import { DetectedChapterInfo, ParsedArchiveStructure as CompressionParsedStructure } from 'manxia_core/src/main/ets/Utils/CompressionUtils';
 import { WebtoonPageRef } from '../main/ets/components/MangaWebtoonTypes';
 
 function createTestChapter(id: string, title: string, index: number): UnifiedChapter {
@@ -170,6 +192,26 @@ class TestDataChangeListener implements DataChangeListener {
   public moveCount: number = 0;
 
   public onDataReloaded(): void {
+    this.reloadCount = this.reloadCount + 1;
+  }
+
+  public onDataAdded(_index: number): void {
+    this.addCount = this.addCount + 1;
+  }
+
+  public onDataMoved(_from: number, _to: number): void {
+    this.moveCount = this.moveCount + 1;
+  }
+
+  public onDataDeleted(_index: number): void {
+    this.deleteCount = this.deleteCount + 1;
+  }
+
+  public onDataChanged(_index: number): void {
+    this.changeCount = this.changeCount + 1;
+  }
+
+  public onDatasetChange(_operations: DataOperation[]): void {
     this.reloadCount = this.reloadCount + 1;
   }
 
@@ -396,16 +438,7 @@ export default function localUnitTest() {
     it('importArchiveParseCacheStoresSuccessfulParseOnly', 0, () => {
       const cache: ImportArchiveParseCache = getImportArchiveParseCache();
       cache.clear();
-      const parsed: CompressionParsedStructure = {
-        hasComicInfo: false,
-        isMultiLayer: false,
-        detectedChapters: [],
-        rootImageCount: 1,
-        totalImageCount: 3,
-        extractedPath: '/tmp/unit',
-        tempDirectories: [],
-        warnings: []
-      };
+      const parsed: TestCompressionParsedStructure = new TestCompressionParsedStructure();
       cache.set('file://unit.cbz', parsed);
       const hit = cache.get('file://unit.cbz');
       const miss = cache.get('file://missing.cbz');
@@ -651,6 +684,113 @@ export default function localUnitTest() {
       cache.clear();
     });
 
+    it('mangaImageFitPlannerPreservesAspectAndReportsOverflow', 0, () => {
+      const planner: MangaImageFitPlanner = new MangaImageFitPlanner();
+      const fitWidth: MangaImageFitLayout = planner.resolve('fit_width', 800, 1000, 400, 600, 2);
+      expect(fitWidth.width).assertEqual(400);
+      expect(fitWidth.height).assertEqual(500);
+      expect(fitWidth.overflowX).assertFalse();
+      expect(fitWidth.overflowY).assertFalse();
+
+      const fitHeight: MangaImageFitLayout = planner.resolve('fit_height', 800, 1000, 400, 600, 2);
+      expect(fitHeight.width).assertEqual(480);
+      expect(fitHeight.height).assertEqual(600);
+      expect(fitHeight.overflowX).assertTrue();
+      expect(fitHeight.overflowY).assertFalse();
+
+      const original: MangaImageFitLayout = planner.resolve('original', 800, 1000, 400, 600, 2);
+      expect(original.width).assertEqual(400);
+      expect(original.height).assertEqual(500);
+      expect(original.usedFallback).assertFalse();
+
+      const tallPage: MangaImageFitLayout = planner.resolve('fit_width', 600, 1200, 400, 600, 2);
+      expect(tallPage.overflowY).assertTrue();
+      expect(resolveMangaImageFitMode('unsupported')).assertEqual(MangaImageFitMode.FIT_WIDTH);
+      expect(DEFAULT_READING_SETTINGS.fitMode).assertEqual(MangaImageFitMode.FIT_WIDTH);
+
+      const unknownDimensions: MangaImageFitLayout = planner.resolve('fit_height', 0, 0, 400, 600, 2);
+      expect(unknownDimensions.usedFallback).assertTrue();
+      expect(unknownDimensions.width).assertEqual(400);
+      expect(unknownDimensions.height).assertEqual(600);
+    });
+
+    it('coverPreloadBatchResultTracksPartialSuccess', 0, () => {
+      const results: CoverPreloadResult[] = [
+        new CoverPreloadResult('https://example.test/cover-a.jpg', true),
+        new CoverPreloadResult('https://example.test/cover-b.jpg', false)
+      ];
+      expect(results.length).assertEqual(2);
+      expect(results[0].succeeded).assertTrue();
+      expect(results[1].succeeded).assertFalse();
+
+      const failureCache: HomeCoverFailureTtlCache = getHomeCoverFailureTtlCache();
+      failureCache.clear();
+      failureCache.recordFailure('cover-a-manga-1', 'old failure', 1000);
+      failureCache.recordFailure('cover-a-manga-2', 'old failure', 1000);
+      const keysByUrl: Map<string, string[]> = new Map<string, string[]>();
+      keysByUrl.set('https://example.test/cover-a.jpg', ['cover-a-manga-1', 'cover-a-manga-2']);
+      keysByUrl.set('https://example.test/cover-b.jpg', ['cover-b-manga']);
+
+      const processor: HomeCoverPreloadResultProcessor = new HomeCoverPreloadResultProcessor();
+      const summary = processor.process(results, keysByUrl, failureCache, 2000);
+      expect(summary.succeededCount).assertEqual(1);
+      expect(summary.failedCount).assertEqual(1);
+      expect(failureCache.shouldSkipBackground('cover-a-manga-1', false, 2001)).assertFalse();
+      expect(failureCache.shouldSkipBackground('cover-a-manga-2', false, 2001)).assertFalse();
+      expect(failureCache.shouldSkipBackground('cover-b-manga', false, 2001)).assertTrue();
+      expect(failureCache.getMessage('cover-b-manga')).assertEqual('预加载未返回 PixelMap');
+      failureCache.clear();
+    });
+
+    it('transferredPdfValidationAcceptsParsedPagesWithoutMetadataTitle', 0, () => {
+      const metadata: EBookMetadata = {
+        title: '',
+        author: '',
+        publisher: '',
+        publishDate: '',
+        isbn: '',
+        language: '',
+        description: '',
+        coverImagePath: '',
+        tags: [],
+        rating: 0
+      };
+      const pageChapter: EBookChapter = {
+        id: 'pdf_page_parser-book_0',
+        bookId: 'parser-book',
+        chapterNumber: 1,
+        title: '第 1 页',
+        content: '',
+        startPosition: 0,
+        endPosition: 1,
+        wordCount: 0,
+        createTime: 1
+      };
+      const validPdf: EBook = new EBook(
+        'parser-book', EBookFormat.PDF, '/tmp/parser-book.pdf', 1024, metadata, [pageChapter]
+      );
+      const validator: TransferredBookValidation = new TransferredBookValidation();
+      expect(validator.hasUsablePdfPages(validPdf)).assertTrue();
+      expect(validator.getPdfFallbackTitle('C:\\Books\\source-report.pdf', 'target-id')).assertEqual('source-report');
+
+      const fallbackChapter: EBookChapter = {
+        id: 'pdf_chapter_1',
+        bookId: 'empty-pdf',
+        chapterNumber: 1,
+        title: '全文',
+        content: '',
+        startPosition: 0,
+        endPosition: 0,
+        wordCount: 0,
+        createTime: 1
+      };
+      const invalidPdf: EBook = new EBook(
+        'empty-pdf', EBookFormat.PDF, '/tmp/empty-pdf.pdf', 1024, metadata, [fallbackChapter]
+      );
+      expect(validator.hasUsablePdfPages(invalidPdf)).assertFalse();
+      expect(validator.getPdfFallbackTitle('', 'target-id')).assertEqual('PDF文档');
+    });
+
     it('mangaImageRetryCoordinatorTransitionsToForceRefresh', 0, () => {
       const coordinator: MangaImageRetryCoordinator = new MangaImageRetryCoordinator();
       const key: string = buildMangaImageRetryKey('chapter-1', 'page-1');
@@ -760,4 +900,131 @@ export default function localUnitTest() {
       expect(resolver.resolveManagedPageIndex(page, -1, webtoonContext)).assertEqual(12);
     });
   });
+
+  describe('Continuation reading policy and transfer manifest', () => {
+    it('defaultsToReadOnlyAndFallsBackToEnabledMode', 0, () => {
+      const defaults: ContinuationReadingSettings = {
+        readOnlyEnabled: true,
+        importToLibraryEnabled: true,
+        defaultMode: ContinuationTransferMode.READ_ONLY
+      };
+      expect(resolveContinuationTransferMode(defaults)).assertEqual(ContinuationTransferMode.READ_ONLY);
+
+      const importOnly: ContinuationReadingSettings = {
+        readOnlyEnabled: false,
+        importToLibraryEnabled: true,
+        defaultMode: ContinuationTransferMode.READ_ONLY
+      };
+      expect(resolveContinuationTransferMode(importOnly)).assertEqual(ContinuationTransferMode.IMPORT_TO_LIBRARY);
+      expect(normalizeContinuationReadingSettings(importOnly).defaultMode).assertEqual(ContinuationTransferMode.IMPORT_TO_LIBRARY);
+
+      const disabled: ContinuationReadingSettings = {
+        readOnlyEnabled: false,
+        importToLibraryEnabled: false,
+        defaultMode: ContinuationTransferMode.READ_ONLY
+      };
+      expect(resolveContinuationTransferMode(disabled)).assertEqual(ContinuationTransferMode.DISABLED);
+    });
+
+    it('acceptsOnlyMatchingVersionedPackageIdentityAndSafePaths', 0, () => {
+      const request: ContinuationTransferRequest = {
+        schemaVersion: 1,
+        sessionId: 'session-1',
+        mode: ContinuationTransferMode.READ_ONLY,
+        contentType: 'manga',
+        sourceBookId: 'comic-1',
+        isLocal: false,
+        chapterIndex: 3,
+        pageIndex: 2,
+        offset: 0
+      };
+      const file: ContinuationTransferFile = {
+        name: 'page.bin',
+        relativePath: 'pages/chapter-3/page.bin',
+        sourcePath: '',
+        size: 32,
+        sha256: 'a'.repeat(64)
+      };
+      const comic: RemoteComicMetadata = {
+        id: 'comic-1',
+        title: 'Test comic',
+        author: 'Test author',
+        description: '',
+        coverUrl: '',
+        coverLocalPath: '',
+        sourceId: '1',
+        externalId: 'external-1',
+        status: 'ongoing',
+        tags: [],
+        rating: 0,
+        chapterCount: 1,
+        lastUpdateTime: 1,
+        addTime: 1,
+        contentType: 'manga',
+        isNSFW: 0,
+        isPrivate: 0
+      };
+      const bundle: MangaTransferBundle = {
+        comic: comic,
+        chapters: [],
+        chapterPages: [],
+        files: []
+      };
+      const manifest: ContinuationTransferManifest = {
+        schemaVersion: 1,
+        sessionId: 'session-1',
+        mode: ContinuationTransferMode.READ_ONLY,
+        contentType: 'manga',
+        sourceBookId: 'comic-1',
+        isLocal: false,
+        title: 'Test comic',
+        author: 'Test author',
+        coverPath: '',
+        sourceId: '1',
+        sourceName: 'Test source',
+        bookUrl: '',
+        chapterIndex: 3,
+        pageIndex: 2,
+        offset: 0,
+        chapterTitle: 'Chapter 4',
+        chapterCount: 4,
+        isCompleteBook: false,
+        ebook: null,
+        manga: bundle,
+        novelBook: null,
+        novelChapters: [],
+        chapterContents: [],
+        files: [file]
+      };
+
+      expect(isContinuationManifestCompatible(manifest, request)).assertTrue();
+      expect(normalizeContinuationPackagePath('pages\\chapter-3\\page.bin')).assertEqual('pages/chapter-3/page.bin');
+
+      bundle.comic.coverLocalPath = '../outside.jpg';
+      expect(isContinuationManifestCompatible(manifest, request)).assertFalse();
+      bundle.comic.coverLocalPath = '';
+
+      let rejectedTraversal = false;
+      try {
+        normalizeContinuationPackagePath('../outside.bin');
+      } catch (_error) {
+        rejectedTraversal = true;
+      }
+      expect(rejectedTraversal).assertTrue();
+
+      manifest.schemaVersion = 2;
+      expect(isContinuationManifestCompatible(manifest, request)).assertFalse();
+    });
+  });
+}
+
+class TestCompressionParsedStructure implements CompressionParsedStructure {
+  public hasComicInfo: boolean = false;
+  public isMultiLayer: boolean = false;
+  public detectedChapters: DetectedChapterInfo[] = [];
+  public rootImageCount: number = 1;
+  public totalImageCount: number = 3;
+  public extractedPath: string = '/tmp/unit';
+  public tempDirectories: string[] = [];
+  public warnings: string[] = [];
 }

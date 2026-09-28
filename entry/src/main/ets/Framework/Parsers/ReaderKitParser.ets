@@ -1,4 +1,4 @@
-﻿import { SafeFileUtils } from '../../Utils/SafeFileUtils';
+﻿import { SafeFileUtils } from 'manxia_core/src/main/ets/Utils/SafeFileUtils';
 // 文件路径: entry/src/main/ets/Framework/Parsers/ReaderKitParser.ets
 /**
  * Reader Kit 电子书解析器
@@ -8,8 +8,8 @@
  *      不支持 PDF 格式
  */
 
-import { EBook, EBookFormat, EBookMetadata, EBookChapter, EBookStatus } from '../../Models/EBookModels';
-import { logger } from '../../Utils/Logger';
+import { EBook, EBookFormat, EBookMetadata, EBookChapter, EBookStatus } from 'manxia_core/src/main/ets/Models/EBookModels';
+import { logger } from 'manxia_core/src/main/ets/Utils/Logger';
 import { fileIo } from '@kit.CoreFileKit';
 import { isReaderKitEnabled } from '../Initialization/ReaderKitFeatureGate';
 import { bookParser } from '@kit.ReaderKit';

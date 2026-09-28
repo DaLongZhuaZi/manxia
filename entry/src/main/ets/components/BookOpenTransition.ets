@@ -9,12 +9,13 @@
  * 5. 平滑的状态过渡和回调机制
  */
 
-import { logger } from '../Utils/Logger';
+import { logger } from 'manxia_core/src/main/ets/Utils/Logger';
 import { image } from '@kit.ImageKit';
 import { curves } from '@kit.ArkUI';
-import { ThemeManager } from '../Framework/Managers/ThemeManager';
+import { ThemeManager } from 'manxia_theme/src/main/ets/Framework/Managers/ThemeManager';
 import { getCoverImageManager } from '../Framework/Image/CoverImageManager';
 import { EBookBackgroundSettings } from './BookTransitionOverlay';
+import { resolveMedia } from 'manxia_ui_resources/src/main/ets/ResourceCatalog';
 
 const TAG = 'BookOpenTransition';
 
@@ -387,23 +388,7 @@ export struct BookOpenTransition {
   }
 
   private resolveAppMediaImageSource(raw: string): Resource {
-    const resourceName = raw.substring('app.media.'.length);
-    if (resourceName === 'mangabook') {
-      return $r('app.media.mangabook');
-    }
-    if (resourceName === 'ebook') {
-      return $r('app.media.ebook');
-    }
-    if (resourceName === 'ic_ebook') {
-      return $r('app.media.ic_ebook');
-    }
-    if (resourceName === 'icon') {
-      return $r('app.media.icon');
-    }
-    if (resourceName === 'ic_source_novel' || resourceName === 'ic_novel') {
-      return $r('app.media.ic_source_novel');
-    }
-    return $r('app.media.ebook');
+    return resolveMedia(raw);
   }
 
   private toRenderableImageSource(raw: string): string | Resource {

@@ -1,0 +1,30 @@
+{
+  "schemaVersion": 1,
+  "contract": "legado_jsoup_regex_class_parenthesis_context",
+  "issueId": "ISSUE-COMPAT-243-JSOUP-STANDARD-CSS-PSEUDO-SELECTORS",
+  "baseline": {
+    "sourceCount": 458,
+    "sourcePackageSha256": "473048A191DE4749FA9C15E0A2F2328A3E86B385A5FCE23EA30432D598D03A67",
+    "legadoCommit": "95973d186b147fb9ab43a9240021d688e4304fbd"
+  },
+  "cases": [
+    {
+      "id": "legacy-chain-at-after-regex-open-parenthesis",
+      "rule": "div.card:matches([(]@needle)@text",
+      "semantics": "parentheses_inside_a_regex_character_class_do_not_block_the_top_level_at_chain_delimiter",
+      "expected": ["(@needle"]
+    },
+    {
+      "id": "selector-group-comma-after-regex-open-parenthesis",
+      "selector": "div.card:matches([(]needle), span.card",
+      "semantics": "a_comma_after_a_pseudo_argument_is_a_top_level_selector_group_boundary_even_when_the_regex_class_contains_parenthesis",
+      "expectedGroups": ["div.card:matches([(]needle)", "span.card"]
+    }
+  ],
+  "selectionPaths": [
+    "LegadoRuleAnalyzer.getStringByCSS -> getStringByLegadoRule -> LegadoRuleChainAnalyzer.splitByAt",
+    "LegadoRuleAnalyzer.getElementsByCSSWithBridge -> getElementsByCSSChain -> splitSelectorWithJs",
+    "LegadoRuleAnalyzer.findElementsBySingleSelector -> splitTopLevelCssSelectorGroups"
+  ],
+  "failureCondition": "The splitters increment parenthesisDepth for '(' while bracketDepth is nonzero, so an unmatched parenthesis inside a regex character class prevents a later @ or comma from being recognized at top level."
+}

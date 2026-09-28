@@ -1,0 +1,11 @@
+{
+  "schemaVersion": 1,
+  "contract": "hypium_governance_in_progress_status",
+  "script": "tools/legado-compat/Update-LegadoGovernanceState.ps1",
+  "requiredStatus": "in_progress",
+  "parameterNames": [
+    "IssueStatus",
+    "TaskStatus"
+  ],
+  "reason": "machine state uses in_progress for the active root-cause issue and the updater must preserve it atomically"
+}

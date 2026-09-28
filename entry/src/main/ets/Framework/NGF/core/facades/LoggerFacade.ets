@@ -1,4 +1,4 @@
-﻿import { logger, LogLevel } from '../../../../Utils/Logger';
+﻿import { logger, LogLevel } from 'manxia_core/src/main/ets/Utils/Logger';
 import { ILogger, NGFLogLevel } from '../contracts/ILogger';
 
 export class LoggerFacade implements ILogger {

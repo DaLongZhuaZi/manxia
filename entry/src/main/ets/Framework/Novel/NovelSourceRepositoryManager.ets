@@ -1,7 +1,7 @@
 import { Context } from '@kit.AbilityKit';
-import { logger } from '../../Utils/Logger';
-import { SafeFileUtils } from '../../Utils/SafeFileUtils';
-import { SafeUtils } from '../../Utils/SafeUtils';
+import { logger } from 'manxia_core/src/main/ets/Utils/Logger';
+import { SafeFileUtils } from 'manxia_core/src/main/ets/Utils/SafeFileUtils';
+import { SafeUtils } from 'manxia_core/src/main/ets/Utils/SafeUtils';
 import {
   DEFAULT_VERSION_COMMIT_REPOSITORIES,
   MANXIA_LEGADO_SOURCES_REPOSITORY_KEY,
@@ -9,9 +9,9 @@ import {
   VersionHistoryManager,
   VersionRepositoryUpdateCheckResult,
   VersionRepositoryVersionMarker
-} from '../Managers/VersionHistoryManager';
-import { AppInfoManager } from '../Managers/AppInfoManager';
-import { LegadoSourceImportResult } from './LegadoSourceTypes';
+} from 'manxia_core/src/main/ets/Framework/Managers/VersionHistoryManager';
+import { AppInfoManager } from 'manxia_core/src/main/ets/Framework/Managers/AppInfoManager';
+import { LegadoSourceImportResult } from 'manxia_novel/src/main/ets/Framework/Novel/LegadoSourceTypes';
 import { getNovelSourceManager, NovelSourceManager } from './NovelSourceManager';
 import {
   LegadoCloudLogLevel,

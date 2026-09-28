@@ -1,20 +1,20 @@
-﻿import { SafeFileUtils } from '../../Utils/SafeFileUtils';
-import { SafeUtils } from '../../Utils/SafeUtils';
+﻿import { SafeFileUtils } from 'manxia_core/src/main/ets/Utils/SafeFileUtils';
+import { SafeUtils } from 'manxia_core/src/main/ets/Utils/SafeUtils';
 import { common } from '@kit.AbilityKit';
 import { preferences } from '@kit.ArkData';
 import { cryptoFramework } from '@kit.CryptoArchitectureKit';
 import { fileUri } from '@kit.CoreFileKit';
 import fs from '@ohos.file.fs';
-import { logger } from '../../Utils/Logger';
-import { sanitizeFileName } from '../../Utils/FileNameUtils';
+import { logger } from 'manxia_core/src/main/ets/Utils/Logger';
+import { sanitizeFileName } from 'manxia_core/src/main/ets/Utils/FileNameUtils';
 import {
   aes256GcmEncrypt,
   aes256GcmDecrypt,
   generateAes256Key,
   exportSymKeyToBase64,
   importSymKeyFromBase64
-} from '../../Utils/CryptoUtils';
-import { FTPConfig, FTPFileInfo, FTPListResult, FTPNativeClient } from '../FTP/FTPNativeClient';
+} from 'manxia_core/src/main/ets/Utils/CryptoUtils';
+import { FTPConfig, FTPFileInfo, FTPListResult, FTPNativeClient } from 'manxia_network/src/main/ets/Framework/FTP/FTPNativeClient';
 import {
   SMBClientAdapter,
   SMBDirectoryEntry,
@@ -26,10 +26,10 @@ import {
   WebDAVNativeConfig,
   WebDAVNativeFileInfo,
   WebDAVNativeListResult
-} from '../WebDAV/WebDAVNativeClient';
-import { WebDAVClient, WebDAVConfig, WebDAVFile } from '../WebDAV/WebDAVClient';
-import { SandboxManager } from '../Storage/SandboxManager';
-import DownloadDirManager from '../Storage/DownloadDirManager';
+} from 'manxia_network/src/main/ets/Framework/WebDAV/WebDAVNativeClient';
+import { WebDAVClient, WebDAVConfig, WebDAVFile } from 'manxia_network/src/main/ets/Framework/WebDAV/WebDAVClient';
+import { SandboxManager } from 'manxia_core/src/main/ets/Framework/Storage/SandboxManager';
+import DownloadDirManager from 'manxia_core/src/main/ets/Framework/Storage/DownloadDirManager';
 import {
   NetworkFolderBrowseResult,
   NetworkFolderCacheDetail,
@@ -44,7 +44,7 @@ import {
   joinRelativeNetworkFolderPath,
   normalizeConnectionBasePath,
   normalizeRelativeNetworkFolderPath
-} from '../../Models/NetworkFolderModels';
+} from 'manxia_core/src/main/ets/Models/NetworkFolderModels';
 
 const TAG = 'NetworkFolderManager';
 
@@ -1406,7 +1406,7 @@ export class NetworkFolderManager {
       this.encryptionKey = await importSymKeyFromBase64(storedKey);
     } else {
       this.encryptionKey = await generateAes256Key();
-      const exportedKey = exportSymKeyToBase64(this.encryptionKey);
+      const exportedKey = await exportSymKeyToBase64(this.encryptionKey);
       await this.pref!.put(ENCRYPTION_KEY_PREF, exportedKey);
       await this.pref!.flush();
     }

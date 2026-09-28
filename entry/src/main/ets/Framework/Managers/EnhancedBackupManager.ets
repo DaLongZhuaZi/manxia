@@ -1,5 +1,5 @@
-﻿import { SafeFileUtils } from '../../Utils/SafeFileUtils';
-import { SafeUtils } from '../../Utils/SafeUtils';
+﻿import { SafeFileUtils } from 'manxia_core/src/main/ets/Utils/SafeFileUtils';
+import { SafeUtils } from 'manxia_core/src/main/ets/Utils/SafeUtils';
 /**
  * 增强版备份管理器
  * 支持完整的数据备份、用户选择、tar打包
@@ -7,17 +7,17 @@ import { SafeUtils } from '../../Utils/SafeUtils';
  * 文件路径: entry/src/main/ets/Framework/Managers/EnhancedBackupManager.ets
  */
 
-import { logger } from '../../Utils/Logger';
-import { SandboxManager } from '../Storage/SandboxManager';
-import { DatabaseManager } from '../Database/DatabaseManager';
+import { logger } from 'manxia_core/src/main/ets/Utils/Logger';
+import { SandboxManager } from 'manxia_core/src/main/ets/Framework/Storage/SandboxManager';
+import { DatabaseManager } from 'manxia_core/src/main/ets/Framework/Database/DatabaseManager';
 import { getNovelDataManager, NovelDataManager } from '../Novel/NovelDataManager';
 import { getNovelSourceManager, NovelSourceManager } from '../Novel/NovelSourceManager';
-import { getNovelSettingsManager, NovelSettingsManager } from '../Novel/NovelSettingsManager';
-import { SettingsManager, SettingKeys } from './SettingsManager';
-import { AppInfoManager } from './AppInfoManager';
-import { getTarPackager, TarPackager } from '../Utils/TarPackager';
+import { getNovelSettingsManager, NovelSettingsManager } from 'manxia_core/src/main/ets/Framework/Novel/NovelSettingsManager';
+import { SettingsManager, SettingKeys } from 'manxia_core/src/main/ets/Framework/Managers/SettingsManager';
+import { AppInfoManager } from 'manxia_core/src/main/ets/Framework/Managers/AppInfoManager';
+import { getTarPackager, TarPackager } from 'manxia_core/src/main/ets/Framework/Utils/TarPackager';
 import { preferences } from '@kit.ArkData';
-import { getContext as getGlobalContext } from '../../GlobalContext';
+import { getContext as getGlobalContext } from 'manxia_core/src/main/ets/GlobalContext';
 import {
   BackupData,
   BackupOptions,
@@ -75,17 +75,18 @@ import {
   KomgaInstanceConfigBackup,
   FTPConnectionsBackup,
   FTPConnectionBackup
-} from '../../Models/BackupModels';
-import { MetadataXmlGenerator, MangaMetadata, EBookMetadata, NovelMetadata } from '../../Utils/MetadataXmlGenerator';
+} from 'manxia_core/src/main/ets/Models/BackupModels';
+import { MetadataXmlGenerator, MangaMetadata, EBookMetadata, NovelMetadata } from 'manxia_core/src/main/ets/Utils/MetadataXmlGenerator';
 import { KomgaAuthMode, KomgaConfig, KomgaInstanceConfig } from '../Source/KomgaModels';
 import { loadKomgaConfig, saveKomgaConfig } from '../Source/KomgaConfigStore';
 
-import { NovelBook, NovelSourceInfo, NovelReadStatus } from '../../Models/NovelModels';
-import { LegadoBookSource, LegadoSourceImportResult } from '../Novel/LegadoSourceTypes';
-import { BrowseHistoryInput, BrowseHistoryItem } from '../Novel/NovelSettingsManager';
+import { NovelBook, NovelSourceInfo, NovelReadStatus } from 'manxia_core/src/main/ets/Models/NovelModels';
+import { LegadoBookSource, LegadoSourceImportResult } from 'manxia_novel/src/main/ets/Framework/Novel/LegadoSourceTypes';
+import { BrowseHistoryInput, BrowseHistoryItem } from 'manxia_core/src/main/ets/Framework/Novel/NovelSettingsManager';
 import { fileIo as fs } from '@kit.CoreFileKit';
+import { serializeAsync } from 'manxia_core/src/main/ets/Utils/JsonSerializeUtils';
 import { deviceInfo } from '@kit.BasicServicesKit';
-import { DatabaseRecord, DatabaseValue } from '../Database/DatabaseTypes';
+import { DatabaseRecord, DatabaseValue } from 'manxia_core/src/main/ets/Framework/Database/DatabaseTypes';
 
 // WebDAV配置类型
 interface WebDAVSettingsConfig {
@@ -5796,7 +5797,7 @@ export class EnhancedBackupManager {
   }
 
   private async saveJSON(path: string, data: BackupData): Promise<void> {
-    const jsonStr = JSON.stringify(data, null, 2);
+    const jsonStr = await serializeAsync(data);
     await this.sandboxManager.writeFile(path, jsonStr);
   }
 
@@ -6302,7 +6303,7 @@ export class EnhancedBackupManager {
       
       // 通知FontManager重新加载设置
       try {
-        const fontManagerModule = await import('./FontManager');
+        const fontManagerModule = await import('manxia_theme/src/main/ets/Framework/Managers/FontManager');
         const fontManager = fontManagerModule.getFontManager();
         await fontManager.reloadSettings();
       } catch (reloadError) {

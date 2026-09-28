@@ -1,9 +1,9 @@
-import { logger } from '../../Utils/Logger';
+import { logger } from 'manxia_core/src/main/ets/Utils/Logger';
 import {
   ChapterOrderPersistResult,
   UnifiedChapter,
   UnifiedContent
-} from '../../Models/UnifiedContentModels';
+} from 'manxia_core/src/main/ets/Models/UnifiedContentModels';
 import { getNovelTxtTocRuleManager, TxtTocRule } from '../Novel/NovelTxtTocRuleManager';
 import {
   ChapterOrderRuleSorter,
@@ -11,7 +11,7 @@ import {
   getChapterOrderRuleSorter
 } from '../Services/ChapterOrderRuleSorter';
 import { SourceDialogScaffold } from './SourceDialogScaffold';
-import { ThemeAwareHelper, ThemeAwareState } from './ThemeAware';
+import { ThemeAwareHelper, ThemeAwareState } from 'manxia_theme/src/main/ets/Framework/Components/ThemeAware';
 
 const TAG = 'ChapterOrderDialogComponent';
 

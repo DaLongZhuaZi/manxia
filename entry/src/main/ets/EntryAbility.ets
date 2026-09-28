@@ -1,4 +1,4 @@
-import { SafeUtils } from './Utils/SafeUtils';
+import { SafeUtils } from 'manxia_core/src/main/ets/Utils/SafeUtils';
 //文件路径：entry/src/main/ets/EntryAbility.ets
 /**
  * 应用入口Ability
@@ -7,37 +7,39 @@ import { SafeUtils } from './Utils/SafeUtils';
  
 import { UIAbility, AbilityConstant, Want, wantConstant } from '@kit.AbilityKit';
 import { window } from '@kit.ArkUI';
-import { setContext } from './GlobalContext';
+import { setContext } from 'manxia_core/src/main/ets/GlobalContext';
 import { DeepLinkRouter } from './Framework/Utils/DeepLinkRouter';
 import { FeedbackTurnstileBridge } from './Framework/Services/FeedbackTurnstileBridge';
-import { logCollector } from './Framework/Debug/LogCollector';
-import { logger } from './Utils/Logger';
-import { WindowManager, DisplayMode } from './Utils/WindowManager';
-import { OrientationLockApplyResult, OrientationLockManager, OrientationLockStrategy } from './Utils/OrientationLockManager';
+import { logCollector } from 'manxia_core/src/main/ets/Framework/Debug/LogCollector';
+import { logger } from 'manxia_core/src/main/ets/Utils/Logger';
+import { WindowManager, DisplayMode } from 'manxia_theme/src/main/ets/Utils/WindowManager';
+import { OrientationLockApplyResult, OrientationLockManager, OrientationLockStrategy } from 'manxia_core/src/main/ets/Utils/OrientationLockManager';
 import { DataInitializer } from './Framework/Initialization/DataInitializer';
-import { ThemeManager } from './Framework/Managers/ThemeManager';
-import { DeviceAdaptationManager } from './Framework/Managers/DeviceAdaptationManager';
-import { SettingsManager, SettingKeys } from './Framework/Managers/SettingsManager';
-import { AnimationSettingsManager } from './Framework/Animation/AnimationSettingsManager';
-import { VisualEffectsManager } from './Framework/Managers/VisualEffectsManager';
-import { AppNotificationManager } from './Framework/Managers/NotificationManager';
+import { getNovelInitializer } from './Framework/Novel/NovelInitializer';
+import { getSubscriptionInitializer } from './Framework/Subscription/SubscriptionInitializer';
+import { ThemeManager } from 'manxia_theme/src/main/ets/Framework/Managers/ThemeManager';
+import { DeviceAdaptationManager } from 'manxia_theme/src/main/ets/Framework/Managers/DeviceAdaptationManager';
+import { SettingsManager, SettingKeys } from 'manxia_core/src/main/ets/Framework/Managers/SettingsManager';
+import { AnimationSettingsManager } from 'manxia_core/src/main/ets/Framework/Animation/AnimationSettingsManager';
+import { VisualEffectsManager } from 'manxia_core/src/main/ets/Framework/Managers/VisualEffectsManager';
+import { AppNotificationManager } from 'manxia_core/src/main/ets/Framework/Managers/NotificationManager';
 import { MangaDownloadManager } from './Framework/Download/DownloadManager';
 import { getNovelSourceValidator } from './Framework/Novel/NovelSourceValidator';
-import { uiContextManager } from './Framework/Managers/UIContextManager';
-import { ProxyManager } from './Framework/Network/ProxyManager';
-import { getFontManager } from './Framework/Managers/FontManager';
-import { getDownloadSyncManager } from './Framework/Managers/DownloadSyncManager';
-import { getChangelogManager } from './Framework/Managers/ChangelogManager';
+import { uiContextManager } from 'manxia_theme/src/main/ets/Framework/Managers/UIContextManager';
+import { ProxyManager } from 'manxia_network/src/main/ets/Framework/Network/ProxyManager';
+import { getFontManager } from 'manxia_theme/src/main/ets/Framework/Managers/FontManager';
+import { getDownloadSyncManager } from 'manxia_core/src/main/ets/Framework/Managers/DownloadSyncManager';
+import { getChangelogManager } from 'manxia_features_ui/src/main/ets/Framework/Managers/ChangelogManager';
 import { getAutoBackupScheduler } from './Framework/WebDAV/WebDAVAutoBackupScheduler';
 import { widgetDataSync } from './Utils/WidgetDataSync';
 import { getUnifiedDetailPageEnforcer } from './Framework/Enforcement/UnifiedDetailPageEnforcer';
-import { InitPhase } from './Framework/Managers/AppInitializationManager';
+import { InitPhase } from 'manxia_core/src/main/ets/Framework/Managers/AppInitializationManager';
 import { getCrashRecorderService } from './Framework/Debug/CrashRecorderService';
 import { getErrorMonitorService } from './Framework/Debug/ErrorMonitorService';
-import { getErrorRecordManager } from './Framework/Debug/ErrorRecordManager';
-import { getHoldingAwarenessManager } from './Framework/Managers/HoldingAwarenessManager';
+import { getErrorRecordManager } from 'manxia_network/src/main/ets/Framework/Debug/ErrorRecordManager';
+import { getHoldingAwarenessManager } from 'manxia_core/src/main/ets/Framework/Managers/HoldingAwarenessManager';
 import { initializeReaderKitRuntimeGate } from './Framework/Initialization/ReaderKitFeatureGate';
-import { ReaderHostWindowRestoreCoordinator } from './Framework/Reader/ReaderHostWindowRestoreCoordinator';
+import { ReaderHostWindowRestoreCoordinator } from 'manxia_reader_ui/src/main/ets/Framework/Reader/ReaderHostWindowRestoreCoordinator';
 import {
   NETWORK_FOLDER_AVIF_EXTENSIONS,
   NETWORK_FOLDER_BACKUP_EXTENSIONS,
@@ -47,7 +49,7 @@ import {
   NETWORK_FOLDER_FONT_EXTENSIONS,
   NETWORK_FOLDER_IMAGE_EXTENSIONS,
   NETWORK_FOLDER_JSON_EXTENSIONS
-} from './Models/NetworkFolderModels';
+} from 'manxia_core/src/main/ets/Models/NetworkFolderModels';
 import {
   ngfContentSourceIntegrationFacade,
   ngfContentWorkflowIntegrationFacade,
@@ -64,18 +66,23 @@ import { distributedFileManager } from './Framework/Distributed/DistributedFileM
 import { distributedDataSyncManager } from './Framework/Distributed/DistributedDataSyncManager';
 import { distributedPermissionManager } from './Framework/Distributed/DistributedPermissionManager';
 import { continuationStateHelper } from './Framework/Distributed/ContinuationStateHelper';
-import { openExternalFileTaskInIsolatedAbilityByContext } from './Framework/ExternalFile/ExternalFileTaskLauncher';
+import { ContinuationReadingSettingsManager } from './Framework/Distributed/ContinuationReadingSettingsManager';
+import { ContinuationCacheManager } from './Framework/Distributed/ContinuationCacheManager';
+import { openExternalFileTaskInIsolatedAbilityByContext } from 'manxia_network/src/main/ets/Framework/ExternalFile/ExternalFileTaskLauncher';
 import {
   ExternalFileTaskFactory,
   ExternalFileTaskKind,
   ExternalFileTaskParams,
   ExternalFileTaskSource
-} from './Framework/ExternalFile/ExternalFileTaskTypes';
+} from 'manxia_network/src/main/ets/Framework/ExternalFile/ExternalFileTaskTypes';
+
+const DEFERRED_STARTUP_WORK_DELAY_MS = 1000;
 
 export default class EntryAbility extends UIAbility {
 
   /** 跨端接续恢复使用的 LocalStorage（restoreWindowStage 传入，onWindowStageRestore 中随 loadContent 传递） */
   private continuationWindowStorage: LocalStorage = new LocalStorage();
+  private deferredStartupWorkTimer: number = -1;
 
   onCreate(want: Want, launchParam: AbilityConstant.LaunchParam): void {
     logger.startup('EntryAbility', 'onCreate START', 'EntryAbility开始创建');
@@ -88,6 +95,12 @@ export default class EntryAbility extends UIAbility {
     // [修复] 注册入口 Ability 上下文（接续成功后源端自动拉起遥控器使用）并预载权限 tokenId
     // （让 onContinue 同步路径 isPermissionGrantedSync() 拿到真实授权结果，避免首次误拒）
     continuationStateHelper.registerEntryAbilityContext(this.context);
+    void ContinuationReadingSettingsManager.getInstance().initialize(this.context).catch((error: Error) => {
+      logger.warn('EntryAbility', `接续阅读设置初始化失败，使用默认仅阅读模式: ${String(error)}`);
+    });
+    void ContinuationCacheManager.getInstance().initialize(this.context).catch((error: Error) => {
+      logger.warn('EntryAbility', `接续阅读缓存初始化失败: ${String(error)}`);
+    });
     distributedPermissionManager.preloadTokenId();
 
     // 启动早期先抑制「设备发现和连接」权限的后台检查点自动请求：
@@ -114,6 +127,12 @@ export default class EntryAbility extends UIAbility {
       logger.info('EntryAbility', '收到接续转交启动，已触发主页接续导航检查');
     }
     
+    // [探针] PDF Kit 能力探针启动参数
+    if (want.parameters && want.parameters['pdfKitProbe']) {
+      AppStorage.setOrCreate('pdfKitProbeAutoOpen', true);
+      logger.info('EntryAbility', '收到 PDF Kit 探针启动参数，将在主页显示后打开探针页');
+    }
+
     // 详细记录Want信息用于调试
     logger.info('EntryAbility', `📋 Want详情: uri=${want.uri || 'null'}, type=${want.type || 'null'}, action=${want.action || 'null'}`);
     if (want.parameters) {
@@ -486,6 +505,7 @@ export default class EntryAbility extends UIAbility {
     // 所有阶段完成
     initManager.markCompleted();
     ngfCoreEventBridge.publishInitializationCompleted('应用初始化流程全部完成');
+    this.scheduleDeferredStartupWork();
   }
 
   private publishInitPhaseCompleted(phase: InitPhase, message: string): void {
@@ -494,6 +514,38 @@ export default class EntryAbility extends UIAbility {
 
   private publishInitPhaseFailed(phase: InitPhase, errorMessage: string): void {
     ngfCoreEventBridge.publishInitializationFailed(phase, errorMessage);
+  }
+
+  /**
+   * 首屏稳定后再恢复全部 V2 兼容状态，并初始化依赖设置门面的订阅服务。
+   * 这两项工作不影响主页面展示，但必须保留完整屏障和失败日志。
+   */
+  private scheduleDeferredStartupWork(): void {
+    if (this.deferredStartupWorkTimer !== -1) {
+      return;
+    }
+    this.deferredStartupWorkTimer = setTimeout((): void => {
+      this.deferredStartupWorkTimer = -1;
+      try {
+        getNovelInitializer().startDeferredRestore();
+        void getSubscriptionInitializer().initialize(this.context)
+          .then((): void => {
+            logger.info('EntryAbility', '✅ 订阅服务已在启动关键路径后初始化');
+          })
+          .catch((error: Error): void => {
+            logger.warn('EntryAbility', `⚠️ 订阅服务后台初始化失败: ${String(error)}`);
+          });
+      } catch (error) {
+        logger.warn('EntryAbility', `⚠️ 后台启动任务调度失败: ${String(error)}`);
+      }
+    }, DEFERRED_STARTUP_WORK_DELAY_MS) as number;
+  }
+
+  private cancelDeferredStartupWork(): void {
+    if (this.deferredStartupWorkTimer !== -1) {
+      clearTimeout(this.deferredStartupWorkTimer);
+      this.deferredStartupWorkTimer = -1;
+    }
   }
   
   /**
@@ -1473,6 +1525,7 @@ export default class EntryAbility extends UIAbility {
   // 在Ability销毁时的清理工作（游戏引擎已移除）
   onDestroy(): void {
     logger.info('EntryAbility', 'onDestroy: app is being destroyed');
+    this.cancelDeferredStartupWork();
     // [修复] 接续迁移时入口任务被系统迁移销毁，但源端阅读器任务仍在运行：
     // 跳过全局清理（WindowManager 释放、错误监控停止、分布式会话清理），
     // 否则会破坏仍在阅读器中的窗口状态与遥控器会话

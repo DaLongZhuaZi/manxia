@@ -2,18 +2,18 @@
  * 后台任务悬浮球组件
  * 显示后台任务进度，支持拖拽移动
  */
-import { BackgroundTaskManager, BackgroundTask, TaskStatus, TaskProgress, TaskStatusListener } from '../Task/BackgroundTaskManager';
-import { logger } from '../../Utils/Logger';
+import { BackgroundTaskManager, BackgroundTask, TaskStatus, TaskProgress, TaskStatusListener } from 'manxia_network/src/main/ets/Framework/Task/BackgroundTaskManager';
+import { logger } from 'manxia_core/src/main/ets/Utils/Logger';
 import { display } from '@kit.ArkUI';
-import { AppColors, ColorRole } from '../Theme/AppColors';
-import { SourceInteractiveEditorPageParams } from '../SourceEditor/SourceEditorTypes';
-import { TaskNavigationTarget } from '../Task/TaskNavigationTypes';
+import { AppColors, ColorRole } from 'manxia_theme/src/main/ets/Framework/Theme/AppColors';
+import { SourceInteractiveEditorPageParams } from 'manxia_source_engine/src/main/ets/Framework/SourceEditor/SourceEditorTypes';
+import { TaskNavigationTarget } from 'manxia_core/src/main/ets/Framework/Task/TaskNavigationTypes';
 import {
   getHoldingAwarenessManager,
   HoldingAwarenessFeature,
   HoldingAwarenessManager,
   HoldingUiAnchor
-} from '../Managers/HoldingAwarenessManager';
+} from 'manxia_core/src/main/ets/Framework/Managers/HoldingAwarenessManager';
 
 const TAG = 'TaskFloatingBall';
 const TASK_FLOATING_BALL_DEFAULT_LEFT_X: number = 20;

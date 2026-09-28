@@ -1,6 +1,6 @@
 // 职责: 解析漫画阅读流中的页面、条漫索引和预加载任务，不触碰 UI 状态和加载器。
 
-import { MangaChapter, MangaPage } from '../Models/MangaModels';
+import { MangaChapter, MangaPage } from 'manxia_core/src/main/ets/Models/MangaModels';
 import { PreloadTaskItem } from './PreloadManager';
 import { WebtoonDataItem, WebtoonPageRef } from './MangaWebtoonTypes';
 

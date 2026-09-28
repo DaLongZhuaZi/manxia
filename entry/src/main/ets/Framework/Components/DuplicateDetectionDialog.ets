@@ -3,7 +3,7 @@
  * 显示可能重复的内容列表，让用户决定是否继续添加
  */
 
-import { ThemeAwareState, ThemeAwareHelper } from './ThemeAware';
+import { ThemeAwareState, ThemeAwareHelper } from 'manxia_theme/src/main/ets/Framework/Components/ThemeAware';
 import { SourceDialogScaffold } from './SourceDialogScaffold';
 import {
   DuplicateMatchItem,

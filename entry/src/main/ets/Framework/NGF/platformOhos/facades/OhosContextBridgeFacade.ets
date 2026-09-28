@@ -1,4 +1,4 @@
-import { uiContextManager } from '../../../Managers/UIContextManager';
+import { uiContextManager } from 'manxia_theme/src/main/ets/Framework/Managers/UIContextManager';
 import { IOhosContextBridge } from '../contracts/IOhosContextBridge';
 
 export class OhosContextBridgeFacade implements IOhosContextBridge {

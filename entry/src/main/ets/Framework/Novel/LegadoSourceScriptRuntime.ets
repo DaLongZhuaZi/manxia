@@ -1,5 +1,5 @@
-import { logger } from '../../Utils/Logger';
-import { sha256Hash } from '../../Utils/CryptoUtils';
+import { logger } from 'manxia_core/src/main/ets/Utils/Logger';
+import { sha256Hash } from 'manxia_core/src/main/ets/Utils/CryptoUtils';
 import {
   getLegadoJsEngine,
   JsContext,
@@ -7,13 +7,13 @@ import {
   LegadoJsSourceEffects
 } from './LegadoJsEngine';
 import { getNovelLoginManager } from './NovelLoginManager';
-import { LegadoSourceParser } from './LegadoSourceParser';
-import { LegadoBookSource } from './LegadoSourceTypes';
-import { LegadoBridgeTrace, LegadoExecutionErrorCode } from './LegadoCompatibilityTypes';
+import { LegadoSourceParser } from 'manxia_novel/src/main/ets/Framework/Novel/LegadoSourceParser';
+import { LegadoBookSource } from 'manxia_novel/src/main/ets/Framework/Novel/LegadoSourceTypes';
+import { LegadoBridgeTrace, LegadoExecutionErrorCode } from 'manxia_novel/src/main/ets/Framework/Novel/LegadoCompatibilityTypes';
 import {
   LegadoExecutionCancellationToken,
   createLegadoExecutionCancelledError
-} from './LegadoExecutionCancellation';
+} from 'manxia_novel/src/main/ets/Framework/Novel/LegadoExecutionCancellation';
 
 const TAG = 'LegadoSourceScriptRuntime';
 const WEBVIEW_NOT_READY = 'WEBVIEW_NOT_READY';

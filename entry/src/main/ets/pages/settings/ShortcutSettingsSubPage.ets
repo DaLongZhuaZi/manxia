@@ -1,3 +1,4 @@
+import { ISettingsManagerFacade, SettingsManagerHolder } from 'manxia_core/src/main/ets/Framework/Contracts/ISettingsManagerFacade';
 // 文件路径: entry/src/main/ets/pages/settings/ShortcutSettingsSubPage.ets
 /**
  * 快捷方式设置子页面
@@ -9,20 +10,20 @@ import { HdsNavDestination } from '@kit.UIDesignKit';
 import { promptAction } from '@kit.ArkUI';
 import { common, Want } from '@kit.AbilityKit';
 import shortcutManager from '@ohos.bundle.shortcutManager';
-import { logger } from '../../Utils/Logger';
-import { PageLifecycleManager } from '../../Framework/Lifecycle';
-import { ThemeAwareState, ThemeAwareHelper } from '../../Framework/Components/ThemeAware';
-import { ThemeType } from '../../Framework/Managers/ThemeManager';
-import { FontAwareHelper, FontAwareState } from '../../Framework/Components/FontAware';
-import { DeviceAdaptationManager, DeviceInfo, DeviceChangeListener, Breakpoint } from '../../Framework/Managers/DeviceAdaptationManager';
-import { ResponsiveLayoutHelper } from '../../Framework/Utils/ResponsiveLayout';
-import { SettingsManager, SettingKeys } from '../../Framework/Managers/SettingsManager';
-import { SettingsSearchSupport } from './SettingsSearchSupport';
-import { SettingsPanelSurfaceHelper } from './SettingsPanelSurfaceHelper';
-import { GlobalBackgroundLayerMode } from '../../Framework/Components/GlobalBackgroundLayer';
-import { SharedPageBackgroundLayer } from '../../Framework/Components/SharedPageBackgroundLayer';
+import { logger } from 'manxia_core/src/main/ets/Utils/Logger';
+import { PageLifecycleManager } from 'manxia_core/src/main/ets/Framework/Lifecycle/index';
+import { ThemeAwareState, ThemeAwareHelper } from 'manxia_theme/src/main/ets/Framework/Components/ThemeAware';
+import { ThemeType } from 'manxia_theme/src/main/ets/Framework/Managers/ThemeManager';
+import { FontAwareHelper, FontAwareState } from 'manxia_theme/src/main/ets/Framework/Components/FontAware';
+import { DeviceAdaptationManager, DeviceInfo, DeviceChangeListener, Breakpoint } from 'manxia_theme/src/main/ets/Framework/Managers/DeviceAdaptationManager';
+import { ResponsiveLayoutHelper } from 'manxia_theme/src/main/ets/Framework/Utils/ResponsiveLayout';
+import { SettingKeys } from 'manxia_core/src/main/ets/Framework/Contracts/SettingKeys';
+import { SettingsSearchSupport } from 'manxia_features_ui/src/main/ets/pages/settings/SettingsSearchSupport';
+import { SettingsPanelSurfaceHelper } from 'manxia_features_ui/src/main/ets/pages/settings/SettingsPanelSurfaceHelper';
+import { GlobalBackgroundLayerMode } from 'manxia_theme/src/main/ets/Framework/Components/GlobalBackgroundLayer';
+import { SharedPageBackgroundLayer } from 'manxia_theme/src/main/ets/Framework/Components/SharedPageBackgroundLayer';
 import { SettingsImmersiveTitleBar } from './SettingsImmersiveTitleBar';
-import { SettingsPageTitleBarManager } from './SettingsPageTitleBarManager';
+import { SettingsPageTitleBarManager } from 'manxia_features_ui/src/main/ets/pages/settings/SettingsPageTitleBarManager';
 
 const TAG = 'ShortcutSettingsSubPage';
 const SHORTCUT_MAX_VISIBLE_COUNT: number = 4;
@@ -58,7 +59,7 @@ export struct ShortcutSettingsSubPage {
   @State fontState: FontAwareState = new FontAwareState();
   @StorageLink('appFontFamily') appFontFamily: string = 'HarmonyOS Sans';
   private componentId: string = 'ShortcutSettingsSubPage';
-  private settingsManager: SettingsManager = SettingsManager.getInstance();
+  private settingsManager: ISettingsManagerFacade = SettingsManagerHolder.get();
 
   // 响应式布局相关状态
   private deviceManager: DeviceAdaptationManager = DeviceAdaptationManager.getInstance();

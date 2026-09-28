@@ -1,0 +1,18 @@
+{
+  "schemaVersion": 1,
+  "kind": "legado_governance_queue_count_consistency_fixture",
+  "contract": "current_static_queue_count_consistency",
+  "issueId": "ISSUE-AUTO-048-GOVERNANCE-QUEUE-SELECTION-ANCHOR-DRIFT",
+  "baseline": {
+    "sourceCount": 458,
+    "sourcePackageSha256": "473048A191DE4749FA9C15E0A2F2328A3E86B385A5FCE23EA30432D598D03A67",
+    "legadoCommit": "95973d186b147fb9ab43a9240021d688e4304fbd"
+  },
+  "currentGatePathSource": "tools/legado-compat/state/full-source-validation-state.json::governance.queuePreflight.evidencePath",
+  "governancePath": "tools/legado-compat/LEGADO_V2_GOVERNANCE_TASKS.md",
+  "expectedCandidateGateStatus": "no_candidate_satisfies_evidence_gate",
+  "expectedCandidateCount": 0,
+  "staleTopLine": "当前静态队列门禁评估 226 个 P0/P1 条目",
+  "verificationPolicy": "static_document_count_contract_only;runtime_build_device_and_legado_diff_deferred",
+  "semanticMatchAllowed": false
+}

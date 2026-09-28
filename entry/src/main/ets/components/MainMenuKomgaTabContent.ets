@@ -1,10 +1,10 @@
-﻿import { SafeUtils } from '../Utils/SafeUtils';
+﻿import { SafeUtils } from 'manxia_core/src/main/ets/Utils/SafeUtils';
 import { preferences } from '@kit.ArkData';
 import { promptAction } from '@kit.ArkUI';
 import { common } from '@kit.AbilityKit';
-import { logger } from '../Utils/Logger';
-import { ThemeAwareHelper, ThemeAwareState } from '../Framework/Components/ThemeAware';
-import { ThemeType } from '../Framework/Managers/ThemeManager';
+import { logger } from 'manxia_core/src/main/ets/Utils/Logger';
+import { ThemeAwareHelper, ThemeAwareState } from 'manxia_theme/src/main/ets/Framework/Components/ThemeAware';
+import { ThemeType } from 'manxia_theme/src/main/ets/Framework/Managers/ThemeManager';
 import { TabContentCacheManager, KomgaCacheData } from '../Framework/Cache/TabContentCacheManager';
 import { ComicInfo } from '../Framework/Source/SourceExecutor';
 import KomgaCacheManager from '../Framework/Source/KomgaCacheManager';
@@ -244,7 +244,7 @@ export struct MainMenuKomgaTabContent {
 
   private async loadPreferences(): Promise<void> {
     try {
-      const store = preferences.getPreferencesSync(this.getHostContext(), { name: this.prefsName });
+      const store = await preferences.getPreferences(this.getHostContext(), { name: this.prefsName });
       const savedDisplayMode = store.getSync('displayMode', 'grid') as string;
       const savedBrowseMode = store.getSync('browseMode', 'library') as string;
       const savedContentType = store.getSync('contentType', 'SERIES') as string;
@@ -268,7 +268,7 @@ export struct MainMenuKomgaTabContent {
 
   private async savePreferences(): Promise<void> {
     try {
-      const store = preferences.getPreferencesSync(this.getHostContext(), { name: this.prefsName });
+      const store = await preferences.getPreferences(this.getHostContext(), { name: this.prefsName });
       store.putSync('displayMode', this.displayMode);
       store.putSync('browseMode', this.browseMode);
       store.putSync('contentType', this.contentType);

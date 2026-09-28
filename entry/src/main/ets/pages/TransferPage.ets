@@ -3,16 +3,16 @@ import { common } from '@kit.AbilityKit';
 import { pasteboard } from '@kit.BasicServicesKit';
 import { uniformTypeDescriptor as utd } from '@kit.ArkData';
 import { systemShare } from '@kit.ShareKit';
-import { logger } from '../Utils/Logger';
-import { ThemeAwareHelper, ThemeAwareState } from '../Framework/Components/ThemeAware';
+import { logger } from 'manxia_core/src/main/ets/Utils/Logger';
+import { ThemeAwareHelper, ThemeAwareState } from 'manxia_theme/src/main/ets/Framework/Components/ThemeAware';
 import { SettingsImmersiveTitleBar } from './settings/SettingsImmersiveTitleBar';
-import { SettingsPageTitleBarManager } from './settings/SettingsPageTitleBarManager';
-import { SettingsPanelSurfaceHelper } from './settings/SettingsPanelSurfaceHelper';
-import { GlobalBackgroundLayerMode } from '../Framework/Components/GlobalBackgroundLayer';
-import { SharedPageBackgroundLayer } from '../Framework/Components/SharedPageBackgroundLayer';
-import { AppFloatingWindowConfig, WindowManager } from '../Utils/WindowManager';
-import { getTransferConfigManager, TransferConfigManager } from '../Framework/Managers/TransferConfigManager';
-import { getLocalTransferServerService, LocalTransferServerService } from '../Framework/Services/LocalTransferServerService';
+import { SettingsPageTitleBarManager } from 'manxia_features_ui/src/main/ets/pages/settings/SettingsPageTitleBarManager';
+import { SettingsPanelSurfaceHelper } from 'manxia_features_ui/src/main/ets/pages/settings/SettingsPanelSurfaceHelper';
+import { GlobalBackgroundLayerMode } from 'manxia_theme/src/main/ets/Framework/Components/GlobalBackgroundLayer';
+import { SharedPageBackgroundLayer } from 'manxia_theme/src/main/ets/Framework/Components/SharedPageBackgroundLayer';
+import { AppFloatingWindowConfig, WindowManager } from 'manxia_theme/src/main/ets/Utils/WindowManager';
+import { getTransferConfigManager, TransferConfigManager } from 'manxia_core/src/main/ets/Framework/Managers/TransferConfigManager';
+import { getLocalTransferServerService, LocalTransferServerService } from 'manxia_network/src/main/ets/Framework/Services/LocalTransferServerService';
 import {
   getTransferSignalClientService,
   TransferSignalClientService,
@@ -26,7 +26,7 @@ import {
   getTransferUploadStoreService,
   TransferExternalFileTaskPrepareResult,
   TransferUploadStoreService
-} from '../Framework/Services/TransferUploadStoreService';
+} from 'manxia_network/src/main/ets/Framework/Services/TransferUploadStoreService';
 import {
   getTransferRtcFileReceiverService,
   TransferRtcFileReceiverResult,
@@ -68,9 +68,9 @@ import {
   createDefaultTransferConfig,
   parseTransferNativeRtcCandidateSignalPayload,
   parseTransferNativeRtcSdpSignalPayload
-} from '../Models/TransferModels';
-import type { NetworkFolderImportCategory } from '../Models/NetworkFolderModels';
-import { openExternalFileTaskInIsolatedAbility } from '../Framework/ExternalFile/ExternalFileTaskLauncher';
+} from 'manxia_core/src/main/ets/Models/TransferModels';
+import type { NetworkFolderImportCategory } from 'manxia_core/src/main/ets/Models/NetworkFolderModels';
+import { openExternalFileTaskInIsolatedAbility } from 'manxia_network/src/main/ets/Framework/ExternalFile/ExternalFileTaskLauncher';
 
 const TAG = 'TransferPage';
 const TRANSFER_ACCENT_COLOR: string = '#0F8A6C';

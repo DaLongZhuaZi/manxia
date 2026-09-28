@@ -1,0 +1,65 @@
+{
+  "schemaVersion": 1,
+  "contract": "legado_jsoup_structural_tag_scanner_context",
+  "issueId": "ISSUE-COMPAT-243-JSOUP-STANDARD-CSS-PSEUDO-SELECTORS",
+  "baseline": {
+    "sourceCount": 458,
+    "sourcePackageSha256": "473048A191DE4749FA9C15E0A2F2328A3E86B385A5FCE23EA30432D598D03A67",
+    "legadoCommit": "95973d186b147fb9ab43a9240021d688e4304fbd"
+  },
+  "cases": [
+    {
+      "id": "parent-axis-quoted-tag-text",
+      "html": "<section><div data-note=\"a > <fake>\"><span>target</span></div></section>",
+      "rule": "//span/parent::*",
+      "expectedTags": ["div"],
+      "expectedTexts": ["target"],
+      "semantics": "parent-axis-must-ignore_markup_like_text_inside_a_quoted_attribute"
+    },
+    {
+      "id": "following-sibling-quoted-tag-text",
+      "html": "<section><span data-note=\"a > <fake>\">first</span><span>second</span></section>",
+      "rule": "//span[1]/following-sibling::*",
+      "expectedTags": ["span"],
+      "expectedTexts": ["second"],
+      "semantics": "following-sibling-boundary_must_not_be_extended_by_markup_like_text_inside_a_quoted_attribute"
+    },
+    {
+      "id": "descendant-wildcard-completeness",
+      "html": "<section><div><span>deep</span></div></section>",
+      "rule": "//section/descendant::*",
+      "expectedTags": ["div", "span"],
+      "expectedTexts": ["deep", "deep"],
+      "semantics": "XPath_descendant_wildcard_returns_all_descendants_not_only_top_level_children"
+    },
+    {
+      "id": "legacy-children-quoted-tag-text",
+      "html": "<section><div data-note=\"a > <fake>\"><span>inner</span></div><p>second</p></section>",
+      "rule": "children",
+      "expectedTags": ["div", "p"],
+      "expectedTexts": ["inner", "second"],
+      "semantics": "legacy_children_keeps_only_direct_elements_and_ignores_markup_like_attribute_text"
+    },
+    {
+      "id": "child-pseudo-quoted-tag-text",
+      "html": "<section><div data-note=\"a > <fake>\">first</div><div>second</div></section>",
+      "rule": "section > div:first-child@text",
+      "expectedTags": ["div"],
+      "expectedTexts": ["first"],
+      "semantics": "standard_child_pseudo_occurrence_mapping_must_keep_the_complete_start_tag"
+    }
+  ],
+  "selectionPaths": [
+    "LegadoRuleAnalyzer.getElementsByXPathPath -> matchXPathAxis -> getParentElement",
+    "LegadoRuleAnalyzer.getElementsByXPathPath -> matchXPathAxis -> getFollowingSiblings -> findParentEndTag",
+    "LegadoRuleAnalyzer.getElementsByXPathPath -> getDescendantElements -> findAllElements",
+    "LegadoRuleAnalyzer.findElementsBySingleRule -> getChildElements",
+    "LegadoRuleAnalyzer.getElementsByCSSChain -> findDirectChildOccurrences"
+  ],
+  "legadoSemantics": {
+    "implementation": "AnalyzeByJSoup delegates selector evaluation to Jsoup Element.select and XPath uses a parsed DOM; quoted attribute text cannot become a tag or axis boundary.",
+    "tagScanner": "A start tag ends at the first unquoted >; markup-like text in an attribute remains data.",
+    "descendantWildcard": "The XPath descendant axis includes every nested element in document order."
+  },
+  "failureCondition": "The string fallback still uses raw tag regular expressions and backwards/forwards character scans in structural helpers. Those paths can treat markup-like text inside quoted attributes as tags, and findAllElements only returns top-level extracted elements for wildcard descendant traversal."
+}

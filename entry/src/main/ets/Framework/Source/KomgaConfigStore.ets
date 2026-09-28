@@ -1,15 +1,15 @@
-import { SafeUtils } from '../../Utils/SafeUtils';
+import { SafeUtils } from 'manxia_core/src/main/ets/Utils/SafeUtils';
 import { preferences } from '@kit.ArkData';
 import { KomgaConfig, KomgaInstanceConfig, KOMGA_DEFAULT_CHAPTER_TEMPLATE } from './KomgaModels';
-import { getContext } from '../../GlobalContext';
-import { logger } from '../../Utils/Logger';
+import { getContext } from 'manxia_core/src/main/ets/GlobalContext';
+import { logger } from 'manxia_core/src/main/ets/Utils/Logger';
 
 const STORE_NAME: string = 'komga_config';
 const CONFIG_KEY: string = 'config_json';
 const TAG: string = 'KomgaConfigStore';
 
-function getKomgaPreferencesStore() {
-  return preferences.getPreferencesSync(getContext(), { name: STORE_NAME });
+async function getKomgaPreferencesStore() {
+  return await preferences.getPreferences(getContext(), { name: STORE_NAME });
 }
 
 function createInstanceId(): string {
@@ -138,7 +138,7 @@ function normalizeKomgaConfigForSave(config: KomgaConfig): KomgaConfig {
 
 export async function loadKomgaConfig(): Promise<KomgaConfig> {
   try {
-    const store = getKomgaPreferencesStore();
+    const store = await getKomgaPreferencesStore();
     const rawText = store.getSync(CONFIG_KEY, '') as string;
     if (!rawText) {
       return createEmptyKomgaConfig();
@@ -152,7 +152,7 @@ export async function loadKomgaConfig(): Promise<KomgaConfig> {
 
 export async function saveKomgaConfig(config: KomgaConfig): Promise<boolean> {
   try {
-    const store = getKomgaPreferencesStore();
+    const store = await getKomgaPreferencesStore();
     const normalized = normalizeKomgaConfigForSave(config);
     store.putSync(CONFIG_KEY, JSON.stringify(normalized));
     await store.flush();

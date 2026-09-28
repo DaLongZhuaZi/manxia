@@ -8,15 +8,15 @@ import { LengthMetrics } from '@kit.ArkUI';
 
 import { AnimatedComponent } from '../Framework/Animation/AnimatedComponent';
 import { AnimationType } from '../Framework/Animation/GlobalAnimationSystem';
-import { logger } from '../Utils/Logger';
-import { TestItem, TestCategory } from '../Data/TestData';
-import { testData } from '../Data/TestData';
+import { logger } from 'manxia_core/src/main/ets/Utils/Logger';
+import { TestItem, TestCategory } from 'manxia_core/src/main/ets/Data/TestData';
+import { testData } from 'manxia_core/src/main/ets/Data/TestData';
 import { window } from '@kit.ArkUI';
 import { common } from '@kit.AbilityKit';
-import { uiContextManager } from '../Framework/Managers/UIContextManager';
-import { ThemeManager, ThemeType } from '../Framework/Managers/ThemeManager';
-import { ThemeToggle } from '../Framework/Components/ThemeToggle';
-import { ThemeAwareState, ThemeAwareHelper } from '../Framework/Components/ThemeAware';
+import { uiContextManager } from 'manxia_theme/src/main/ets/Framework/Managers/UIContextManager';
+import { ThemeManager, ThemeType } from 'manxia_theme/src/main/ets/Framework/Managers/ThemeManager';
+import { ThemeToggle } from 'manxia_theme/src/main/ets/Framework/Components/ThemeToggle';
+import { ThemeAwareState, ThemeAwareHelper } from 'manxia_theme/src/main/ets/Framework/Components/ThemeAware';
 
 // 定义标题栏最小高度，用于内容占位
 const TITLE_BAR_HEIGHT_MINI: number = 56;
@@ -49,7 +49,8 @@ struct TestManagementPage {
     { id: 'webview_configurable_system_test', title: 'WebView可配置系统测试', description: '测试JSON配置系统、扩展模块、统一操作接口等功能', icon: '⚙️', routeName: 'WebViewConfigurableSystemTestPage', isAvailable: true, category: '系统测试' },
     // 数据管理测试入口已移除
     // { id: 'webview_image_test', title: 'WebView图片测试', description: '验证WebView图片加载功能、缓存机制和性能表现', icon: '🌐', routeName: 'WebViewImageTestPage', isAvailable: true, category: '功能测试' }, // 已移除，不符合JSON驱动系统
-    { id: 'manga_source_test', title: '漫画图源测试', description: '测试JSON驱动的漫画图源配置和功能验证', icon: '📚', routeName: 'MangaSourceTestPage', isAvailable: true, category: '功能测试' }
+    { id: 'manga_source_test', title: '漫画图源测试', description: '测试JSON驱动的漫画图源配置和功能验证', icon: '📚', routeName: 'MangaSourceTestPage', isAvailable: true, category: '功能测试' },
+    { id: 'pdf_kit_capability_probe', title: 'PDF Kit 能力探针', description: '核实 PDF Kit 的大纲/搜索/文本抽取/加密/批注/缩放/性能等能力', icon: '📄', routeName: 'PdfKitCapabilityProbePage', isAvailable: true, category: '功能测试' }
   ];
 
   aboutToAppear(): void {

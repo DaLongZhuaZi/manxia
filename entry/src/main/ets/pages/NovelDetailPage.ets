@@ -1,3 +1,4 @@
+import { ISettingsManagerFacade, SettingsManagerHolder } from 'manxia_core/src/main/ets/Framework/Contracts/ISettingsManagerFacade';
 ﻿/**
  * 小说详情页面
  * 展示书籍详情和章节列表
@@ -8,33 +9,33 @@
 
 import { HdsNavDestination } from '@kit.UIDesignKit';
 import { curves, promptAction } from '@kit.ArkUI';
-import { logger } from '../Utils/Logger';
-import { PageLifecycleManager } from '../Framework/Lifecycle';
+import { logger } from 'manxia_core/src/main/ets/Utils/Logger';
+import { PageLifecycleManager } from 'manxia_core/src/main/ets/Framework/Lifecycle/index';
 import { getNovelSourceManager } from '../Framework/Novel/NovelSourceManager';
 import { getNovelDataManager } from '../Framework/Novel/NovelDataManager';
 import { getNovelChapterCacheManager } from '../Framework/Novel/NovelChapterCacheManager';
-import { getNovelSettingsManager, BrowseHistoryInput } from '../Framework/Novel/NovelSettingsManager';
-import { getNovelCoverGenerator, NovelCoverGenerator } from '../Framework/Novel/NovelCoverGenerator';
+import { getNovelSettingsManager, BrowseHistoryInput } from 'manxia_core/src/main/ets/Framework/Novel/NovelSettingsManager';
+import { getNovelCoverGenerator, NovelCoverGenerator } from 'manxia_novel/src/main/ets/Framework/Novel/NovelCoverGenerator';
 import { getNovelSourceSearchService, SourceSearchResult, SearchTaskHandle } from '../Framework/Novel/NovelSourceSearchService';
-import { LegadoBook, LegadoChapter } from '../Framework/Novel/LegadoSourceTypes';
-import { NovelBook, NovelReadStatus, NovelSearchResult } from '../Models/NovelModels';
-import { ThemeAwareState, ThemeAwareHelper } from '../Framework/Components/ThemeAware';
-import { ThemeManager, ThemeType } from '../Framework/Managers/ThemeManager';
-import { FontAwareHelper, FontAwareState } from '../Framework/Components/FontAware';
+import { LegadoBook, LegadoChapter } from 'manxia_novel/src/main/ets/Framework/Novel/LegadoSourceTypes';
+import { NovelBook, NovelReadStatus, NovelSearchResult } from 'manxia_core/src/main/ets/Models/NovelModels';
+import { ThemeAwareState, ThemeAwareHelper } from 'manxia_theme/src/main/ets/Framework/Components/ThemeAware';
+import { ThemeManager, ThemeType } from 'manxia_theme/src/main/ets/Framework/Managers/ThemeManager';
+import { FontAwareHelper, FontAwareState } from 'manxia_theme/src/main/ets/Framework/Components/FontAware';
 import { NovelDetailPageParams, NovelReaderPageParams } from './NovelBookshelfPage';
 import { startBookOpenTransitionWithComponentId } from '../components/BookTransitionOverlay';
 import { openNovelReaderInIsolatedAbility } from '../Framework/Reader/NovelReaderAbilityLauncher';
-import { TextReaderSettings, DEFAULT_TEXT_READER_SETTINGS, BackgroundType, DEFAULT_TEXT_STYLE, TextAlignment } from '../Models/TextReaderModels';
+import { TextReaderSettings, DEFAULT_TEXT_READER_SETTINGS, BackgroundType, DEFAULT_TEXT_STYLE, TextAlignment } from 'manxia_core/src/main/ets/Models/TextReaderModels';
 import { TextReaderSettingsPanel } from '../components/TextReaderSettingsPanel';
-import { SettingsManager, SettingKeys } from '../Framework/Managers/SettingsManager';
+import { SettingKeys } from 'manxia_core/src/main/ets/Framework/Contracts/SettingKeys';
 import { SymbolGlyphModifier } from '@kit.ArkUI';
-import { ContentFilterManager } from '../Framework/Managers/ContentFilterManager';
-import { AppColors } from '../Framework/Theme/AppColors';
-import { GlobalBackgroundLayerMode } from '../Framework/Components/GlobalBackgroundLayer';
-import { SharedPageBackgroundLayer } from '../Framework/Components/SharedPageBackgroundLayer';
+import { ContentFilterManager } from 'manxia_core/src/main/ets/Framework/Managers/ContentFilterManager';
+import { AppColors } from 'manxia_theme/src/main/ets/Framework/Theme/AppColors';
+import { GlobalBackgroundLayerMode } from 'manxia_theme/src/main/ets/Framework/Components/GlobalBackgroundLayer';
+import { SharedPageBackgroundLayer } from 'manxia_theme/src/main/ets/Framework/Components/SharedPageBackgroundLayer';
 import { SettingsImmersiveTitleBar } from './settings/SettingsImmersiveTitleBar';
-import { SettingsPanelSurfaceHelper } from './settings/SettingsPanelSurfaceHelper';
-import { SettingsPageTitleBarManager } from './settings/SettingsPageTitleBarManager';
+import { SettingsPanelSurfaceHelper } from 'manxia_features_ui/src/main/ets/pages/settings/SettingsPanelSurfaceHelper';
+import { SettingsPageTitleBarManager } from 'manxia_features_ui/src/main/ets/pages/settings/SettingsPageTitleBarManager';
 
 const TAG = 'NovelDetailPage';
 
@@ -80,7 +81,7 @@ export struct NovelDetailPage {
   // 设置面板动画状态
   @State settingsPanelOpacity: number = 0;
   @State settingsPanelScale: number = 0.95;
-  private settingsManager: SettingsManager = SettingsManager.getInstance();
+  private settingsManager: ISettingsManagerFacade = SettingsManagerHolder.get();
   private sourceId: string = '';
   private bookUrl: string = '';
   private requestCarrierKey: string = '';

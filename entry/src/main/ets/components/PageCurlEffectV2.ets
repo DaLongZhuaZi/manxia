@@ -9,7 +9,7 @@
  * 5. 使用PixelMap和5参数drawImage确保兼容性
  */
 
-import { logger } from '../Utils/Logger';
+import { logger } from 'manxia_core/src/main/ets/Utils/Logger';
 import { image } from '@kit.ImageKit';
 
 const TAG = 'PageCurlEffectV2';

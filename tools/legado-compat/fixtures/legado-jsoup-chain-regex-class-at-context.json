@@ -1,0 +1,27 @@
+{
+  "schemaVersion": 1,
+  "contract": "legado_jsoup_chain_parenthesis_regex_class_at_context",
+  "issueId": "ISSUE-COMPAT-243-JSOUP-STANDARD-CSS-PSEUDO-SELECTORS",
+  "baseline": {
+    "sourceCount": 458,
+    "sourcePackageSha256": "473048A191DE4749FA9C15E0A2F2328A3E86B385A5FCE23EA30432D598D03A67",
+    "legadoCommit": "95973d186b147fb9ab43a9240021d688e4304fbd"
+  },
+  "selectionPath": "LegadoRuleAnalyzer.getStringByCSS -> getStringByLegadoRule -> LegadoRuleChainAnalyzer.splitByAt",
+  "html": "<section><div class=\"card\">foo@needle</div><div class=\"card\">other</div></section>",
+  "cases": [
+    {
+      "id": "regex-character-class-preserves-at",
+      "rule": "div.card:matches([^)]+@needle)@text",
+      "semantics": "an_at_inside_a_pseudo_argument_after_a_regex_character_class_is_not_a_chain_delimiter",
+      "expected": ["foo@needle"]
+    },
+    {
+      "id": "nested-not-regex-character-class-preserves-at",
+      "rule": "div.card:not(:matches([^)]+@needle))@text",
+      "semantics": "nested_pseudo_parentheses_and_regex_character_classes_remain_opaque_to_chain_splitting",
+      "expected": ["other"]
+    }
+  ],
+  "failureCondition": "LegadoRuleChainAnalyzer.splitByAt uses skipBalanced('(', ')') without tracking a simultaneous bracketDepth; a ')' inside [^)] closes the pseudo early and the following @ is emitted as a top-level chain delimiter."
+}

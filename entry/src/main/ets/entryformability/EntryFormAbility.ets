@@ -1,4 +1,4 @@
-﻿import { SafeUtils } from '../Utils/SafeUtils';
+﻿import { SafeUtils } from 'manxia_core/src/main/ets/Utils/SafeUtils';
 /**
  * 阅读目标卡片 - FormExtensionAbility
  * 管理卡片的生命周期和数据更新

@@ -1,29 +1,29 @@
 import { hdsMaterial, HdsNavDestination } from '@kit.UIDesignKit';
 import { promptAction } from '@kit.ArkUI';
-import { ThemeAwareState, ThemeAwareHelper } from '../../Framework/Components/ThemeAware';
-import { FontAwareHelper, FontAwareState } from '../../Framework/Components/FontAware';
-import { logger } from '../../Utils/Logger';
-import { PageLifecycleManager } from '../../Framework/Lifecycle';
+import { ThemeAwareState, ThemeAwareHelper } from 'manxia_theme/src/main/ets/Framework/Components/ThemeAware';
+import { FontAwareHelper, FontAwareState } from 'manxia_theme/src/main/ets/Framework/Components/FontAware';
+import { logger } from 'manxia_core/src/main/ets/Utils/Logger';
+import { PageLifecycleManager } from 'manxia_core/src/main/ets/Framework/Lifecycle/index';
 import {
   DeviceAdaptationManager,
   DeviceInfo,
   DeviceChangeListener,
   Breakpoint
-} from '../../Framework/Managers/DeviceAdaptationManager';
-import { ResponsiveLayoutHelper } from '../../Framework/Utils/ResponsiveLayout';
+} from 'manxia_theme/src/main/ets/Framework/Managers/DeviceAdaptationManager';
+import { ResponsiveLayoutHelper } from 'manxia_theme/src/main/ets/Framework/Utils/ResponsiveLayout';
 import {
   VisualEffectsManager,
   VisualEffectsMaterialMode,
   VisualEffectsState,
   VisualEffectsStateListener
-} from '../../Framework/Managers/VisualEffectsManager';
-import { SettingsSearchSupport } from './SettingsSearchSupport';
-import { GlobalBackgroundLayerMode } from '../../Framework/Components/GlobalBackgroundLayer';
-import { SharedPageBackgroundLayer } from '../../Framework/Components/SharedPageBackgroundLayer';
+} from 'manxia_core/src/main/ets/Framework/Managers/VisualEffectsManager';
+import { SettingsSearchSupport } from 'manxia_features_ui/src/main/ets/pages/settings/SettingsSearchSupport';
+import { GlobalBackgroundLayerMode } from 'manxia_theme/src/main/ets/Framework/Components/GlobalBackgroundLayer';
+import { SharedPageBackgroundLayer } from 'manxia_theme/src/main/ets/Framework/Components/SharedPageBackgroundLayer';
 import { SettingsImmersiveTitleBar } from './SettingsImmersiveTitleBar';
-import { SettingsPageTitleBarManager } from './SettingsPageTitleBarManager';
-import { SettingsPanelSurfaceHelper } from './SettingsPanelSurfaceHelper';
-import { ThemeType } from '../../Framework/Managers/ThemeManager';
+import { SettingsPageTitleBarManager } from 'manxia_features_ui/src/main/ets/pages/settings/SettingsPageTitleBarManager';
+import { SettingsPanelSurfaceHelper } from 'manxia_features_ui/src/main/ets/pages/settings/SettingsPanelSurfaceHelper';
+import { ThemeType } from 'manxia_theme/src/main/ets/Framework/Managers/ThemeManager';
 
 const TAG = 'VisualEffectsSettingsSubPage';
 

@@ -1,12 +1,12 @@
 import { common, StartOptions, Want } from '@kit.AbilityKit';
 import { UIContext } from '@kit.ArkUI';
-import { logger } from '../../Utils/Logger';
-import { DisplayMode } from '../../Utils/WindowManager';
+import { logger } from 'manxia_core/src/main/ets/Utils/Logger';
+import { DisplayMode } from 'manxia_theme/src/main/ets/Utils/WindowManager';
 import { NovelReaderPageParams } from '../../pages/NovelBookshelfPage';
 import {
   READ_ALOUD_PLAYER_ABILITY_NAME,
   READ_ALOUD_PLAYER_ABILITY_REFRESH_TRIGGER_KEY
-} from './ReadAloudPlayerAbilityConstants';
+} from 'manxia_novel/src/main/ets/Framework/ReadAloud/ReadAloudPlayerAbilityConstants';
 import {
   ReadAloudPlayerAbilityParams,
   ReadAloudPlayerAbilityParamStore

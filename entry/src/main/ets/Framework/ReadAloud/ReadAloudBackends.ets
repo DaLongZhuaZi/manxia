@@ -1,6 +1,6 @@
-﻿import { SafeFileUtils } from '../../Utils/SafeFileUtils';
-import { SafeUtils } from '../../Utils/SafeUtils';
-import { logger } from '../../Utils/Logger';
+﻿import { SafeFileUtils } from 'manxia_core/src/main/ets/Utils/SafeFileUtils';
+import { SafeUtils } from 'manxia_core/src/main/ets/Utils/SafeUtils';
+import { logger } from 'manxia_core/src/main/ets/Utils/Logger';
 import {
   buildXiaomiMimoStyledText,
   DEFAULT_READ_ALOUD_SETTINGS,
@@ -11,15 +11,15 @@ import {
   RemoteReadAloudSettings,
   normalizeReadAloudSettings,
   normalizeRemoteReadAloudSettings
-} from '../../Models/TextReaderModels';
+} from 'manxia_core/src/main/ets/Models/TextReaderModels';
 import { ReadAloudProgressSnapshot, ReadAloudSessionContext, ReadAloudVoiceOption } from './ReadAloudTypes';
-import { ReadAloudRequestIdGenerator } from './ReadAloudRequestIdGenerator';
+import { ReadAloudRequestIdGenerator } from 'manxia_novel/src/main/ets/Framework/ReadAloud/ReadAloudRequestIdGenerator';
 import { textToSpeech } from '@kit.CoreSpeechKit';
 import { http } from '@kit.NetworkKit';
 import fs from '@ohos.file.fs';
 import { util } from '@kit.ArkTS';
 import { media } from '@kit.MediaKit';
-import { uiContextManager } from '../Managers/UIContextManager';
+import { uiContextManager } from 'manxia_theme/src/main/ets/Framework/Managers/UIContextManager';
 import { eventBus, GameEvent, ReadAloudCacheUpdatedPayload } from '../EventBus';
 
 const TAG = 'ReadAloudBackends';

@@ -1,0 +1,36 @@
+{
+  "schemaVersion": 1,
+  "contract": "legado_v2_image_request_header_fallback_carrier",
+  "baseline": {
+    "sourceCount": 458,
+    "sourcePackageSha256": "473048A191DE4749FA9C15E0A2F2328A3E86B385A5FCE23EA30432D598D03A67",
+    "legadoCommit": "95973d186b147fb9ab43a9240021d688e4304fbd"
+  },
+  "fallbackPaths": [
+    "http_403_relaxed_retry",
+    "photos18_cookie_refresh_retry",
+    "rmcdn_webview_fallback",
+    "photos18_webview_fallback",
+    "pixiv_webview_fallback"
+  ],
+  "requiredHeaderFieldsOnEveryRetry": [
+    "User-Agent",
+    "Accept",
+    "Referer",
+    "Origin",
+    "Cookie",
+    "Authorization",
+    "Accept-Language",
+    "Cache-Control",
+    "Pragma",
+    "Sec-Fetch-Dest",
+    "Sec-Fetch-Mode",
+    "Sec-Fetch-Site"
+  ],
+  "requiredOptionFieldsOnEveryRetry": [
+    "skipFailureTtl",
+    "forceRefresh",
+    "legadoImageTrace"
+  ],
+  "semanticRule": "A fallback request may alter transport mechanism, but it must receive the same effective Legado header carrier and policy options; it cannot silently downgrade a standard header to omission or an untracked empty value."
+}

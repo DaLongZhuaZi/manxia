@@ -1,0 +1,13 @@
+{
+  "schemaVersion": 1,
+  "kind": "legado_governance_stale_verifying_preservation",
+  "statusTokens": {
+    "durable": "verifying",
+    "interrupted": "running"
+  },
+  "expected": {
+    "durableStatusAfterRecovery": "verifying",
+    "interruptedStatusAfterRecovery": "planned",
+    "staleGovernanceCount": 1
+  }
+}

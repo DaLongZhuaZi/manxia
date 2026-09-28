@@ -1,0 +1,18 @@
+{
+  "schemaVersion": 1,
+  "issueId": "V2-GOV-004-DOCUMENT-TASK-MIRROR",
+  "sourceOfTruth": "tools/legado-compat/state/full-source-validation-state.json",
+  "mirrorPath": "tools/legado-compat/LEGADO_V2_GOVERNANCE_TASKS.md",
+  "startMarker": "<!-- LEGADO_V2_GOVERNANCE_TASK_MIRROR:START -->",
+  "endMarker": "<!-- LEGADO_V2_GOVERNANCE_TASK_MIRROR:END -->",
+  "historicalTokenOutsideMirror": "| V2-GOV-004 | passed | P1 |",
+  "requirements": [
+    "one marker-delimited generated block",
+    "every governance task and issue has an exact status/attempt mirror row",
+    "historical task evidence outside the generated block is preserved",
+    "UTF-8 without BOM and atomic writer are used",
+    "state or ledger read failures throw and propagate a non-zero refresh result"
+  ],
+  "verificationPolicy": "static_contract_only;runtime_regression_not_applicable",
+  "semanticMatchAllowed": false
+}

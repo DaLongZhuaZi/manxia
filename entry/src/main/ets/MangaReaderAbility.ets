@@ -1,15 +1,15 @@
 import { AbilityConstant, UIAbility, Want, common } from '@kit.AbilityKit';
 import { window } from '@kit.ArkUI';
-import { logger } from './Utils/Logger';
+import { logger } from 'manxia_core/src/main/ets/Utils/Logger';
 import { continuationStateHelper } from './Framework/Distributed/ContinuationStateHelper';
 import { MangaReaderPageParams } from './pages/MangaReaderPage';
 import {
   MANGA_READER_ABILITY_INSTANCE_ID_KEY,
   MANGA_READER_ABILITY_PAGE,
   MANGA_READER_ABILITY_PARAMS_KEY
-} from './Framework/Reader/MangaReaderAbilityConstants';
+} from 'manxia_reader_ui/src/main/ets/Framework/Reader/MangaReaderAbilityConstants';
 import { MangaReaderAbilityParamStore } from './Framework/Reader/MangaReaderAbilityParamStore';
-import { ReaderAbilityWindowLifecycleController } from './Framework/Reader/ReaderAbilityWindowLifecycleController';
+import { ReaderAbilityWindowLifecycleController } from 'manxia_reader_ui/src/main/ets/Framework/Reader/ReaderAbilityWindowLifecycleController';
 
 const TAG: string = 'MangaReaderAbility';
 const DEFAULT_READER_INSTANCE_TITLE: string = '漫画阅读器';

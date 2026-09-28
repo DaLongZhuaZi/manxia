@@ -1,16 +1,15 @@
 // 文件路径: src/main/ets/pages/SplashPage.ets
 // 职责: 应用启动页面，显示品牌标识和加载状态，监听真实初始化进度
 
-import { logger } from '../Utils/Logger';
-import { PageLifecycleManager } from '../Framework/Lifecycle';
-import { ThemeManager, ThemeType, CUSTOM_THEME_KEYS } from '../Framework/Managers/ThemeManager';
-import { ThemeAwareHelper, ThemeAwareState } from '../Framework/Components/ThemeAware';
-import { WelcomeGuideManager } from '../Framework/Managers/WelcomeGuideManager';
-import { WindowManager, DisplayMode } from '../Utils/WindowManager';
+import { logger } from 'manxia_core/src/main/ets/Utils/Logger';
+import { PageLifecycleManager } from 'manxia_core/src/main/ets/Framework/Lifecycle/index';
+import { ThemeManager, ThemeType, CUSTOM_THEME_KEYS } from 'manxia_theme/src/main/ets/Framework/Managers/ThemeManager';
+import { ThemeAwareHelper, ThemeAwareState } from 'manxia_theme/src/main/ets/Framework/Components/ThemeAware';
+import { WelcomeGuideManager } from 'manxia_core/src/main/ets/Framework/Managers/WelcomeGuideManager';
+import { WindowManager, DisplayMode } from 'manxia_theme/src/main/ets/Utils/WindowManager';
 import { common } from '@kit.AbilityKit';
-import { colorMap } from '../Data/ResourceMap';
-import { BuiltInThemeResources } from '../Framework/Theme/BuiltInThemeResources';
-import { getAppInitializationManager, InitializationState, InitPhase, InitProgressCallback } from '../Framework/Managers/AppInitializationManager';
+import { BuiltInThemeResources } from 'manxia_theme/src/main/ets/Framework/Theme/BuiltInThemeResources';
+import { getAppInitializationManager, InitializationState, InitPhase, InitProgressCallback } from 'manxia_core/src/main/ets/Framework/Managers/AppInitializationManager';
 import { ngfEventBusFacade, NGFEventPayload, NGFInitializationEventName } from '../Framework/NGF';
 import { ngfPlatformWindowControllerFacade, NGFDisplayMode } from '../Framework/NGF/platformOhos/index';
 

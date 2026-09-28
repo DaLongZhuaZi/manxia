@@ -1,4 +1,4 @@
-import { SafeFileUtils } from '../../Utils/SafeFileUtils';
+import { SafeFileUtils } from 'manxia_core/src/main/ets/Utils/SafeFileUtils';
 // 文件路径: entry/src/main/ets/Framework/Debug/ErrorMonitorService.ets
 /**
  * 错误监控服务
@@ -8,16 +8,16 @@ import { SafeFileUtils } from '../../Utils/SafeFileUtils';
 
 import { common } from '@kit.AbilityKit';
 import { fileIo as fs } from '@kit.CoreFileKit';
-import { LogLevel } from '../../Utils/Logger';
-import { LogCollector, LogEntry } from './LogCollector';
-import { DownloadDirManager } from '../Storage/DownloadDirManager';
-import { ErrorCategory, ErrorRecordManager } from './ErrorRecordManager';
+import { LogLevel } from 'manxia_core/src/main/ets/Utils/Logger';
+import { LogCollector, LogEntry } from 'manxia_core/src/main/ets/Framework/Debug/LogCollector';
+import { DownloadDirManager } from 'manxia_core/src/main/ets/Framework/Storage/DownloadDirManager';
+import { ErrorCategory, ErrorRecordManager } from 'manxia_network/src/main/ets/Framework/Debug/ErrorRecordManager';
 import { deviceInfo } from '@kit.BasicServicesKit';
 import { ngfEventBusFacade, NGFEventPayload, NGFInitializationEventName } from '../NGF';
 import {
   getNetworkTransportFailureCoordinator,
   NetworkTransportFailureCoordinator
-} from '../Network/NetworkTransportFailureCoordinator';
+} from 'manxia_network/src/main/ets/Framework/Network/NetworkTransportFailureCoordinator';
 
 const TAG = 'ErrorMonitorService';
 

@@ -1,6 +1,6 @@
 import { common, StartOptions, Want } from '@kit.AbilityKit';
 import { UIContext } from '@kit.ArkUI';
-import { logger } from '../../Utils/Logger';
+import { logger } from 'manxia_core/src/main/ets/Utils/Logger';
 import { ContinuationTriggeredPayload } from '../EventBus';
 import {
   REMOTE_CONTROL_ABILITY_NAME,

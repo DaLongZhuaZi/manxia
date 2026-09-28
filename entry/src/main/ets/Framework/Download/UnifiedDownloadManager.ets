@@ -6,13 +6,13 @@
  * 文件路径: entry/src/main/ets/Framework/Download/UnifiedDownloadManager.ets
  */
 
-import { logger } from '../../Utils/Logger';
+import { logger } from 'manxia_core/src/main/ets/Utils/Logger';
 import { MangaDownloadManager, DownloadTaskInfo, TaskStatus, PageListFetcher, DownloadPageItem } from './DownloadManager';
 import { getNovelChapterCacheManager, NovelChapterCacheManager, DownloadProgressCallback as NovelDownloadCallback } from '../Novel/NovelChapterCacheManager';
-import { LegadoChapter } from '../Novel/LegadoSourceTypes';
-import { AppNotificationManager } from '../Managers/NotificationManager';
+import { LegadoChapter } from 'manxia_novel/src/main/ets/Framework/Novel/LegadoSourceTypes';
+import { AppNotificationManager } from 'manxia_core/src/main/ets/Framework/Managers/NotificationManager';
 import { common } from '@kit.AbilityKit';
-import { DownloadCacheFlowMonitor, getDownloadCacheFlowMonitor } from './DownloadCacheFlowMonitor';
+import { DownloadCacheFlowMonitor, getDownloadCacheFlowMonitor } from 'manxia_network/src/main/ets/Framework/Download/DownloadCacheFlowMonitor';
 import {
   DownloadCacheContentType,
   DownloadCacheEntrySource,
@@ -21,7 +21,7 @@ import {
   DownloadCacheFlowSessionInfo,
   DownloadCacheFlowSeverity,
   DownloadCacheFlowStage
-} from './DownloadCacheFlowTypes';
+} from 'manxia_network/src/main/ets/Framework/Download/DownloadCacheFlowTypes';
 
 const TAG = 'UnifiedDownloadManager';
 
@@ -206,6 +206,26 @@ export class UnifiedDownloadManager {
       UnifiedDownloadManager.instance = new UnifiedDownloadManager();
     }
     return UnifiedDownloadManager.instance;
+  }
+
+  /**
+   * 重置单例状态，清理所有长生命周期 Map
+   * 应用退出、用户注销或全量重置时调用，避免已完成任务残留导致内存泄漏
+   *
+   * 前置条件：调用时必须确保没有正在进行中的下载任务。
+   * 本方法仅清理 bookkeeping Map，不会取消 in-flight 下载，
+   * 若在下载进行中调用会导致孤儿任务和丢失完成通知。
+   * 如需在下载进行中重置，应先通过 mangaDownloadManager / novelCacheManager 取消活跃任务。
+   */
+  public reset(): void {
+    this.unifiedTasks.clear();
+    this.taskIdsByType.clear();
+    this.taskIdsByContent.clear();
+    this.taskIdsByStatus.clear();
+    this.callbacks.clear();
+    this.globalCallbacks.clear();
+    this.lastProgressNotifyAtByTaskId.clear();
+    logger.info(TAG, '统一下载管理器状态已重置');
   }
   
   /**

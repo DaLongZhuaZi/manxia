@@ -3,11 +3,11 @@
  * 单例模式，在内容添加到书库前检测是否已存在相似内容
  */
 
-import { logger } from '../../Utils/Logger';
+import { logger } from 'manxia_core/src/main/ets/Utils/Logger';
 import { DataManager } from '../Data/DataManager';
-import { EBookDataManager } from '../Data/EBookDataManager';
+import { EBookDataManager } from 'manxia_core/src/main/ets/Framework/Data/EBookDataManager';
 import { NovelDataManager } from '../Novel/NovelDataManager';
-import { SettingsManager } from '../Managers/SettingsManager';
+import { SettingsManager } from 'manxia_core/src/main/ets/Framework/Managers/SettingsManager';
 import { normalizeText, combinedSimilarity } from './StringSimilarity';
 import {
   DuplicateCheckInput,

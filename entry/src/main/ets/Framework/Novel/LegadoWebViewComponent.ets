@@ -6,8 +6,8 @@
  */
 
 import { webview } from '@kit.ArkWeb';
-import { logger } from '../../Utils/Logger';
-import { getWebViewExecutor } from './LegadoWebViewExecutor';
+import { logger } from 'manxia_core/src/main/ets/Utils/Logger';
+import { getWebViewExecutor } from 'manxia_novel/src/main/ets/Framework/Novel/LegadoWebViewExecutor';
 import { getLegadoJsEngine } from './LegadoJsEngine';
 import { getLegadoRuntimeV2 } from './LegadoRuntimeV2';
 import { getLegadoRuntimeAssetManager } from './LegadoRuntimeAssetManager';

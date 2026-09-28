@@ -6,13 +6,13 @@
  */
 
 import { webview } from '@kit.ArkWeb';
-import { logger } from '../../Utils/Logger';
-import { DatabaseManager } from '../Database/DatabaseManager';
+import { logger } from 'manxia_core/src/main/ets/Utils/Logger';
+import { DatabaseManager } from 'manxia_core/src/main/ets/Framework/Database/DatabaseManager';
 import { 
   ChapterInfoDatabaseRecord,
   PageInfoDatabaseRecord,
   ComicSourceDatabaseRecord
-} from '../Database/DatabaseTypes';
+} from 'manxia_core/src/main/ets/Framework/Database/DatabaseTypes';
 import { 
   IWebViewImageLoader,
   ImageRequestInfo,
@@ -22,7 +22,7 @@ import {
   WebViewImageInterceptor,
   WebViewImageCache,
   WebViewSourceConfig
-} from './WebViewImageLoader';
+} from 'manxia_source_engine/src/main/ets/Framework/WebView/WebViewImageLoader';
 import { WebViewSourceManager } from './WebViewSourceManager';
 
 const TAG = 'WebViewMangaLoader';

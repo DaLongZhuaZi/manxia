@@ -1,4 +1,4 @@
-﻿import { SafeUtils } from '../../Utils/SafeUtils';
+﻿import { SafeUtils } from 'manxia_core/src/main/ets/Utils/SafeUtils';
 // 文件路径: entry/src/main/ets/Framework/Components/ShareLinkDialogComponent.ets
 // 职责: 分享直达链接对话框组件，样式与 DownloadDialogComponent 完全一致
 
@@ -7,10 +7,10 @@ import { pasteboard } from '@kit.BasicServicesKit';
 import { common } from '@kit.AbilityKit';
 import { systemShare } from '@kit.ShareKit';
 import { uniformTypeDescriptor as utd } from '@kit.ArkData';
-import { logger } from '../../Utils/Logger';
-import { ThemeAwareState, ThemeAwareHelper } from './ThemeAware';
+import { logger } from 'manxia_core/src/main/ets/Utils/Logger';
+import { ThemeAwareState, ThemeAwareHelper } from 'manxia_theme/src/main/ets/Framework/Components/ThemeAware';
 import { SourceDialogScaffold } from './SourceDialogScaffold';
-import { UnifiedContent, UnifiedContentType } from '../../Models/UnifiedContentModels';
+import { UnifiedContent, UnifiedContentType } from 'manxia_core/src/main/ets/Models/UnifiedContentModels';
 
 const TAG = 'ShareLinkDialogComponent';
 const WEB_DOMAIN: string = 'manxia.top';

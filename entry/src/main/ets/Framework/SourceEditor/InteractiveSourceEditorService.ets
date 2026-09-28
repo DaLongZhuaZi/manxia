@@ -1,15 +1,15 @@
 import { common } from '@kit.AbilityKit';
 import fs from '@ohos.file.fs';
-import { logger } from '../../Utils/Logger';
-import { SafeFileUtils } from '../../Utils/SafeFileUtils';
-import { SafeUtils } from '../../Utils/SafeUtils';
-import { ComicSourceDatabaseRecord } from '../Database/DatabaseTypes';
+import { logger } from 'manxia_core/src/main/ets/Utils/Logger';
+import { SafeFileUtils } from 'manxia_core/src/main/ets/Utils/SafeFileUtils';
+import { SafeUtils } from 'manxia_core/src/main/ets/Utils/SafeUtils';
+import { ComicSourceDatabaseRecord } from 'manxia_core/src/main/ets/Framework/Database/DatabaseTypes';
 import { DataManager } from '../Data/DataManager';
 import { SourceManager, ImportResult } from '../Source/SourceManager';
-import { Action, MangaSourceSettings } from '../WebView/MangaSourceTypes';
+import { Action, MangaSourceSettings } from 'manxia_source_engine/src/main/ets/Framework/WebView/MangaSourceTypes';
 import { WebViewSourceManager } from '../WebView/WebViewSourceManager';
-import { SourceConfigValidator } from './SourceConfigValidator';
-import { sourceDraftStore } from './SourceDraftStore';
+import { SourceConfigValidator } from 'manxia_source_engine/src/main/ets/Framework/SourceEditor/SourceConfigValidator';
+import { sourceDraftStore } from 'manxia_source_engine/src/main/ets/Framework/SourceEditor/SourceDraftStore';
 import { sourceMaintenanceManager } from '../Source/SourceMaintenanceManager';
 import {
   DomSelectionSnapshot,
@@ -22,8 +22,8 @@ import {
   SourceInteractiveEditorPageParams,
   SourceSaveMode,
   SourceValidationResult
-} from './SourceEditorTypes';
-import { SourceRuleGenerator } from './SourceRuleGenerator';
+} from 'manxia_source_engine/src/main/ets/Framework/SourceEditor/SourceEditorTypes';
+import { SourceRuleGenerator } from 'manxia_source_engine/src/main/ets/Framework/SourceEditor/SourceRuleGenerator';
 
 const TAG = 'InteractiveSourceEditorService';
 

@@ -1,23 +1,26 @@
-import { SafeFileUtils } from '../Utils/SafeFileUtils';
-import { SafeUtils } from '../Utils/SafeUtils';
-import { logger } from '../Utils/Logger';
+import { ISettingsManagerFacade, SettingsManagerHolder } from 'manxia_core/src/main/ets/Framework/Contracts/ISettingsManagerFacade';
+import { SafeFileUtils } from 'manxia_core/src/main/ets/Utils/SafeFileUtils';
+import { SafeUtils } from 'manxia_core/src/main/ets/Utils/SafeUtils';
+import { logger } from 'manxia_core/src/main/ets/Utils/Logger';
 import { common } from '@kit.AbilityKit';
 import { display, promptAction, UIContext, window } from '@kit.ArkUI';
 import { preferences } from '@kit.ArkData';
 import { util } from '@kit.ArkTS';
 import { fileIo } from '@kit.CoreFileKit';
 import batteryInfo from '@ohos.batteryInfo';
-import { WindowManager, DisplayMode } from '../Utils/WindowManager';
-import { PageWindowCoordinator } from '../Utils/PageWindowCoordinator';
-import { ReaderOrientationLockHelper } from '../Utils/ReaderOrientationLockHelper';
+import { WindowManager, DisplayMode } from 'manxia_theme/src/main/ets/Utils/WindowManager';
+import { PageWindowCoordinator } from 'manxia_theme/src/main/ets/Utils/PageWindowCoordinator';
+import { ReaderOrientationLockHelper, ReaderOrientationLockScope } from 'manxia_core/src/main/ets/Utils/ReaderOrientationLockHelper';
+import { ReaderToolbarButton } from '../components/ReaderToolbarButton';
 import { ReaderSafeAreaUtils } from '../Utils/ReaderSafeAreaUtils';
-import { ThemeManager } from '../Framework/Managers/ThemeManager';
-import { getFontManager, FontScene } from '../Framework/Managers/FontManager';
+import { ThemeManager } from 'manxia_theme/src/main/ets/Framework/Managers/ThemeManager';
+import { getFontManager, FontScene } from 'manxia_theme/src/main/ets/Framework/Managers/FontManager';
 import { distributedReadingService } from '../Framework/Distributed/DistributedReadingService';
 import { distributedDataSyncManager, SyncReadingState } from '../Framework/Distributed/DistributedDataSyncManager';
-import { EBookDataManager } from '../Framework/Data/EBookDataManager';
+import { EBookDataManager } from 'manxia_core/src/main/ets/Framework/Data/EBookDataManager';
+import { ContinuationCacheManager } from '../Framework/Distributed/ContinuationCacheManager';
 import { EBookParserFactory, resolveEpubPackageDocumentPathFromRoot } from '../Framework/Parsers/EBookParser';
-import { convertMobiToExtractedDir } from '../Framework/Parsers/MobiParser';
+import { convertMobiToExtractedDir } from 'manxia_source_engine/src/main/ets/Framework/Parsers/MobiParser';
 import { KeyCode, inputConsumer } from '@kit.InputKit';
 import {
   EBook,
@@ -29,7 +32,7 @@ import {
   EBookReadingProgress,
   EBookReadingSettings,
   DEFAULT_EBOOK_READING_SETTINGS
-} from '../Models/EBookModels';
+} from 'manxia_core/src/main/ets/Models/EBookModels';
 import {
   ReadingSettings as MangaReadingSettings,
   DEFAULT_READING_SETTINGS,
@@ -37,7 +40,7 @@ import {
   ReadingDirection,
   DoublePagePortraitLayout,
   PageTurnAnimationType
-} from '../Models/MangaModels';
+} from 'manxia_core/src/main/ets/Models/MangaModels';
 import {
   EpubWebViewReaderComponent,
   EpubWebViewReaderController,
@@ -52,7 +55,7 @@ import {
   EpubWebComponentFlowEvent,
   EpubWebComponentFlowEventName
 } from '../Framework/Components/EpubWebViewReaderComponent';
-import { UnifiedContentType } from '../Models/UnifiedContentModels';
+import { UnifiedContentType } from 'manxia_core/src/main/ets/Models/UnifiedContentModels';
 import {
   AnnotationAnchor,
   CreateThoughtInput,
@@ -60,9 +63,9 @@ import {
   HighlightStyle,
   UnifiedAnnotationRecord,
   UnifiedAnnotationType
-} from '../Models/AnnotationModels';
-import { getUnifiedAnnotationManager } from '../Framework/Annotations/UnifiedAnnotationManager';
-import { SettingsManager } from '../Framework/Managers/SettingsManager';
+} from 'manxia_core/src/main/ets/Models/AnnotationModels';
+import { getUnifiedAnnotationManager } from 'manxia_core/src/main/ets/Framework/Annotations/UnifiedAnnotationManager';
+
 import { AddRuleParams, NovelReplaceRuleManager, ReplaceRule, ReplaceScope } from '../Framework/Novel/NovelReplaceRuleManager';
 import {
   DEFAULT_READ_ALOUD_SETTINGS,
@@ -70,7 +73,7 @@ import {
   ReadAloudSettings,
   mergeRemoteReadAloudSettings,
   normalizeReadAloudSettings
-} from '../Models/TextReaderModels';
+} from 'manxia_core/src/main/ets/Models/TextReaderModels';
 import { ReadAloudController } from '../Framework/ReadAloud/ReadAloudController';
 import { ReadAloudPlaybackState, ReadAloudVoiceOption } from '../Framework/ReadAloud/ReadAloudTypes';
 import { ReadAloudAvailability, ReadAloudEngineAvailabilityMap } from '../Framework/ReadAloud/ReadAloudAvailability';
@@ -92,20 +95,20 @@ import {
 import { EBookReaderParams } from './EBookReaderRouteTypes';
 import { isReaderKitEnabled } from '../Framework/Initialization/ReaderKitFeatureGate';
 import { openEBookReaderRouterPage } from '../Framework/Adapters/EBookReaderRouteNavigator';
-import { READER_ABILITY_HOST_MULTITON } from '../Framework/Reader/MangaReaderAbilityConstants';
+import { READER_ABILITY_HOST_MULTITON } from 'manxia_reader_ui/src/main/ets/Framework/Reader/MangaReaderAbilityConstants';
 import { openReadAloudPlayerInIsolatedAbility } from '../Framework/ReadAloud/ReadAloudPlayerAbilityLauncher';
 import type { KeyEvent as InputKeyEvent } from '@kit.InputKit';
-import { DetailOpenFlowMonitor } from '../Framework/Reader/DetailOpenFlowMonitor';
+import { DetailOpenFlowMonitor } from 'manxia_reader_ui/src/main/ets/Framework/Reader/DetailOpenFlowMonitor';
 import {
   DetailOpenFlowEventType,
   DetailOpenFlowTargetKind
-} from '../Framework/Reader/DetailOpenFlowTypes';
-import { EpubReadFlowMonitor } from '../Framework/Reader/EpubReadFlowMonitor';
+} from 'manxia_reader_ui/src/main/ets/Framework/Reader/DetailOpenFlowTypes';
+import { EpubReadFlowMonitor } from 'manxia_reader_ui/src/main/ets/Framework/Reader/EpubReadFlowMonitor';
 import {
   EpubReadFlowEventType,
   EpubReadFlowSessionInfo,
   EpubReadFlowSeverity
-} from '../Framework/Reader/EpubReadFlowTypes';
+} from 'manxia_reader_ui/src/main/ets/Framework/Reader/EpubReadFlowTypes';
 
 const TAG = 'EpubWebViewReaderPage';
 const IMAGE_RESOURCE_PATH_PATTERN: RegExp = /\.(apng|avif|bmp|gif|heic|heif|jpe?g|png|svg|webp)$/i;
@@ -191,6 +194,7 @@ export struct EpubWebViewReaderPage {
   @State errorMessage: string = '';
   @State showTopToolbar: boolean = false;
   @State showBottomToolbar: boolean = false;
+  @StorageProp('reader_toolbar_text_hint_enabled') toolbarTextHintEnabled: boolean = true;
   @State toolbarOpacity: number = 0;
   @State showSettingsPanel: boolean = false;
   @State showQuickSettings: boolean = false;
@@ -238,13 +242,17 @@ export struct EpubWebViewReaderPage {
   private autoPageTurnTimer: number = -1;
   private timeUpdateTimer: number = -1;
   private lastProgressSaveTime: number = 0;
+  private lastDistributedProgressBookId: string = '';
+  private lastDistributedProgressSpineIndex: number = -1;
+  private lastDistributedProgressPageIndex: number = -1;
   private lastRemoteInstructionTimestamp: number = 0;
   private remoteCallbacksRegistered: boolean = false;
+  private continuationCacheId: string = '';
   private pendingContinuationSpineIndex: number = -1;
   private pendingContinuationPageIndex: number = -1;
   private sessionStartTimestamp: number = 0;
   private themeManager: ThemeManager = ThemeManager.getInstance();
-  private settingsManager: SettingsManager = SettingsManager.getInstance();
+  private settingsManager: ISettingsManagerFacade = SettingsManagerHolder.get();
   private readAloudController: ReadAloudController = ReadAloudController.getInstance();
   private hasNotifiedTransitionReaderReady: boolean = false;
   private epubCurlGestureActive: boolean = false;
@@ -323,7 +331,7 @@ export struct EpubWebViewReaderPage {
       distributedReadingService.clearContinuationFlags();
     }
     this.themeManager = ThemeManager.getInstance();
-    this.settingsManager = SettingsManager.getInstance();
+    this.settingsManager = SettingsManagerHolder.get();
     eventBus.subscribe(GameEvent.READ_ALOUD_STATE_CHANGED, this.onReadAloudStateChanged);
     AppStorage.setOrCreate('ReadAloudCurrentHostPage', 'EpubWebViewReaderPage');
     this.syncReadAloudStateFromController();
@@ -403,6 +411,7 @@ export struct EpubWebViewReaderPage {
     this.routeReaderTitle = params.readerTitle || '';
     this.shouldAutoStartReadAloudFromRoute = params.autoStartReadAloud === true;
     this.shouldAutoOpenReadAloudPlayerFromRoute = params.autoOpenReadAloudPlayer === true;
+    this.continuationCacheId = params.continuationCacheId || '';
     this.routeReadAloudAutoStartAttempts = 0;
     this.startEpubReadFlowSession(params.bookId, this.routeReaderTitle, '', 'initialize_params');
     await this.loadEBook(params.bookId);
@@ -433,7 +442,9 @@ export struct EpubWebViewReaderPage {
     this.replaceSettingsLoaded = false;
 
     try {
-      const ebook = await this.ebookDataManager.getEBookById(bookId);
+      const ebook = this.continuationCacheId.length > 0
+        ? await ContinuationCacheManager.getInstance().getEBook(this.continuationCacheId)
+        : await this.ebookDataManager.getEBookById(bookId);
       if (!ebook) {
         throw new Error('未找到电子书');
       }
@@ -460,12 +471,12 @@ export struct EpubWebViewReaderPage {
               }
             }
           }
-          void this.ebookDataManager.saveEBook(ebook, { skipReadingSettings: true });
+          this.persistEBookSnapshot(ebook);
           logger.info(TAG, `懒解压成功: extractedRootPath=${extractedRoot}`);
         }
       }
 
-      if (isMobiFormat) {
+      if (isMobiFormat && !(this.continuationCacheId.length > 0 && extractedRoot.length > 0)) {
         logger.info(
           TAG,
           `${extractedRoot.length === 0 ? 'MOBI extractedRootPath 为空，触发懒转换' : '检查 MOBI 本地转换缓存版本'}: ${ebook.filePath}`
@@ -482,7 +493,7 @@ export struct EpubWebViewReaderPage {
             }
             ebook.chapters = newSpine;
           }
-          void this.ebookDataManager.saveEBook(ebook, { skipReadingSettings: true });
+          this.persistEBookSnapshot(ebook);
           logger.info(TAG, `MOBI 本地转换缓存就绪: ${extractedRoot}`);
         } else {
           mobiConversionError = convResult.errorMessage;
@@ -515,7 +526,7 @@ export struct EpubWebViewReaderPage {
             ch.bookId = ebook.id;
           }
           ebook.chapters = opfSpineItems;
-          void this.ebookDataManager.saveEBook(ebook, { skipReadingSettings: true });
+          this.persistEBookSnapshot(ebook);
           spineItems = opfSpineItems;
           logger.info(TAG, `已根据 OPF 刷新 WebView spine 元数据: count=${spineItems.length}`);
         }
@@ -529,7 +540,7 @@ export struct EpubWebViewReaderPage {
             ch.bookId = ebook.id;
           }
           ebook.chapters = opfSpineItems;
-          void this.ebookDataManager.saveEBook(ebook, { skipReadingSettings: true });
+          this.persistEBookSnapshot(ebook);
           spineItems = opfSpineItems;
           logger.info(TAG, `OPF 直接解析成功，获得 ${spineItems.length} 个 spine 项`);
         }
@@ -612,7 +623,7 @@ export struct EpubWebViewReaderPage {
       }
       // [修复] 加载完成立即同步一次阅读状态：打开书籍后未翻页就触发接续时，
       // onContinue 守卫依赖 currentRead*（此前该状态只随进度保存更新，会误判拒绝流转）
-      distributedReadingService.syncProgress(ebook.id, this.currentSpineIndex, this.currentPageWithinSpine, 0, 'ebook');
+      this.syncCurrentProgressToRemote('ebook_loaded', true);
       logger.info(TAG, `阅读状态已就绪: bookId=${ebook.id}, spine=${this.currentSpineIndex}, page=${this.currentPageWithinSpine}`);
 
       this.isLoading = false;
@@ -3294,6 +3305,9 @@ export struct EpubWebViewReaderPage {
     if (!this.ebook) {
       return;
     }
+    if (this.continuationCacheId.length > 0) {
+      return;
+    }
     try {
       await this.ebookDataManager.saveImageReaderSettings(
         this.ebook.id,
@@ -3308,6 +3322,15 @@ export struct EpubWebViewReaderPage {
     this.queuePageReadingSettingsSave(trigger);
   }
 
+  private persistEBookSnapshot(ebook: EBook): void {
+    if (this.continuationCacheId.length > 0) {
+      return;
+    }
+    void this.ebookDataManager.saveEBook(ebook, { skipReadingSettings: true }).catch((error: Error) => {
+      logger.warn(TAG, `保存 EPUB 元数据失败: ${String(error)}`);
+    });
+  }
+
   private async executePersistTextReadingSettings(trigger: string): Promise<void> {
     if (!this.ebook) {
       return;
@@ -3319,7 +3342,11 @@ export struct EpubWebViewReaderPage {
         TAG,
         `保存 WebView EPUB 文本阅读设置: 触发源=${trigger}, fontSize=${snapshot.fontSize}, fontFamily=${snapshot.fontFamily}, fontPath=${snapshot.fontPath || 'none'}, fontWeight=${snapshot.fontWeight}, lineHeight=${snapshot.lineHeight}, pageMargin=${snapshot.pageMargin}, letterSpacing=${snapshot.letterSpacing ?? 0}, paragraphSpacing=${snapshot.paragraphSpacing ?? 8}, firstLineIndent=${snapshot.firstLineIndent ?? 2}, textAlignment=${snapshot.textAlignment ?? 'JUSTIFY'}`
       );
-      await this.ebookDataManager.saveReadingSettings(this.ebook.id, snapshot);
+      if (this.continuationCacheId.length > 0) {
+        await ContinuationCacheManager.getInstance().updateEBookSettings(this.continuationCacheId, snapshot);
+      } else {
+        await this.ebookDataManager.saveReadingSettings(this.ebook.id, snapshot);
+      }
     } catch (error) {
       logger.error(TAG, `保存 WebView EPUB 文本阅读设置失败: 触发源=${trigger}, 错误=${String(error)}`);
     }
@@ -3333,8 +3360,11 @@ export struct EpubWebViewReaderPage {
     if (!this.uiContext) {
       this.uiContext = this.getUIContext();
     }
-    const enabled: boolean = (this.readingSettings.lockDeviceOrientation ?? false) ||
-      (this.pageReadingSettings.lockDeviceOrientation ?? false);
+    const enabled: boolean = ReaderOrientationLockHelper.resolveOrientationLockEnabled(
+      ReaderOrientationLockScope.EBOOK,
+      this.readingSettings.lockDeviceOrientation ?? false,
+      this.pageReadingSettings.lockDeviceOrientation ?? false
+    );
     this.orientationLockToken = ReaderOrientationLockHelper.syncCurrentOrientationLock(
       'EpubWebViewReaderPage',
       this.orientationLockToken,
@@ -4164,6 +4194,26 @@ export struct EpubWebViewReaderPage {
 
   // ──── 进度保存 ────
 
+  private syncCurrentProgressToRemote(trigger: string, force: boolean = false): void {
+    const ebook = this.ebook;
+    if (!ebook || ebook.id.length <= 0 || this.currentSpineIndex < 0 || this.currentPageWithinSpine < 0) {
+      return;
+    }
+    if (!force && this.lastDistributedProgressBookId === ebook.id &&
+      this.lastDistributedProgressSpineIndex === this.currentSpineIndex &&
+      this.lastDistributedProgressPageIndex === this.currentPageWithinSpine) {
+      return;
+    }
+    this.lastDistributedProgressBookId = ebook.id;
+    this.lastDistributedProgressSpineIndex = this.currentSpineIndex;
+    this.lastDistributedProgressPageIndex = this.currentPageWithinSpine;
+    distributedReadingService.syncProgress(ebook.id, this.currentSpineIndex, this.currentPageWithinSpine, 0, 'ebook');
+    logger.debug(
+      TAG,
+      `[${trigger}] 已即时同步遥控阅读状态: spine=${this.currentSpineIndex}, page=${this.currentPageWithinSpine}`
+    );
+  }
+
   private async saveReadingProgress(trigger: string): Promise<void> {
     const saveStartedAt = Date.now();
     const ebook = this.ebook;
@@ -4196,11 +4246,19 @@ export struct EpubWebViewReaderPage {
       totalReadingTime: baseTotalReadingTime + sessionMinutes
     };
     try {
-      await this.ebookDataManager.saveReadingProgress(progress);
+      if (this.continuationCacheId.length > 0) {
+        await ContinuationCacheManager.getInstance().updateProgress(this.continuationCacheId, {
+          chapterIndex: progress.currentChapterIndex,
+          pageIndex: progress.currentPosition,
+          offset: this.currentPageWithinSpine,
+          lastReadTime: progress.lastReadTime
+        });
+      } else {
+        await this.ebookDataManager.saveReadingProgress(progress);
+      }
       ebook.readingProgress = progress;
-      // [修复] 同步跨端接续阅读状态（currentRead* + 独立通道推送），
-      // WebView EPUB 阅读器此前缺失该调用，导致 onContinue 打包旧书状态被拒绝
-      distributedReadingService.syncProgress(ebook.id, progress.currentChapterIndex, progress.currentPosition, 0, 'ebook');
+      // 定时或退出保存成功后强制刷新会话时间戳。
+      this.syncCurrentProgressToRemote(trigger, true);
       this.lastProgressSaveTime = now;
       this.sessionStartTimestamp = now;
       logger.debug(
@@ -4725,14 +4783,13 @@ export struct EpubWebViewReaderPage {
   @Builder
   private buildTopToolbar() {
     Row() {
-      Button() {
-        SymbolGlyph($r('sys.symbol.arrow_left'))
-          .fontSize(22)
-          .fontColor([this.getToolbarIconColor()])
-      }
-      .width(48).height(48)
-      .backgroundColor(Color.Transparent)
-      .onClick(() => { void this.goBack(); })
+      ReaderToolbarButton({
+        icon: $r('sys.symbol.arrow_left'),
+        label: '返回',
+        iconColor: this.getToolbarIconColor(),
+        iconSize: 20,
+        onAction: () => { void this.goBack(); }
+      })
 
       Column() {
         Text(this.getBookTitle())
@@ -4756,16 +4813,14 @@ export struct EpubWebViewReaderPage {
       .alignItems(HorizontalAlign.Start)
       .margin({ left: 8, right: 8 })
 
-      Button() {
-        SymbolGlyph(this.isCurrentPageBookmarked ? $r('sys.symbol.bookmark_fill') : $r('sys.symbol.bookmark'))
-          .fontSize(20)
-          .fontColor([this.isCurrentPageBookmarked ? $r('app.color.accent_primary') : this.getToolbarIconColor()])
-      }
-      .width(48)
-      .height(48)
-      .backgroundColor(Color.Transparent)
-      .onClick(() => {
-        this.addCurrentEpubBookmark();
+      ReaderToolbarButton({
+        icon: this.isCurrentPageBookmarked ? $r('sys.symbol.bookmark_fill') : $r('sys.symbol.bookmark'),
+        label: '书签',
+        iconColor: this.isCurrentPageBookmarked ? $r('app.color.accent_primary') : this.getToolbarIconColor(),
+        iconSize: 20,
+        onAction: () => {
+          this.addCurrentEpubBookmark();
+        }
       })
     }
     .width('100%')
@@ -4865,99 +4920,111 @@ export struct EpubWebViewReaderPage {
 
       // 功能按钮行
       Row() {
-        Button() {
-          SymbolGlyph($r('sys.symbol.list_bullet'))
-            .fontSize(22)
-            .fontColor([this.getToolbarIconColor()])
-        }
-        .width(48).height(48).backgroundColor(Color.Transparent)
-        .onClick(() => {
-          this.openChapterList();
-        })
-
-        Blank()
-
-        Button() {
-          SymbolGlyph($r('sys.symbol.gearshape'))
-            .fontSize(22)
-            .fontColor([this.getToolbarIconColor()])
-        }
-        .width(48).height(48).backgroundColor(Color.Transparent)
-        .onClick(() => {
-          this.openQuickSettings();
-        })
-
-        Blank()
-
-        Button() {
-          SymbolGlyph($r('sys.symbol.page_turning'))
-            .fontSize(22)
-            .fontColor([this.getToolbarIconColor()])
-        }
-        .width(48).height(48).backgroundColor(Color.Transparent)
-        .onClick(() => {
-          this.openPageTurnAnimationSettings();
-        })
-
-        Blank()
-
-        Button() {
-          SymbolGlyph($r('sys.symbol.eye'))
-            .fontSize(22)
-            .fontColor([this.getToolbarIconColor()])
-        }
-        .width(48).height(48).backgroundColor(Color.Transparent)
-        .onClick(() => {
-          this.openTextSettings();
-        })
-
-        Blank()
-
-        Row() {
-          Row() {
-            SymbolGlyph(this.readAloudPlaying ? $r('sys.symbol.pause_fill') : $r('sys.symbol.play_fill'))
-              .fontSize(18)
-              .fontColor([this.readAloudPlaying ? Color.White : this.getToolbarIconColor()])
+        ReaderToolbarButton({
+          icon: $r('sys.symbol.list_bullet'),
+          label: '目录',
+          iconColor: this.getToolbarIconColor(),
+          iconSize: 20,
+          onAction: () => {
+            this.openChapterList();
           }
-          .width(48)
-          .height('100%')
-          .justifyContent(FlexAlign.Center)
-          .onClick(() => {
-            this.toggleReadAloudFromToolbar();
-          })
-
-          Column()
-            .width(1)
-            .height(16)
-            .backgroundColor(this.readAloudPlaying ? '#66FFFFFF' : $r('app.color.divider_primary'))
-
-          Row() {
-            SymbolGlyph($r('sys.symbol.gearshape'))
-              .fontSize(16)
-              .fontColor([this.readAloudPlaying ? Color.White : this.getToolbarIconColor()])
-          }
-          .width(44)
-          .height('100%')
-          .justifyContent(FlexAlign.Center)
-          .onClick(() => {
-            this.openReadAloudSettingsPanelFromToolbar();
-          })
-        }
-        .height(36)
-        .backgroundColor(this.readAloudPlaying ? '#1A1890FF' : $r('app.color.background_secondary'))
-        .borderRadius(18)
-        .clip(true)
+        })
 
         Blank()
 
-        Button() {
-          SymbolGlyph(this.getAutoPageTurnIconResource())
-            .fontSize(22)
-            .fontColor([this.getToolbarIconColor(this.autoPageTurnEnabled)])
+        ReaderToolbarButton({
+          icon: $r('sys.symbol.gearshape'),
+          label: '设置',
+          iconColor: this.getToolbarIconColor(),
+          iconSize: 20,
+          onAction: () => {
+            this.openQuickSettings();
+          }
+        })
+
+        Blank()
+
+        ReaderToolbarButton({
+          icon: $r('sys.symbol.page_turning'),
+          label: '翻页',
+          iconColor: this.getToolbarIconColor(),
+          iconSize: 20,
+          onAction: () => {
+            this.openPageTurnAnimationSettings();
+          }
+        })
+
+        Blank()
+
+        ReaderToolbarButton({
+          icon: $r('sys.symbol.eye'),
+          label: '阅读',
+          iconColor: this.getToolbarIconColor(),
+          iconSize: 20,
+          onAction: () => {
+            this.openTextSettings();
+          }
+        })
+
+        Blank()
+
+        Column({ space: 1 }) {
+          Row() {
+            Row() {
+              SymbolGlyph(this.readAloudPlaying ? $r('sys.symbol.pause_fill') : $r('sys.symbol.play_fill'))
+                .fontSize(18)
+                .fontColor([this.readAloudPlaying ? Color.White : this.getToolbarIconColor()])
+            }
+            .width(48)
+            .height('100%')
+            .justifyContent(FlexAlign.Center)
+            .onClick(() => {
+              this.toggleReadAloudFromToolbar();
+            })
+
+            Column()
+              .width(1)
+              .height(16)
+              .backgroundColor(this.readAloudPlaying ? '#66FFFFFF' : $r('app.color.divider_primary'))
+
+            Row() {
+              SymbolGlyph($r('sys.symbol.gearshape'))
+                .fontSize(16)
+                .fontColor([this.readAloudPlaying ? Color.White : this.getToolbarIconColor()])
+            }
+            .width(44)
+            .height('100%')
+            .justifyContent(FlexAlign.Center)
+            .onClick(() => {
+              this.openReadAloudSettingsPanelFromToolbar();
+            })
+          }
+          .height(36)
+          .backgroundColor(this.readAloudPlaying ? '#1A1890FF' : $r('app.color.background_secondary'))
+          .borderRadius(18)
+          .clip(true)
+
+          if (this.toolbarTextHintEnabled) {
+            Text('听书')
+              .fontSize(9)
+              .fontColor(this.getToolbarIconColor())
+              .fontFamily(this.appFontFamily)
+              .maxLines(1)
+              .textOverflow({ overflow: TextOverflow.Ellipsis })
+          }
         }
-        .width(48).height(48).backgroundColor(Color.Transparent)
-        .onClick(() => {
-          this.openAutoPageTurnSettings();
+        .alignItems(HorizontalAlign.Center)
+
+        Blank()
+
+        ReaderToolbarButton({
+          icon: this.getAutoPageTurnIconResource(),
+          label: '自动',
+          iconColor: this.getToolbarIconColor(this.autoPageTurnEnabled),
+          iconSize: 20,
+          onAction: () => {
+            this.openAutoPageTurnSettings();
+          }
         })
       }
       .width('100%')
@@ -5459,6 +5526,7 @@ export struct EpubWebViewReaderPage {
                     const isReadAloudFollow = source === EpubWebPageChangeSource.READ_ALOUD_FOLLOW && !spineChanged;
                     this.currentPageWithinSpine = page;
                     this.totalPagesInSpine = totalPages;
+                    this.syncCurrentProgressToRemote('page_change');
                     if (this.currentAnchorFragment.length > 0) {
                       this.currentAnchorFragment = '';
                     }
@@ -5550,7 +5618,7 @@ export struct EpubWebViewReaderPage {
                 }
               } as EpubWebViewReaderParams,
               enableEpubAnnotations: true,
-              epubHighlightRanges: this.currentSpineHighlightRanges
+              epubHighlightRanges: $currentSpineHighlightRanges
             })
               .id(`epub_webview_reader_component_${this.readerMountEpoch}`)
               .width('100%')

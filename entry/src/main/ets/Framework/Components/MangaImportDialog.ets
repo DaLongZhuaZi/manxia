@@ -1,4 +1,4 @@
-﻿import { SafeFileUtils } from '../../Utils/SafeFileUtils';
+﻿import { SafeFileUtils } from 'manxia_core/src/main/ets/Utils/SafeFileUtils';
 // 文件路径: entry/src/main/ets/Framework/Components/MangaImportDialog.ets
 /**
  * 漫画导入配置对话框
@@ -7,17 +7,17 @@
  * 支持刮削工具获取元数据
  */
 
-import { ThemeAwareState, ThemeAwareHelper } from './ThemeAware';
-import { DialogSurfaceStyleHelper } from './DialogSurfaceStyleHelper';
-import { FontAwareHelper, FontAwareState } from './FontAware';
-import { logger } from '../../Utils/Logger';
-import { removeFileExtension } from '../../Utils/FileNameUtils';
+import { ThemeAwareState, ThemeAwareHelper } from 'manxia_theme/src/main/ets/Framework/Components/ThemeAware';
+import { DialogSurfaceStyleHelper } from 'manxia_features_ui/src/main/ets/Framework/Components/DialogSurfaceStyleHelper';
+import { FontAwareHelper, FontAwareState } from 'manxia_theme/src/main/ets/Framework/Components/FontAware';
+import { logger } from 'manxia_core/src/main/ets/Utils/Logger';
+import { removeFileExtension } from 'manxia_core/src/main/ets/Utils/FileNameUtils';
 import { promptAction } from '@kit.ArkUI';
-import { AppColors } from '../Theme/AppColors';
+import { AppColors } from 'manxia_theme/src/main/ets/Framework/Theme/AppColors';
 import { ScraperDialog, ScraperDialogConfig, ScraperDialogResult } from './ScraperDialog';
-import { ScraperContentType } from '../Scraper/ScraperTypes';
+import { ScraperContentType } from 'manxia_core/src/main/ets/Framework/Scraper/ScraperTypes';
 import { fileIo } from '@kit.CoreFileKit';
-import { ImportFlowContentType, ImportFlowEvent, ImportFlowEventType } from '../Import/ImportFlowTypes';
+import { ImportFlowContentType, ImportFlowEvent, ImportFlowEventType } from 'manxia_core/src/main/ets/Framework/Import/ImportFlowTypes';
 
 const TAG = 'MangaImportDialog';
 

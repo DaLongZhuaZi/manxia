@@ -9,31 +9,31 @@
 import { HdsNavDestination } from '@kit.UIDesignKit';
 import { promptAction } from '@kit.ArkUI';
 import { common } from '@kit.AbilityKit';
-import { logger } from '../Utils/Logger';
-import { PageLifecycleManager } from '../Framework/Lifecycle';
+import { logger } from 'manxia_core/src/main/ets/Utils/Logger';
+import { PageLifecycleManager } from 'manxia_core/src/main/ets/Framework/Lifecycle/index';
 import { getNovelSourceManager, NovelSourceManager } from '../Framework/Novel/NovelSourceManager';
 import { getNovelInitializer } from '../Framework/Novel/NovelInitializer';
-import { LegadoWorkflowKind } from '../Framework/Novel/LegadoCompatibilityTypes';
-import { getLegadoSourceAutomationToken } from '../Framework/Novel/LegadoSourceAutomationIdentity';
-import { LegadoBookSourceType } from '../Framework/Novel/LegadoSourceTypes';
+import { LegadoWorkflowKind } from 'manxia_novel/src/main/ets/Framework/Novel/LegadoCompatibilityTypes';
+import { getLegadoSourceAutomationToken } from 'manxia_novel/src/main/ets/Framework/Novel/LegadoSourceAutomationIdentity';
+import { LegadoBookSourceType } from 'manxia_novel/src/main/ets/Framework/Novel/LegadoSourceTypes';
 import { getLegadoMangaSourceBridge, LegadoMangaVirtualSource } from '../Framework/Novel/LegadoMangaSourceBridge';
-import { getNovelSettingsManager, NovelSettingsManager } from '../Framework/Novel/NovelSettingsManager';
-import { NovelSearchResult, NovelSourceInfo } from '../Models/NovelModels';
-import { ThemeAwareState, ThemeAwareHelper } from '../Framework/Components/ThemeAware';
-import { ThemeManager, ThemeType } from '../Framework/Managers/ThemeManager';
-import { FontAwareHelper, FontAwareState } from '../Framework/Components/FontAware';
+import { getNovelSettingsManager, NovelSettingsManager } from 'manxia_core/src/main/ets/Framework/Novel/NovelSettingsManager';
+import { NovelSearchResult, NovelSourceInfo } from 'manxia_core/src/main/ets/Models/NovelModels';
+import { ThemeAwareState, ThemeAwareHelper } from 'manxia_theme/src/main/ets/Framework/Components/ThemeAware';
+import { ThemeManager, ThemeType } from 'manxia_theme/src/main/ets/Framework/Managers/ThemeManager';
+import { FontAwareHelper, FontAwareState } from 'manxia_theme/src/main/ets/Framework/Components/FontAware';
 import { NovelDetailPageParams, NovelSearchPageParams } from './NovelBookshelfPage';
 import { NovelExplorePageParams } from './NovelExplorePage';
-import { DeviceAdaptationManager, DeviceChangeListener } from '../Framework/Managers/DeviceAdaptationManager';
-import { AppColors } from '../Framework/Theme/AppColors';
+import { DeviceAdaptationManager, DeviceChangeListener } from 'manxia_theme/src/main/ets/Framework/Managers/DeviceAdaptationManager';
+import { AppColors } from 'manxia_theme/src/main/ets/Framework/Theme/AppColors';
 import { PageSettingsHelper, DetailPageType } from './settings/PageSettingsSubPage';
-import { UnifiedDetailPageParams, UnifiedContentType } from '../Models/UnifiedContentModels';
+import { UnifiedDetailPageParams, UnifiedContentType } from 'manxia_core/src/main/ets/Models/UnifiedContentModels';
 import { MangaDetailPageParams } from './MangaDetailPage';
-import { GlobalBackgroundLayerMode } from '../Framework/Components/GlobalBackgroundLayer';
-import { SharedPageBackgroundLayer } from '../Framework/Components/SharedPageBackgroundLayer';
+import { GlobalBackgroundLayerMode } from 'manxia_theme/src/main/ets/Framework/Components/GlobalBackgroundLayer';
+import { SharedPageBackgroundLayer } from 'manxia_theme/src/main/ets/Framework/Components/SharedPageBackgroundLayer';
 import { SettingsImmersiveTitleBar } from './settings/SettingsImmersiveTitleBar';
-import { SettingsPanelSurfaceHelper } from './settings/SettingsPanelSurfaceHelper';
-import { SettingsPageTitleBarManager } from './settings/SettingsPageTitleBarManager';
+import { SettingsPanelSurfaceHelper } from 'manxia_features_ui/src/main/ets/pages/settings/SettingsPanelSurfaceHelper';
+import { SettingsPageTitleBarManager } from 'manxia_features_ui/src/main/ets/pages/settings/SettingsPageTitleBarManager';
 
 /**
  * 书源搜索结果分组

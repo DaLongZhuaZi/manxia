@@ -6,18 +6,18 @@
  */
 
 import { HdsNavDestination, HdsNavDestinationAttribute, ScrollEffectType } from '@kit.UIDesignKit';
-import { logger } from '../Utils/Logger';
-import { ThemeAwareState, ThemeAwareHelper } from '../Framework/Components/ThemeAware';
-import { ThemeType } from '../Framework/Managers/ThemeManager';
-import { PageLifecycleManager } from '../Framework/Lifecycle';
-import { DeviceAdaptationManager, DeviceChangeListener, DeviceInfo } from '../Framework/Managers/DeviceAdaptationManager';
+import { logger } from 'manxia_core/src/main/ets/Utils/Logger';
+import { ThemeAwareState, ThemeAwareHelper } from 'manxia_theme/src/main/ets/Framework/Components/ThemeAware';
+import { ThemeType } from 'manxia_theme/src/main/ets/Framework/Managers/ThemeManager';
+import { PageLifecycleManager } from 'manxia_core/src/main/ets/Framework/Lifecycle/index';
+import { DeviceAdaptationManager, DeviceChangeListener, DeviceInfo } from 'manxia_theme/src/main/ets/Framework/Managers/DeviceAdaptationManager';
 import { SourceManager, SourceInfo } from '../Framework/Source/SourceManager';
 import { MangaSourceEngine, EngineConfig } from '../Framework/WebView/MangaSourceEngine';
 import { WebViewAuthManager } from '../Framework/WebView/WebViewAuthManager';
-import { AntiCrawlerConfig, TaskResult } from '../Framework/WebView/MangaSourceTypes';
+import { AntiCrawlerConfig, TaskResult } from 'manxia_source_engine/src/main/ets/Framework/WebView/MangaSourceTypes';
 import { ImageCacheManager } from '../Framework/Cache/ImageCacheManager';
 import { DataManager } from '../Framework/Data/DataManager';
-import { EBookDataManager } from '../Framework/Data/EBookDataManager';
+import { EBookDataManager } from 'manxia_core/src/main/ets/Framework/Data/EBookDataManager';
 import { openEBookReaderRouterPage } from '../Framework/Adapters/EBookReaderRouteNavigator';
 import { OnlineEBookImportService } from '../Framework/Services/OnlineEBookImportService';
 import { webview } from '@kit.ArkWeb';
@@ -33,7 +33,7 @@ import {
   DownloadButtonState,
   DownloadSourceSelector,
   FileFormatSelector
-} from '../Framework/Components/EBookDownloadComponents';
+} from 'manxia_theme/src/main/ets/Framework/Components/EBookDownloadComponents';
 import {
   MangaDownloadManager,
   TaskStatus,
@@ -41,13 +41,13 @@ import {
   DownloadTaskType
 } from '../Framework/Download/DownloadManager';
 import { EBookReaderParams } from './EBookReaderRouteTypes';
-import { ChapterInfo as SourceChapterInfo, PageInfo as SourcePageInfo } from '../Framework/WebView/MangaSourceTypes';
+import { ChapterInfo as SourceChapterInfo, PageInfo as SourcePageInfo } from 'manxia_source_engine/src/main/ets/Framework/WebView/MangaSourceTypes';
 import { promptAction } from '@kit.ArkUI';
-import { AppColors } from '../Framework/Theme/AppColors';
+import { AppColors } from 'manxia_theme/src/main/ets/Framework/Theme/AppColors';
 import { SettingsImmersiveTitleBar } from './settings/SettingsImmersiveTitleBar';
-import { SettingsPageTitleBarManager } from './settings/SettingsPageTitleBarManager';
-import { SharedPageBackgroundLayer } from '../Framework/Components/SharedPageBackgroundLayer';
-import { GlobalBackgroundLayerMode } from '../Framework/Components/GlobalBackgroundLayer';
+import { SettingsPageTitleBarManager } from 'manxia_features_ui/src/main/ets/pages/settings/SettingsPageTitleBarManager';
+import { SharedPageBackgroundLayer } from 'manxia_theme/src/main/ets/Framework/Components/SharedPageBackgroundLayer';
+import { GlobalBackgroundLayerMode } from 'manxia_theme/src/main/ets/Framework/Components/GlobalBackgroundLayer';
 
 const TAG = 'OnlineEBookDetailPage';
 

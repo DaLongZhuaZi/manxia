@@ -1,0 +1,83 @@
+{
+  "schemaVersion": 1,
+  "contract": "legado_jsoup_standard_css_pseudo_selectors",
+  "issueId": "ISSUE-COMPAT-243-JSOUP-STANDARD-CSS-PSEUDO-SELECTORS",
+  "baseline": {
+    "sourceCount": 458,
+    "sourcePackageSha256": "473048A191DE4749FA9C15E0A2F2328A3E86B385A5FCE23EA30432D598D03A67",
+    "legadoCommit": "95973d186b147fb9ab43a9240021d688e4304fbd"
+  },
+  "largeDocument": {
+    "thresholdBytesExclusive": 50000,
+    "baseHtml": "<section><p>first</p><p>second</p><p>third</p></section><article><p>only</p></article>",
+    "fillerUnit": "<div class=\"filler\">padding</div>",
+    "fillerRepeat": 2000,
+    "selectionPath": "LegadoRuleAnalyzer.getElementsByCSSWithBridge -> getElementsByCSSChain -> findElementsBySimpleSelector -> filterElementsByPseudoClasses"
+  },
+  "cases": [
+    {
+      "id": "first-child",
+      "rule": "section > p:first-child@text",
+      "semantics": "standard_first_element_child",
+      "expected": ["first"]
+    },
+    {
+      "id": "last-child",
+      "rule": "section > p:last-child@text",
+      "semantics": "standard_last_element_child",
+      "expected": ["third"]
+    },
+    {
+      "id": "nth-child-exact",
+      "rule": "section > p:nth-child(2)@text",
+      "semantics": "standard_one_based_element_child_index",
+      "expected": ["second"]
+    },
+    {
+      "id": "nth-child-formula",
+      "rule": "section > p:nth-child(2n+1)@text",
+      "semantics": "standard_an_plus_b_element_child_index",
+      "expected": ["first", "third"]
+    },
+    {
+      "id": "only-child",
+      "rule": "article > p:only-child@text",
+      "semantics": "standard_only_element_child",
+      "expected": ["only"]
+    },
+    {
+      "id": "only-child-negative",
+      "rule": "section > p:only-child@text",
+      "semantics": "standard_only_child_rejects_multiple_siblings",
+      "expected": []
+    }
+  ],
+  "pseudoCounts": {
+    "first-child": 4,
+    "last-child": 3,
+    "nth-child": 40,
+    "only-child": 5,
+    "total": 52
+  },
+  "affectedSourceOrdinals": [
+    26, 70, 97, 144, 145, 147, 158, 195, 201, 223, 228,
+    231, 251, 255, 278, 283, 284, 357, 402, 408, 452
+  ],
+  "representativeRules": [
+    "div[id = chapterList] >a:last-child@text",
+    "body > table:nth-child(4) > tbody > tr > td > span > a",
+    ".book_other:nth-child(3)@text",
+    "#info > p:nth-child(2) > a@text",
+    "#chapterlist>p:nth-child(n+2)>a",
+    "@css:.listshadow1 .text-danger:first-child h2@text",
+    ".text-sm:nth-child(3)>a@text",
+    "p:nth-child(1)@text",
+    "@css:#page>div>ul>li:nth-child(2)>img@src"
+  ],
+  "legadoSemantics": {
+    "implementation": "AnalyzeByJSoup -> Element.select -> Jsoup 1.16.2 QueryParser/Evaluator",
+    "standardPseudoSet": ["first-child", "last-child", "nth-child", "only-child"],
+    "indexing": "element children only; nth-child is 1-based and supports an+b"
+  },
+  "queuePolicy": "candidate_evidence_only;do_not_activate_or_patch_while_ISSUE-COMPAT-242-TRACE-BRIDGE-PRESERVATION_is_active"
+}

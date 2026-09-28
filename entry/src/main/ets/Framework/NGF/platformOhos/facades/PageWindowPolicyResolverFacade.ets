@@ -1,6 +1,6 @@
-import { DisplayMode } from '../../../../Utils/WindowManager';
-import { PageWindowPolicy } from '../../../../Utils/PageWindowPolicy';
-import { PageWindowRegistry } from '../../../../Utils/PageWindowRegistry';
+import { DisplayMode } from 'manxia_theme/src/main/ets/Utils/WindowManager';
+import { PageWindowPolicy } from 'manxia_theme/src/main/ets/Utils/PageWindowPolicy';
+import { PageWindowRegistry } from 'manxia_theme/src/main/ets/Utils/PageWindowRegistry';
 import {
   IPageWindowPolicyResolver,
   NGFPageWindowPolicy,

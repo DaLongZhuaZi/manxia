@@ -1,0 +1,10 @@
+{
+  "name": "manxia_native",
+  "version": "1.0.0",
+  "description": "漫匣原生能力模块：AVIF 解码 / JSVM+QuickJS JS 引擎 / WebDAV(SMB+curl+mbedTLS) / 局域网传书 RTC",
+  "main": "",
+  "author": "",
+  "license": "",
+  "dependencies": {},
+  "devDependencies": {}
+}

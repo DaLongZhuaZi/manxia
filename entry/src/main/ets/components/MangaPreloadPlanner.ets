@@ -1,6 +1,6 @@
 // 职责: 计算漫画预加载计划，不接触 UI、加载器和状态管理器。
 
-import { ImageSourceType, MangaPage } from '../Models/MangaModels';
+import { ImageSourceType, MangaPage } from 'manxia_core/src/main/ets/Models/MangaModels';
 import { PreloadTaskItem } from './PreloadManager';
 import { WebtoonDataItem } from './MangaWebtoonTypes';
 

@@ -1,4 +1,4 @@
-import { logger } from '../Utils/Logger';
+import { logger } from 'manxia_core/src/main/ets/Utils/Logger';
 import type { PerformanceWarning } from './Debug/PerformanceAnalyzer';
 
 // 移除对Game目录的依赖，使用简单的类型定义

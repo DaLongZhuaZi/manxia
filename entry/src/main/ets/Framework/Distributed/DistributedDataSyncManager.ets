@@ -1,6 +1,6 @@
 import distributedDataObject from '@ohos.data.distributedDataObject';
 import common from '@ohos.app.ability.common';
-import { logger } from '../../Utils/Logger';
+import { logger } from 'manxia_core/src/main/ets/Utils/Logger';
 import {
   RemoteControlSocketChannel,
   RemoteControlSocketMessage
@@ -215,6 +215,9 @@ export class DistributedDataSyncManager {
       this.syncObj['pageIndex'] = pageIndex;
       this.syncObj['offset'] = offset;
       this.syncObj['sourceType'] = sourceType;
+      // 进度消息清除上一条指令标记，避免被遥控端按命令回声过滤。
+      this.syncObj['instructionType'] = 'none';
+      this.syncObj['instructionPayload'] = '';
       this.syncObj['timestamp'] = Date.now();
       // 独立连接通道：进度经局域网 TCP 直达遥控端
       this.sendOverSocketChannel();

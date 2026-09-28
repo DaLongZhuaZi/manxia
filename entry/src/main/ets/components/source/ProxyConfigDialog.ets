@@ -1,14 +1,15 @@
+import { IProxyManagerFacade, ProxyManagerHolder } from 'manxia_core/src/main/ets/Framework/Contracts/ProxyManagerFacade';
 ﻿/**
  * 代理配置对话框（图源网络代理）
  * 统一用于 MainMenuPage / SourceManagementPage
  */
 
 import { promptAction } from '@kit.ArkUI';
-import { logger } from '../../Utils/Logger';
-import { ThemeAwareHelper } from '../../Framework/Components/ThemeAware';
-import { ThemeType } from '../../Framework/Managers/ThemeManager';
-import { ProxyConfig, DEFAULT_PROXY_CONFIG, ProxyManager, ProxyProtocol } from '../../Framework/Network/ProxyManager';
-import { SettingsPageSurfaceManager } from '../../pages/settings/SettingsPageSurfaceManager';
+import { logger } from 'manxia_core/src/main/ets/Utils/Logger';
+import { ThemeAwareHelper } from 'manxia_theme/src/main/ets/Framework/Components/ThemeAware';
+import { ThemeType } from 'manxia_theme/src/main/ets/Framework/Managers/ThemeManager';
+import { ProxyConfig, DEFAULT_PROXY_CONFIG, ProxyManager, ProxyProtocol } from 'manxia_network/src/main/ets/Framework/Network/ProxyManager';
+import { SettingsPageSurfaceManager } from 'manxia_features_ui/src/main/ets/pages/settings/SettingsPageSurfaceManager';
 
 const TAG = 'ProxyConfigDialog';
 
@@ -58,7 +59,7 @@ export struct ProxyConfigDialog {
   @Local isTestingProxy: boolean = false;
   @Local proxyTestSites: ProxyTestSite[] = [];
 
-  private proxyManager: ProxyManager = ProxyManager.getInstance();
+  private proxyManager: IProxyManagerFacade = ProxyManagerHolder.get();
   private readonly tabOrder: ProxyDialogTab[] = ['settings', 'sources', 'test'];
   private swipeStartX: number = 0;
   private swipeOffsetX: number = 0;

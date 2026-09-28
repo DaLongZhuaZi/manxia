@@ -1,0 +1,17 @@
+{
+  "schemaVersion": 1,
+  "contract": "legado_document_consistency_active_issue_anchor",
+  "issueId": "ISSUE-AUTO-046-DOCUMENT-ACTIVE-ANCHOR",
+  "baseline": {
+    "sourceCount": 458,
+    "sourcePackageSha256": "473048A191DE4749FA9C15E0A2F2328A3E86B385A5FCE23EA30432D598D03A67",
+    "legadoCommit": "95973d186b147fb9ab43a9240021d688e4304fbd"
+  },
+  "activeSourceIssue": "ISSUE-COMPAT-243-JSOUP-STANDARD-CSS-PSEUDO-SELECTORS",
+  "acceptedAnchorForms": [
+    "当前活动源码议题为 {issueId}",
+    "当前唯一活动源码议题为 {issueId}"
+  ],
+  "failureCondition": "The document consistency contract requires the literal phrase 当前唯一活动源码议题为, while the generated governance document uses the semantically equivalent phrase 当前活动源码议题为. The check fails despite matching machine activeIssueId and derived mirrors.",
+  "scope": "static governance/document consistency only"
+}

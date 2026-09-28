@@ -1,6 +1,6 @@
 import { http } from '@kit.NetworkKit';
-import { logger } from '../../../Utils/Logger';
-import { base64Encode } from '../../../Utils/CryptoUtils';
+import { logger } from 'manxia_core/src/main/ets/Utils/Logger';
+import { base64Encode } from 'manxia_core/src/main/ets/Utils/CryptoUtils';
 import { BaseTracker } from './BaseTracker';
 import { TrackRecord, TrackSearchResult, TrackerId, UpdateTrackRecordParams } from '../TrackingModels';
 import { KomgaConfig, KomgaInstanceConfig } from '../../Source/KomgaModels';

@@ -1,4 +1,4 @@
-﻿import { SafeUtils } from '../../../Utils/SafeUtils';
+﻿import { SafeUtils } from 'manxia_core/src/main/ets/Utils/SafeUtils';
 /**
  * Suwayomi 跟踪器
  * 支持两种模式：
@@ -8,8 +8,8 @@
 
 import { http } from '@kit.NetworkKit';
 import { preferences } from '@kit.ArkData';
-import { logger } from '../../../Utils/Logger';
-import { base64Encode } from '../../../Utils/CryptoUtils';
+import { logger } from 'manxia_core/src/main/ets/Utils/Logger';
+import { base64Encode } from 'manxia_core/src/main/ets/Utils/CryptoUtils';
 import { common } from '@kit.AbilityKit';
 import { BaseTracker, TrackerAuthState } from './BaseTracker';
 import {
@@ -19,7 +19,7 @@ import {
   UpdateTrackRecordParams,
   TrackerId
 } from '../TrackingModels';
-import { uiContextManager } from '../../Managers/UIContextManager';
+import { uiContextManager } from 'manxia_theme/src/main/ets/Framework/Managers/UIContextManager';
 
 const TAG = 'SuwayomiTracker';
 
@@ -216,7 +216,7 @@ export class SuwayomiTracker extends BaseTracker {
    */
   private async loadConfig(): Promise<void> {
     try {
-      const store = preferences.getPreferencesSync(this.getAbilityContext(), { name: 'suwayomi_config' });
+      const store = await preferences.getPreferences(this.getAbilityContext(), { name: 'suwayomi_config' });
       const serverUrl = store.getSync('serverUrl', '') as string;
       const username = store.getSync('username', '') as string;
       const password = store.getSync('password', '') as string;
@@ -242,7 +242,7 @@ export class SuwayomiTracker extends BaseTracker {
    */
   public async saveConfig(config: SuwayomiConfig): Promise<boolean> {
     try {
-      const store = preferences.getPreferencesSync(this.getAbilityContext(), { name: 'suwayomi_config' });
+      const store = await preferences.getPreferences(this.getAbilityContext(), { name: 'suwayomi_config' });
       store.putSync('serverUrl', config.serverUrl);
       store.putSync('username', config.username);
       store.putSync('password', config.password);

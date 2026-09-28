@@ -3,7 +3,7 @@
 import {
   ReadingDirection,
   ReadingMode
-} from '../Models/MangaModels';
+} from 'manxia_core/src/main/ets/Models/MangaModels';
 import { CurlStartPosition } from './PageCurlEffectV2';
 
 export type MangaCurlPageTurnDirection = 'left' | 'right' | 'up' | 'down';

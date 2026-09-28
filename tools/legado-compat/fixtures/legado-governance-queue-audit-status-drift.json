@@ -1,0 +1,31 @@
+{
+  "schemaVersion": 1,
+  "kind": "legado_governance_queue_audit_status_drift",
+  "issueId": "ISSUE-AUTO-053-GOVERNANCE-QUEUE-AUDIT-STATUS-DRIFT",
+  "taskId": "COMPAT-006",
+  "activeIssueId": "ISSUE-COMPAT-243-JSOUP-STANDARD-CSS-PSEUDO-SELECTORS",
+  "baseline": {
+    "sourceCount": 458,
+    "sourcePackageSha256": "473048A191DE4749FA9C15E0A2F2328A3E86B385A5FCE23EA30432D598D03A67",
+    "legadoCommit": "95973d186b147fb9ab43a9240021d688e4304fbd"
+  },
+  "canonicalRevision": "2026-08-10-actual-docs-source-refactor-jsoup-combination-r4-readiness-static-closure",
+  "queueEvidencePathSource": "tools/legado-compat/state/full-source-validation-state.json::governance.queuePreflight.evidencePath",
+  "observedBeforeFix": {
+    "status": "preflight_passed_no_candidate",
+    "candidateCount": 0,
+    "candidateGateStatus": "no_candidate_satisfies_evidence_gate",
+    "candidateStatus": "source_fix_static_closed"
+  },
+  "expectedAfterFix": {
+    "status": "preflight_passed_no_candidate",
+    "candidateCount": 0,
+    "candidateGateStatus": "no_candidate_satisfies_evidence_gate",
+    "candidateStatus": "no_candidate_satisfies_evidence_gate"
+  },
+  "selectionGateInvariant": {
+    "candidateStatus": "source_fix_static_closed",
+    "candidateGateStatus": "source_fix_static_closed_wait_r4"
+  },
+  "invariant": "A queueAudit with zero candidates and no_candidate_satisfies_evidence_gate must use the same explicit no-candidate value for candidateStatus; the objective queueSelectionGate remains the separate active-issue anchor and is not rewritten by this fix."
+}

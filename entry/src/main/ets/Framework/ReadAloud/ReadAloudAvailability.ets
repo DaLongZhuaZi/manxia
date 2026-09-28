@@ -1,13 +1,13 @@
 import { textToSpeech } from '@kit.CoreSpeechKit';
-import { logger } from '../../Utils/Logger';
+import { logger } from 'manxia_core/src/main/ets/Utils/Logger';
 import {
   ReadAloudEngineType,
   ReadAloudSettings,
   RemoteReadAloudSettings,
   normalizeReadAloudSettings
-} from '../../Models/TextReaderModels';
-import { ReadAloudRequestIdGenerator } from './ReadAloudRequestIdGenerator';
-import { SettingsManager } from '../Managers/SettingsManager';
+} from 'manxia_core/src/main/ets/Models/TextReaderModels';
+import { ReadAloudRequestIdGenerator } from 'manxia_novel/src/main/ets/Framework/ReadAloud/ReadAloudRequestIdGenerator';
+import { SettingsManager } from 'manxia_core/src/main/ets/Framework/Managers/SettingsManager';
 import { loadGlobalReadAloudSettings } from './ReadAloudSettingsStore';
 
 const TAG = 'ReadAloudAvailability';

@@ -1,34 +1,34 @@
-import { SafeFileUtils } from '../Utils/SafeFileUtils';
-import { SafeUtils } from '../Utils/SafeUtils';
+import { SafeFileUtils } from 'manxia_core/src/main/ets/Utils/SafeFileUtils';
+import { SafeUtils } from 'manxia_core/src/main/ets/Utils/SafeUtils';
 /**
  * 主题设置页面
  * 提供自定义主题功能：图片选择、裁剪、模糊效果、主色调提取、深色模式适配
  */
-import { logger } from '../Utils/Logger';
-import { ThemeManager, ThemeType, CustomThemeData, CUSTOM_THEME_KEYS, THEME_CONFIGS, SplashRotationRule, CustomThemeMode } from '../Framework/Managers/ThemeManager';
-import { ThemeAwareState, ThemeAwareHelper } from '../Framework/Components/ThemeAware';
-import { FontAwareHelper, FontAwareState } from '../Framework/Components/FontAware';
-import { PageLifecycleManager } from '../Framework/Lifecycle';
-import { UserThemeConfigManager, TransparencyConfig, EffectsConfig, HdsTabEffectsConfig } from '../Framework/Theme/UserThemeConfig';
+import { logger } from 'manxia_core/src/main/ets/Utils/Logger';
+import { ThemeManager, ThemeType, CustomThemeData, CUSTOM_THEME_KEYS, THEME_CONFIGS, SplashRotationRule, CustomThemeMode } from 'manxia_theme/src/main/ets/Framework/Managers/ThemeManager';
+import { ThemeAwareState, ThemeAwareHelper } from 'manxia_theme/src/main/ets/Framework/Components/ThemeAware';
+import { FontAwareHelper, FontAwareState } from 'manxia_theme/src/main/ets/Framework/Components/FontAware';
+import { PageLifecycleManager } from 'manxia_core/src/main/ets/Framework/Lifecycle/index';
+import { UserThemeConfigManager, TransparencyConfig, EffectsConfig, HdsTabEffectsConfig } from 'manxia_theme/src/main/ets/Framework/Theme/UserThemeConfig';
 import { photoAccessHelper } from '@kit.MediaLibraryKit';
 import { common } from '@kit.AbilityKit';
 import { image } from '@kit.ImageKit';
 import { fileIo } from '@kit.CoreFileKit';
 import { UIContext, LengthMetrics, promptAction } from '@kit.ArkUI';
-import { CropAlignment } from '../Framework/Utils/ImageCropper';
+import { CropAlignment } from 'manxia_core/src/main/ets/Framework/Utils/ImageCropper';
 import { preferences } from '@kit.ArkData';
 import fs from '@ohos.file.fs';
 import effectKit from '@ohos.effectKit';
-import { DeviceAdaptationManager, DeviceInfo, DeviceChangeListener, Breakpoint } from '../Framework/Managers/DeviceAdaptationManager';
-import { ResponsiveLayoutHelper } from '../Framework/Utils/ResponsiveLayout';
+import { DeviceAdaptationManager, DeviceInfo, DeviceChangeListener, Breakpoint } from 'manxia_theme/src/main/ets/Framework/Managers/DeviceAdaptationManager';
+import { ResponsiveLayoutHelper } from 'manxia_theme/src/main/ets/Framework/Utils/ResponsiveLayout';
 import { hdsMaterial, HdsNavDestination, HdsNavDestinationAttribute, ScrollEffectType } from '@kit.UIDesignKit';
-import { SettingsSearchSupport } from './settings/SettingsSearchSupport';
-import { GlobalBackgroundLayerMode } from '../Framework/Components/GlobalBackgroundLayer';
-import { SharedPageBackgroundLayer } from '../Framework/Components/SharedPageBackgroundLayer';
+import { SettingsSearchSupport } from 'manxia_features_ui/src/main/ets/pages/settings/SettingsSearchSupport';
+import { GlobalBackgroundLayerMode } from 'manxia_theme/src/main/ets/Framework/Components/GlobalBackgroundLayer';
+import { SharedPageBackgroundLayer } from 'manxia_theme/src/main/ets/Framework/Components/SharedPageBackgroundLayer';
 import { SettingsImmersiveTitleBar } from './settings/SettingsImmersiveTitleBar';
-import { SettingsImmersiveTitleActionItem, SettingsPageTitleBarManager } from './settings/SettingsPageTitleBarManager';
-import { SettingsPanelSurfaceHelper } from './settings/SettingsPanelSurfaceHelper';
-import { BuiltInThemeResources } from '../Framework/Theme/BuiltInThemeResources';
+import { SettingsImmersiveTitleActionItem, SettingsPageTitleBarManager } from 'manxia_features_ui/src/main/ets/pages/settings/SettingsPageTitleBarManager';
+import { SettingsPanelSurfaceHelper } from 'manxia_features_ui/src/main/ets/pages/settings/SettingsPanelSurfaceHelper';
+import { BuiltInThemeResources } from 'manxia_theme/src/main/ets/Framework/Theme/BuiltInThemeResources';
 
 const TAG = 'ThemeSettingsPage';
 const HDS_TAB_MATERIAL_FOLLOW_GLOBAL: number = -1;

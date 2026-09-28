@@ -8,22 +8,22 @@
 
 import { HdsNavDestination } from '@kit.UIDesignKit';
 import { promptAction } from '@kit.ArkUI';
-import { logger } from '../Utils/Logger';
-import { PageLifecycleManager } from '../Framework/Lifecycle';
+import { logger } from 'manxia_core/src/main/ets/Utils/Logger';
+import { PageLifecycleManager } from 'manxia_core/src/main/ets/Framework/Lifecycle/index';
 import { getNovelDataManager, NovelDataManager } from '../Framework/Novel/NovelDataManager';
-import { NovelBook, NovelReadStatus } from '../Models/NovelModels';
-import { ThemeAwareState, ThemeAwareHelper } from '../Framework/Components/ThemeAware';
-import { ThemeManager, ThemeType } from '../Framework/Managers/ThemeManager';
-import { FontAwareHelper, FontAwareState } from '../Framework/Components/FontAware';
-import { getNovelSettingsManager, BookshelfSettings, BookshelfSortType, BrowseHistoryItem } from '../Framework/Novel/NovelSettingsManager';
-import { AppColors } from '../Framework/Theme/AppColors';
+import { NovelBook, NovelReadStatus } from 'manxia_core/src/main/ets/Models/NovelModels';
+import { ThemeAwareState, ThemeAwareHelper } from 'manxia_theme/src/main/ets/Framework/Components/ThemeAware';
+import { ThemeManager, ThemeType } from 'manxia_theme/src/main/ets/Framework/Managers/ThemeManager';
+import { FontAwareHelper, FontAwareState } from 'manxia_theme/src/main/ets/Framework/Components/FontAware';
+import { getNovelSettingsManager, BookshelfSettings, BookshelfSortType, BrowseHistoryItem } from 'manxia_core/src/main/ets/Framework/Novel/NovelSettingsManager';
+import { AppColors } from 'manxia_theme/src/main/ets/Framework/Theme/AppColors';
 import { PageSettingsHelper, DetailPageType } from './settings/PageSettingsSubPage';
-import { UnifiedDetailPageParams, UnifiedContentType } from '../Models/UnifiedContentModels';
+import { UnifiedDetailPageParams, UnifiedContentType } from 'manxia_core/src/main/ets/Models/UnifiedContentModels';
 import { eventBus, GameEvent, IEventPayload } from '../Framework/EventBus';
-import { GlobalBackgroundLayerMode } from '../Framework/Components/GlobalBackgroundLayer';
-import { SharedPageBackgroundLayer } from '../Framework/Components/SharedPageBackgroundLayer';
+import { GlobalBackgroundLayerMode } from 'manxia_theme/src/main/ets/Framework/Components/GlobalBackgroundLayer';
+import { SharedPageBackgroundLayer } from 'manxia_theme/src/main/ets/Framework/Components/SharedPageBackgroundLayer';
 import { SettingsImmersiveTitleBar } from './settings/SettingsImmersiveTitleBar';
-import { SettingsImmersiveTitleActionItem, SettingsPageTitleBarManager } from './settings/SettingsPageTitleBarManager';
+import { SettingsImmersiveTitleActionItem, SettingsPageTitleBarManager } from 'manxia_features_ui/src/main/ets/pages/settings/SettingsPageTitleBarManager';
 
 const TAG = 'NovelBookshelfPage';
 
@@ -113,6 +113,8 @@ export interface NovelReaderPageParams {
    * prior chapter cache hide the V2 Content workflow on first open.
    */
   forceNetworkContentRefresh?: boolean;
+  continuationCacheId?: string;
+  continuationImportedSnapshot?: boolean;
 }
 
 /**

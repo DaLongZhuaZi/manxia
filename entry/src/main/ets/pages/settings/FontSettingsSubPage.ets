@@ -6,21 +6,21 @@
 
 import { HdsNavDestination, HdsNavDestinationAttribute, ScrollEffectType } from '@kit.UIDesignKit';
 import { LengthMetrics, promptAction } from '@kit.ArkUI';
-import { ThemeAwareState, ThemeAwareHelper } from '../../Framework/Components/ThemeAware';
-import { FontAwareHelper, FontAwareState } from '../../Framework/Components/FontAware';
-import { ThemeManager, ThemeType } from '../../Framework/Managers/ThemeManager';
-import { FontManager, getFontManager, FontType, FontScene, SystemFont, CustomFont, FontSettings } from '../../Framework/Managers/FontManager';
-import { logger } from '../../Utils/Logger';
+import { ThemeAwareState, ThemeAwareHelper } from 'manxia_theme/src/main/ets/Framework/Components/ThemeAware';
+import { FontAwareHelper, FontAwareState } from 'manxia_theme/src/main/ets/Framework/Components/FontAware';
+import { ThemeManager, ThemeType } from 'manxia_theme/src/main/ets/Framework/Managers/ThemeManager';
+import { FontManager, getFontManager, FontType, FontScene, SystemFont, CustomFont, FontSettings } from 'manxia_theme/src/main/ets/Framework/Managers/FontManager';
+import { logger } from 'manxia_core/src/main/ets/Utils/Logger';
 import { picker } from '@kit.CoreFileKit';
 import { common } from '@kit.AbilityKit';
-import { DeviceAdaptationManager, DeviceInfo, DeviceChangeListener, Breakpoint } from '../../Framework/Managers/DeviceAdaptationManager';
-import { ResponsiveLayoutHelper } from '../../Framework/Utils/ResponsiveLayout';
-import { SettingsSearchSupport } from './SettingsSearchSupport';
-import { SettingsPanelSurfaceHelper } from './SettingsPanelSurfaceHelper';
-import { GlobalBackgroundLayerMode } from '../../Framework/Components/GlobalBackgroundLayer';
-import { SharedPageBackgroundLayer } from '../../Framework/Components/SharedPageBackgroundLayer';
+import { DeviceAdaptationManager, DeviceInfo, DeviceChangeListener, Breakpoint } from 'manxia_theme/src/main/ets/Framework/Managers/DeviceAdaptationManager';
+import { ResponsiveLayoutHelper } from 'manxia_theme/src/main/ets/Framework/Utils/ResponsiveLayout';
+import { SettingsSearchSupport } from 'manxia_features_ui/src/main/ets/pages/settings/SettingsSearchSupport';
+import { SettingsPanelSurfaceHelper } from 'manxia_features_ui/src/main/ets/pages/settings/SettingsPanelSurfaceHelper';
+import { GlobalBackgroundLayerMode } from 'manxia_theme/src/main/ets/Framework/Components/GlobalBackgroundLayer';
+import { SharedPageBackgroundLayer } from 'manxia_theme/src/main/ets/Framework/Components/SharedPageBackgroundLayer';
 import { SettingsImmersiveTitleBar } from './SettingsImmersiveTitleBar';
-import { SettingsPageTitleBarManager } from './SettingsPageTitleBarManager';
+import { SettingsPageTitleBarManager } from 'manxia_features_ui/src/main/ets/pages/settings/SettingsPageTitleBarManager';
 
 const TAG = 'FontSettingsSubPage';
 const TITLE_BAR_HEIGHT_MINI: number = 56;
@@ -319,7 +319,7 @@ export struct FontSettingsSubPage {
 
       // 自定义字体
       if (this.customFonts.length > 0) {
-        Text('自定义字体')
+        Text('内置与自定义字体')
           .fontSize(14)
           .fontWeight(FontWeight.Medium)
           .fontFamily(this.appFontFamily)
@@ -352,14 +352,24 @@ export struct FontSettingsSubPage {
             .alignItems(HorizontalAlign.Start)
             .layoutWeight(1)
 
-            Button({ type: ButtonType.Circle, stateEffect: true }) {
-              SymbolGlyph($r('sys.symbol.trash')).fontSize(14).fontColor([ThemeAwareHelper.getTestManagementThemedColor('button_danger', this.themeState.currentTheme)])
+            if (font.isBuiltIn === true) {
+              Text('内置')
+                .fontSize(11)
+                .fontFamily(this.appFontFamily)
+                .fontColor(ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme))
+                .padding({ left: 8, right: 8, top: 3, bottom: 3 })
+                .borderRadius(10)
+                .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('comp_background_tertiary', this.themeState.currentTheme))
+            } else {
+              Button({ type: ButtonType.Circle, stateEffect: true }) {
+                SymbolGlyph($r('sys.symbol.trash')).fontSize(14).fontColor([ThemeAwareHelper.getTestManagementThemedColor('button_danger', this.themeState.currentTheme)])
+              }
+              .width(32).height(32)
+              .backgroundColor(Color.Transparent)
+              .onClick(() => {
+                this.deleteCustomFont(font.id);
+              })
             }
-            .width(32).height(32)
-            .backgroundColor(Color.Transparent)
-            .onClick(() => {
-              this.deleteCustomFont(font.id);
-            })
           }
           .width('100%')
           .padding(12)

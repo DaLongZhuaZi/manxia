@@ -10,8 +10,8 @@
  * 文件路径: entry/src/main/ets/Framework/Novel/LegadoRhinoEngine.ets
  */
 
-import { logger } from '../../Utils/Logger';
-import { getRhinoWasmExecutor, RhinoWasmExecutor, RhinoContext, RhinoExecuteResult } from './RhinoWasmExecutor';
+import { logger } from 'manxia_core/src/main/ets/Utils/Logger';
+import { getRhinoWasmExecutor, RhinoWasmExecutor, RhinoContext, RhinoExecuteResult } from 'manxia_novel/src/main/ets/Framework/Novel/RhinoWasmExecutor';
 import { LegadoJsEngine, JsContext, JsExecuteResult } from './LegadoJsEngine';
 import { webview } from '@kit.ArkWeb';
 

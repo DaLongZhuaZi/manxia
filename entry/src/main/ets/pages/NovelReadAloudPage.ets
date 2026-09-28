@@ -1,4 +1,5 @@
-import { SafeUtils } from '../Utils/SafeUtils';
+import { ISettingsManagerFacade, SettingsManagerHolder } from 'manxia_core/src/main/ets/Framework/Contracts/ISettingsManagerFacade';
+import { SafeUtils } from 'manxia_core/src/main/ets/Utils/SafeUtils';
 /**
  * 小说听书页面（播放器样式）
  */
@@ -6,24 +7,24 @@ import { SafeUtils } from '../Utils/SafeUtils';
 import { promptAction } from '@kit.ArkUI';
 import { common } from '@kit.AbilityKit';
 import { media } from '@kit.MediaKit';
-import { logger } from '../Utils/Logger';
+import { logger } from 'manxia_core/src/main/ets/Utils/Logger';
 import { continuationStateHelper } from '../Framework/Distributed/ContinuationStateHelper';
 import { NovelReaderPageParams } from './NovelBookshelfPage';
 import { getNovelSourceManager } from '../Framework/Novel/NovelSourceManager';
 import { getNovelChapterCacheManager } from '../Framework/Novel/NovelChapterCacheManager';
-import { LegadoBook, LegadoBookSourceType, LegadoChapter } from '../Framework/Novel/LegadoSourceTypes';
+import { LegadoBook, LegadoBookSourceType, LegadoChapter } from 'manxia_novel/src/main/ets/Framework/Novel/LegadoSourceTypes';
 import {
   DEFAULT_READ_ALOUD_SETTINGS,
   ReadAloudSettings
-} from '../Models/TextReaderModels';
-import { SettingsManager } from '../Framework/Managers/SettingsManager';
+} from 'manxia_core/src/main/ets/Models/TextReaderModels';
+
 import { ReadAloudController } from '../Framework/ReadAloud/ReadAloudController';
 import { ReadAloudPlaybackState } from '../Framework/ReadAloud/ReadAloudTypes';
 import { eventBus, GameEvent, IEventPayload, ReadAloudStatePayload } from '../Framework/EventBus';
 import { loadGlobalReadAloudSettings as loadStoredGlobalReadAloudSettings } from '../Framework/ReadAloud/ReadAloudSettingsStore';
 import { processReadAloudNovelContentByBook } from '../Framework/ReadAloud/ReadAloudTextProcessing';
 import { openNovelReaderInIsolatedAbility } from '../Framework/Reader/NovelReaderAbilityLauncher';
-import { LegadoWorkflowOutputKind } from '../Framework/Novel/LegadoCompatibilityTypes';
+import { LegadoWorkflowOutputKind } from 'manxia_novel/src/main/ets/Framework/Novel/LegadoCompatibilityTypes';
 
 const TAG = 'NovelReadAloudPage';
 type AudioJsonValue = string | number | boolean | Object | Array<Object> | null;
@@ -55,7 +56,7 @@ export struct NovelReadAloudPage {
   private sourceManager = getNovelSourceManager();
   private cacheManager = getNovelChapterCacheManager();
   private readAloudController: ReadAloudController = ReadAloudController.getInstance();
-  private settingsManager: SettingsManager = SettingsManager.getInstance();
+  private settingsManager: ISettingsManagerFacade = SettingsManagerHolder.get();
 
   private sourceId: string = '';
   private bookUrl: string = '';

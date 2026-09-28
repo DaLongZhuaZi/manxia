@@ -1,0 +1,39 @@
+{
+  "schemaVersion": 1,
+  "issueId": "ISSUE-COMPAT-243-JSOUP-STANDARD-CSS-PSEUDO-SELECTORS",
+  "contract": "arkweb_legado_jsoup_regex_contains_composition_context",
+  "legado": {
+    "implementation": "legado/app/src/main/java/io/legado/app/model/analyzeRule/AnalyzeByJSoup.kt",
+    "jsoupVersion": "1.16.2",
+    "semantics": "Element.select evaluates the Jsoup ~= regular expression and :contains against the same owning element compound."
+  },
+  "affectedSourceOrdinals": [267],
+  "affectedRuleStrings": [
+    "@css:a[href~=(-|_)\\d+]:contains(下一页)@href"
+  ],
+  "html": "<nav><a href=\"/chapter-12\">上一页</a><a href=\"/chapter-13\">下一页</a><a href=\"/other\">下一页</a><a>下一页</a></nav>",
+  "cases": [
+    {
+      "id": "regex-then-contains",
+      "rule": "a[href~=(-|_)\\d+]:contains(下一页)@href",
+      "expected": ["/chapter-13"],
+      "semantics": "the regex attribute and text pseudo are conjunctive on one anchor"
+    },
+    {
+      "id": "regex-only-control",
+      "rule": "a[href~=(-|_)\\d+]@href",
+      "expected": ["/chapter-12", "/chapter-13"],
+      "semantics": "the Jsoup regex predicate remains independently observable"
+    },
+    {
+      "id": "contains-only-control",
+      "rule": "a:contains(下一页)@href",
+      "expected": ["/chapter-13", "/other", ""],
+      "semantics": "the text pseudo remains independently observable, including a missing href"
+    }
+  ],
+  "failureCondition": "ArkWeb uses native ancestor.matches(targetSelector) while targetSelector still contains Jsoup ~=; the browser token operator or parser rejection loses the owning compound before :contains is evaluated.",
+  "requiredFix": "Resolve pseudo owning compounds through legadoMatchesJsoupSelector so regex attributes and text pseudos use one Jsoup-compatible projection.",
+  "runtimeActionsPerformed": [],
+  "semanticMatchAllowed": false
+}

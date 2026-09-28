@@ -5,7 +5,7 @@
  */
 
 import { matrix4, curves } from '@kit.ArkUI';
-import { ReadingDirection, PageTurnAnimationType } from '../../Models/MangaModels';
+import { ReadingDirection, PageTurnAnimationType } from 'manxia_core/src/main/ets/Models/MangaModels';
 import { EpubPageLayoutKind } from './EpubCssBuilder';
 
 export interface ViewportAnimationState {

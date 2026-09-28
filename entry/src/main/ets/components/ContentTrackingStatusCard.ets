@@ -1,4 +1,4 @@
-import { ThemeAwareHelper, ThemeAwareState } from '../Framework/Components/ThemeAware';
+import { ThemeAwareHelper, ThemeAwareState } from 'manxia_theme/src/main/ets/Framework/Components/ThemeAware';
 import { SubscriptionExecutionStatus } from '../Framework/Subscription';
 
 export enum ContentTrackingHighlightTone {

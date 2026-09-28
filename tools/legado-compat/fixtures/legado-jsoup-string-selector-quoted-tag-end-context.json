@@ -1,0 +1,54 @@
+{
+  "schemaVersion": 1,
+  "contract": "legado_jsoup_string_selector_quoted_tag_end_context",
+  "issueId": "ISSUE-COMPAT-243-JSOUP-STANDARD-CSS-PSEUDO-SELECTORS",
+  "baseline": {
+    "sourceCount": 458,
+    "sourcePackageSha256": "473048A191DE4749FA9C15E0A2F2328A3E86B385A5FCE23EA30432D598D03A67",
+    "legadoCommit": "95973d186b147fb9ab43a9240021d688e4304fbd"
+  },
+  "html": "<section><a class=\"item\" title=\"a > b\">first</a><a class=\"item\" title=\"c > d\">second</a></section>",
+  "cases": [
+    {
+      "id": "selector-group-quoted-greater",
+      "selector": "section > a.item:first-child, section > a.item:last-child",
+      "expectedTexts": [
+        "first",
+        "second"
+      ],
+      "expectedCount": 2,
+      "semantics": "a_greater_than_inside_a_quoted_html_attribute_must_not_end_the_start_tag_before_selector_group_occurrence_marking"
+    },
+    {
+      "id": "class-selector-quoted-greater",
+      "selector": ".item",
+      "expectedTexts": [
+        "first",
+        "second"
+      ],
+      "expectedCount": 2,
+      "semantics": "class_selector_extraction_must_keep_the_complete_start_tag_when_an_attribute_value_contains_greater_than"
+    }
+  ],
+  "selectionPath": [
+    "LegadoRuleAnalyzer.getElementsByCSSWithBridge",
+    "LegadoRuleAnalyzer.getElementsByCSS",
+    "string fallback findElementsBySimpleSelector / annotateStringSelectorHtml / extractElement"
+  ],
+  "representativeSourceSet": {
+    "sourceOrdinals": [
+      278
+    ],
+    "rulePaths": [
+      "$[277].ruleExplore.bookList",
+      "$[277].ruleExplore.coverUrl"
+    ],
+    "binding": "The frozen source at ordinal 278 uses quoted attribute selectors with direct-child CSS chains; the fixture adds a valid response attribute value containing > to exercise the shared HTML tag-boundary scanner."
+  },
+  "legadoSemantics": {
+    "implementation": "AnalyzeByJSoup delegates CSS selection to Jsoup Element.select over a parsed DOM; > in a quoted attribute value is data, not a start-tag boundary.",
+    "tagBoundary": "A quoted attribute value may contain > and must be consumed until the matching unquoted >.",
+    "identity": "Selector-group occurrence projection must preserve both distinct anchor nodes even when their surrounding markup is otherwise equal."
+  },
+  "failureCondition": "The string fallback used indexOf('>') at attribute, simple-selector, occurrence-marker and element-extraction boundaries. A > inside title=\"a > b\" truncated the start tag and could corrupt element extraction or occurrence markers."
+}

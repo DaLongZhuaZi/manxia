@@ -1,0 +1,38 @@
+{
+  "schemaVersion": 1,
+  "contract": "legado_jsoup_has_relative_selector_context",
+  "issueId": "ISSUE-COMPAT-243-JSOUP-STANDARD-CSS-PSEUDO-SELECTORS",
+  "baseline": {
+    "sourceCount": 458,
+    "sourcePackageSha256": "473048A191DE4749FA9C15E0A2F2328A3E86B385A5FCE23EA30432D598D03A67",
+    "legadoCommit": "95973d186b147fb9ab43a9240021d688e4304fbd"
+  },
+  "html": "<section class=\"card first\"><div class=\"body\"><span class=\"author\">作者：张三</span></div></section><section class=\"card indirect\"><p><span class=\"author\">错误：非直接 div</span></p></section><section class=\"card nested\"><div class=\"body\"><p>没有目标 span</p></div></section>",
+  "cases": [
+    {
+      "id": "has-direct-child-descendant",
+      "rule": "section:has(>div span)@text",
+      "semantics": "relative_selector_continues_below_direct_child",
+      "expected": ["作者：张三"]
+    },
+    {
+      "id": "has-direct-child-descendant-class",
+      "rule": "section:has(>div >span.author)@text",
+      "semantics": "relative_selector_keeps_direct_child_and_nested_child_constraints",
+      "expected": ["作者：张三"]
+    },
+    {
+      "id": "has-rejects-indirect-ancestor",
+      "rule": "section:has(>div span.author)@text",
+      "semantics": "relative_selector_must_not_accept_span_under_nonmatching_direct_child",
+      "expected": ["作者：张三"]
+    },
+    {
+      "id": "has-nested-direct-relative",
+      "rule": "section:has(>div:has(>span.author))@text",
+      "semantics": "nested_has_preserves_direct_child_relative_context",
+      "expected": ["作者：张三"]
+    }
+  ],
+  "failureCondition": "The pre-fix DOM matcher called child.matches(childSelector), which cannot evaluate a selector whose match is below the direct child; the string fallback required every match to equal the direct child and rejected >div span."
+}

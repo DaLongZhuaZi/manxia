@@ -1,0 +1,43 @@
+{
+  "schemaVersion": 1,
+  "contract": "legado_jsoup_not_selector_ancestor_context",
+  "issueId": "ISSUE-COMPAT-243-JSOUP-STANDARD-CSS-PSEUDO-SELECTORS",
+  "baseline": {
+    "sourceCount": 458,
+    "sourcePackageSha256": "473048A191DE4749FA9C15E0A2F2328A3E86B385A5FCE23EA30432D598D03A67",
+    "legadoCommit": "95973d186b147fb9ab43a9240021d688e4304fbd"
+  },
+  "html": "<section><div><span>same</span></div></section><aside><div><span>same</span></div></aside>",
+  "cases": [
+    {
+      "id": "deep-ancestor-descendant",
+      "rule": "span:not(section div span)@text",
+      "semantics": "not_must_evaluate_candidate_with_full_ancestor_context",
+      "expectedTexts": ["same"],
+      "expectedCount": 1,
+      "matchingCandidate": "aside > div > span"
+    },
+    {
+      "id": "deep-ancestor-child-combinator",
+      "rule": "span:not(section > div > span)@text",
+      "semantics": "not_must_preserve_multi_level_child_combinator_context",
+      "expectedTexts": ["same"],
+      "expectedCount": 1,
+      "matchingCandidate": "aside > div > span"
+    },
+    {
+      "id": "duplicate-occurrence",
+      "rule": "span:not(section div span)@text",
+      "semantics": "not_must_bind_duplicate_html_to_its_occurrence_offset",
+      "expectedTexts": ["same"],
+      "expectedCount": 1,
+      "matchingCandidate": "second identical span occurrence"
+    }
+  ],
+  "legadoSemantics": {
+    "implementation": "AnalyzeByJSoup delegates to Element.select; :not arguments are evaluated in the original document context.",
+    "selectorList": "a candidate matches :not only when it matches none of the argument selectors.",
+    "occurrenceIdentity": "two equal outerHTML values remain distinct Element nodes and must be evaluated at their own offsets."
+  },
+  "verificationPolicy": "static_failure_witness_then_source_fix;runtime_regression_build_device_and_legado_diff_deferred"
+}

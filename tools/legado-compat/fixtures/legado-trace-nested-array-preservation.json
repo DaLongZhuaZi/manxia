@@ -1,0 +1,69 @@
+{
+  "schemaVersion": 1,
+  "kind": "legado_trace_nested_array_preservation_fixture",
+  "contract": "legado_trace_nested_array_preservation",
+  "issueId": "ISSUE-COMPAT-242-TRACE-BRIDGE-PRESERVATION",
+  "runtimePath": "entry/src/main/ets/Framework/Novel/LegadoCompatibilityTypes.ets",
+  "classes": [
+    {
+      "name": "LegadoBridgeTrace",
+      "fields": [
+        {
+          "name": "headerNames",
+          "parameter": "headerNames",
+          "directAssignment": "this.headerNames = headerNames;",
+          "defensiveAssignment": "this.headerNames = headerNames.slice();"
+        }
+      ]
+    },
+    {
+      "name": "RequestSpec",
+      "fields": [
+        {
+          "name": "headers",
+          "parameter": "headers",
+          "directAssignment": "this.headers = headers;",
+          "defensiveAssignment": "this.headers = headers.slice();"
+        },
+        {
+          "name": "optionTrace",
+          "parameter": "optionTrace",
+          "directAssignment": "this.optionTrace = optionTrace;",
+          "defensiveAssignment": "this.optionTrace = optionTrace.slice();"
+        }
+      ]
+    },
+    {
+      "name": "ResponseEnvelope",
+      "fields": [
+        {
+          "name": "requestHeaders",
+          "parameter": "requestHeaders",
+          "directAssignment": "this.requestHeaders = requestHeaders;",
+          "defensiveAssignment": "this.requestHeaders = requestHeaders.slice();"
+        },
+        {
+          "name": "responseHeaders",
+          "parameter": "responseHeaders",
+          "directAssignment": "this.responseHeaders = responseHeaders;",
+          "defensiveAssignment": "this.responseHeaders = responseHeaders.slice();"
+        },
+        {
+          "name": "redirectChain",
+          "parameter": "redirectChain",
+          "directAssignment": "this.redirectChain = redirectChain;",
+          "defensiveAssignment": "this.redirectChain = redirectChain.slice();"
+        }
+      ]
+    }
+  ],
+  "semantics": {
+    "traceGraph": "All mutable arrays reachable from a persisted LegadoExecutionTrace must be constructor-owned snapshots.",
+    "bridgeEvidence": "Bridge header-name evidence must remain stable after the producer reuses its header array.",
+    "requestEvidence": "Request headers and URL-option disposition evidence must remain stable after request planning completes.",
+    "responseEvidence": "Response headers and redirect-chain evidence must remain stable after transport completion."
+  },
+  "execution": "static_source_contract_only",
+  "runtimeRegression": "not_run",
+  "deviceRegression": "not_run"
+}

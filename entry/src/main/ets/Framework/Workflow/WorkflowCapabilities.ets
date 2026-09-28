@@ -4,13 +4,13 @@
  * 允许图源通过JSON配置声明和使用各种能力
  */
 
-import { logger } from '../../Utils/Logger';
-import DynamicUrlResolver, { type UrlResolverConfig } from '../Utils/DynamicUrlResolver';
-import ChineseConverter, { type ChineseConversionConfig } from '../Utils/ChineseConverter';
-import PaginationHandler, { type PaginationConfig, type PaginationResult } from '../Utils/PaginationHandler';
-import UserAgentManager, { type UserAgentRotationConfig } from '../Network/UserAgentManager';
+import { logger } from 'manxia_core/src/main/ets/Utils/Logger';
+import DynamicUrlResolver, { type UrlResolverConfig } from 'manxia_core/src/main/ets/Framework/Utils/DynamicUrlResolver';
+import ChineseConverter, { type ChineseConversionConfig } from 'manxia_core/src/main/ets/Framework/Utils/ChineseConverter';
+import PaginationHandler, { type PaginationConfig, type PaginationResult } from 'manxia_core/src/main/ets/Framework/Utils/PaginationHandler';
+import UserAgentManager, { type UserAgentRotationConfig } from 'manxia_core/src/main/ets/Framework/Managers/UserAgentManager';
 import ErrorHandler, { type RetryConfig } from '../Network/ErrorHandler';
-import SessionManager, { type SessionRefreshConfig } from '../Managers/SessionManager';
+import SessionManager, { type SessionRefreshConfig } from 'manxia_core/src/main/ets/Framework/Managers/SessionManager';
 
 const TAG = 'WorkflowCapabilities';
 

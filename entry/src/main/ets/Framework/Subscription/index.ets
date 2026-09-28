@@ -40,4 +40,4 @@ export {
   createSourceKeywordCondition,
   createTagKeywordCondition,
   createTitleKeywordCondition
-} from '../../Models/SubscriptionModels';
+} from 'manxia_core/src/main/ets/Models/SubscriptionModels';

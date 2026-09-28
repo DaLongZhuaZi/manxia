@@ -1,5 +1,5 @@
-import { SafeFileUtils } from '../../Utils/SafeFileUtils';
-import { SafeUtils } from '../../Utils/SafeUtils';
+import { SafeFileUtils } from 'manxia_core/src/main/ets/Utils/SafeFileUtils';
+import { SafeUtils } from 'manxia_core/src/main/ets/Utils/SafeUtils';
 /**
  * 小说章节缓存管理器
  * 负责章节内容的缓存、下载和离线阅读支持
@@ -16,14 +16,14 @@ import { SafeUtils } from '../../Utils/SafeUtils';
  * 文件路径: entry/src/main/ets/Framework/Novel/NovelChapterCacheManager.ets
  */
 
-import { logger } from '../../Utils/Logger';
+import { logger } from 'manxia_core/src/main/ets/Utils/Logger';
 import { getNovelDataManager } from './NovelDataManager';
 import { getNovelSourceManager } from './NovelSourceManager';
-import { LegadoChapter, LegadoBookSourceType } from './LegadoSourceTypes';
-import { NovelDownloadTask, NovelCacheInfo, BookMetadata } from '../../Models/NovelModels';
-import { ChapterOrderCacheRemapResult, ChapterOrderIndexRemap } from '../../Models/UnifiedContentModels';
-import { AppNotificationManager } from '../Managers/NotificationManager';
-import { SandboxManager } from '../Storage/SandboxManager';
+import { LegadoChapter, LegadoBookSourceType } from 'manxia_novel/src/main/ets/Framework/Novel/LegadoSourceTypes';
+import { NovelDownloadTask, NovelCacheInfo, BookMetadata } from 'manxia_core/src/main/ets/Models/NovelModels';
+import { ChapterOrderCacheRemapResult, ChapterOrderIndexRemap } from 'manxia_core/src/main/ets/Models/UnifiedContentModels';
+import { AppNotificationManager } from 'manxia_core/src/main/ets/Framework/Managers/NotificationManager';
+import { SandboxManager } from 'manxia_core/src/main/ets/Framework/Storage/SandboxManager';
 import { fileIo } from '@kit.CoreFileKit';
 import { http } from '@kit.NetworkKit';
 import { util } from '@kit.ArkTS';
@@ -42,6 +42,12 @@ export interface DownloadProgressCallback {
   onProgress: (current: number, total: number, chapterTitle: string) => void;
   onComplete: () => void;
   onError: (error: string) => void;
+}
+
+export interface NovelChapterCacheSnapshot {
+  bookId: string;
+  snapshotDirectory: string;
+  hadOriginalDirectory: boolean;
 }
 
 /**
@@ -1758,6 +1764,81 @@ export class NovelChapterCacheManager {
     } catch (error) {
       logger.error(TAG, `保存章节列表失败: ${String(error)}`);
     }
+  }
+
+  async createContinuationImportSnapshot(bookId: string): Promise<NovelChapterCacheSnapshot> {
+    await this.ensureInitialized();
+    const sourceDirectory = this.getBookCacheDir(bookId);
+    const snapshotDirectory = `${this.novelsCacheDir}/.continuation_snapshot_${this.sanitizeFileName(bookId)}_${Date.now()}`;
+    const hadOriginalDirectory = SafeFileUtils.accessSync(sourceDirectory);
+    try {
+      if (hadOriginalDirectory) {
+        this.copyDirectoryStrict(sourceDirectory, snapshotDirectory);
+      }
+      return {
+        bookId: bookId,
+        snapshotDirectory: snapshotDirectory,
+        hadOriginalDirectory: hadOriginalDirectory
+      };
+    } catch (error) {
+      this.deleteDirectoryTreeStrict(snapshotDirectory);
+      throw error as Error;
+    }
+  }
+
+  async restoreContinuationImportSnapshot(snapshot: NovelChapterCacheSnapshot): Promise<void> {
+    await this.ensureInitialized();
+    const targetDirectory = this.getBookCacheDir(snapshot.bookId);
+    this.deleteDirectoryTreeStrict(targetDirectory);
+    if (snapshot.hadOriginalDirectory) {
+      SafeFileUtils.renameSyncStrict(snapshot.snapshotDirectory, targetDirectory);
+    }
+  }
+
+  async discardContinuationImportSnapshot(snapshot: NovelChapterCacheSnapshot): Promise<void> {
+    await this.ensureInitialized();
+    this.deleteDirectoryTreeStrict(snapshot.snapshotDirectory);
+  }
+
+  private copyDirectoryStrict(sourceDirectory: string, targetDirectory: string): void {
+    const sourceStat = SafeFileUtils.lstatSyncStrict(sourceDirectory);
+    if (!sourceStat.isDirectory()) {
+      throw new Error(`小说章节缓存目录无效: ${sourceDirectory}`);
+    }
+    SafeFileUtils.mkdirSyncStrict(targetDirectory, true);
+    for (const entry of SafeFileUtils.listFileSync(sourceDirectory)) {
+      const sourcePath = `${sourceDirectory}/${entry}`;
+      const targetPath = `${targetDirectory}/${entry}`;
+      const entryStat = SafeFileUtils.lstatSyncStrict(sourcePath);
+      if (entryStat.isDirectory()) {
+        this.copyDirectoryStrict(sourcePath, targetPath);
+      } else {
+        SafeFileUtils.copyFileSyncStrict(sourcePath, targetPath);
+      }
+    }
+  }
+
+  private deleteDirectoryTreeStrict(path: string): void {
+    if (!SafeFileUtils.accessSync(path)) {
+      return;
+    }
+    const stat = SafeFileUtils.lstatSyncStrict(path);
+    if (!stat.isDirectory()) {
+      SafeFileUtils.unlinkSyncStrict(path);
+      return;
+    }
+    for (const entry of SafeFileUtils.listFileSync(path)) {
+      this.deleteDirectoryTreeStrict(`${path}/${entry}`);
+    }
+    fileIo.rmdirSync(path);
+  }
+
+  async storeChapterContent(bookId: string, chapterIndex: number, chapterTitle: string, content: string): Promise<void> {
+    if (bookId.length <= 0 || chapterIndex < 0 || content.length <= 0) {
+      throw new Error('小说章节缓存参数无效');
+    }
+    await this.ensureInitialized();
+    await this.saveChapterToFile(bookId, chapterIndex, chapterTitle, content);
   }
   
   /**

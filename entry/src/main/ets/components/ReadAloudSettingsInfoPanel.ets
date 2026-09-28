@@ -1,7 +1,7 @@
 ﻿import { curves, UIContext } from '@kit.ArkUI';
 import { textToSpeech } from '@kit.CoreSpeechKit';
-import { ThemeManager } from '../Framework/Managers/ThemeManager';
-import { SettingKeys, SettingsManager } from '../Framework/Managers/SettingsManager';
+import { ThemeManager } from 'manxia_theme/src/main/ets/Framework/Managers/ThemeManager';
+import { SettingKeys, SettingsManager } from 'manxia_core/src/main/ets/Framework/Managers/SettingsManager';
 import {
   DEFAULT_REMOTE_READ_ALOUD_SETTINGS,
   DEFAULT_REMOTE_READ_ALOUD_PRESET_ID,
@@ -24,10 +24,10 @@ import {
   normalizeRemoteReadAloudSettings,
   splitRemoteReadAloudStylePrompt,
   normalizeRemoteReadAloudStylePrompt
-} from '../Models/TextReaderModels';
+} from 'manxia_core/src/main/ets/Models/TextReaderModels';
 import { ReadAloudAvailability, ReadAloudEngineAvailabilityMap } from '../Framework/ReadAloud/ReadAloudAvailability';
 import { ReadAloudVoiceOption } from '../Framework/ReadAloud/ReadAloudTypes';
-import { logger } from '../Utils/Logger';
+import { logger } from 'manxia_core/src/main/ets/Utils/Logger';
 
 interface ReadAloudEngineOption {
   label: string;

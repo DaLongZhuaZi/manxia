@@ -1,10 +1,10 @@
 ﻿import { common } from '@kit.AbilityKit';
 import { promptAction } from '@kit.ArkUI';
-import { logger } from '../Utils/Logger';
-import { Manga } from '../Models/MangaModels';
-import { ThemeAwareHelper, ThemeAwareState } from '../Framework/Components/ThemeAware';
-import { FontAwareHelper, FontAwareState } from '../Framework/Components/FontAware';
-import { ThemeManager, ThemeType } from '../Framework/Managers/ThemeManager';
+import { logger } from 'manxia_core/src/main/ets/Utils/Logger';
+import { Manga } from 'manxia_core/src/main/ets/Models/MangaModels';
+import { ThemeAwareHelper, ThemeAwareState } from 'manxia_theme/src/main/ets/Framework/Components/ThemeAware';
+import { FontAwareHelper, FontAwareState } from 'manxia_theme/src/main/ets/Framework/Components/FontAware';
+import { ThemeManager, ThemeType } from 'manxia_theme/src/main/ets/Framework/Managers/ThemeManager';
 import { DataManager, ReadHistory } from '../Framework/Data/DataManager';
 import { RemoteLibraryMangaBridge } from '../Framework/Source/RemoteLibraryMangaBridge';
 import { getRemoteLibraryShelfManager, RemoteLibraryShelfManager } from '../Framework/Source/RemoteLibraryShelfManager';
@@ -14,7 +14,7 @@ import { getSuwayomiSourceExecutor, SuwayomiSourceExecutor } from '../Framework/
 import { SuwayomiImage } from '../components/SuwayomiImage';
 import { MangaReaderContentType, MangaReaderPageParams } from './MangaReaderPage';
 import { openMangaReaderInIsolatedAbility } from '../Framework/Reader/MangaReaderAbilityLauncher';
-import { SettingsImmersiveTitleActionItem, SettingsPageTitleBarManager } from './settings/SettingsPageTitleBarManager';
+import { SettingsImmersiveTitleActionItem, SettingsPageTitleBarManager } from 'manxia_features_ui/src/main/ets/pages/settings/SettingsPageTitleBarManager';
 import { SettingsImmersiveTitleBar } from './settings/SettingsImmersiveTitleBar';
 
 const TAG = 'SuwayomiMangaDetailPage';

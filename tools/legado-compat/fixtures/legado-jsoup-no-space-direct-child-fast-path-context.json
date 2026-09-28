@@ -1,0 +1,61 @@
+{
+  "schemaVersion": 1,
+  "contract": "legado_jsoup_no_space_direct_child_fast_path",
+  "issueId": "ISSUE-COMPAT-243-JSOUP-STANDARD-CSS-PSEUDO-SELECTORS",
+  "baseline": {
+    "sourceCount": 458,
+    "sourcePackageSha256": "473048A191DE4749FA9C15E0A2F2328A3E86B385A5FCE23EA30432D598D03A67",
+    "legadoCommit": "95973d186b147fb9ab43a9240021d688e4304fbd"
+  },
+  "html": "<div id=\"main\"><div class=\"card\">main</div></div><div id=\"chapterlist\"><p>intro</p><p><a href=\"/chapter-2\">chapter</a></p></div><div class=\"manga-list\"><a href=\"/manga-1\">manga</a></div><div class=\"text-sm\">one</div><div class=\"text-sm\">two</div><div class=\"text-sm\"><a href=\"/third\">third</a></div><div id=\"page\"><div><ul><li>cover</li><li><img src=\"/cover.jpg\"></li></ul></div></div>",
+  "selectionPath": "getElementsByCSSWithBridge -> getElementsByCSSChain -> findElementsBySingleSelector",
+  "cases": [
+    {
+      "id": "id_no_space_child",
+      "selector": "#main>div",
+      "semantics": "top_level_child_combinator_without_whitespace_must_not_use_the_simple_id_fast_path",
+      "expected": ["<div class=\"card\">main</div>"]
+    },
+    {
+      "id": "id_no_space_multi_level_pseudo",
+      "selector": "#chapterlist>p:nth-child(n+2)>a",
+      "semantics": "multi_level_direct_child_chain_and_standard_pseudo_are evaluated as one CSS selector",
+      "expected": ["<a href=\"/chapter-2\">chapter</a>"]
+    },
+    {
+      "id": "class_no_space_child",
+      "selector": "@css:.manga-list>a",
+      "semantics": "explicit @css class selector with no whitespace must reach direct-child dispatch",
+      "expected": ["<a href=\"/manga-1\">manga</a>"]
+    },
+    {
+      "id": "class_pseudo_no_space_child",
+      "selector": ".text-sm:nth-child(3)>a",
+      "semantics": "class pseudo plus direct child must not be consumed as a simple class token",
+      "expected": ["<a href=\"/third\">third</a>"]
+    },
+    {
+      "id": "source_representative_nested_chain",
+      "selector": "#page>div>ul>li:nth-child(2)>img",
+      "semantics": "representative frozen source chain preserves every top-level child relation",
+      "expected": ["<img src=\"/cover.jpg\">"]
+    }
+  ],
+  "affectedSourceOrdinals": [88, 201, 223, 231, 255, 268, 276, 278, 279, 318, 363, 403, 404, 439, 440, 445, 446, 452],
+  "affectedRuleStringCount": 30,
+  "representativeSourceRules": [
+    "#main>div",
+    "#chapterlist>p:nth-child(n+2)>a",
+    "@css:.grow>div:nth-child(2)",
+    ".text-sm:nth-child(3)>a",
+    "@css:#page>div>ul>li:nth-child(2)>img",
+    "#allCatalog>.catalog-volume>label",
+    "@css:.chapter-wrap-list.normal>li"
+  ],
+  "legadoSemantics": {
+    "implementation": "AnalyzeByJSoup delegates the complete selector to Jsoup Element.select",
+    "fastPathPolicy": "A selector beginning with a class or id is eligible for a simple lookup only when it has no top-level CSS combinator.",
+    "childPolicy": "Whitespace is optional around a top-level > combinator; nested > characters inside pseudo arguments and attributes are not combinators."
+  },
+  "failureCondition": "The V2 class/id fast path checks only for whitespace. A no-space top-level > chain is sent to findElementsBySimpleSelector before direct-child splitting, so the chain is treated as an id/class token instead of a CSS relation."
+}

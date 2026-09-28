@@ -5,16 +5,16 @@
  * 文件路径: entry/src/main/ets/components/backup/WebDAVConfigDialog.ets
  */
 
-import { ThemeAwareHelper } from '../../Framework/Components/ThemeAware';
-import { ThemeType } from '../../Framework/Managers/ThemeManager';
-import { WebDAVSettings } from '../../Models/WebDAVModels';
-import { logger } from '../../Utils/Logger';
-import { WebDAVTestResult } from '../../Framework/WebDAV/WebDAVClient';
-import { WebDAVErrorAnalyzer, WEBDAV_SERVER_GUIDES, WebDAVServerGuide } from '../../Framework/WebDAV/WebDAVErrorAnalyzer';
+import { ThemeAwareHelper } from 'manxia_theme/src/main/ets/Framework/Components/ThemeAware';
+import { ThemeType } from 'manxia_theme/src/main/ets/Framework/Managers/ThemeManager';
+import { WebDAVSettings } from 'manxia_core/src/main/ets/Models/WebDAVModels';
+import { logger } from 'manxia_core/src/main/ets/Utils/Logger';
+import { WebDAVTestResult } from 'manxia_network/src/main/ets/Framework/WebDAV/WebDAVClient';
+import { WebDAVErrorAnalyzer, WEBDAV_SERVER_GUIDES, WebDAVServerGuide } from 'manxia_network/src/main/ets/Framework/WebDAV/WebDAVErrorAnalyzer';
 import { getAutoBackupScheduler, formatNextBackupTime, AutoBackupStatus } from '../../Framework/WebDAV/WebDAVAutoBackupScheduler';
-import { SettingsPanelSurfaceHelper } from '../../pages/settings/SettingsPanelSurfaceHelper';
+import { SettingsPanelSurfaceHelper } from 'manxia_features_ui/src/main/ets/pages/settings/SettingsPanelSurfaceHelper';
 import { NetworkScannerAdapter } from '../../Framework/Network/NetworkScannerAdapter';
-import { NetworkScanHost, ProtocolPort } from '../../Models/NetworkFolderModels';
+import { NetworkScanHost, ProtocolPort } from 'manxia_core/src/main/ets/Models/NetworkFolderModels';
 
 const TAG = 'WebDAVConfigDialog';
 const ACCENT_COLOR: string = '#0F8A6C';

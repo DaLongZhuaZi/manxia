@@ -6,12 +6,12 @@
 
 import {
   EBookReadingSettings
-} from '../../Models/EBookModels';
+} from 'manxia_core/src/main/ets/Models/EBookModels';
 import {
   ReadingSettings as MangaReadingSettings,
   ReadingMode,
   DoublePagePortraitLayout
-} from '../../Models/MangaModels';
+} from 'manxia_core/src/main/ets/Models/MangaModels';
 
 export type EpubPageLayoutKind =
   'horizontal_paged' |

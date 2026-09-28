@@ -3,10 +3,10 @@
  * 通过 DeepLinkDialogManager.show() 从任何页面调用
  */
 
-import { ThemeAwareState, ThemeAwareHelper } from './ThemeAware';
+import { ThemeAwareState, ThemeAwareHelper } from 'manxia_theme/src/main/ets/Framework/Components/ThemeAware';
 import { DeepLinkRouter, DeepLinkResult } from '../Utils/DeepLinkRouter';
-import { DialogSurfaceStyleHelper } from './DialogSurfaceStyleHelper';
-import { logger } from '../../Utils/Logger';
+import { DialogSurfaceStyleHelper } from 'manxia_features_ui/src/main/ets/Framework/Components/DialogSurfaceStyleHelper';
+import { logger } from 'manxia_core/src/main/ets/Utils/Logger';
 import { promptAction } from '@kit.ArkUI';
 
 const TAG = 'DeepLinkDialog';

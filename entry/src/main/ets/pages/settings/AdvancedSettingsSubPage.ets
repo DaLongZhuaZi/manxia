@@ -6,25 +6,26 @@
 
 import { HdsNavDestination, HdsNavDestinationAttribute, ScrollEffectType } from '@kit.UIDesignKit';
 import { LengthMetrics, promptAction } from '@kit.ArkUI';
-import { ThemeAwareState, ThemeAwareHelper } from '../../Framework/Components/ThemeAware';
-import { ThemeManager, ThemeType } from '../../Framework/Managers/ThemeManager';
-import { FontAwareHelper, FontAwareState } from '../../Framework/Components/FontAware';
-import { SettingsManager, SettingKeys } from '../../Framework/Managers/SettingsManager';
-import { ContentFilterManager } from '../../Framework/Managers/ContentFilterManager';
-import { WelcomeGuideManager } from '../../Framework/Managers/WelcomeGuideManager';
-import { AppGuideManager } from '../../Framework/Managers/AppGuideManager';
+import { ThemeAwareState, ThemeAwareHelper } from 'manxia_theme/src/main/ets/Framework/Components/ThemeAware';
+import { ThemeManager, ThemeType } from 'manxia_theme/src/main/ets/Framework/Managers/ThemeManager';
+import { FontAwareHelper, FontAwareState } from 'manxia_theme/src/main/ets/Framework/Components/FontAware';
+import { ISettingsManagerFacade, SettingsManagerHolder } from 'manxia_core/src/main/ets/Framework/Contracts/ISettingsManagerFacade';
+import { SettingKeys } from 'manxia_core/src/main/ets/Framework/Contracts/SettingKeys';
+import { ContentFilterManager } from 'manxia_core/src/main/ets/Framework/Managers/ContentFilterManager';
+import { WelcomeGuideManager } from 'manxia_core/src/main/ets/Framework/Managers/WelcomeGuideManager';
+import { AppGuideManager } from 'manxia_core/src/main/ets/Framework/Managers/AppGuideManager';
 import { common, Want } from '@kit.AbilityKit';
-import { logger, LOG_LEVEL_NAMES, LOG_LEVEL_VALUES, LogLevel } from '../../Utils/Logger';
-import { PageLifecycleManager } from '../../Framework/Lifecycle';
-import { DeviceAdaptationManager, DeviceInfo, DeviceChangeListener, Breakpoint } from '../../Framework/Managers/DeviceAdaptationManager';
-import { ResponsiveLayoutHelper } from '../../Framework/Utils/ResponsiveLayout';
-import { SettingsSearchSupport } from './SettingsSearchSupport';
+import { logger, LOG_LEVEL_NAMES, LOG_LEVEL_VALUES, LogLevel } from 'manxia_core/src/main/ets/Utils/Logger';
+import { PageLifecycleManager } from 'manxia_core/src/main/ets/Framework/Lifecycle/index';
+import { DeviceAdaptationManager, DeviceInfo, DeviceChangeListener, Breakpoint } from 'manxia_theme/src/main/ets/Framework/Managers/DeviceAdaptationManager';
+import { ResponsiveLayoutHelper } from 'manxia_theme/src/main/ets/Framework/Utils/ResponsiveLayout';
+import { SettingsSearchSupport } from 'manxia_features_ui/src/main/ets/pages/settings/SettingsSearchSupport';
 import { setReaderKitEnabled, isEpubWebViewEnabled, setEpubWebViewEnabled } from '../../Framework/Initialization/ReaderKitFeatureGate';
-import { SettingsPanelSurfaceHelper } from './SettingsPanelSurfaceHelper';
-import { GlobalBackgroundLayerMode } from '../../Framework/Components/GlobalBackgroundLayer';
-import { SharedPageBackgroundLayer } from '../../Framework/Components/SharedPageBackgroundLayer';
+import { SettingsPanelSurfaceHelper } from 'manxia_features_ui/src/main/ets/pages/settings/SettingsPanelSurfaceHelper';
+import { GlobalBackgroundLayerMode } from 'manxia_theme/src/main/ets/Framework/Components/GlobalBackgroundLayer';
+import { SharedPageBackgroundLayer } from 'manxia_theme/src/main/ets/Framework/Components/SharedPageBackgroundLayer';
 import { SettingsImmersiveTitleBar } from './SettingsImmersiveTitleBar';
-import { SettingsPageTitleBarManager } from './SettingsPageTitleBarManager';
+import { SettingsPageTitleBarManager } from 'manxia_features_ui/src/main/ets/pages/settings/SettingsPageTitleBarManager';
 
 const TAG = 'AdvancedSettingsSubPage';
 const TITLE_BAR_HEIGHT_MINI: number = 56;
@@ -54,7 +55,7 @@ export struct AdvancedSettingsSubPage {
   @StorageLink('source_settings_visible') sourceSettingsVisible: boolean = false;
   private themeManager: ThemeManager = ThemeManager.getInstance();
   private componentId: string = 'AdvancedSettingsSubPage';
-  private settingsManager: SettingsManager = SettingsManager.getInstance();
+  private settingsManager: ISettingsManagerFacade = SettingsManagerHolder.get();
   private welcomeGuideManager: WelcomeGuideManager = WelcomeGuideManager.getInstance();
   private appGuideManager: AppGuideManager = AppGuideManager.getInstance();
 

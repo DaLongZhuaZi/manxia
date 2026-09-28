@@ -1,0 +1,10 @@
+{
+  "name": "manxia_ui_resources",
+  "version": "1.0.0",
+  "description": "漫匣共享 UI 资源与编译期资源解析器",
+  "main": "./src/main/ets/index.ets",
+  "author": "",
+  "license": "",
+  "dependencies": {},
+  "devDependencies": {}
+}

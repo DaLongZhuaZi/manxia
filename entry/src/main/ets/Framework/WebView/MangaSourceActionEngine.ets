@@ -1,4 +1,4 @@
-import { SafeUtils } from '../../Utils/SafeUtils';
+import { SafeUtils } from 'manxia_core/src/main/ets/Utils/SafeUtils';
 // 文件路径: src/main/ets/Framework/WebView/MangaSourceActionEngine.ets
 /**
  * 漫画图源操作引擎
@@ -7,7 +7,7 @@ import { SafeUtils } from '../../Utils/SafeUtils';
 
 import { webview } from '@kit.ArkWeb';
 import { BusinessError } from '@kit.BasicServicesKit';
-import { logger } from '../../Utils/Logger';
+import { logger } from 'manxia_core/src/main/ets/Utils/Logger';
 import { 
   Action, 
   ActionType, 
@@ -29,16 +29,16 @@ import {
   MangaSourceError,
   MangaSourceErrorCode,
   AntiCrawlerConfig
-} from './MangaSourceTypes';
-import { MangaSourceSelectorEngine } from './MangaSourceSelectorEngine';
-import { MangaSourceAntiCrawler } from './MangaSourceAntiCrawler';
-import { MangaSourceAPIEngine, JSONExtractConfig } from './MangaSourceAPIEngine';
+} from 'manxia_source_engine/src/main/ets/Framework/WebView/MangaSourceTypes';
+import { MangaSourceSelectorEngine } from 'manxia_source_engine/src/main/ets/Framework/WebView/MangaSourceSelectorEngine';
+import { MangaSourceAntiCrawler } from 'manxia_source_engine/src/main/ets/Framework/WebView/MangaSourceAntiCrawler';
+import { MangaSourceAPIEngine, JSONExtractConfig } from 'manxia_network/src/main/ets/Framework/WebView/MangaSourceAPIEngine';
 import { DataManager } from '../Data/DataManager';
-import CookieManager from '../Managers/CookieManager';
-import { generatePicaSignature } from '../Source/SignatureHandler';
-import { UserAgentManager } from '../Managers/UserAgentManager';
-import { sourceDiagnosticManager } from '../SourceEditor/SourceDiagnosticManager';
-import { SourceDiagnosticEvent, SourceDiagnosticEventKind, SourceDiagnosticLevel } from '../SourceEditor/SourceDiagnosticTypes';
+import CookieManager from 'manxia_core/src/main/ets/Framework/Managers/CookieManager';
+import { generatePicaSignature } from 'manxia_source_engine/src/main/ets/Framework/Source/SignatureHandler';
+import { UserAgentManager } from 'manxia_core/src/main/ets/Framework/Managers/UserAgentManager';
+import { sourceDiagnosticManager } from 'manxia_source_engine/src/main/ets/Framework/SourceEditor/SourceDiagnosticManager';
+import { SourceDiagnosticEvent, SourceDiagnosticEventKind, SourceDiagnosticLevel } from 'manxia_source_engine/src/main/ets/Framework/SourceEditor/SourceDiagnosticTypes';
 
 /**
  * 字段选择器解析结果
@@ -446,8 +446,26 @@ export class MangaSourceActionEngine {
     logger.info(TAG, `导航到: ${url}, waitAfterLoad=${waitAfterLoad}ms`);
 
     try {
-      // 开始导航
-      this.webviewController.loadUrl(url);
+      // controller 切页/重挂时可能短暂未关联，最多重试 loadUrl
+      let loadOk = false;
+      for (let attempt = 0; attempt < 8; attempt++) {
+        try {
+          this.webviewController.loadUrl(url);
+          loadOk = true;
+          break;
+        } catch (loadErr) {
+          const msg = loadErr instanceof Error ? loadErr.message : String(loadErr);
+          if (msg.includes('must be associated') || msg.includes('Init error')) {
+            logger.warn(TAG, `loadUrl 时 controller 未关联，等待挂载后重试 (${attempt + 1}/8)`);
+            await this.sleep(250);
+            continue;
+          }
+          throw new Error(msg);
+        }
+      }
+      if (!loadOk) {
+        throw new Error('WebviewController must be associated with a Web component');
+      }
 
       // [优化] 智能等待：轮询 document.readyState 替代盲等
       const startTime = Date.now();
@@ -1151,6 +1169,9 @@ export class MangaSourceActionEngine {
             if (result.trim().startsWith('{') || result.trim().startsWith('[')) {
               const parsedResult = SafeUtils.parseObj(result) as T;
               resolve(parsedResult);
+            } else if (result === 'true' || result === 'false') {
+              // runJavaScript 将布尔值序列化为字符串，必须还原，否则 "false" 被当作真值
+              resolve((result === 'true') as T);
             } else {
               // 对于非JSON结果，进行类型转换
               resolve(result as T);
@@ -1212,6 +1233,8 @@ export class MangaSourceActionEngine {
             if (result.trim().startsWith('{') || result.trim().startsWith('[')) {
               const parsed = SafeUtils.parseObj(result) as T;
               resolve(parsed);
+            } else if (result === 'true' || result === 'false') {
+              resolve((result === 'true') as T);
             } else {
               resolve(result as T);
             }
@@ -1238,7 +1261,8 @@ export class MangaSourceActionEngine {
    */
   private async checkElement(selector: string): Promise<boolean> {
     const script = `document.querySelector('${selector}') !== null`;
-    return await this.executeJavaScript<boolean>(script);
+    const result = await this.executeJavaScript<boolean | string>(script);
+    return result === true || result === 'true';
   }
 
   /**
@@ -1249,7 +1273,7 @@ export class MangaSourceActionEngine {
     
     while (Date.now() - startTime < timeout) {
       const exists = await this.checkElement(selector);
-      if (exists) {
+      if (exists === true) {
         return true;
       }
       await this.sleep(200);

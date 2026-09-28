@@ -1,10 +1,11 @@
-﻿import { SafeUtils } from '../../Utils/SafeUtils';
+import { ISettingsManagerFacade, SettingsManagerHolder } from 'manxia_core/src/main/ets/Framework/Contracts/ISettingsManagerFacade';
+﻿import { SafeUtils } from 'manxia_core/src/main/ets/Utils/SafeUtils';
 import { http } from '@kit.NetworkKit';
-import { logger } from '../../Utils/Logger';
-import { base64Encode } from '../../Utils/CryptoUtils';
-import { ThemeAwareState, ThemeAwareHelper } from '../../Framework/Components/ThemeAware';
-import { FontAwareHelper, FontAwareState } from '../../Framework/Components/FontAware';
-import { ThemeType } from '../../Framework/Managers/ThemeManager';
+import { logger } from 'manxia_core/src/main/ets/Utils/Logger';
+import { base64Encode } from 'manxia_core/src/main/ets/Utils/CryptoUtils';
+import { ThemeAwareState, ThemeAwareHelper } from 'manxia_theme/src/main/ets/Framework/Components/ThemeAware';
+import { FontAwareHelper, FontAwareState } from 'manxia_theme/src/main/ets/Framework/Components/FontAware';
+import { ThemeType } from 'manxia_theme/src/main/ets/Framework/Managers/ThemeManager';
 import { getKomgaTracker } from '../../Framework/Tracking/trackers/KomgaTracker';
 import { getKomgaSourceExecutor } from '../../Framework/Source/KomgaSourceExecutor';
 import { TabContentCacheManager } from '../../Framework/Cache/TabContentCacheManager';
@@ -22,13 +23,13 @@ import {
   createEmptyKomgaConfig,
   getKomgaInstanceDisplayName
 } from '../../Framework/Source/KomgaConfigStore';
-import { SettingsManager } from '../../Framework/Managers/SettingsManager';
-import { GlobalBackgroundLayerMode } from '../../Framework/Components/GlobalBackgroundLayer';
-import { SharedPageBackgroundLayer } from '../../Framework/Components/SharedPageBackgroundLayer';
+
+import { GlobalBackgroundLayerMode } from 'manxia_theme/src/main/ets/Framework/Components/GlobalBackgroundLayer';
+import { SharedPageBackgroundLayer } from 'manxia_theme/src/main/ets/Framework/Components/SharedPageBackgroundLayer';
 import { SettingsImmersiveTitleBar } from './SettingsImmersiveTitleBar';
-import { SettingsPageTitleBarManager } from './SettingsPageTitleBarManager';
+import { SettingsPageTitleBarManager } from 'manxia_features_ui/src/main/ets/pages/settings/SettingsPageTitleBarManager';
 import { eventBus, GameEvent, RemoteLibraryConfigChangedPayload } from '../../Framework/EventBus';
-import { SettingsPanelSurfaceHelper } from './SettingsPanelSurfaceHelper';
+import { SettingsPanelSurfaceHelper } from 'manxia_features_ui/src/main/ets/pages/settings/SettingsPanelSurfaceHelper';
 
 const TAG = 'KomgaSettingsPage';
 const PAGE_BOTTOM_SPACER: number = 32;
@@ -77,7 +78,7 @@ export struct KomgaSettingsPage {
   @State testSuccess: boolean = false;
 
   private tracker = getKomgaTracker();
-  private settingsManager: SettingsManager = SettingsManager.getInstance();
+  private settingsManager: ISettingsManagerFacade = SettingsManagerHolder.get();
   private componentId: string = 'KomgaSettingsPage';
   private testConnectionRequestId: number = 0;
   private libraryLoadRequestId: number = 0;

@@ -3,7 +3,7 @@
  * 从 UnifiedDetailPage 提取，用于清理缓存前的确认提示
  */
 
-import { ThemeAwareState, ThemeAwareHelper } from './ThemeAware';
+import { ThemeAwareState, ThemeAwareHelper } from 'manxia_theme/src/main/ets/Framework/Components/ThemeAware';
 import { SourceDialogScaffold } from './SourceDialogScaffold';
 
 /** 缓存确认对话框配置 */

@@ -1,0 +1,12 @@
+{
+  "name": "manxia_network",
+  "version": "1.0.0",
+  "description": "漫匣网络传输层：Network / FTP / WebDAV / Download / Task / Cache / ExternalFile",
+  "main": "./src/main/ets/index.ets",
+  "author": "",
+  "license": "",
+  "dependencies": {
+    "manxia_core": "file:../manxia-core"
+  },
+  "devDependencies": {}
+}

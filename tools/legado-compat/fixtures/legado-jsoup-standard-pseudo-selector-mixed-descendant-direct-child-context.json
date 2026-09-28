@@ -1,0 +1,38 @@
+{
+  "schemaVersion": 1,
+  "contract": "legado_jsoup_standard_pseudo_selector_mixed_descendant_direct_child_context",
+  "issueId": "ISSUE-COMPAT-243-JSOUP-STANDARD-CSS-PSEUDO-SELECTORS",
+  "baseline": {
+    "sourceCount": 458,
+    "sourcePackageSha256": "473048A191DE4749FA9C15E0A2F2328A3E86B385A5FCE23EA30432D598D03A67",
+    "legadoCommit": "95973d186b147fb9ab43a9240021d688e4304fbd"
+  },
+  "html": "<main><section class=\"catalog\"><div class=\"book_list2\"><div class=\"col-md-3\"><a>first-a</a></div><div class=\"col-md-3\"><a>second-a</a></div></div></section><section class=\"catalog\"><div class=\"book_list2\"><div class=\"col-md-3\"><a>first-b</a></div><div class=\"col-md-3\"><a>second-b</a></div></div></section></main>",
+  "cases": [
+    {
+      "id": "actual-source-mixed-chain",
+      "selector": ".book_list2 .col-md-3:nth-child(n+1) > a",
+      "semantics": "descendant_left_operand_then_direct_child_and_child_pseudo",
+      "expectedTexts": ["first-a", "second-a", "first-b", "second-b"],
+      "expectedCount": 4
+    },
+    {
+      "id": "mixed-chain-preserves-root-context",
+      "selector": "section.catalog .book_list2 > div.col-md-3:nth-child(2) > a",
+      "semantics": "multiple_descendant_and_direct_child_segments_are_evaluated_as_one_selector_chain",
+      "expectedTexts": ["second-a", "second-b"],
+      "expectedCount": 2
+    }
+  ],
+  "affectedSourceSet": {
+    "sourceOrdinals": [97],
+    "ruleStringCount": 1,
+    "rulePaths": ["$[96].ruleToc.chapterList"],
+    "binding": "The frozen source at ordinal 97 uses the actual mixed descendant/direct-child selector in its TOC chapterList rule."
+  },
+  "legadoSemantics": {
+    "implementation": "AnalyzeByJSoup delegates CSS selection to Jsoup Element.select.",
+    "chainEvaluation": "Whitespace descendant combinators and greater-than direct-child combinators are evaluated in one selector chain; nth-child counts element siblings."
+  },
+  "verificationPolicy": "static_failure_witness_then_source_fix;runtime_regression_build_device_and_legado_diff_deferred"
+}

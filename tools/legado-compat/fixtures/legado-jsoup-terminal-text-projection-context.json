@@ -1,0 +1,100 @@
+{
+  "schemaVersion": 1,
+  "contract": "legado_jsoup_terminal_text_projection",
+  "issueId": "ISSUE-COMPAT-243-JSOUP-STANDARD-CSS-PSEUDO-SELECTORS",
+  "baseline": {
+    "sourceCount": 458,
+    "sourcePackageSha256": "473048A191DE4749FA9C15E0A2F2328A3E86B385A5FCE23EA30432D598D03A67",
+    "legadoCommit": "95973d186b147fb9ab43a9240021d688e4304fbd",
+    "jsoupVersion": "1.16.2"
+  },
+  "reference": {
+    "elementSourceUrl": "https://raw.githubusercontent.com/jhy/jsoup/jsoup-1.16.2/src/main/java/org/jsoup/nodes/Element.java",
+    "elementSourceSha256": "D46A492CE54600267F55F0817C834FF4ED2203A9DD556E758C60AEC73BD541DF",
+    "textNodeSourceUrl": "https://raw.githubusercontent.com/jhy/jsoup/jsoup-1.16.2/src/main/java/org/jsoup/nodes/TextNode.java",
+    "textNodeSourceSha256": "F5F5F5FDBAE40F780C092C2D2196E5F20AB56F1F8626B8435EC6BA2DFC6D9050",
+    "tagSourceUrl": "https://raw.githubusercontent.com/jhy/jsoup/jsoup-1.16.2/src/main/java/org/jsoup/parser/Tag.java",
+    "tagSourceSha256": "DF4D89D95C9F6ACB3B503218DAFB04173AFFAE456DC68CAAFF9AB664C95F3800",
+    "legadoTerminalConsumer": "legado/app/src/main/java/io/legado/app/model/analyzeRule/AnalyzeByJSoup.kt#getResultLast"
+  },
+  "sourceUsage": {
+    "method": "recursive UTF-8 traversal of every source JSON string using case-insensitive regular expressions",
+    "textNodes": {
+      "pattern": "(?i)@textNodes(?![A-Za-z0-9_])",
+      "occurrences": 104,
+      "sourceCount": 67
+    },
+    "ownText": {
+      "pattern": "(?i)@ownText(?![A-Za-z0-9_])",
+      "occurrences": 42,
+      "sourceCount": 25
+    },
+    "jsOwnText": {
+      "pattern": "(?i)\\.ownText\\s*\\(",
+      "occurrences": 1,
+      "sourceCount": 1
+    }
+  },
+  "semantics": {
+    "text": "Element.text() traverses descendant TextNode values, skips script/style data nodes, normalizes ordinary whitespace, and uses an ASCII space around block and br boundaries.",
+    "ownText": "Element.ownText() includes only direct TextNode values and direct br boundaries, with an ASCII space for br.",
+    "textNodes": "AnalyzeByJSoup gets direct Element.textNodes(), calls TextNode.text().trim { it <= ' ' } on each node, removes blank nodes, and joins retained values with LF."
+  },
+  "cases": [
+    {
+      "id": "br-is-space-for-text-and-owntext",
+      "html": "<div>left<br>right</div>",
+      "expected": {
+        "text": "left right",
+        "ownText": "left right",
+        "textNodes": "left\nright"
+      }
+    },
+    {
+      "id": "inline-descendant-scopes-remain-distinct",
+      "html": "<div>outer<span>inner</span>tail</div>",
+      "expected": {
+        "text": "outerinnertail",
+        "ownText": "outertail",
+        "textNodes": "outer\ntail"
+      }
+    },
+    {
+      "id": "block-tail-before-inline-and-text",
+      "html": "<div><div>alpha</div><span>beta</span><p>gamma</p>delta</div>",
+      "expected": {
+        "text": "alpha beta gamma delta",
+        "ownText": "delta",
+        "textNodes": "delta"
+      }
+    },
+    {
+      "id": "data-nodes-are-not-visible-text",
+      "html": "<div>visible<script>hidden <b>markup</b></script><style>.hidden{display:none}</style>tail</div>",
+      "expected": {
+        "text": "visible tail",
+        "ownText": "visibletail",
+        "textNodes": "visible\ntail"
+      }
+    },
+    {
+      "id": "preserve-whitespace-does-not-change-textnode-normalization",
+      "html": "<pre>  A   B\n C  </pre>",
+      "expected": {
+        "text": "A   B\n C",
+        "ownText": "A   B\n C",
+        "textNodes": "A B C"
+      }
+    },
+    {
+      "id": "basic-named-and-numeric-entities",
+      "html": "<div>a&nbsp;&amp;<br>b&#x20ac;</div>",
+      "expected": {
+        "text": "a & b€",
+        "ownText": "a & b€",
+        "textNodes": "a &\nb€"
+      }
+    }
+  ],
+  "verificationPolicy": "fixture is an R3 static reference contract only; it does not claim runtime semantic_match before the deferred Legado differential and device gates."
+}

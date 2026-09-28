@@ -1,4 +1,4 @@
-﻿import { SafeUtils } from '../../Utils/SafeUtils';
+﻿import { SafeUtils } from 'manxia_core/src/main/ets/Utils/SafeUtils';
 /**
  * 小说源执行器
  * 负责执行书源的搜索、获取详情、目录、正文等操作
@@ -6,7 +6,7 @@
  * 文件路径: entry/src/main/ets/Framework/Novel/NovelSourceExecutor.ets
  */
 
-import { logger } from '../../Utils/Logger';
+import { logger } from 'manxia_core/src/main/ets/Utils/Logger';
 import { http } from '@kit.NetworkKit';
 import { util } from '@kit.ArkTS';
 import {
@@ -16,16 +16,16 @@ import {
   LegadoChapter,
   LegadoExploreKind,
   LegadoBookSourceType
-} from './LegadoSourceTypes';
-import { LegadoSourceParser } from './LegadoSourceParser';
+} from 'manxia_novel/src/main/ets/Framework/Novel/LegadoSourceTypes';
+import { LegadoSourceParser } from 'manxia_novel/src/main/ets/Framework/Novel/LegadoSourceParser';
 import { LegadoRuleAnalyzer } from './LegadoRuleAnalyzer';
 import { LegadoUrlAnalyzer, ParsedUrlRequest, RequestMethod } from './LegadoUrlAnalyzer';
 import { getLegadoJsEngine, JsContext, LegadoJsSourceEffects } from './LegadoJsEngine';
 import { getNovelReplaceRuleManager, ReplaceScope } from './NovelReplaceRuleManager';
 import { getNovelLoginManager } from './NovelLoginManager';
-import { HtmlFormatter } from './HtmlFormatter';
-import { ProxyManager } from '../Network/ProxyManager';
-import { LegadoMangaExtractedImage, LegadoMangaImageExtractor } from './LegadoMangaImageExtractor';
+import { HtmlFormatter } from 'manxia_novel/src/main/ets/Framework/Novel/HtmlFormatter';
+import { ProxyManager } from 'manxia_network/src/main/ets/Framework/Network/ProxyManager';
+import { LegadoMangaExtractedImage, LegadoMangaImageExtractor } from 'manxia_novel/src/main/ets/Framework/Novel/LegadoMangaImageExtractor';
 
 const TAG = 'NovelSourceExecutor';
 const REQUEST_TIMEOUT_MS = 15000;
@@ -1122,7 +1122,7 @@ export class NovelSourceExecutor {
       }
 
       if (request.url.startsWith('data:')) {
-        const dataPayload = this.parseDataUrl(request.url);
+        const dataPayload = await this.parseDataUrl(request.url);
         if (this.isLikelyRedirectUrl(dataPayload)) {
           const redirectRequest = await this.analyzeRequestUrl(dataPayload);
           if (!redirectRequest.url.startsWith('data:')) {
@@ -1368,7 +1368,7 @@ export class NovelSourceExecutor {
     return text;
   }
 
-  private parseDataUrl(url: string): string {
+  private async parseDataUrl(url: string): Promise<string> {
     try {
       logger.debug(TAG, `解析data:URL: ${url.substring(0, Math.min(200, url.length))}...`);
 
@@ -1398,7 +1398,7 @@ export class NovelSourceExecutor {
           }
         }
 
-        const decodedContent = this.tryDecodeBase64DataUrlPayload(content);
+        const decodedContent = await this.tryDecodeBase64DataUrlPayload(content);
         if (decodedContent !== null) {
           logger.debug(TAG, `data:URL Base64解码成功: ${decodedContent.substring(0, Math.min(200, decodedContent.length))}...`);
           return decodedContent;
@@ -1414,7 +1414,7 @@ export class NovelSourceExecutor {
     }
   }
 
-  private tryDecodeBase64DataUrlPayload(payload: string): string | null {
+  private async tryDecodeBase64DataUrlPayload(payload: string): Promise<string | null> {
     const trimmedPayload = payload.trim();
     if (!this.isLikelyBase64Payload(trimmedPayload)) {
       return null;
@@ -1428,7 +1428,7 @@ export class NovelSourceExecutor {
       }
 
       const base64Helper: util.Base64Helper = new util.Base64Helper();
-      const decodedBytes: Uint8Array = base64Helper.decodeSync(normalized);
+      const decodedBytes: Uint8Array = await base64Helper.decode(normalized);
       const decoder = new util.TextDecoder('utf-8');
       const decodedText = decoder.decodeToString(decodedBytes).trim();
       if (!this.isUsableDecodedDataPayload(decodedText)) {
@@ -1499,7 +1499,7 @@ export class NovelSourceExecutor {
       }
 
       if (request.url.startsWith('data:')) {
-        const dataPayload = this.parseDataUrl(request.url);
+        const dataPayload = await this.parseDataUrl(request.url);
         if (this.isLikelyRedirectUrl(dataPayload)) {
           const redirectRequest = await this.analyzeRequestUrl(dataPayload);
           if (!redirectRequest.url.startsWith('data:')) {

@@ -1,0 +1,50 @@
+{
+  "schemaVersion": 1,
+  "contract": "legado_v2_image_request_header_carrier",
+  "baseline": {
+    "sourceCount": 458,
+    "sourcePackageSha256": "473048A191DE4749FA9C15E0A2F2328A3E86B385A5FCE23EA30432D598D03A67",
+    "legadoCommit": "95973d186b147fb9ab43a9240021d688e4304fbd"
+  },
+  "legadoSemantics": {
+    "sourceHeader": "base_headers",
+    "urlOptionHeaders": "override_base_headers",
+    "pageHeaders": "override_request_headers",
+    "cookie": "cookie_store_merged_with_explicit_cookie",
+    "consumer": "same_effective_headers_for_visible_and_preload_image_requests"
+  },
+  "requiredHeaderFields": [
+    "User-Agent",
+    "Accept",
+    "Referer",
+    "Origin",
+    "Cookie",
+    "Authorization",
+    "Accept-Language",
+    "Cache-Control",
+    "Pragma",
+    "Sec-Fetch-Dest",
+    "Sec-Fetch-Mode",
+    "Sec-Fetch-Site"
+  ],
+  "requiredPostFix": {
+    "canonicalProjection": "ImageCacheManager.buildOnlineHeaders",
+    "preloadProjection": "calls_canonical_projection",
+    "extensions": "extraHeaders_preserved",
+    "options": ["forceRefresh", "skipFailureTtl", "partitionKey", "sourceId"],
+    "forbidden": [
+      "manual_partial_header_copy",
+      "standard_header_demoted_to_extra_headers",
+      "preload_header_loss",
+      "visible_preload_header_divergence"
+    ]
+  },
+  "referencePaths": [
+    "legado/app/src/main/java/io/legado/app/model/analyzeRule/AnalyzeUrl.kt",
+    "entry/src/main/ets/Framework/Reader/MangaRequestHeaderContract.ets",
+    "entry/src/main/ets/Framework/Reader/MangaAssetLoader.ets",
+    "entry/src/main/ets/Framework/Cache/ImageCacheManager.ets",
+    "entry/src/main/ets/Framework/Cache/OnlineImageLoader.ets",
+    "entry/src/main/ets/Framework/Preload/ChapterPreloadManager.ets"
+  ]
+}

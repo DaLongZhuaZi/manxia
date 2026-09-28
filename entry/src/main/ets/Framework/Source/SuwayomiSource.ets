@@ -1,4 +1,4 @@
-import { SafeUtils } from '../../Utils/SafeUtils';
+import { SafeUtils } from 'manxia_core/src/main/ets/Utils/SafeUtils';
 /**
  * Suwayomi 图源
  * 将 Suwayomi 服务器作为漫画源使用
@@ -7,11 +7,11 @@ import { SafeUtils } from '../../Utils/SafeUtils';
 
 import { http } from '@kit.NetworkKit';
 import { preferences } from '@kit.ArkData';
-import { logger } from '../../Utils/Logger';
-import { base64Encode } from '../../Utils/CryptoUtils';
+import { logger } from 'manxia_core/src/main/ets/Utils/Logger';
+import { base64Encode } from 'manxia_core/src/main/ets/Utils/CryptoUtils';
 import { ComicInfo, ChapterInfo, PageInfo, ComicDetailInfo } from './SourceExecutor';
 import { common } from '@kit.AbilityKit';
-import { uiContextManager } from '../Managers/UIContextManager';
+import { uiContextManager } from 'manxia_theme/src/main/ets/Framework/Managers/UIContextManager';
 
 const TAG = 'SuwayomiSource';
 
@@ -343,8 +343,8 @@ export class SuwayomiSource {
    */
   private async loadConfig(): Promise<void> {
     try {
-      // 从 SuwayomiTracker 的配置中读取（使用同步方法保持一致）
-      const store = preferences.getPreferencesSync(this.getAbilityContext(), { name: 'suwayomi_config' });
+      // 从 SuwayomiTracker 的配置中读取（使用异步方法保持一致）
+      const store = await preferences.getPreferences(this.getAbilityContext(), { name: 'suwayomi_config' });
       const serverUrl = store.getSync('serverUrl', '') as string;
       const username = store.getSync('username', '') as string;
       const password = store.getSync('password', '') as string;

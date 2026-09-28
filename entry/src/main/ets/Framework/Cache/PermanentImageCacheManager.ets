@@ -1,19 +1,19 @@
-﻿import { SafeFileUtils } from '../../Utils/SafeFileUtils';
+﻿import { SafeFileUtils } from 'manxia_core/src/main/ets/Utils/SafeFileUtils';
 /**
  * 永久图片缓存管理器
  * 用于"边看边下载"功能，将图片永久保存到本地
  * 存储结构: /permanent_cache/source_{sourceId}/manga_{mangaId}/chapter_{chapterId}/page_{pageIndex}.jpg
  */
 
-import { logger } from '../../Utils/Logger';
-import { uiContextManager } from '../Managers/UIContextManager';
+import { logger } from 'manxia_core/src/main/ets/Utils/Logger';
+import { uiContextManager } from 'manxia_theme/src/main/ets/Framework/Managers/UIContextManager';
 import fs from '@ohos.file.fs';
 import http from '@ohos.net.http';
 import { BusinessError } from '@ohos.base';
 import { DataManager } from '../Data/DataManager';
-import { MangaPage } from '../../Models/MangaModels';
-import { DatabaseManager } from '../Database/DatabaseManager';
-import { DownloadCacheFlowMonitor, getDownloadCacheFlowMonitor } from '../Download/DownloadCacheFlowMonitor';
+import { MangaPage } from 'manxia_core/src/main/ets/Models/MangaModels';
+import { DatabaseManager } from 'manxia_core/src/main/ets/Framework/Database/DatabaseManager';
+import { DownloadCacheFlowMonitor, getDownloadCacheFlowMonitor } from 'manxia_network/src/main/ets/Framework/Download/DownloadCacheFlowMonitor';
 import { eventBus, GameEvent, MangaCacheUpdatedPayload } from '../EventBus';
 import {
   DownloadCacheContentType,
@@ -23,7 +23,7 @@ import {
   DownloadCacheFlowSessionInfo,
   DownloadCacheFlowSeverity,
   DownloadCacheFlowStage
-} from '../Download/DownloadCacheFlowTypes';
+} from 'manxia_network/src/main/ets/Framework/Download/DownloadCacheFlowTypes';
 
 const TAG = 'PermanentImageCacheManager';
 

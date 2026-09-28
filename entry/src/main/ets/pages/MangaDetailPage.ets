@@ -1,17 +1,17 @@
-﻿import { SafeFileUtils } from '../Utils/SafeFileUtils';
-import { SafeUtils } from '../Utils/SafeUtils';
+import { SafeFileUtils } from 'manxia_core/src/main/ets/Utils/SafeFileUtils';
+import { SafeUtils } from 'manxia_core/src/main/ets/Utils/SafeUtils';
 // 文件路径: entry/src/main/ets/pages/MangaDetailPage.ets
 // 职责: 漫画详情页面，展示漫画的详细信息、章节列表等内容（含收藏持久化）
 
 import { HdsNavDestination, HdsNavDestinationAttribute, ScrollEffectType } from '@kit.UIDesignKit';
 import { Popup } from '@kit.ArkUI';
-import { ThemeAwareState, ThemeAwareHelper } from '../Framework/Components/ThemeAware';
-import { FontAwareHelper, FontAwareState } from '../Framework/Components/FontAware';
-import { PageLifecycleManager, CancellationError } from '../Framework/Lifecycle';
+import { ThemeAwareState, ThemeAwareHelper } from 'manxia_theme/src/main/ets/Framework/Components/ThemeAware';
+import { FontAwareHelper, FontAwareState } from 'manxia_theme/src/main/ets/Framework/Components/FontAware';
+import { PageLifecycleManager, CancellationError } from 'manxia_core/src/main/ets/Framework/Lifecycle/index';
 import { AnimatedComponent } from '../Framework/Animation/AnimatedComponent';
 import { AnimationType } from '../Framework/Animation/GlobalAnimationSystem';
-import { logger } from '../Utils/Logger';
-import { TimeUtils } from '../Framework/Utils/TimeUtils';
+import { logger } from 'manxia_core/src/main/ets/Utils/Logger';
+import { TimeUtils } from 'manxia_core/src/main/ets/Framework/Utils/TimeUtils';
 import {
   Manga,
   MangaChapter,
@@ -22,13 +22,13 @@ import {
   ReadingDirection,
   MangaPage,
   MangaImageRequestHeader
-} from '../Models/MangaModels';
-import { DEFAULT_READING_SETTINGS, ReadingSettings } from '../Models/MangaModels';
-import { DownloadStatus, MangaStatus, ReadingStatus, StatusConverter } from '../Framework/Types/StatusEnums';
+} from 'manxia_core/src/main/ets/Models/MangaModels';
+import { DEFAULT_READING_SETTINGS, ReadingSettings } from 'manxia_core/src/main/ets/Models/MangaModels';
+import { DownloadStatus, MangaStatus, ReadingStatus, StatusConverter } from 'manxia_core/src/main/ets/Framework/Types/StatusEnums';
 import { ComicConverter } from '../Framework/Utils/ComicConverter';
 import { DataManager, ComicInfo, ComicInfoInput, ChapterInfo as DataChapterInfo, ChapterInfoInput, PageInfo, PageInfoInput, ReadHistory, OnlineChapterInfoInput, OnlinePageInfoInput, OnlineComicInfo, OnlineComicSourceSaveInput } from '../Framework/Data/DataManager';
-import { ThemeManager, ThemeType } from '../Framework/Managers/ThemeManager';
-import { colorMap } from '../Data/ResourceMap';
+import { ThemeManager, ThemeType } from 'manxia_theme/src/main/ets/Framework/Managers/ThemeManager';
+import { resolveColor } from 'manxia_ui_resources/src/main/ets/ResourceCatalog';
 import { MangaReaderPageParams, MangaReaderContentType } from './MangaReaderPage';
 import { openMangaReaderInIsolatedAbility } from '../Framework/Reader/MangaReaderAbilityLauncher';
 import { DataService } from '../Framework/Services/DataService';
@@ -36,28 +36,28 @@ import { MangaSettingsPageParams } from './MangaSettingsPage';
 import { GlobalSearchPageParams } from './GlobalSearchPage';
 import { startBookOpenTransition, startBookOpenTransitionWithComponentId, setReaderReady } from '../components/BookTransitionOverlay';
 import { CoverPosition } from '../components/BookOpenTransition';
-import { DeviceAdaptationManager, DeviceInfo, DeviceChangeListener, Breakpoint } from '../Framework/Managers/DeviceAdaptationManager';
-import { ResponsiveLayoutHelper } from '../Framework/Utils/ResponsiveLayout';
+import { DeviceAdaptationManager, DeviceInfo, DeviceChangeListener, Breakpoint } from 'manxia_theme/src/main/ets/Framework/Managers/DeviceAdaptationManager';
+import { ResponsiveLayoutHelper } from 'manxia_theme/src/main/ets/Framework/Utils/ResponsiveLayout';
 import { WebViewSourceManager } from '../Framework/WebView/WebViewSourceManager';
 import { MangaSourceEngine, EngineResult, MangaDetailWithChapters } from '../Framework/WebView/MangaSourceEngine';
-import { MangaInfo, ChapterInfo as WebViewChapterInfo, PageInfo as SourcePageInfo, PageRequestHeader } from '../Framework/WebView/MangaSourceTypes';
-import { WebViewDataCacheManager } from '../Framework/Cache/WebViewDataCacheManager';
+import { MangaInfo, ChapterInfo as WebViewChapterInfo, PageInfo as SourcePageInfo, PageRequestHeader } from 'manxia_source_engine/src/main/ets/Framework/WebView/MangaSourceTypes';
+import { WebViewDataCacheManager } from 'manxia_network/src/main/ets/Framework/Cache/WebViewDataCacheManager';
 import { ChapterPreloadManager, ChapterInfo } from '../Framework/Preload/ChapterPreloadManager';
 import { getLegadoMangaSourceBridge, LegadoMangaDetailResult, LegadoMangaPageResult } from '../Framework/Novel/LegadoMangaSourceBridge';
 import { DownloadPageItem } from '../Framework/Download/DownloadManager';
 
 import { LengthMetrics, curves, UIContext } from '@kit.ArkUI';
 import { image } from '@kit.ImageKit';
-import { LabelUtils } from '../Utils/LabelUtils';
+import { LabelUtils } from 'manxia_core/src/main/ets/Utils/LabelUtils';
 import fs from '@ohos.file.fs';
 import http from '@ohos.net.http';
 import { common } from '@kit.AbilityKit';
 import webview from '@ohos.web.webview';
-import { DatabaseRecord, ComicSourceDatabaseRecord } from '../Framework/Database/DatabaseTypes';
-import { DatabaseManager } from '../Framework/Database/DatabaseManager';
+import { DatabaseRecord, ComicSourceDatabaseRecord } from 'manxia_core/src/main/ets/Framework/Database/DatabaseTypes';
+import { DatabaseManager } from 'manxia_core/src/main/ets/Framework/Database/DatabaseManager';
 import { OnlineImageLoader, RequestHeaderEntry as OnlineRequestHeaderEntry, RequestHeaders as OnlineRequestHeaders } from '../Framework/Cache/OnlineImageLoader';
 import { promptAction } from '@kit.ArkUI';
-import { ContentFilterManager } from '../Framework/Managers/ContentFilterManager';
+import { ContentFilterManager } from 'manxia_core/src/main/ets/Framework/Managers/ContentFilterManager';
 import { AvifImage } from '../components/AvifImage';
 
 const TAG: string = 'MangaDetailPage';
@@ -4970,7 +4970,21 @@ struct MangaDetailPage {
         .fontWeight(FontWeight.Medium)
         .fontFamily(this.appFontFamily)
         .margin({ bottom: 12 })
-      
+
+      Button('下载选中')
+        .width('100%')
+        .fontFamily(this.appFontFamily)
+        .margin({ bottom: 8 })
+        .enabled(this.selectedChapters.size > 0)
+        .onClick(() => {
+          const n = this.selectedChapters.size;
+          logger.info(TAG, `下载选中章节: ${n}`);
+          void this.downloadSelectedChapters();
+          this.showDownloadOptions = false;
+          this.isSelectionMode = false;
+          this.selectedChapters.clear();
+        })
+
       Button('下载所有')
         .width('100%')
         .fontFamily(this.appFontFamily)
@@ -4979,7 +4993,7 @@ struct MangaDetailPage {
           this.downloadAllChapters();
           this.showDownloadOptions = false;
         })
-      
+
       Button('下载未读')
         .width('100%')
         .fontFamily(this.appFontFamily)
@@ -5365,7 +5379,7 @@ struct MangaDetailPage {
     .width('100%')
     .padding(12)
     .backgroundColor(Color.Transparent)
-    .border({ width: 1, color: colorMap['app.color.settings_panel_border'] })
+    .border({ width: 1, color: resolveColor('app.color.settings_panel_border') })
     .borderRadius(8)
     .justifyContent(FlexAlign.Center)
     .alignItems(HorizontalAlign.Center)
@@ -5493,7 +5507,7 @@ struct MangaDetailPage {
     .width('100%')
     .padding({ left: 16, right: 16, top: 12, bottom: 12 })
     .backgroundColor(Color.Transparent)
-    .border({ width: 1, color: colorMap['app.color.settings_panel_border'] })
+    .border({ width: 1, color: resolveColor('app.color.settings_panel_border') })
     .borderRadius(8)
     .onClick(() => this.readChapter(chapter))
     .gesture(

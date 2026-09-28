@@ -1,0 +1,117 @@
+{
+  "contract": "source_workflow_evidence_projection_closed_matrix",
+  "sourceAttempt": 1,
+  "sourceAttemptEvidence": {
+    "sourceAttempt": 1,
+    "searchAttempt": 1,
+    "workflowAttempts": {
+      "search": 1,
+      "explore": 0,
+      "bookInfo": 1,
+      "toc": 1,
+      "content": 1,
+      "file": 0,
+      "review": 0
+    }
+  },
+  "sourceAttemptScenarios": {
+    "sourceAttemptLessThanWorkflowMax": {
+      "sourceAttemptBefore": 1,
+      "workflowMaximumAttempt": 3,
+      "expectedReconciledSourceAttempt": 3
+    },
+    "sourceAttemptGreaterThanWorkflowMax": {
+      "sourceAttemptBefore": 9,
+      "workflowMaximumAttempt": 3,
+      "expectedReconciledSourceAttempt": 3
+    }
+  },
+  "trace": {
+    "workflow": "search",
+    "statusCode": 200,
+    "errorCode": "none",
+    "outputSummarySha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+  },
+  "digestScenarios": {
+    "tracePresentWithSha256": {
+      "tracePresent": true,
+      "traceDigest": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "evidenceDigest": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+    },
+    "tracePresentWithoutDigest": {
+      "tracePresent": true,
+      "traceDigest": "",
+      "evidenceDigest": ""
+    },
+    "digestWithoutTrace": {
+      "tracePresent": false,
+      "traceDigest": "",
+      "evidenceDigest": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+    }
+  },
+  "workflows": {
+    "search": {
+      "status": "blocked",
+      "outcome": "empty_without_reference",
+      "attempts": 1,
+      "evidenceDigest": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "tracePresent": true,
+      "traceDigest": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "result": "blocked:empty_without_reference"
+    },
+    "explore": {
+      "status": "policy_blocked",
+      "outcome": "profile_safe_search_only",
+      "attempts": 0,
+      "evidenceDigest": "",
+      "tracePresent": false,
+      "traceDigest": "",
+      "result": "policy_blocked:profile_safe_search_only"
+    },
+    "bookInfo": {
+      "status": "blocked",
+      "outcome": "safe_read_path_not_executed_after_search_terminal",
+      "attempts": 1,
+      "evidenceDigest": "",
+      "tracePresent": false,
+      "traceDigest": "",
+      "result": "blocked:safe_read_path_not_executed_after_search_terminal"
+    },
+    "toc": {
+      "status": "blocked",
+      "outcome": "safe_read_path_not_executed_after_search_terminal",
+      "attempts": 1,
+      "evidenceDigest": "",
+      "tracePresent": false,
+      "traceDigest": "",
+      "result": "blocked:safe_read_path_not_executed_after_search_terminal"
+    },
+    "content": {
+      "status": "blocked",
+      "outcome": "safe_read_path_not_executed_after_search_terminal",
+      "attempts": 1,
+      "evidenceDigest": "",
+      "tracePresent": false,
+      "traceDigest": "",
+      "result": "blocked:safe_read_path_not_executed_after_search_terminal"
+    },
+    "file": {
+      "status": "policy_blocked",
+      "outcome": "profile_safe_search_only",
+      "attempts": 0,
+      "evidenceDigest": "",
+      "tracePresent": false,
+      "traceDigest": "",
+      "result": "policy_blocked:profile_safe_search_only"
+    },
+    "review": {
+      "status": "policy_blocked",
+      "outcome": "profile_safe_search_only",
+      "attempts": 0,
+      "evidenceDigest": "",
+      "tracePresent": false,
+      "traceDigest": "",
+      "result": "policy_blocked:profile_safe_search_only"
+    }
+  }
+}

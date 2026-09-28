@@ -1,4 +1,4 @@
-import { SafeFileUtils } from '../Utils/SafeFileUtils';
+import { SafeFileUtils } from 'manxia_core/src/main/ets/Utils/SafeFileUtils';
 // 文件路径：entry/src/main/ets/pages/DownloadSyncPage.ets
 /**
  * Download同步页面
@@ -6,57 +6,58 @@ import { SafeFileUtils } from '../Utils/SafeFileUtils';
  */
 import { HdsNavDestination, HdsNavDestinationAttribute, ScrollEffectType } from '@kit.UIDesignKit';
 import { LengthMetrics, UIContext, promptAction } from '@kit.ArkUI';
-import { ThemeManager, ThemeType } from '../Framework/Managers/ThemeManager';
-import { ThemeAwareState, ThemeAwareHelper } from '../Framework/Components/ThemeAware';
-import { FontAwareHelper, FontAwareState } from '../Framework/Components/FontAware';
-import { logger } from '../Utils/Logger';
+import { ThemeManager, ThemeType } from 'manxia_theme/src/main/ets/Framework/Managers/ThemeManager';
+import { ThemeAwareState, ThemeAwareHelper } from 'manxia_theme/src/main/ets/Framework/Components/ThemeAware';
+import { FontAwareHelper, FontAwareState } from 'manxia_theme/src/main/ets/Framework/Components/FontAware';
+import { logger } from 'manxia_core/src/main/ets/Utils/Logger';
 import { picker } from '@kit.CoreFileKit';
 import { common, abilityAccessCtrl, bundleManager, Permissions } from '@kit.AbilityKit';
 import { DataManager, ComicInfoInput, ChapterInfoInput, ChapterInfoCreationResult, PageInfoInput,
   PageInfo as PageRecord, ChapterInfo as ChapterRecord, ComicInfo } from '../Framework/Data/DataManager';
 import { DataService } from '../Framework/Services/DataService';
-import { MangaStatus } from '../Framework/Types/StatusEnums';
-import { CompressionUtils } from '../Utils/CompressionUtils';
-import { ComicInfoParser, ComicInfo as ParsedComicInfo } from '../Utils/ComicInfoParser';
-import { SandboxManager } from '../Framework/Storage/SandboxManager';
+import { MangaStatus } from 'manxia_core/src/main/ets/Framework/Types/StatusEnums';
+import { CompressionUtils } from 'manxia_core/src/main/ets/Utils/CompressionUtils';
+import { ComicInfoParser, ComicInfo as ParsedComicInfo } from 'manxia_core/src/main/ets/Utils/ComicInfoParser';
+import { SandboxManager } from 'manxia_core/src/main/ets/Framework/Storage/SandboxManager';
 import { eventBus, GameEvent, MangaImportCompletedPayload } from '../Framework/EventBus';
 import fs from '@ohos.file.fs';
 import { fileUri } from '@kit.CoreFileKit';
-import { EBookDataManager } from '../Framework/Data/EBookDataManager';
-import { generateUUID } from '../Framework/Utils/UUIDGenerator';
-import { createLocalMangaChapterExternalId } from '../Utils/LocalMangaImportIdentity';
+import { EBookDataManager } from 'manxia_core/src/main/ets/Framework/Data/EBookDataManager';
+import { generateUUID } from 'manxia_core/src/main/ets/Framework/Utils/UUIDGenerator';
+import { createLocalMangaChapterExternalId } from 'manxia_core/src/main/ets/Utils/LocalMangaImportIdentity';
 import { PdfImportDialog, PdfImportDialogResult } from '../Framework/Components/PdfImportDialog';
 import { MangaImportDialog, MangaImportDialogResult, MangaImportMode, ChapterInfo, ParsedArchiveStructure, ExistingMangaCandidate, PrefilledComicInfo } from '../Framework/Components/MangaImportDialog';
 import { BatchMangaImportDialog, BatchMangaImportDialogResult, MangaGroupResult, BatchChapterResult, MangaStatus as BatchMangaStatus } from '../Framework/Components/BatchMangaImportDialog';
-import { showArchivePasswordDialog } from '../Framework/Components/ArchivePasswordDialog';
-import { ParsedArchiveStructure as CompressionParsedStructure } from '../Utils/CompressionUtils';
-import { DeviceAdaptationManager, DeviceChangeListener, DeviceInfo, Breakpoint } from '../Framework/Managers/DeviceAdaptationManager';
-import { ResponsiveLayoutHelper } from '../Framework/Utils/ResponsiveLayout';
+import { showArchivePasswordDialog } from 'manxia_theme/src/main/ets/Framework/Components/ArchivePasswordDialog';
+import { ParsedArchiveStructure as CompressionParsedStructure } from 'manxia_core/src/main/ets/Utils/CompressionUtils';
+import { DeviceAdaptationManager, DeviceChangeListener, DeviceInfo, Breakpoint } from 'manxia_theme/src/main/ets/Framework/Managers/DeviceAdaptationManager';
+import { ResponsiveLayoutHelper } from 'manxia_theme/src/main/ets/Framework/Utils/ResponsiveLayout';
 import { EBookParserFactory, EBookCoverExtractor } from '../Framework/Parsers/EBookParser';
-import { getHelpPanelManagerV2 } from '../Framework/Components/HelpPanelV2';
-import { SettingsManager, SettingKeys } from '../Framework/Managers/SettingsManager';
+import { getHelpPanelManagerV2 } from 'manxia_features_ui/src/main/ets/Framework/Components/HelpPanelV2';
+import { ISettingsManagerFacade, SettingsManagerHolder } from 'manxia_core/src/main/ets/Framework/Contracts/ISettingsManagerFacade';
+import { SettingKeys } from 'manxia_core/src/main/ets/Framework/Contracts/SettingKeys';
 import { NovelImportDialog, NovelImportDialogResult, TextEncoding } from '../Framework/Components/NovelImportDialog';
 import { EBookMetadataDialog, EBookMetadataDialogResult } from '../Framework/Components/EBookMetadataDialog';
-import { EBookMetadata, EBookChapter, EBook } from '../Models/EBookModels';
+import { EBookMetadata, EBookChapter, EBook } from 'manxia_core/src/main/ets/Models/EBookModels';
 import { fileIo } from '@kit.CoreFileKit';
 import { util } from '@kit.ArkTS';
 import { image } from '@kit.ImageKit';
-import { AppGuideOverlay, GuideHighlightRect } from '../Framework/Components/AppGuideOverlay';
+import { AppGuideOverlay, GuideHighlightRect } from 'manxia_theme/src/main/ets/Framework/Components/AppGuideOverlay';
 import { ensureGuideAnchorVisibleInScroller, resolveGuideHighlightRectInRoot } from '../Framework/Components/AppGuideSupport';
-import { AppGuideManager, AppGuidePageId, AppGuideStep } from '../Framework/Managers/AppGuideManager';
-import { BackgroundTaskManager, TaskType, TaskNotificationScene, TaskCancelSignal } from '../Framework/Task/BackgroundTaskManager';
+import { AppGuideManager, AppGuidePageId, AppGuideStep } from 'manxia_core/src/main/ets/Framework/Managers/AppGuideManager';
+import { BackgroundTaskManager, TaskType, TaskNotificationScene, TaskCancelSignal } from 'manxia_network/src/main/ets/Framework/Task/BackgroundTaskManager';
 import { PdfImportResult } from '../Framework/Parsers/PdfToMangaImporter';
-import { DownloadDirManager } from '../Framework/Storage/DownloadDirManager';
+import { DownloadDirManager } from 'manxia_core/src/main/ets/Framework/Storage/DownloadDirManager';
 import { PdfImportService } from '../Framework/Services/PdfImportService';
 import { SettingsImmersiveTitleBar } from './settings/SettingsImmersiveTitleBar';
-import { SettingsImmersiveTitleActionItem, SettingsPageTitleBarManager } from './settings/SettingsPageTitleBarManager';
-import { GlobalBackgroundLayerMode } from '../Framework/Components/GlobalBackgroundLayer';
-import { SharedPageBackgroundLayer } from '../Framework/Components/SharedPageBackgroundLayer';
-import { SettingsPanelSurfaceHelper } from './settings/SettingsPanelSurfaceHelper';
-import { MangaReadFlowImportReport, MangaReadFlowImportReporter } from '../Framework/Reader/MangaReadFlowImportReporter';
+import { SettingsImmersiveTitleActionItem, SettingsPageTitleBarManager } from 'manxia_features_ui/src/main/ets/pages/settings/SettingsPageTitleBarManager';
+import { GlobalBackgroundLayerMode } from 'manxia_theme/src/main/ets/Framework/Components/GlobalBackgroundLayer';
+import { SharedPageBackgroundLayer } from 'manxia_theme/src/main/ets/Framework/Components/SharedPageBackgroundLayer';
+import { SettingsPanelSurfaceHelper } from 'manxia_features_ui/src/main/ets/pages/settings/SettingsPanelSurfaceHelper';
+import { MangaReadFlowImportReport, MangaReadFlowImportReporter } from 'manxia_reader_ui/src/main/ets/Framework/Reader/MangaReadFlowImportReporter';
 import { ImportArchiveParseCache, getImportArchiveParseCache } from '../Framework/Import/ImportArchiveParseCache';
 import { ImportDuplicateDetectionCache, getImportDuplicateDetectionCache } from '../Framework/Import/ImportDuplicateDetectionCache';
-import { ImportFlowMonitor, getImportFlowMonitor } from '../Framework/Import/ImportFlowMonitor';
+import { ImportFlowMonitor, getImportFlowMonitor } from 'manxia_core/src/main/ets/Framework/Import/ImportFlowMonitor';
 import {
   ImportFlowContentType,
   ImportFlowEntrySource,
@@ -64,7 +65,7 @@ import {
   ImportFlowEventType,
   ImportFlowSessionInfo,
   ImportFlowSeverity
-} from '../Framework/Import/ImportFlowTypes';
+} from 'manxia_core/src/main/ets/Framework/Import/ImportFlowTypes';
 
 const TAG = 'DownloadSyncPage';
 const TITLE_BAR_HEIGHT_MINI: number = 56;
@@ -1122,7 +1123,7 @@ A: 不会，原文件保持不变。`;
    */
   private async saveDownloadSyncSettings(): Promise<void> {
     try {
-      const settingsManager = SettingsManager.getInstance();
+      const settingsManager: ISettingsManagerFacade = SettingsManagerHolder.get();
       if (this.downloadDirPath) {
         await settingsManager.setString(SettingKeys.DOWNLOAD_SYNC_DIR_PATH, this.downloadDirPath);
       }

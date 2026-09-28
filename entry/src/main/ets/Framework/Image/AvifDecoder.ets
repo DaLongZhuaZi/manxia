@@ -4,7 +4,7 @@
  */
 
 import { image } from '@kit.ImageKit';
-import { logger } from '../../Utils/Logger';
+import { logger } from 'manxia_core/src/main/ets/Utils/Logger';
 import avifDecoderNativeImport from 'libavif_decoder.so';
 
 const TAG = 'AvifDecoder';

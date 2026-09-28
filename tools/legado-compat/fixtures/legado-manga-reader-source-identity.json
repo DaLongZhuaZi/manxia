@@ -1,0 +1,60 @@
+{
+  "schemaVersion": 1,
+  "contract": "legado_manga_reader_source_identity",
+  "issueId": "ISSUE-COMPAT-015",
+  "baseline": {
+    "sourceCount": 458,
+    "sourcePackageSha256": "473048A191DE4749FA9C15E0A2F2328A3E86B385A5FCE23EA30432D598D03A67",
+    "legadoCommit": "95973d186b147fb9ab43a9240021d688e4304fbd"
+  },
+  "affectedSourceSet": {
+    "sourceType": 2,
+    "sourceCount": 54,
+    "ordinalDigest": "16D0FC5E54DE57615227F7695CF127F41CEAE5AB6068841A874DCC3A2B3E99A6",
+    "sourceIdDigest": "D8757274B2FDB739E3EE4FAE2E26E5F1D6BAB0243C1549D0C2FF79BC331B0594"
+  },
+  "legadoReference": {
+    "bookIdentity": [
+      "legado/app/src/main/java/io/legado/app/data/entities/Book.kt:48",
+      "legado/app/src/main/java/io/legado/app/data/entities/Book.kt:51",
+      "legado/app/src/main/java/io/legado/app/model/ReadManga.kt:115",
+      "legado/app/src/main/java/io/legado/app/model/ReadBook.kt:167"
+    ],
+    "chapterIdentity": [
+      "legado/app/src/main/java/io/legado/app/data/entities/BookChapter.kt:44",
+      "legado/app/src/main/java/io/legado/app/data/entities/BookChapter.kt:47"
+    ]
+  },
+  "routePayload": {
+    "sourceId": 227,
+    "sourcePkg": "legado.image.fixture-227",
+    "sourceName": "fixture-source",
+    "contentType": "OnlineUndownloaded",
+    "mangaId": "external-manga-227",
+    "chapterId": "external-chapter-227",
+    "pageIndex": 2,
+    "fromPage": "fixture",
+    "skipDatabaseLookup": true,
+    "chapterTitle": "Fixture chapter"
+  },
+  "requiredEntrances": [
+    "router",
+    "nav_stack",
+    "isolated_ability"
+  ],
+  "requiredIdentityFields": [
+    "sourceId",
+    "sourcePkg",
+    "sourceName",
+    "contentType",
+    "skipDatabaseLookup",
+    "chapterTitle"
+  ],
+  "preFixMissingMarkers": [
+    "const hasSourcePkg: boolean = rawKeys.includes('sourcePkg')",
+    "const hasSkipDatabaseLookup: boolean = rawKeys.includes('skipDatabaseLookup')",
+    "skipDatabaseLookup: hasSkipDatabaseLookup",
+    "private async refreshLegadoV2ImageTraceIdentity(): Promise<void>",
+    "legadoSourceRawSha256: this.legadoSourceRawSha256"
+  ]
+}

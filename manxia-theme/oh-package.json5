@@ -1,0 +1,14 @@
+{
+  "name": "manxia_theme",
+  "version": "1.0.0",
+  "description": "漫匣主题与视觉基础设施：ThemeManager/ThemeAware/FontAware/背景层/主题资源",
+  "main": "./src/main/ets/index.ets",
+  "author": "",
+  "license": "",
+  "dependencies": {
+    "manxia_core": "file:../manxia-core",
+    "manxia_ui_resources": "file:../manxia-ui-resources",
+    "manxia_source_engine": "file:../manxia-source-engine"
+  },
+  "devDependencies": {}
+}

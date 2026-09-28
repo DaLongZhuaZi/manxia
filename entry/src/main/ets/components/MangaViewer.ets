@@ -4,13 +4,13 @@
  * 支持单页/双页/连续滚动模式、缩放、手势翻页、图片预加载等功能
  */
 
-import { logger } from '../Utils/Logger';
+import { logger } from 'manxia_core/src/main/ets/Utils/Logger';
 import {
   getHoldingAwarenessManager,
   HoldingAwarenessFeature,
   HoldingAwarenessManager,
   HoldingUiAnchor
-} from '../Framework/Managers/HoldingAwarenessManager';
+} from 'manxia_core/src/main/ets/Framework/Managers/HoldingAwarenessManager';
 import {
   GlobalAnimationManager,
   AnimationType,
@@ -27,11 +27,12 @@ import {
   PageTurnAnimationType,
   DoublePagePortraitLayout,
   DoublePageVerticalDirection
-} from '../Models/MangaModels';
+} from 'manxia_core/src/main/ets/Models/MangaModels';
 import {
   curves,
   UIContext,
-  matrix4
+  matrix4,
+  display
 } from '@kit.ArkUI';
 import fs from '@ohos.file.fs';
 import { BusinessError } from '@kit.BasicServicesKit';
@@ -63,7 +64,7 @@ import {
   MangaViewerImageDimensions
 } from './MangaLoadStateCommitter';
 // 新增：本地图片缓存管理器
-import { CacheStats, LocalImageCacheManager } from '../Framework/Cache/LocalImageCacheManager';
+import { CacheStats, LocalImageCacheManager } from 'manxia_network/src/main/ets/Framework/Cache/LocalImageCacheManager';
 import { MangaAssetLoadCoordinator } from '../Framework/Reader/MangaAssetLoadCoordinator';
 import { MangaAssetLoader } from '../Framework/Reader/MangaAssetLoader';
 import { MangaAssetMetricsSnapshot, MangaAssetMonitor } from '../Framework/Reader/MangaAssetMonitor';
@@ -82,13 +83,13 @@ import {
 import {
   MangaReaderSessionGuard,
   MangaReaderSessionSnapshot
-} from '../Framework/Reader/MangaReaderSessionGuard';
+} from 'manxia_reader_ui/src/main/ets/Framework/Reader/MangaReaderSessionGuard';
 import {
   getNetworkTransportFailureCoordinator,
   NetworkTransportFailureCoordinator,
   NetworkTransportFailureDescriptor,
   NetworkTransportFailureKind
-} from '../Framework/Network/NetworkTransportFailureCoordinator';
+} from 'manxia_network/src/main/ets/Framework/Network/NetworkTransportFailureCoordinator';
 import {
   MangaAssetLoadContextInput,
   MangaAssetLoadContextResolver
@@ -104,6 +105,7 @@ import {
   MangaPreloadPageResolveResult
 } from './MangaPageLoadResolver';
 import { MangaPagePathResolver } from './MangaPagePathResolver';
+import { MangaImageFitLayout, MangaImageFitMode, MangaImageFitPlanner, resolveMangaImageFitMode } from './MangaImageFitPlanner';
 import {
   MangaPageVisibilityContext,
   MangaPageVisibilityResolver,
@@ -223,23 +225,23 @@ import {
   MangaReaderCacheSnapshot,
   MangaReaderCacheSnapshotInput
 } from './MangaReaderCacheMonitor';
-import { MangaReadFlowMonitor } from '../Framework/Reader/MangaReadFlowMonitor';
+import { MangaReadFlowMonitor } from 'manxia_reader_ui/src/main/ets/Framework/Reader/MangaReadFlowMonitor';
 import {
   MangaReadFlowSessionBridge,
   MangaReadFlowSessionBridgeContext,
   MangaReadFlowSessionBridgeResult
-} from '../Framework/Reader/MangaReadFlowSessionBridge';
+} from 'manxia_reader_ui/src/main/ets/Framework/Reader/MangaReadFlowSessionBridge';
 import {
   MangaReadFlowEvent,
   MangaReadFlowEventType,
   MangaReadFlowSeverity,
   MangaReadFlowSourceKind,
   mapReadingModeToFlowMode
-} from '../Framework/Reader/MangaReadFlowTypes';
+} from 'manxia_reader_ui/src/main/ets/Framework/Reader/MangaReadFlowTypes';
 import {
   MangaScrollableReadFlowContext,
   MangaScrollableReadFlowReporter
-} from '../Framework/Reader/MangaScrollableReadFlowReporter';
+} from 'manxia_reader_ui/src/main/ets/Framework/Reader/MangaScrollableReadFlowReporter';
 import {
   DoublePageSmartDisplayMode,
   DoublePageSmartDisplayPlan,
@@ -330,6 +332,8 @@ interface MangaViewerCallbacks {
   onScrollPositionChange?: (position: number) => void;
   onComponentReady?: (component: MangaViewer) => void;
   onFirstVisibleDisplayCommitted?: (pageIndex: number, pageId: string, sourceType: ImageSourceType) => void;
+  /** 页面真实解码尺寸测量回调（供上层自动识别长图/宽图并切换阅读模式） */
+  onPageImageMeasured?: (pageIndex: number, pageId: string, width: number, height: number, sourceType: ImageSourceType) => void;
   onWebtoonDetected?: (isWebtoon: boolean, avgAspectRatio: number) => void;  // 条漫检测回调
   // [新增] 条漫模式章节切换回调 - 当滚动到其他章节时通知父组件
   onWebtoonChapterSwitch?: (chapterId: string, chapterTitle: string, pageIndex: number) => void;
@@ -445,10 +449,14 @@ export struct MangaViewer {
   private mangaScrollableReadFlowReporter: MangaScrollableReadFlowReporter = new MangaScrollableReadFlowReporter();
   private mangaReaderCacheOwnershipLogged: boolean = false;
   private firstVisibleDisplayCommitted: boolean = false;
+  private mangaImageFitPlanner: MangaImageFitPlanner = new MangaImageFitPlanner();
+  private displayDensityPixels: number = 1;
+  private lastFitMode: string = '';
 
   // 屏幕尺寸属性
   @State private screenWidth: number = 0;
   @State private screenHeight: number = 0;
+  @State private fitPanAxis: 'none' | 'horizontal' | 'vertical' = 'none';
 
   // 内部状态
   @State private imageLoadStates: Map<string, ImageLoadState> = new Map();
@@ -750,6 +758,7 @@ export struct MangaViewer {
     // 初始化屏幕尺寸
     this.initScreenSize();
     this.lastReadingSettingsSideEffectKey = this.getReadingSettingsSideEffectKey();
+    this.lastFitMode = this.readingSettings.fitMode;
 
     this.initializeImageStates();
     // 初始化双页模式的左右页索引
@@ -1284,11 +1293,14 @@ export struct MangaViewer {
     try {
       this.screenWidth = 0;
       this.screenHeight = 0;
+      const displayInfo = display.getDefaultDisplaySync();
+      this.displayDensityPixels = displayInfo.densityPixels > 0 ? displayInfo.densityPixels : 1;
       logger.debug(TAG, `屏幕尺寸初始化完成`);
     } catch (error) {
       logger.error(TAG, '初始化屏幕尺寸失败', String(error));
       this.screenWidth = 0;
       this.screenHeight = 0;
+      this.displayDensityPixels = 1;
     }
   }
 
@@ -1624,6 +1636,7 @@ export struct MangaViewer {
     }
 
     this.isDragging = true;
+    this.fitPanAxis = 'none';
     this.pageChangeCommitted = false;
     this.swipeTriggered = false;
     this.panStartX = event.fingerList[0].globalX;
@@ -1854,7 +1867,21 @@ export struct MangaViewer {
     const deltaX = event.fingerList[0].globalX - this.panStartX;
     const deltaY = event.fingerList[0].globalY - this.panStartY;
 
-    if (this.isDoublePageVerticalPortraitMode() && this.currentScale <= 1.0) {
+    const fitOverflowX: boolean = this.getCurrentPageFitOverflow(true);
+    const fitOverflowY: boolean = this.getCurrentPageFitOverflow(false);
+
+    if (this.currentScale <= 1.0 && fitOverflowX && Math.abs(deltaX) >= Math.abs(deltaY)) {
+      this.fitPanAxis = 'horizontal';
+      this.translateX = this.clampImageTranslation(this.initialTranslateX + deltaX, true);
+      return;
+    }
+    if (this.currentScale <= 1.0 && fitOverflowY && Math.abs(deltaY) > Math.abs(deltaX)) {
+      this.fitPanAxis = 'vertical';
+      this.translateY = this.clampImageTranslation(this.initialTranslateY + deltaY, false);
+      return;
+    }
+
+    if (this.isDoublePageVerticalPortraitMode() && this.currentScale <= 1.0 && !fitOverflowX && !fitOverflowY) {
       return;
     }
 
@@ -2168,6 +2195,10 @@ export struct MangaViewer {
     }
 
     this.isDragging = false;
+    if (this.fitPanAxis !== 'none') {
+      this.fitPanAxis = 'none';
+      return;
+    }
     if (this.swipeTriggered || this.pageChangeCommitted) {
       this.translateX = 0;
       this.translateY = 0;
@@ -2681,23 +2712,22 @@ export struct MangaViewer {
       const imgH: number = pmInfo.size.height;
       const compW: number = this.screenWidth;
       const compH: number = this.screenHeight;
-
-      // 计算适应组件的缩放比例（保持宽高比）
-      const scaleW: number = compW / imgW;
-      const scaleH: number = compH / imgH;
-      const scale: number = Math.min(scaleW, scaleH);
-
-      // 计算显示尺寸
-      const displayW: number = imgW * scale;
-      const displayH: number = imgH * scale;
-
-      // 居中显示
-      const displayX: number = (compW - displayW) / 2;
-      const displayY: number = (compH - displayH) / 2;
-
-      const rect: ImageDisplayRect = { x: displayX, y: displayY, w: displayW, h: displayH };
+      const fitLayout: MangaImageFitLayout = this.mangaImageFitPlanner.resolve(
+        this.readingSettings.fitMode,
+        imgW,
+        imgH,
+        compW,
+        compH,
+        this.displayDensityPixels
+      );
+      const rect: ImageDisplayRect = {
+        x: fitLayout.x,
+        y: fitLayout.y,
+        w: fitLayout.width,
+        h: fitLayout.height
+      };
       this.imageDisplayRect = rect;
-      logger.debug(TAG, `图片显示区域: x=${displayX.toFixed(1)}, y=${displayY.toFixed(1)}, w=${displayW.toFixed(1)}, h=${displayH.toFixed(1)}`);
+      logger.debug(TAG, `图片显示区域: x=${fitLayout.x.toFixed(1)}, y=${fitLayout.y.toFixed(1)}, w=${fitLayout.width.toFixed(1)}, h=${fitLayout.height.toFixed(1)}`);
     } catch (e) {
       // 出错时使用全屏
       const fallbackRect: ImageDisplayRect = { x: 0, y: 0, w: this.screenWidth, h: this.screenHeight };
@@ -4745,12 +4775,15 @@ export struct MangaViewer {
     const direction: string = this.readingSettings.readingDirection.toString();
     const spacing: number = this.readingSettings.pageSpacing !== undefined ? this.readingSettings.pageSpacing : 16;
     const portraitLayout: string = (this.readingSettings.doublePagePortraitLayout || DoublePagePortraitLayout.VERTICAL).toString();
+    const fitMode: string = this.readingSettings.fitMode;
     const webtoonLeftMargin: number = this.readingSettings.webtoonLeftMargin !== undefined ? this.readingSettings.webtoonLeftMargin : 0;
     const webtoonRightMargin: number = this.readingSettings.webtoonRightMargin !== undefined ? this.readingSettings.webtoonRightMargin : 0;
-    return `${mode}_${direction}_${spacing}_${portraitLayout}_${webtoonLeftMargin}_${webtoonRightMargin}`;
+    return `${mode}_${direction}_${spacing}_${portraitLayout}_${fitMode}_${webtoonLeftMargin}_${webtoonRightMargin}`;
   }
 
   private onReadingSettingsChange(): void {
+    const fitModeChanged: boolean = this.lastFitMode !== this.readingSettings.fitMode;
+    this.lastFitMode = this.readingSettings.fitMode;
     const sideEffectKey: string = this.getReadingSettingsSideEffectKey();
     if (sideEffectKey === this.lastReadingSettingsSideEffectKey) {
       logger.debug(TAG, `忽略重复阅读设置副作用: mode=${this.readingSettings.readingMode.toString()}, direction=${this.readingSettings.readingDirection.toString()}`);
@@ -4758,6 +4791,16 @@ export struct MangaViewer {
     }
     this.lastReadingSettingsSideEffectKey = sideEffectKey;
     this.invalidateWebtoonPositionCache();
+
+    if (fitModeChanged) {
+      this.currentScale = this.MIN_ZOOM_SCALE;
+      this.translateX = 0;
+      this.translateY = 0;
+      this.fitPanAxis = 'none';
+      if (this.callbacks && this.callbacks.onZoomChange) {
+        this.callbacks.onZoomChange(this.MIN_ZOOM_SCALE);
+      }
+    }
 
     if (this.readingSettings.readingMode === ReadingMode.DOUBLE_PAGE) {
       this.updateDoublePageIndices();
@@ -5097,9 +5140,10 @@ export struct MangaViewer {
         Stack() {
           Image(this.previewPrevImageInput)
             .key(`${this.previewPrevPageId}_preview_prev_${this.viewCurrentPageIndex}_${this.renderEpoch}_${this.getPixelMapEpoch(this.previewPrevPageId)}_${this.getImageRenderEpoch(this.previewPrevPageId)}`)
-            .width('100%')
-            .height('100%')
+            .width(this.getPageImageFitWidth(this.getPageById(this.previewPrevPageId)!))
+            .height(this.getPageImageFitHeight(this.getPageById(this.previewPrevPageId)!))
             .objectFit(this.getImageFitMode(this.getPageById(this.previewPrevPageId)!))
+            .align(Alignment.Center)
             .padding(0)
             .margin(0)
             .borderWidth(0)
@@ -5127,9 +5171,10 @@ export struct MangaViewer {
         Stack() {
           Image(this.previewNextImageInput)
             .key(`${this.previewNextPageId}_preview_next_${this.viewCurrentPageIndex}_${this.renderEpoch}_${this.getPixelMapEpoch(this.previewNextPageId)}_${this.getImageRenderEpoch(this.previewNextPageId)}`)
-            .width('100%')
-            .height('100%')
+            .width(this.getPageImageFitWidth(this.getPageById(this.previewNextPageId)!))
+            .height(this.getPageImageFitHeight(this.getPageById(this.previewNextPageId)!))
             .objectFit(this.getImageFitMode(this.getPageById(this.previewNextPageId)!))
+            .align(Alignment.Center)
             .padding(0)
             .margin(0)
             .borderWidth(0)
@@ -5516,9 +5561,10 @@ export struct MangaViewer {
             } else {
               Image(this.doubleLeftImageInput)
               .key(`${this.doubleLeftPageId}_${this.leftPageIndex}_${this.renderEpoch}_${this.getPixelMapEpoch(this.doubleLeftPageId)}_${this.getImageRenderEpoch(this.doubleLeftPageId)}_${this.pagePixelMaps.has(this.doubleLeftPageId) ? 'pm' : 'url'}_single`)
-              .width('100%')
-              .height('100%')
-              .objectFit(ImageFit.Contain)
+              .width(this.getPageImageFitWidth(this.chapter.pages[this.leftPageIndex]))
+              .height(this.getPageImageFitHeight(this.chapter.pages[this.leftPageIndex]))
+              .objectFit(this.getImageFitMode(this.chapter.pages[this.leftPageIndex]))
+              .align(Alignment.Center)
               .padding(0)
               .margin(0)
               .borderWidth(0)
@@ -5575,9 +5621,11 @@ export struct MangaViewer {
             } else {
               Image(this.doubleLeftImageInput)
               .key(`${this.doubleLeftPageId}_${this.leftPageIndex}_${this.rightPageIndex}_${this.renderEpoch}_${this.getPixelMapEpoch(this.doubleLeftPageId)}_${this.getImageRenderEpoch(this.doubleLeftPageId)}_${this.pagePixelMaps.has(this.doubleLeftPageId) ? 'pm' : 'url'}`)
-              .height('100%')
+              .width(this.getPageImageFitWidth(this.chapter.pages[this.leftPageIndex], true))
+              .height(this.getPageImageFitHeight(this.chapter.pages[this.leftPageIndex], true))
               // 使用Contain保持图片比例，以高度为基准缩放
-              .objectFit(ImageFit.Contain)
+              .objectFit(this.getImageFitMode(this.chapter.pages[this.leftPageIndex]))
+              .align(Alignment.Center)
               .padding(0)
               .margin(0)
               .borderWidth(0)
@@ -5641,9 +5689,11 @@ export struct MangaViewer {
             } else {
               Image(this.doubleRightImageInput)
               .key(`${this.doubleRightPageId}_${this.leftPageIndex}_${this.rightPageIndex}_${this.renderEpoch}_${this.getPixelMapEpoch(this.doubleRightPageId)}_${this.getImageRenderEpoch(this.doubleRightPageId)}_${this.pagePixelMaps.has(this.doubleRightPageId) ? 'pm' : 'url'}`)
-              .height('100%')
+              .width(this.getPageImageFitWidth(this.chapter.pages[this.rightPageIndex], true))
+              .height(this.getPageImageFitHeight(this.chapter.pages[this.rightPageIndex], true))
               // 使用Contain保持图片比例，以高度为基准缩放
-              .objectFit(ImageFit.Contain)
+              .objectFit(this.getImageFitMode(this.chapter.pages[this.rightPageIndex]))
+              .align(Alignment.Center)
               .padding(0)
               .margin(0)
               .borderWidth(0)
@@ -5836,7 +5886,7 @@ export struct MangaViewer {
     if (!this.chapter || !this.chapter.pages || pageIndex < 0 || pageIndex >= this.chapter.pages.length) {
       return 0;
     }
-    return Math.max(1, Math.floor(this.getEstimatedImageHeight(this.chapter.pages[pageIndex])));
+    return Math.max(1, Math.floor(this.getPageImageFitHeight(this.chapter.pages[pageIndex], true)));
   }
 
   private getVerticalDoublePageContentHeight(): number {
@@ -6060,9 +6110,10 @@ export struct MangaViewer {
         if (this.shouldRenderVerticalDoublePageImage(pageIndex)) {
           Image(this.getVerticalDoublePageDisplayInput(pageIndex, imageInput))
             .key(`${pageId}_${keyPrefix}_${this.viewCurrentPageIndex}_${this.renderEpoch}_${this.getPixelMapEpoch(pageId)}_${this.getImageRenderEpoch(pageId)}`)
-            .width('100%')
+            .width(this.getPageImageFitWidth(this.chapter.pages[pageIndex], true))
             .height(this.getVerticalDoublePageImageHeight(pageIndex))
-            .objectFit(ImageFit.Contain)
+            .objectFit(this.getImageFitMode(this.chapter.pages[pageIndex]))
+            .align(Alignment.Center)
             .draggable(false)
             .padding(0)
             .margin(0)
@@ -6111,7 +6162,9 @@ export struct MangaViewer {
     this.isDragging = true;
     this.pageChangeCommitted = false;
     this.swipeTriggered = false;
+    this.panStartX = event.fingerList[0].globalX;
     this.panStartY = event.fingerList[0].globalY;
+    this.initialTranslateX = this.translateX;
     this.verticalDoublePageLastPanOffsetY = 0;
     this.verticalDoublePagePanStartScrollOffset = this.syncVerticalDoublePageScrollOffset();
     this.verticalDoublePageLastScrollDeltaY = 0;
@@ -6132,7 +6185,14 @@ export struct MangaViewer {
       return;
     }
 
+    const deltaX: number = event.fingerList[0].globalX - this.panStartX;
     const deltaY: number = event.fingerList[0].globalY - this.panStartY;
+    if (this.currentScale <= 1.0 &&
+      this.getCurrentPageFitOverflow(true) &&
+      Math.abs(deltaX) >= Math.abs(deltaY)) {
+      this.translateX = this.clampImageTranslation(this.initialTranslateX + deltaX, true);
+      return;
+    }
     const panFrameDeltaY: number = deltaY - this.verticalDoublePageLastPanOffsetY;
     this.verticalDoublePageLastPanOffsetY = deltaY;
 
@@ -6257,7 +6317,7 @@ export struct MangaViewer {
     .height('100%')
     .clip(true)
     .gesture(
-      PanGesture({ fingers: 1, direction: PanDirection.Vertical, distance: 2 })
+      PanGesture({ fingers: 1, direction: PanDirection.All, distance: 2 })
         .onActionStart((event: GestureEvent) => this.handleVerticalDoublePageManualPanStart(event))
         .onActionUpdate((event: GestureEvent) => this.handleVerticalDoublePageManualPanUpdate(event))
         .onActionEnd(() => this.handleVerticalDoublePageManualPanEnd())
@@ -6551,9 +6611,10 @@ export struct MangaViewer {
           } else {
             Image(this.doubleLeftImageInput)
               .key(`${this.doubleLeftPageId}_portrait_h_single_${this.viewCurrentPageIndex}_${this.renderEpoch}_${this.getPixelMapEpoch(this.doubleLeftPageId)}_${this.getImageRenderEpoch(this.doubleLeftPageId)}`)
-              .width('100%')
-              .height('100%')
-              .objectFit(ImageFit.Contain)
+              .width(this.getPageImageFitWidth(this.chapter.pages[this.leftPageIndex]))
+              .height(this.getPageImageFitHeight(this.chapter.pages[this.leftPageIndex]))
+              .objectFit(this.getImageFitMode(this.chapter.pages[this.leftPageIndex]))
+              .align(Alignment.Center)
               .padding(0)
               .margin(0)
               .borderWidth(0)
@@ -6594,9 +6655,10 @@ export struct MangaViewer {
           } else {
             Image(this.doubleLeftImageInput)
               .key(`${this.doubleLeftPageId}_portrait_h_left_${this.viewCurrentPageIndex}_${this.renderEpoch}_${this.getPixelMapEpoch(this.doubleLeftPageId)}_${this.getImageRenderEpoch(this.doubleLeftPageId)}`)
-              .width('100%')
-              .height('100%')
-              .objectFit(ImageFit.Contain)
+              .width(this.getPageImageFitWidth(this.chapter.pages[this.leftPageIndex], true))
+              .height(this.getPageImageFitHeight(this.chapter.pages[this.leftPageIndex], true))
+              .objectFit(this.getImageFitMode(this.chapter.pages[this.leftPageIndex]))
+              .align(Alignment.Center)
               .padding(0)
               .margin(0)
               .borderWidth(0)
@@ -6635,9 +6697,10 @@ export struct MangaViewer {
           } else {
             Image(this.doubleRightImageInput)
               .key(`${this.doubleRightPageId}_portrait_h_right_${this.viewCurrentPageIndex}_${this.renderEpoch}_${this.getPixelMapEpoch(this.doubleRightPageId)}_${this.getImageRenderEpoch(this.doubleRightPageId)}`)
-              .width('100%')
-              .height('100%')
-              .objectFit(ImageFit.Contain)
+              .width(this.getPageImageFitWidth(this.chapter.pages[this.rightPageIndex], true))
+              .height(this.getPageImageFitHeight(this.chapter.pages[this.rightPageIndex], true))
+              .objectFit(this.getImageFitMode(this.chapter.pages[this.rightPageIndex]))
+              .align(Alignment.Center)
               .padding(0)
               .margin(0)
               .borderWidth(0)
@@ -7138,9 +7201,10 @@ export struct MangaViewer {
         || (this.getPageLoadState(page)?.isLoaded === true)) {
         Image(this.singlePageImageInput)
           .key(this.getSinglePageContentKey(page))
-          .width('100%')
-          .height('100%')
+          .width(this.getPageImageFitWidth(page))
+          .height(this.getPageImageFitHeight(page))
           .objectFit(this.getImageFitMode(page))
+          .align(Alignment.Center)
           .padding(0)
           .margin(0)
           .borderWidth(0)
@@ -7211,6 +7275,8 @@ export struct MangaViewer {
         this.buildImageFailureOverlay(page, false, '100%')
       }
     }
+    .width('100%')
+    .height('100%')
   }
 
   @Builder
@@ -7218,9 +7284,10 @@ export struct MangaViewer {
     Stack() {
       Image(this.computeImageInputForPage(page))
         .key(`${page.id}_preview_${this.renderEpoch}_${this.getPixelMapEpoch(page.id)}_${this.getImageRenderEpoch(page.id)}`)
-        .width('100%')
-        .height('100%')
+        .width(this.getPageImageFitWidth(page))
+        .height(this.getPageImageFitHeight(page))
         .objectFit(this.getImageFitMode(page))
+        .align(Alignment.Center)
         .padding(0)
         .margin(0)
         .borderWidth(0)
@@ -7234,6 +7301,8 @@ export struct MangaViewer {
           this.handleImageComponentError(page, error, 'page_preview');
         })
     }
+    .width('100%')
+    .height('100%')
   }
 
   /**
@@ -7251,9 +7320,10 @@ export struct MangaViewer {
         || (this.getPageLoadState(page)?.isLoaded === true)) {
         Image(this.getDisplayImageInput(page))
           .key(`${page.id}_${this.leftPageIndex}_${this.rightPageIndex}_${this.renderEpoch}_${this.getPixelMapEpoch(page.id)}_${this.getImageRenderEpoch(page.id)}`)
-          .width('100%')
-          .height('100%')
-          .objectFit(ImageFit.Contain)
+          .width(this.getPageImageFitWidth(page, true))
+          .height(this.getPageImageFitHeight(page, true))
+          .objectFit(this.getImageFitMode(page))
+          .align(Alignment.Center)
           .padding(0)
           .margin(0)
           .borderWidth(0)
@@ -7305,6 +7375,8 @@ export struct MangaViewer {
         this.buildImageFailureOverlay(page, true, '100%')
       }
     }
+    .width('100%')
+    .height('100%')
   }
 
   /**
@@ -8983,23 +9055,115 @@ export struct MangaViewer {
     return fallbackIndex >= 0 ? [fallbackIndex] : [];
   }
 
-  /**
-   * 获取图片适配模式
-   */
-  private getImageFitMode(page: MangaPage): ImageFit {
-    // 判断是否为横向页面（宽度大于高度）
-    const isLandscape = page.width && page.height && page.width > page.height;
-
-    if (this.isWebtoonMode()) {
-      // 条漫模式：以宽度占满并允许放大以适配屏宽
-      return ImageFit.Contain;
-    } else if (isLandscape && this.isSinglePageMode()) {
-      // 单页横向：保持完整显示
-      return ImageFit.Contain;
-    } else {
-      // 其他情况：保持完整显示，按宽度适配
-      return ImageFit.Contain;
+  private getPageImageFitLayout(page: MangaPage, doublePage: boolean = false): MangaImageFitLayout {
+    let viewportWidth: number = this.screenWidth > 0 ? this.screenWidth : 360;
+    let viewportHeight: number = this.screenHeight > 0 ? this.screenHeight : 780;
+    if (doublePage && !this.isDoublePageSingleDisplayActive()) {
+      if (this.isDoublePageVerticalPortraitMode()) {
+        viewportHeight = viewportHeight / 2;
+      } else {
+        viewportWidth = viewportWidth / 2;
+      }
     }
+
+    const fitMode: string = this.isWebtoonMode() || this.isContinuousScrollMode()
+      ? MangaImageFitMode.FIT_WIDTH
+      : this.readingSettings.fitMode;
+    const pageWidth: number = page.width !== undefined && page.width > 0 ? page.width : 0;
+    const pageHeight: number = page.height !== undefined && page.height > 0 ? page.height : 0;
+    return this.mangaImageFitPlanner.resolve(
+      fitMode,
+      pageWidth,
+      pageHeight,
+      viewportWidth,
+      viewportHeight,
+      this.displayDensityPixels
+    );
+  }
+
+  private getPageImageFitWidth(page: MangaPage, doublePage: boolean = false): number {
+    return this.getPageImageFitLayout(page, doublePage).width;
+  }
+
+  private getPageImageFitHeight(page: MangaPage, doublePage: boolean = false): number {
+    return this.getPageImageFitLayout(page, doublePage).height;
+  }
+
+  private getCurrentPageFitOverflow(horizontal: boolean): boolean {
+    if (this.currentScale > 1.0) {
+      return true;
+    }
+    if (this.isWebtoonMode() || this.isContinuousScrollMode()) {
+      return false;
+    }
+
+    if (this.readingSettings.readingMode === ReadingMode.DOUBLE_PAGE) {
+      if (this.leftPageIndex >= 0 && this.leftPageIndex < this.chapter.pages.length) {
+        const leftLayout: MangaImageFitLayout = this.getPageImageFitLayout(this.chapter.pages[this.leftPageIndex], true);
+        if (horizontal ? leftLayout.overflowX : leftLayout.overflowY) {
+          return true;
+        }
+      }
+      if (this.rightPageIndex >= 0 && this.rightPageIndex < this.chapter.pages.length) {
+        const rightLayout: MangaImageFitLayout = this.getPageImageFitLayout(this.chapter.pages[this.rightPageIndex], true);
+        if (horizontal ? rightLayout.overflowX : rightLayout.overflowY) {
+          return true;
+        }
+      }
+      return false;
+    }
+
+    if (this.viewCurrentPageIndex < 0 || this.viewCurrentPageIndex >= this.chapter.pages.length) {
+      return false;
+    }
+    const layout: MangaImageFitLayout = this.getPageImageFitLayout(this.chapter.pages[this.viewCurrentPageIndex]);
+    return horizontal ? layout.overflowX : layout.overflowY;
+  }
+
+  private getCurrentFitContentExtent(horizontal: boolean): number {
+    let extent: number = horizontal
+      ? (this.screenWidth > 0 ? this.screenWidth : 360)
+      : (this.screenHeight > 0 ? this.screenHeight : 780);
+    if (this.readingSettings.readingMode === ReadingMode.DOUBLE_PAGE) {
+      const singleDisplay: boolean = this.isDoublePageSingleDisplayActive();
+      const verticalPair: boolean = this.isDoublePageVerticalPortraitMode();
+      if (this.leftPageIndex >= 0 && this.leftPageIndex < this.chapter.pages.length) {
+        const leftLayout: MangaImageFitLayout = this.getPageImageFitLayout(this.chapter.pages[this.leftPageIndex], true);
+        const leftExtent: number = horizontal
+          ? leftLayout.width * (singleDisplay || verticalPair ? 1 : 2)
+          : leftLayout.height * (singleDisplay || !verticalPair ? 1 : 2);
+        extent = Math.max(extent, leftExtent);
+      }
+      if (this.rightPageIndex >= 0 && this.rightPageIndex < this.chapter.pages.length) {
+        const rightLayout: MangaImageFitLayout = this.getPageImageFitLayout(this.chapter.pages[this.rightPageIndex], true);
+        const rightExtent: number = horizontal
+          ? rightLayout.width * (singleDisplay || verticalPair ? 1 : 2)
+          : rightLayout.height * (singleDisplay || !verticalPair ? 1 : 2);
+        extent = Math.max(extent, rightExtent);
+      }
+      return extent;
+    }
+    if (this.viewCurrentPageIndex >= 0 && this.viewCurrentPageIndex < this.chapter.pages.length) {
+      const layout: MangaImageFitLayout = this.getPageImageFitLayout(this.chapter.pages[this.viewCurrentPageIndex]);
+      extent = horizontal ? layout.width : layout.height;
+    }
+    return extent;
+  }
+
+  private clampImageTranslation(value: number, horizontal: boolean): number {
+    const viewportExtent: number = horizontal
+      ? (this.screenWidth > 0 ? this.screenWidth : 360)
+      : (this.screenHeight > 0 ? this.screenHeight : 780);
+    const contentExtent: number = this.getCurrentFitContentExtent(horizontal) * this.currentScale;
+    const limit: number = Math.max(0, (contentExtent - viewportExtent) / 2);
+    return Math.max(-limit, Math.min(limit, value));
+  }
+
+  /**
+   * ImageFit.Contain preserves the full page inside the explicit fit rectangle.
+   */
+  private getImageFitMode(_page: MangaPage): ImageFit {
+    return ImageFit.Contain;
   }
 
   private cancelWebtoonStopCleanup(): void {
@@ -9350,6 +9514,7 @@ export struct MangaViewer {
     }).then((pixelMap) => {
       if (pixelMap) {
         logger.debug(TAG, `本地图片缓存加载成功: ${page.id}`);
+        this.notifyLocalPageImageMeasuredFromPixelMap(page, pageIndex, pixelMap);
         this.recordReadFlowAssetEvent(
           MangaReadFlowEventType.ASSET_LOADED,
           page,
@@ -10207,6 +10372,29 @@ export struct MangaViewer {
   }
 
   /**
+   * 上报页面真实解码尺寸（供上层自动识别长图/宽图并切换阅读模式）。
+   */
+  private notifyPageImageMeasured(pageIndex: number, page: MangaPage, width: number, height: number): void {
+    if (!this.callbacks || !this.callbacks.onPageImageMeasured) {
+      return;
+    }
+    if (width <= 0 || height <= 0) {
+      return;
+    }
+    this.callbacks.onPageImageMeasured(pageIndex, page.id, width, height, page.sourceType);
+  }
+
+  private notifyLocalPageImageMeasuredFromPixelMap(page: MangaPage, pageIndex: number, pixelMap: image.PixelMap): void {
+    try {
+      const info = pixelMap.getImageInfoSync();
+      if (info && info.size) {
+        this.notifyPageImageMeasured(pageIndex, page, info.size.width, info.size.height);
+      }
+    } catch (_error) {
+    }
+  }
+
+  /**
    * 提交页面 PixelMap。
    * 条漫模式下优先做行级刷新，避免每张图都触发整树响应式重算。
    */
@@ -10238,6 +10426,7 @@ export struct MangaViewer {
           } as ImageLoadState;
           this.imageLoadStates.set(pageId, nextState);
           this.imageLoadStates = new Map(this.imageLoadStates);
+          this.notifyPageImageMeasured(pageIndex, page, imageInfo.size.width, imageInfo.size.height);
         }
       } catch (_error) {
       }
@@ -13287,6 +13476,7 @@ export struct MangaViewer {
     .width('100%')
     .height('100%')
     .backgroundColor(Color.Black)
+    .clip(true)
     .onAreaChange((oldArea: Area, newArea: Area) => {
       const w: number = Number(newArea.width);
       const h: number = Number(newArea.height);
@@ -13296,6 +13486,11 @@ export struct MangaViewer {
       if (h > 0) { this.screenHeight = h; }
       if ((w > 0 && w !== oldW) || (h > 0 && h !== oldH)) {
         this.invalidateWebtoonPositionCache();
+        if (oldW > 0 && oldH > 0) {
+          this.translateX = 0;
+          this.translateY = 0;
+          this.fitPanAxis = 'none';
+        }
       }
 
       // 检测屏幕方向变化（横竖屏切换）

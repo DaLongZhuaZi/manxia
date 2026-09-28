@@ -1,4 +1,4 @@
-﻿import { SafeUtils } from '../../../../Utils/SafeUtils';
+﻿import { SafeUtils } from 'manxia_core/src/main/ets/Utils/SafeUtils';
 import { IWorkflowEngine, NGFWorkflowResult } from '../contracts/IWorkflowEngine';
 import { ngfActionExecutorFacade } from './ActionExecutorFacade';
 import { ngfRateLimitPolicyFacade } from './RateLimitPolicyFacade';

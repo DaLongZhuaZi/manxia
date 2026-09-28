@@ -1,0 +1,66 @@
+{
+  "schemaVersion": 1,
+  "contract": "arkweb_legado_jsoup_empty_compound_pseudo_context",
+  "issueId": "ISSUE-COMPAT-243-JSOUP-STANDARD-CSS-PSEUDO-SELECTORS",
+  "baseline": {
+    "sourceCount": 458,
+    "sourcePackageSha256": "473048A191DE4749FA9C15E0A2F2328A3E86B385A5FCE23EA30432D598D03A67",
+    "legadoCommit": "95973d186b147fb9ab43a9240021d688e4304fbd"
+  },
+  "cases": [
+    {
+      "id": "direct-child-universal-not",
+      "html": "<div><p class=\"keep\"><span>keep</span></p><p class=\"skip\"><span>skip</span></p></div>",
+      "rule": "div > :not(.skip) > span@text",
+      "expected": ["keep"],
+      "semantics": "a_pseudo_only_compound_after_direct_child_combinator_is_universal"
+    },
+    {
+      "id": "descendant-universal-has",
+      "html": "<section><div><p class=\"keep\"><a>keep</a></p><p class=\"skip\"><a>skip</a></p></div></section>",
+      "rule": "section :has(> a):not(.skip) > a@text",
+      "expected": ["keep"],
+      "semantics": "a_pseudo_only_descendant_compound_keeps_the_universal_target"
+    },
+    {
+      "id": "direct-child-after-matchesown",
+      "html": "<div><p>parent<span>keep</span></p><p><span>drop</span></p></div>",
+      "rule": "p:matchesOwn(parent)>:not(br,a)@text",
+      "expected": ["keep"],
+      "semantics": "a_pseudo_only_right_operand_after_a_custom_pseudo_is_universal"
+    },
+    {
+      "id": "pseudo-only-left-matchesown",
+      "html": "<div><p><a>keep</a></p><p><a>also-keep</a></p></div>",
+      "rule": ":matchesOwn(^$)>a@text",
+      "expected": ["keep", "also-keep"],
+      "semantics": "a_pseudo_only_left_operand_before_direct_child_is_universal"
+    },
+    {
+      "id": "repeated-pseudo-only-left-compound",
+      "html": "<div><p><span>marker</span><a>keep</a></p><p class=\"skip\"><span>marker</span><a>skip</a></p></div>",
+      "rule": ":has(> span):not(.skip)>a@text",
+      "expected": ["keep"],
+      "semantics": "multiple_manual_pseudos_share_one_universal_left_compound_before_direct_child"
+    },
+    {
+      "id": "pseudo-only-sibling-compounds",
+      "html": "<section><div><p>left</p></div><div><p>right</p></div></section>",
+      "rule": ":has(> p)+:has(> p)@text",
+      "expected": ["right"],
+      "semantics": "pseudo_only_compounds_joined_by_adjacent_sibling_preserve_universal_targets"
+    }
+  ],
+  "affectedSourceOrdinals": [357, 402],
+  "affectedRuleStrings": [
+    "head>:not(meta,title)",
+    ":matchesOwn(",
+    ":matchesOwn(^$)>a",
+    ":has(>:has("
+  ],
+  "consumerContract": {
+    "holder": "legadoGetStringListSingle creates a detached div and assigns response HTML",
+    "requiredFix": "When a manual pseudo is the only simple selector in a compound, compile that compound as universal * before browser selection and target projection.",
+    "legadoReference": "AnalyzeByJSoup delegates such selectors to Jsoup Element.select, where a pseudo-only compound is equivalent to the universal element selector."
+  }
+}

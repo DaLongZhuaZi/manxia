@@ -1,9 +1,10 @@
-import { logger } from '../Utils/Logger';
+import { logger } from 'manxia_core/src/main/ets/Utils/Logger';
 import { EBookReaderPage } from './EBookReaderPage';
 import { EBookImageReaderPage } from './EBookImageReaderPage';
 import { EpubWebViewReaderPage } from './EpubWebViewReaderPage';
 import { EBookReaderParams } from './EBookReaderRouteTypes';
-import { EBookDataManager } from '../Framework/Data/EBookDataManager';
+import { EBookDataManager } from 'manxia_core/src/main/ets/Framework/Data/EBookDataManager';
+import { ContinuationCacheManager } from '../Framework/Distributed/ContinuationCacheManager';
 import { resolveEBookReaderRouteName } from '../Framework/Adapters/EBookImageReaderAdapter';
 import { EBookParserFactory } from '../Framework/Parsers/EBookParser';
 import {
@@ -11,7 +12,7 @@ import {
   EBookChapter,
   EBookFormat,
   EBookReaderEngine
-} from '../Models/EBookModels';
+} from 'manxia_core/src/main/ets/Models/EBookModels';
 
 const TAG = 'EBookReaderRoutePage';
 
@@ -52,7 +53,8 @@ export struct EBookReaderRoutePageContent {
               forceReaderKit: navParams.forceReaderKit === true,
               autoStartReadAloud: navParams.autoStartReadAloud === true,
               autoOpenReadAloudPlayer: navParams.autoOpenReadAloudPlayer === true,
-              readerTitle: navParams.readerTitle
+              readerTitle: navParams.readerTitle,
+              continuationCacheId: navParams.continuationCacheId || ''
             };
           }
         }
@@ -100,12 +102,16 @@ export struct EBookReaderRoutePageContent {
       return 'EBookReaderPage';
     }
     try {
-      const ebook = await this.ebookDataManager.getEBookById(params.bookId);
+      const ebook = params.continuationCacheId
+        ? await ContinuationCacheManager.getInstance().getEBook(params.continuationCacheId)
+        : await this.ebookDataManager.getEBookById(params.bookId);
       if (!ebook) {
         logger.warn(TAG, `无法解析电子书阅读路由：未找到书籍 bookId=${params.bookId}`);
         return 'EBookReaderPage';
       }
-      const repairedEBook = await this.repairKindleWebViewRouteIfNeeded(ebook);
+      const repairedEBook = params.continuationCacheId
+        ? ebook
+        : await this.repairKindleWebViewRouteIfNeeded(ebook);
       const routeName = resolveEBookReaderRouteName(repairedEBook);
       logger.info(
         TAG,

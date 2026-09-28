@@ -1,16 +1,16 @@
 import { promptAction, LengthMetrics } from '@kit.ArkUI';
 import { HdsNavDestination, HdsNavDestinationAttribute, ScrollEffectType } from '@kit.UIDesignKit';
 import { common } from '@kit.AbilityKit';
-import { logger } from '../Utils/Logger';
+import { logger } from 'manxia_core/src/main/ets/Utils/Logger';
 import { continuationStateHelper } from '../Framework/Distributed/ContinuationStateHelper';
 import { ReadAloudController } from '../Framework/ReadAloud/ReadAloudController';
 import { eventBus, GameEvent, IEventPayload } from '../Framework/EventBus';
 import { ReadAloudPlaybackState, ReadAloudSessionContext, ReadAloudStateSnapshot } from '../Framework/ReadAloud/ReadAloudTypes';
-import { WindowManager, DisplayMode } from '../Utils/WindowManager';
-import { PageWindowCoordinator } from '../Utils/PageWindowCoordinator';
-import { ThemeAwareHelper, ThemeAwareState } from '../Framework/Components/ThemeAware';
+import { WindowManager, DisplayMode } from 'manxia_theme/src/main/ets/Utils/WindowManager';
+import { PageWindowCoordinator } from 'manxia_theme/src/main/ets/Utils/PageWindowCoordinator';
+import { ThemeAwareHelper, ThemeAwareState } from 'manxia_theme/src/main/ets/Framework/Components/ThemeAware';
 import { SourceDialogScaffold } from '../Framework/Components/SourceDialogScaffold';
-import { DialogSurfaceStyleHelper } from '../Framework/Components/DialogSurfaceStyleHelper';
+import { DialogSurfaceStyleHelper } from 'manxia_features_ui/src/main/ets/Framework/Components/DialogSurfaceStyleHelper';
 import {
   NovelAudioReadAloudLaunchParams,
   NovelAudioReadAloudSnapshot,
@@ -19,7 +19,8 @@ import {
 } from '../Framework/ReadAloud/NovelAudioReadAloudSessionManager';
 import { NovelReaderPageParams } from './NovelBookshelfPage';
 import { ReadAloudPlayerAbilityParams } from '../Framework/ReadAloud/ReadAloudPlayerAbilityParamStore';
-import { READ_ALOUD_PLAYER_ABILITY_HOST_SINGLETON } from '../Framework/ReadAloud/ReadAloudPlayerAbilityConstants';
+import { READ_ALOUD_PLAYER_ABILITY_HOST_SINGLETON } from 'manxia_novel/src/main/ets/Framework/ReadAloud/ReadAloudPlayerAbilityConstants';
+import { resolveMedia } from 'manxia_ui_resources/src/main/ets/ResourceCatalog';
 
 const TAG = 'ReadAloudPlayerPage';
 const PLAYER_SKIP_CHARS: number = 420;
@@ -566,17 +567,7 @@ export struct ReadAloudPlayerPage {
       return raw;
     }
     if (raw.startsWith('app.media.')) {
-      const resourceName = raw.substring('app.media.'.length);
-      if (resourceName === 'mangabook') {
-        return $r('app.media.mangabook');
-      }
-      if (resourceName === 'ic_ebook') {
-        return $r('app.media.ic_ebook');
-      }
-      if (resourceName === 'icon') {
-        return $r('app.media.icon');
-      }
-      return $r('app.media.ic_ebook');
+      return resolveMedia(raw);
     }
     if (raw.startsWith('/')) {
       return `file://${raw}`;

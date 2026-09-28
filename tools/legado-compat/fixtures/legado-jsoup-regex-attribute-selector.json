@@ -1,0 +1,49 @@
+{
+  "schemaVersion": 1,
+  "contract": "legado_jsoup_regex_attribute_selector",
+  "html": "<meta property=\"category\" content=\"Fantasy\"><meta property=\"status\" content=\"Serializing\"><img src=\"https://cdn.test/cover-01.jpg\"><img src=\"https://cdn.test/avatar.png\"><a href=\"/chapter-12\">Chapter 12</a><a href=\"/author\">Author</a><div class=\"item\" data-kind=\"foo-extra\">Match</div><div class=\"item\" data-kind=\"other\">Skip</div>",
+  "cases": [
+    {
+      "id": "alternation-property",
+      "rule": "[property~=category|status|update_time]@content",
+      "semantics": "jsoup_regex",
+      "expected": ["Fantasy", "Serializing"]
+    },
+    {
+      "id": "regex-character-class",
+      "rule": "img[src~=(cover|file|article)[^a-z]]@src",
+      "semantics": "jsoup_regex",
+      "expected": ["https://cdn.test/cover-01.jpg"]
+    },
+    {
+      "id": "escaped-digit",
+      "rule": "a[href~=(-|_)\\d+]@text",
+      "semantics": "jsoup_regex",
+      "expected": ["Chapter 12"]
+    },
+    {
+      "id": "java-inline-case-insensitive-flag",
+      "rule": "a[href~=(?i)CHAPTER]@text",
+      "semantics": "jsoup_regex_inline_flags",
+      "expected": ["Chapter 12"]
+    },
+    {
+      "id": "multiple-attribute-predicates",
+      "rule": "div.item[data-kind~=foo|bar]@text",
+      "semantics": "jsoup_regex",
+      "expected": ["Match"]
+    },
+    {
+      "id": "regex-no-match",
+      "rule": "[property~=missing_field]@content",
+      "semantics": "jsoup_regex",
+      "expected": []
+    },
+    {
+      "id": "ordinary-equality-preserved",
+      "rule": "div[class=\"item\"]@text",
+      "semantics": "css_equality",
+      "expected": ["Match", "Skip"]
+    }
+  ]
+}

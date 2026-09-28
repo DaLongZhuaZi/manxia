@@ -6,18 +6,18 @@ import { common } from '@kit.AbilityKit';
 import { BusinessError } from '@kit.BasicServicesKit';
 import { webview } from '@kit.ArkWeb';
 import { HdsNavDestination } from '@kit.UIDesignKit';
-import { logger } from '../Utils/Logger';
-import { SafeUtils } from '../Utils/SafeUtils';
-import { AppFloatingWindowConfig, WindowManager } from '../Utils/WindowManager';
-import { ThemeAwareHelper, ThemeAwareState } from '../Framework/Components/ThemeAware';
-import { ThemeManager, ThemeType } from '../Framework/Managers/ThemeManager';
-import { AppColors } from '../Framework/Theme/AppColors';
-import { FontAwareHelper, FontAwareState } from '../Framework/Components/FontAware';
-import { SharedPageBackgroundLayer } from '../Framework/Components/SharedPageBackgroundLayer';
-import { GlobalBackgroundLayerMode } from '../Framework/Components/GlobalBackgroundLayer';
+import { logger } from 'manxia_core/src/main/ets/Utils/Logger';
+import { SafeUtils } from 'manxia_core/src/main/ets/Utils/SafeUtils';
+import { AppFloatingWindowConfig, WindowManager } from 'manxia_theme/src/main/ets/Utils/WindowManager';
+import { ThemeAwareHelper, ThemeAwareState } from 'manxia_theme/src/main/ets/Framework/Components/ThemeAware';
+import { ThemeManager, ThemeType } from 'manxia_theme/src/main/ets/Framework/Managers/ThemeManager';
+import { AppColors } from 'manxia_theme/src/main/ets/Framework/Theme/AppColors';
+import { FontAwareHelper, FontAwareState } from 'manxia_theme/src/main/ets/Framework/Components/FontAware';
+import { SharedPageBackgroundLayer } from 'manxia_theme/src/main/ets/Framework/Components/SharedPageBackgroundLayer';
+import { GlobalBackgroundLayerMode } from 'manxia_theme/src/main/ets/Framework/Components/GlobalBackgroundLayer';
 import { SettingsImmersiveTitleBar } from './settings/SettingsImmersiveTitleBar';
-import { SettingsImmersiveTitleActionItem, SettingsPageTitleBarManager } from './settings/SettingsPageTitleBarManager';
-import { SettingsPanelSurfaceHelper } from './settings/SettingsPanelSurfaceHelper';
+import { SettingsImmersiveTitleActionItem, SettingsPageTitleBarManager } from 'manxia_features_ui/src/main/ets/pages/settings/SettingsPageTitleBarManager';
+import { SettingsPanelSurfaceHelper } from 'manxia_features_ui/src/main/ets/pages/settings/SettingsPanelSurfaceHelper';
 import {
   BackgroundTaskManager,
   BackgroundTask,
@@ -25,20 +25,20 @@ import {
   TaskNotificationScene,
   TaskStatus,
   TaskType
-} from '../Framework/Task/BackgroundTaskManager';
-import { TaskNavigationTarget } from '../Framework/Task/TaskNavigationTypes';
+} from 'manxia_network/src/main/ets/Framework/Task/BackgroundTaskManager';
+import { TaskNavigationTarget } from 'manxia_core/src/main/ets/Framework/Task/TaskNavigationTypes';
 import {
   sourceAutoCheckHistoryService,
   SourceAutoCheckRecord,
   SourceAutoCheckRecordStatus
-} from '../Framework/SourceEditor/SourceAutoCheckHistoryService';
+} from 'manxia_source_engine/src/main/ets/Framework/SourceEditor/SourceAutoCheckHistoryService';
 import { interactiveSourceEditorService } from '../Framework/SourceEditor/InteractiveSourceEditorService';
 import {
   createEmptySourceEditorSelectionAssessment,
   createEmptySourceEditorWorkflowPreview,
   SourceEditorInspectorSnapshot,
   sourceEditorInspectorStateManager
-} from '../Framework/SourceEditor/SourceEditorInspectorStateManager';
+} from 'manxia_source_engine/src/main/ets/Framework/SourceEditor/SourceEditorInspectorStateManager';
 import {
   DomSelectionSnapshot,
   GeneratedSelectorCandidate,
@@ -52,7 +52,7 @@ import {
   SourceEditorWorkflowPreviewStatus,
   SourceInteractiveEditorPageParams,
   SourceSaveMode
-} from '../Framework/SourceEditor/SourceEditorTypes';
+} from 'manxia_source_engine/src/main/ets/Framework/SourceEditor/SourceEditorTypes';
 
 const TAG = 'SourceInteractiveEditorPage';
 const SOURCE_EDITOR_FLOATING_INSPECTOR_CONFIG: AppFloatingWindowConfig = {

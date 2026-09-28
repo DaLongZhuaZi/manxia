@@ -1,0 +1,11 @@
+{
+  "module": {
+    "name": "manxia_core",
+    "type": "har",
+    "deviceTypes": [
+      "phone",
+      "tablet",
+      "2in1"
+    ]
+  }
+}

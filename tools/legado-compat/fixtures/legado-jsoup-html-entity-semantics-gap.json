@@ -1,0 +1,93 @@
+{
+  "schemaVersion": 1,
+  "contract": "legado_jsoup_html_entity_semantic_gap",
+  "issueId": "ISSUE-COMPAT-244-JSOUP-HTML-ENTITY-SEMANTICS",
+  "baseline": {
+    "sourceCount": 458,
+    "sourcePackageSha256": "473048A191DE4749FA9C15E0A2F2328A3E86B385A5FCE23EA30432D598D03A67",
+    "legadoCommit": "95973d186b147fb9ab43a9240021d688e4304fbd",
+    "jsoupVersion": "1.16.2"
+  },
+  "officialReference": {
+    "entitiesSourceUrl": "https://raw.githubusercontent.com/jhy/jsoup/jsoup-1.16.2/src/main/java/org/jsoup/nodes/Entities.java",
+    "entitiesSourceSha256": "D13B789901B493923121E122384FDF1052ED9552FF20CD17DC039D1C935CFF81",
+    "entitiesDataSourceUrl": "https://raw.githubusercontent.com/jhy/jsoup/jsoup-1.16.2/src/main/java/org/jsoup/nodes/EntitiesData.java",
+    "entitiesDataSourceSha256": "5D2D6726A607FCA5D0F9393AA6D5DC0882E780507DFB35371CD4D17E7E1E63F9",
+    "extendedEntityCount": 2125,
+    "sourceDeclaration": "extended(EntitiesData.fullPoints, 2125)"
+  },
+  "localObservedLimits": {
+    "typedHtmlEntitiesNamedEntries": 122,
+    "analyzerFastNamedEntries": 6,
+    "generatedJsvmNamedEntries": 6,
+    "rhinoStandaloneFallbackNamedEntries": 33,
+    "numericNonBmpRisk": [
+      "HtmlEntities.decode uses String.fromCharCode(code)",
+      "LegadoRuleAnalyzer.decodeHtmlEntitiesFast uses String.fromCharCode(parseInt(...))",
+      "LegadoJsEngine string fallback accepts numeric entities only through U+FFFF"
+    ]
+  },
+  "cases": [
+    {
+      "id": "extended-multipoint-not-equal-tilde",
+      "html": "<div>&NotEqualTilde;</div>",
+      "entityName": "NotEqualTilde",
+      "entitiesDataFragment": "NotEqualTilde=6rm,mw",
+      "expectedCodePoints": [
+        "U+2242",
+        "U+0338"
+      ],
+      "requiredCapability": "extended named entity with two code points"
+    },
+    {
+      "id": "extended-long-name-contour-integral",
+      "html": "<div>&CounterClockwiseContourIntegral;</div>",
+      "entityName": "CounterClockwiseContourIntegral",
+      "entitiesDataFragment": "CounterClockwiseContourIntegral=6r7",
+      "expectedCodePoints": [
+        "U+2233"
+      ],
+      "requiredCapability": "extended long named entity"
+    },
+    {
+      "id": "extended-non-bmp-afr",
+      "html": "<div>&Afr;</div>",
+      "entityName": "Afr",
+      "entitiesDataFragment": "Afr=2kn8",
+      "expectedCodePoints": [
+        "U+1D504"
+      ],
+      "requiredCapability": "extended named entity outside the BMP"
+    },
+    {
+      "id": "extended-multipoint-fjlig",
+      "html": "<div>&fjlig;</div>",
+      "entityName": "fjlig",
+      "entitiesDataFragment": "fjlig=2u,2y",
+      "expectedCodePoints": [
+        "U+0066",
+        "U+006A"
+      ],
+      "requiredCapability": "extended named entity with two ordinary code points"
+    },
+    {
+      "id": "numeric-non-bmp",
+      "html": "<div>&#x1D504;</div>",
+      "expectedCodePoints": [
+        "U+1D504"
+      ],
+      "requiredCapability": "numeric character reference emitted as a Unicode scalar rather than one truncated UTF-16 code unit"
+    }
+  ],
+  "impactScope": {
+    "classification": "dynamic_response_dependent",
+    "reason": "Entity usage is carried by fetched HTML and cannot be enumerated from source JSON rules alone.",
+    "affectedExecutionPaths": [
+      "typed DOM parser",
+      "large-input Analyzer fallback",
+      "generated JSVM string fallback",
+      "Rhino standalone parserless fallback"
+    ]
+  },
+  "statusPolicy": "planned root cause only; do not activate or claim semantic compatibility before a dedicated fix, static contract, R4 runtime, fixed-Legado differential, Harness, build, and device gates"
+}

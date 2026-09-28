@@ -1,12 +1,12 @@
 import { AbilityConstant, UIAbility, Want } from '@kit.AbilityKit';
 import { window } from '@kit.ArkUI';
-import { logger } from './Utils/Logger';
+import { logger } from 'manxia_core/src/main/ets/Utils/Logger';
 import type { SourceDetailParams } from './pages/SourceDetailPage';
 import {
   SOURCE_DETAIL_ABILITY_INSTANCE_ID_KEY,
   SOURCE_DETAIL_ABILITY_PAGE,
   SOURCE_DETAIL_ABILITY_PARAMS_KEY
-} from './Framework/Source/SourceDetailAbilityConstants';
+} from 'manxia_source_engine/src/main/ets/Framework/Source/SourceDetailAbilityConstants';
 import { SourceDetailAbilityParamStore } from './Framework/Source/SourceDetailAbilityParamStore';
 
 const TAG: string = 'SourceDetailAbility';

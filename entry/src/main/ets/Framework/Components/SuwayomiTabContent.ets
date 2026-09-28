@@ -1,20 +1,20 @@
 // 文件路径: src/main/ets/Framework/Components/SuwayomiTabContent.ets
 // 职责: Suwayomi标签页内容组件，从MainMenuPage提取的独立组件
 
-import { logger } from '../../Utils/Logger';
-import { ThemeAwareState, ThemeAwareHelper } from './ThemeAware';
-import { ThemeType } from '../Managers/ThemeManager';
+import { logger } from 'manxia_core/src/main/ets/Utils/Logger';
+import { ThemeAwareState, ThemeAwareHelper } from 'manxia_theme/src/main/ets/Framework/Components/ThemeAware';
+import { ThemeType } from 'manxia_theme/src/main/ets/Framework/Managers/ThemeManager';
 import { TabContentCacheManager } from '../Cache/TabContentCacheManager';
 import { getSuwayomiSourceExecutor, SuwayomiSourceExecutor, SuwayomiExtensionSource } from '../Source/SuwayomiSourceExecutor';
 import { SuwayomiCategory, PaginatedResult, MangaSortOption, MANGA_SORT_OPTIONS } from '../Source/SuwayomiSource';
 import SuwayomiCacheManager from '../Source/SuwayomiCacheManager';
-import DownloadDirManager from '../Storage/DownloadDirManager';
+import DownloadDirManager from 'manxia_core/src/main/ets/Framework/Storage/DownloadDirManager';
 import { ComicInfo as SuwayomiComicInfo } from '../Source/SourceExecutor';
-import { SettingsPageSurfaceManager } from '../../pages/settings/SettingsPageSurfaceManager';
+import { SettingsPageSurfaceManager } from 'manxia_features_ui/src/main/ets/pages/settings/SettingsPageSurfaceManager';
 import { SuwayomiImage } from '../../components/SuwayomiImage';
 import { SuwayomiSourceBrowseParams } from '../../pages/SuwayomiSourceBrowsePage';
 import { eventBus, GameEvent, IEventPayload, RemoteLibraryConfigChangedPayload } from '../EventBus';
-import { BasicDataSource } from '../../Utils/BasicDataSource';
+import { BasicDataSource } from 'manxia_core/src/main/ets/Utils/BasicDataSource';
 
 const TAG = 'SuwayomiTabContent';
 

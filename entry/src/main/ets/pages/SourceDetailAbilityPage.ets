@@ -1,6 +1,6 @@
 import { common } from '@kit.AbilityKit';
 import { FrameCallback, UIContext } from '@kit.ArkUI';
-import { logger } from '../Utils/Logger';
+import { logger } from 'manxia_core/src/main/ets/Utils/Logger';
 import { SourceDetailPage } from './SourceDetailPage';
 import type { SourceDetailParams } from './SourceDetailPage';
 import { SourceSettingsPage } from './SourceSettingsPage';
@@ -8,7 +8,7 @@ import { SourceLoginPage } from './SourceLoginPage';
 import {
   SOURCE_DETAIL_ABILITY_HOST_MULTITON,
   SOURCE_DETAIL_ABILITY_INSTANCE_ID_KEY
-} from '../Framework/Source/SourceDetailAbilityConstants';
+} from 'manxia_source_engine/src/main/ets/Framework/Source/SourceDetailAbilityConstants';
 import {
   SourceDetailAbilityParamStore,
   SourceDetailAbilityWindowPayload

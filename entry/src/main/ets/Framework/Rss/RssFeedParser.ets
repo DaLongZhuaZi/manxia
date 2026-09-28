@@ -1,5 +1,5 @@
-﻿import { RssFeedFormat, RssFeedItem, RssSubscriptionSource } from '../../Models/RssSubscriptionModels';
-import { logger } from '../../Utils/Logger';
+﻿import { RssFeedFormat, RssFeedItem, RssSubscriptionSource } from 'manxia_core/src/main/ets/Models/RssSubscriptionModels';
+import { logger } from 'manxia_core/src/main/ets/Utils/Logger';
 import { LegadoRuleAnalyzer } from '../Novel/LegadoRuleAnalyzer';
 
 export interface ParsedRssFeed {

@@ -1,0 +1,28 @@
+{
+  "schemaVersion": 1,
+  "contract": "legado_jsoup_compound_selector_comment_context",
+  "issueId": "ISSUE-COMPAT-243-JSOUP-STANDARD-CSS-PSEUDO-SELECTORS",
+  "baseline": {
+    "sourceCount": 458,
+    "sourcePackageSha256": "473048A191DE4749FA9C15E0A2F2328A3E86B385A5FCE23EA30432D598D03A67",
+    "legadoCommit": "95973d186b147fb9ab43a9240021d688e4304fbd"
+  },
+  "cases": [
+    {
+      "id": "compound-selector-ignores-comment-markup",
+      "html": "<article><!-- <div class=\"target\">comment</div> --><div class=\"target\">after</div></article>",
+      "rule": "div.target",
+      "expectedCount": 1,
+      "expectedContains": ["<div class=\"target\">after</div>"],
+      "semantics": "compound_selection_must_not_reenter_a_comment_and_treat_markup_like_text_as_a_real_element"
+    }
+  ],
+  "selectionPaths": [
+    "LegadoRuleAnalyzer.findElementsBySimpleSelector -> compound selector scan"
+  ],
+  "legadoSemantics": {
+    "implementation": "AnalyzeByJSoup delegates compound CSS selection to Jsoup Element.select; comment nodes are not selector candidates.",
+    "commentBoundary": "A comment is consumed as one special node and its markup-like text is never reparsed as an element."
+  },
+  "failureCondition": "The V2 compound-selector string fallback advances one character after a comment start and can select markup-like text inside the comment as a real element."
+}

@@ -1,6 +1,6 @@
 // 职责: 统一判断页面在当前阅读窗口中的可见性，不触碰 UI 刷新和加载状态。
 
-import { MangaChapter, MangaPage, ReadingMode } from '../Models/MangaModels';
+import { MangaChapter, MangaPage, ReadingMode } from 'manxia_core/src/main/ets/Models/MangaModels';
 import { MangaPageLoadResolver } from './MangaPageLoadResolver';
 import { WebtoonPageRef } from './MangaWebtoonTypes';
 

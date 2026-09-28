@@ -1,6 +1,6 @@
 import { common } from '@kit.AbilityKit';
 import { FrameCallback, UIContext } from '@kit.ArkUI';
-import { logger } from '../Utils/Logger';
+import { logger } from 'manxia_core/src/main/ets/Utils/Logger';
 import { FileEditorPage } from './FileEditorPage';
 import { ReaderAbilityBackgroundBlurOverlay } from '../Framework/Reader/ReaderAbilityBackgroundBlurOverlay';
 import { FileEditorOpenParams } from '../Framework/Editor/FileEditorService';

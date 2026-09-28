@@ -1,0 +1,28 @@
+{
+  "schemaVersion": 1,
+  "contract": "legado_image_error_file_cleanup",
+  "issueId": "ISSUE-COMPAT-014",
+  "baseline": {
+    "sourceCount": 458,
+    "sourcePackageSha256": "473048A191DE4749FA9C15E0A2F2328A3E86B385A5FCE23EA30432D598D03A67",
+    "legadoCommit": "95973d186b147fb9ab43a9240021d688e4304fbd"
+  },
+  "observedEvidence": {
+    "path": "tools/legado-compat/evidence/harmony-image-transport-summary-20260731.json",
+    "historicalErrorFiles": 78,
+    "runtimeValidation": "historical_device_evidence_only"
+  },
+  "errorFileBudget": {
+    "maxRetainedFiles": 20,
+    "filePrefix": "error_",
+    "fileSuffix": ".txt",
+    "cleanupPolicy": "delete_oldest_when_count_exceeds_budget",
+    "requiredFailurePhase": "finally"
+  },
+  "failureScenario": {
+    "name": "write_failure_after_file_creation",
+    "boundary": "writeFileWithRetry",
+    "expectedOutcome": "managed_error_file_count_is_bounded_after_success_or_write_failure",
+    "reason": "CREATE may leave a managed file before a write or retry failure reaches writeErrorLogFile catch"
+  }
+}

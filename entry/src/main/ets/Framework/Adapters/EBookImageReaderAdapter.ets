@@ -1,7 +1,7 @@
-import { EBook, EBookChapter, EBookContentMode, EBookFormat, EBookReaderEngine } from '../../Models/EBookModels';
-import { DownloadStatus } from '../Types/StatusEnums';
-import { ImageSourceType, MangaChapter, MangaPage, ReadingSettings } from '../../Models/MangaModels';
-import { logger } from '../../Utils/Logger';
+import { EBook, EBookChapter, EBookContentMode, EBookFormat, EBookReaderEngine } from 'manxia_core/src/main/ets/Models/EBookModels';
+import { DownloadStatus } from 'manxia_core/src/main/ets/Framework/Types/StatusEnums';
+import { ImageSourceType, MangaChapter, MangaPage, ReadingSettings } from 'manxia_core/src/main/ets/Models/MangaModels';
+import { logger } from 'manxia_core/src/main/ets/Utils/Logger';
 import { isEpubWebViewEnabled } from '../Initialization/ReaderKitFeatureGate';
 
 const TAG = 'EBookImageReaderAdapter';

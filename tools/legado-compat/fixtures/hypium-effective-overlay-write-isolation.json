@@ -1,0 +1,12 @@
+{
+  "schemaVersion": 1,
+  "contract": "hypium_effective_overlay_write_isolation",
+  "canonicalDirectoryName": "full-source-v2-hypium-device",
+  "effectiveDirectoryName": "effective-full-source-v2-hypium-device",
+  "expectedErrors": {
+    "sameAsBaseline": "EFFECTIVE_EVIDENCE_DIRECTORY_COLLIDES_WITH_BASELINE",
+    "nestedUnderBaseline": "EFFECTIVE_EVIDENCE_DIRECTORY_COLLIDES_WITH_BASELINE",
+    "outsideEvidenceRoot": "EFFECTIVE_EVIDENCE_DIRECTORY_OUTSIDE_ROOT"
+  },
+  "siblingDirectoryAllowed": true
+}

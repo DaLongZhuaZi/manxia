@@ -1,6 +1,6 @@
-import { DisplayMode } from '../../../../Utils/WindowManager';
-import { PageWindowCoordinator } from '../../../../Utils/PageWindowCoordinator';
-import { uiContextManager } from '../../../Managers/UIContextManager';
+import { DisplayMode } from 'manxia_theme/src/main/ets/Utils/WindowManager';
+import { PageWindowCoordinator } from 'manxia_theme/src/main/ets/Utils/PageWindowCoordinator';
+import { uiContextManager } from 'manxia_theme/src/main/ets/Framework/Managers/UIContextManager';
 import { IPagePolicyHost } from '../contracts/IPagePolicyHost';
 
 export class PagePolicyHostFacade implements IPagePolicyHost {

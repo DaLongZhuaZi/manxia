@@ -4,19 +4,19 @@
  * 与漫画阅读器功能对齐
  */
 
-import { logger } from '../Utils/Logger';
+import { logger } from 'manxia_core/src/main/ets/Utils/Logger';
 import { ReaderSafeAreaUtils } from '../Utils/ReaderSafeAreaUtils';
-import { ThemeAwareState, ThemeAwareHelper } from '../Framework/Components/ThemeAware';
-import { FontAwareState } from '../Framework/Components/FontAware';
+import { ThemeAwareState, ThemeAwareHelper } from 'manxia_theme/src/main/ets/Framework/Components/ThemeAware';
+import { FontAwareState } from 'manxia_theme/src/main/ets/Framework/Components/FontAware';
 import { getSuwayomiSourceExecutor, SuwayomiSourceExecutor } from '../Framework/Source/SuwayomiSourceExecutor';
 import { PageInfo, ChapterInfo, ComicDetailInfo } from '../Framework/Source/SourceExecutor';
 import { display, curves, UIContext } from '@kit.ArkUI';
 import { window } from '@kit.ArkUI';
-import { WindowManager, DisplayMode } from '../Utils/WindowManager';
+import { WindowManager, DisplayMode } from 'manxia_theme/src/main/ets/Utils/WindowManager';
 import { AvifDecoder, isAvifFormat } from '../Framework/Image/AvifDecoder';
 import { http } from '@kit.NetworkKit';
 import { image } from '@kit.ImageKit';
-import { MangaReadFlowMonitor } from '../Framework/Reader/MangaReadFlowMonitor';
+import { MangaReadFlowMonitor } from 'manxia_reader_ui/src/main/ets/Framework/Reader/MangaReadFlowMonitor';
 import {
   MangaReadFlowEvent,
   MangaReadFlowEventType,
@@ -24,7 +24,7 @@ import {
   MangaReadFlowSessionInfo,
   MangaReadFlowSeverity,
   MangaReadFlowSourceKind
-} from '../Framework/Reader/MangaReadFlowTypes';
+} from 'manxia_reader_ui/src/main/ets/Framework/Reader/MangaReadFlowTypes';
 import { MangaAssetRetryMode } from '../Framework/Reader/MangaAssetTypes';
 import {
   buildMangaImageRetryKey,

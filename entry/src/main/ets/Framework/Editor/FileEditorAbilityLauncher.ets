@@ -1,6 +1,6 @@
 import { common, StartOptions, Want } from '@kit.AbilityKit';
 import { UIContext } from '@kit.ArkUI';
-import { logger } from '../../Utils/Logger';
+import { logger } from 'manxia_core/src/main/ets/Utils/Logger';
 import { FileEditorOpenFactory } from './FileEditorOpenFactory';
 import { FileEditorOpenParams } from './FileEditorService';
 import {

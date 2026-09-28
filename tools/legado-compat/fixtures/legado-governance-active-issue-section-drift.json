@@ -1,0 +1,12 @@
+{
+  "schemaVersion": 1,
+  "kind": "legado_governance_active_issue_section_contract",
+  "issueId": "ISSUE-AUTO-047-GOVERNANCE-ACTIVE-ISSUE-SECTION-DRIFT",
+  "sourceOfTruth": "tools/legado-compat/state/full-source-validation-state.json",
+  "mirrorPath": "tools/legado-compat/LEGADO_V2_GOVERNANCE_TASKS.md",
+  "startMarker": "<!-- LEGADO_V2_CURRENT_SOURCE_ISSUE:START -->",
+  "endMarker": "<!-- LEGADO_V2_CURRENT_SOURCE_ISSUE:END -->",
+  "historicalTokenOutsideGeneratedSection": "238→037",
+  "semanticMatchAllowed": false,
+  "verificationPolicy": "static_document_contract_only;runtime_build_install_device_and_legado_diff_deferred"
+}

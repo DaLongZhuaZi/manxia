@@ -1,5 +1,5 @@
-import { SafeFileUtils } from '../Utils/SafeFileUtils';
-import { SafeUtils } from '../Utils/SafeUtils';
+import { SafeFileUtils } from 'manxia_core/src/main/ets/Utils/SafeFileUtils';
+import { SafeUtils } from 'manxia_core/src/main/ets/Utils/SafeUtils';
 /**
  * 备份与恢复页面
  * 支持导出和导入所有应用数据
@@ -9,43 +9,43 @@ import { SafeUtils } from '../Utils/SafeUtils';
 
 import { HdsNavDestination, HdsNavDestinationAttribute, ScrollEffectType } from '@kit.UIDesignKit';
 import { LengthMetrics } from '@kit.ArkUI';
-import { logger } from '../Utils/Logger';
+import { logger } from 'manxia_core/src/main/ets/Utils/Logger';
 import { getBackupManager } from '../Framework/Managers/BackupManager';
 import { getEnhancedBackupManager, RestoreOptions } from '../Framework/Managers/EnhancedBackupManager';
-import { BackupData, BackupMetadata, BackupOptions, DEFAULT_BACKUP_OPTIONS } from '../Models/BackupModels';
-import { ThemeAwareHelper } from '../Framework/Components/ThemeAware';
-import { ThemeManager, ThemeType } from '../Framework/Managers/ThemeManager';
-import { FontAwareHelper, FontAwareState } from '../Framework/Components/FontAware';
-import { PageLifecycleManager } from '../Framework/Lifecycle';
-import { SandboxManager } from '../Framework/Storage/SandboxManager';
+import { BackupData, BackupMetadata, BackupOptions, DEFAULT_BACKUP_OPTIONS } from 'manxia_core/src/main/ets/Models/BackupModels';
+import { ThemeAwareHelper } from 'manxia_theme/src/main/ets/Framework/Components/ThemeAware';
+import { ThemeManager, ThemeType } from 'manxia_theme/src/main/ets/Framework/Managers/ThemeManager';
+import { FontAwareHelper, FontAwareState } from 'manxia_theme/src/main/ets/Framework/Components/FontAware';
+import { PageLifecycleManager } from 'manxia_core/src/main/ets/Framework/Lifecycle/index';
+import { SandboxManager } from 'manxia_core/src/main/ets/Framework/Storage/SandboxManager';
 import { picker, fileIo, fileUri as coreFileUri } from '@kit.CoreFileKit';
-import { BackupOptionsDialog } from '../components/backup/BackupOptionsDialog';
-import { RestoreOptionsDialog } from '../components/backup/RestoreOptionsDialog';
+import { BackupOptionsDialog } from 'manxia_features_ui/src/main/ets/components/backup/BackupOptionsDialog';
+import { RestoreOptionsDialog } from 'manxia_features_ui/src/main/ets/components/backup/RestoreOptionsDialog';
 import { WebDAVConfigDialog } from '../components/backup/WebDAVConfigDialog';
 import { util } from '@kit.ArkTS';
 import { common } from '@kit.AbilityKit';
 import { Want } from '@kit.AbilityKit';
-import { getWebDAVBackupManager, RemoteBackupInfo, WebDAVSyncStatus } from '../Framework/WebDAV/WebDAVBackupManager';
-import { WebDAVSettings, DEFAULT_WEBDAV_SETTINGS } from '../Models/WebDAVModels';
-import { WebDAVClient, WebDAVConfig, WebDAVTestResult } from '../Framework/WebDAV/WebDAVClient';
-import { quickTestWebDAVNative } from '../Framework/WebDAV/WebDAVNativeTest';
-import { WebDAVNativeConfig, WebDAVNativeClient, isNativeModuleAvailable } from '../Framework/WebDAV/WebDAVNativeClient';
-import { WebDAVErrorAnalyzer, analyzeWebDAVError } from '../Framework/WebDAV/WebDAVErrorAnalyzer';
-import { FTPConfig, FTPNativeClient, FTPFileInfo, isFTPNativeAvailable } from '../Framework/FTP/FTPNativeClient';
-import { SavedFTPConnection, DEFAULT_FTP_CONNECTION, createFTPConnection } from '../Models/FTPModels';
-import { getHelpPanelManagerV2 } from '../Framework/Components/HelpPanelV2';
+import { getWebDAVBackupManager, RemoteBackupInfo, WebDAVSyncStatus } from 'manxia_network/src/main/ets/Framework/WebDAV/WebDAVBackupManager';
+import { WebDAVSettings, DEFAULT_WEBDAV_SETTINGS } from 'manxia_core/src/main/ets/Models/WebDAVModels';
+import { WebDAVClient, WebDAVConfig, WebDAVTestResult } from 'manxia_network/src/main/ets/Framework/WebDAV/WebDAVClient';
+import { quickTestWebDAVNative } from 'manxia_network/src/main/ets/Framework/WebDAV/WebDAVNativeTest';
+import { WebDAVNativeConfig, WebDAVNativeClient, isNativeModuleAvailable } from 'manxia_network/src/main/ets/Framework/WebDAV/WebDAVNativeClient';
+import { WebDAVErrorAnalyzer, analyzeWebDAVError } from 'manxia_network/src/main/ets/Framework/WebDAV/WebDAVErrorAnalyzer';
+import { FTPConfig, FTPNativeClient, FTPFileInfo, isFTPNativeAvailable } from 'manxia_network/src/main/ets/Framework/FTP/FTPNativeClient';
+import { SavedFTPConnection, DEFAULT_FTP_CONNECTION, createFTPConnection } from 'manxia_core/src/main/ets/Models/FTPModels';
+import { getHelpPanelManagerV2 } from 'manxia_features_ui/src/main/ets/Framework/Components/HelpPanelV2';
 import { preferences } from '@kit.ArkData';
 import { promptAction } from '@kit.ArkUI';
-import { SettingsSearchSupport } from './settings/SettingsSearchSupport';
-import { AppGuideOverlay, GuideHighlightRect } from '../Framework/Components/AppGuideOverlay';
+import { SettingsSearchSupport } from 'manxia_features_ui/src/main/ets/pages/settings/SettingsSearchSupport';
+import { AppGuideOverlay, GuideHighlightRect } from 'manxia_theme/src/main/ets/Framework/Components/AppGuideOverlay';
 import { ensureGuideAnchorVisibleInScroller, resolveGuideHighlightRectInRoot } from '../Framework/Components/AppGuideSupport';
-import { AppGuideManager, AppGuidePageId, AppGuideStep } from '../Framework/Managers/AppGuideManager';
+import { AppGuideManager, AppGuidePageId, AppGuideStep } from 'manxia_core/src/main/ets/Framework/Managers/AppGuideManager';
 import { SettingsImmersiveTitleBar } from './settings/SettingsImmersiveTitleBar';
-import { SettingsImmersiveTitleActionItem, SettingsPageTitleBarManager } from './settings/SettingsPageTitleBarManager';
-import { GlobalBackgroundLayerMode } from '../Framework/Components/GlobalBackgroundLayer';
-import { SharedPageBackgroundLayer } from '../Framework/Components/SharedPageBackgroundLayer';
-import { SettingsPanelSurfaceHelper } from './settings/SettingsPanelSurfaceHelper';
-import { ExternalFileTaskParamStore } from '../Framework/ExternalFile/ExternalFileTaskParamStore';
+import { SettingsImmersiveTitleActionItem, SettingsPageTitleBarManager } from 'manxia_features_ui/src/main/ets/pages/settings/SettingsPageTitleBarManager';
+import { GlobalBackgroundLayerMode } from 'manxia_theme/src/main/ets/Framework/Components/GlobalBackgroundLayer';
+import { SharedPageBackgroundLayer } from 'manxia_theme/src/main/ets/Framework/Components/SharedPageBackgroundLayer';
+import { SettingsPanelSurfaceHelper } from 'manxia_features_ui/src/main/ets/pages/settings/SettingsPanelSurfaceHelper';
+import { ExternalFileTaskParamStore } from 'manxia_network/src/main/ets/Framework/ExternalFile/ExternalFileTaskParamStore';
 
 const TAG = 'BackupPage';
 const TITLE_BAR_HEIGHT_MINI: number = 56;
@@ -1705,7 +1705,7 @@ struct BackupPage {
         await sandboxManager.createDirectory(tempDir);
       }
 
-      const tarPackager = await import('../Framework/Utils/TarPackager').then(m => m.getTarPackager());
+      const tarPackager = await import('manxia_core/src/main/ets/Framework/Utils/TarPackager').then(m => m.getTarPackager());
       await tarPackager.extractTarArchive(backupInfo.filePath, tempDir);
 
       const jsonPath = `${tempDir}/backup.json`;

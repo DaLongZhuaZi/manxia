@@ -8,17 +8,17 @@ import {
   UnifiedChapter,
   UnifiedContent,
   UnifiedContentType
-} from '../../Models/UnifiedContentModels';
-import { MangaChapter } from '../../Models/MangaModels';
-import { EBookChapter, EBookFormat } from '../../Models/EBookModels';
-import { LegadoChapter } from '../Novel/LegadoSourceTypes';
-import { MangaAdapter, EBookAdapter, NovelAdapter } from '../Adapters/UnifiedContentAdapter';
+} from 'manxia_core/src/main/ets/Models/UnifiedContentModels';
+import { MangaChapter } from 'manxia_core/src/main/ets/Models/MangaModels';
+import { EBookChapter, EBookFormat } from 'manxia_core/src/main/ets/Models/EBookModels';
+import { LegadoChapter } from 'manxia_novel/src/main/ets/Framework/Novel/LegadoSourceTypes';
+import { MangaAdapter, EBookAdapter, NovelAdapter } from 'manxia_novel/src/main/ets/Framework/Adapters/UnifiedContentAdapter';
 import { buildLocalTextNovelBookId } from '../Adapters/LocalTextNovelAdapter';
-import { DatabaseManager } from '../Database/DatabaseManager';
-import { DatabaseValue, GenericQueryRecord } from '../Database/DatabaseTypes';
+import { DatabaseManager } from 'manxia_core/src/main/ets/Framework/Database/DatabaseManager';
+import { DatabaseValue, GenericQueryRecord } from 'manxia_core/src/main/ets/Framework/Database/DatabaseTypes';
 import { getNovelChapterCacheManager } from '../Novel/NovelChapterCacheManager';
 import { getRemoteReadAloudCacheService } from '../ReadAloud/RemoteReadAloudCacheService';
-import { logger } from '../../Utils/Logger';
+import { logger } from 'manxia_core/src/main/ets/Utils/Logger';
 
 const TAG = 'ChapterOrderService';
 const OVERRIDE_TABLE = 'chapter_order_override';

@@ -1,4 +1,5 @@
-import { SafeFileUtils } from '../../Utils/SafeFileUtils';
+import { RequestHeaderEntry, RequestHeaders } from 'manxia_core/src/main/ets/Framework/Contracts/ImageRequestHeaders';
+import { SafeFileUtils } from 'manxia_core/src/main/ets/Utils/SafeFileUtils';
 // 文件路径: src/main/ets/Framework/Cache/ImageCacheManager.ets
 /**
  * 图片缓存管理器
@@ -6,18 +7,19 @@ import { SafeFileUtils } from '../../Utils/SafeFileUtils';
  */
 
 import { image } from '@kit.ImageKit';
-import { logger } from '../../Utils/Logger';
-import { SandboxManager } from '../Storage/SandboxManager';
+import { logger } from 'manxia_core/src/main/ets/Utils/Logger';
+import { SandboxManager } from 'manxia_core/src/main/ets/Framework/Storage/SandboxManager';
 import { BusinessError } from '@kit.BasicServicesKit';
 import { http } from '@kit.NetworkKit';
 import { CacheStats, MemoryCacheStats, DiskCacheStats } from '../Data/DataManager';
-import CookieManager from '../Managers/CookieManager';
+import CookieManager from 'manxia_core/src/main/ets/Framework/Managers/CookieManager';
 import { PermanentImageCacheManager } from './PermanentImageCacheManager';
 import { OnlineImageLoader, OnlineLoadOptions, RequestHeaders as OnlineRequestHeaders } from './OnlineImageLoader';
 import { SuwayomiCacheManager } from '../Source/SuwayomiCacheManager';
 import { KomgaCacheManager } from '../Source/KomgaCacheManager';
 import fs from '@ohos.file.fs';
 
+export { RequestHeaderEntry, RequestHeaders };
 const TAG = 'ImageCacheManager';
 
 // 内存缓存配置接口
@@ -103,28 +105,6 @@ export interface LoadOptions {
   contentType?: string;
 }
 
-export interface RequestHeaderEntry {
-  name: string;
-  value: string;
-}
-
-export interface RequestHeaders {
-  userAgent?: string;
-  accept?: string;
-  referer?: string;
-  origin?: string;
-  cookie?: string;
-  authorization?: string;
-  acceptLanguage?: string;
-  cacheControl?: string;
-  pragma?: string;
-  secFetchDest?: string;
-  secFetchMode?: string;
-  secFetchSite?: string;
-  cachePartition?: string;
-  extraHeaders?: RequestHeaderEntry[];
-}
-
 interface HttpHeadersObject {
   'User-Agent'?: string;
   'Origin'?: string;
@@ -141,7 +121,6 @@ interface HttpHeadersObject {
 }
 
 type RemoteProviderCacheType = 'suwayomi' | 'komga' | '';
-
 
 export class ImageCacheManager {
   private static instance: ImageCacheManager | null = null;
@@ -473,6 +452,18 @@ export class ImageCacheManager {
     onlineOptions.forceRefresh = options?.forceRefresh;
     onlineOptions.skipFailureTtl = options?.skipFailureTtl;
     return onlineOptions;
+  }
+
+  private isLikelyTlsImageError(errCode: Object | undefined, errMsg: string): boolean {
+    const codeText = errCode === undefined || errCode === null ? '' : String(errCode);
+    if (codeText === '2300060' || codeText === '2300999') {
+      return true;
+    }
+    const text = errMsg.toLowerCase();
+    return text.includes('certificate') || text.includes('ssl') || text.includes('tls') ||
+      text.includes('unexpected_eof') || text.includes('handshake') ||
+      text.includes('connection_closed') || text.includes('internal error') ||
+      text.includes('code=2300999') || text.includes('code=2300060');
   }
 
   private cloneRequestHeaderEntries(entries?: RequestHeaderEntry[]): RequestHeaderEntry[] | undefined {
@@ -1056,6 +1047,13 @@ export class ImageCacheManager {
           originHdr = 'https://b.amh1234.com';
         }
 
+        // 美图乐图床防盗链
+        if (url.includes('tujiba.top') || url.includes('meitula.org')) {
+          if (refererHdr.length === 0) {
+            refererHdr = 'https://www.meitula.org/';
+          }
+        }
+
         // Pixiv CDN防盗链：i.pximg.net 必须携带 Referer
         if (url.includes('i.pximg.net') || url.includes('.pximg.net')) {
           if (refererHdr.length === 0) {
@@ -1227,13 +1225,30 @@ export class ImageCacheManager {
         if (errCode === 2300060 && url.startsWith('https://')) {
           const httpUrl = url.replace('https://', 'http://');
           logger.info(TAG, `SSL错误，尝试HTTP降级: ${httpUrl.substring(0, 80)}`);
-          
+
           try {
             // 递归调用自己，使用HTTP URL
             return await this.loadFromNetwork(httpUrl, options);
           } catch (retryError) {
-            logger.warn(TAG, `HTTP降级也失败: ${httpUrl.substring(0, 80)}`);
+            logger.warn(TAG, `HTTP降级也失败，转 OnlineImageLoader WebView: ${url.substring(0, 80)}`);
+            try {
+              const onlineLoader = OnlineImageLoader.getInstance();
+              return await onlineLoader.load(url, this.buildOnlineLoadOptions(options));
+            } catch (onlineError) {
+              logger.warn(TAG, `OnlineImageLoader SSL恢复失败: ${String(onlineError)}`);
+            }
             // 继续正常的重试逻辑
+          }
+        }
+
+        // TLS 握手被掐断（图床指纹）时也转 WebView 队列
+        if (url.startsWith('http') && this.isLikelyTlsImageError(errCode, errMsg)) {
+          logger.warn(TAG, `疑似TLS拦截(code=${errCode})，转 OnlineImageLoader: ${url.substring(0, 80)}`);
+          try {
+            const onlineLoader = OnlineImageLoader.getInstance();
+            return await onlineLoader.load(url, this.buildOnlineLoadOptions(options));
+          } catch (onlineError) {
+            logger.warn(TAG, `OnlineImageLoader TLS恢复失败: ${String(onlineError)}`);
           }
         }
         

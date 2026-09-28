@@ -5,7 +5,7 @@
  */
 
 import { image } from '@kit.ImageKit';
-import { logger } from '../../Utils/Logger';
+import { logger } from 'manxia_core/src/main/ets/Utils/Logger';
 import { OnlineImageLoader, OnlineLoadOptions, RequestHeaders } from '../Cache/OnlineImageLoader';
 import { isAvifFormat } from './AvifDecoder';
 
@@ -20,6 +20,16 @@ const loadingUrls: Set<string> = new Set();
 
 // 加载回调队列
 const loadCallbacks: Map<string, Array<(pixelMap: image.PixelMap | null) => void>> = new Map();
+
+export class CoverPreloadResult {
+  public url: string = '';
+  public succeeded: boolean = false;
+
+  constructor(url: string, succeeded: boolean) {
+    this.url = url;
+    this.succeeded = succeeded;
+  }
+}
 
 function releaseCoverPixelMap(pixelMap: image.PixelMap): void {
   try {
@@ -211,15 +221,29 @@ export class CoverImageManager {
   /**
    * 批量预加载封面
    */
-  async preloadCovers(urls: string[]): Promise<void> {
+  async preloadCovers(
+    urls: string[],
+    onBatchComplete?: (results: CoverPreloadResult[]) => void
+  ): Promise<CoverPreloadResult[]> {
     const networkUrls = urls.filter(url => url && url.startsWith('http'));
+    const allResults: CoverPreloadResult[] = [];
     
     // 并发加载，但限制并发数
     const concurrency = 3;
     for (let i = 0; i < networkUrls.length; i += concurrency) {
       const batch = networkUrls.slice(i, i + concurrency);
-      await Promise.all(batch.map(url => this.preloadCover(url)));
+      const pixelMaps = await Promise.all(batch.map((url: string) => this.preloadCover(url)));
+      const batchResults: CoverPreloadResult[] = [];
+      for (let index = 0; index < batch.length; index++) {
+        const result: CoverPreloadResult = new CoverPreloadResult(batch[index], pixelMaps[index] !== null);
+        batchResults.push(result);
+        allResults.push(result);
+      }
+      if (onBatchComplete) {
+        onBatchComplete(batchResults);
+      }
     }
+    return allResults;
   }
   
   /**

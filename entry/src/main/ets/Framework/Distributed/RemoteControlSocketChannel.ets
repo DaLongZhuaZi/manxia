@@ -18,11 +18,38 @@ import { util } from '@kit.ArkTS';
 import { fileIo } from '@kit.CoreFileKit';
 import { cryptoFramework } from '@kit.CryptoArchitectureKit';
 import { connection } from '@kit.NetworkKit';
-import { logger } from '../../Utils/Logger';
-import { SafeFileUtils } from '../../Utils/SafeFileUtils';
-import { getContext } from '../../GlobalContext';
-import { EBookDataManager } from '../Data/EBookDataManager';
-import { DataManager } from '../Data/DataManager';
+import { logger } from 'manxia_core/src/main/ets/Utils/Logger';
+import { SafeFileUtils } from 'manxia_core/src/main/ets/Utils/SafeFileUtils';
+import { getContext } from 'manxia_core/src/main/ets/GlobalContext';
+import { EBookDataManager } from 'manxia_core/src/main/ets/Framework/Data/EBookDataManager';
+import { CoverCacheManager } from 'manxia_theme/src/main/ets/Framework/Cache/CoverCacheManager';
+import { getTarPackager } from 'manxia_core/src/main/ets/Framework/Utils/TarPackager';
+import {
+  DEFAULT_EBOOK_READING_SETTINGS,
+  EBook,
+  EBookChapter
+} from 'manxia_core/src/main/ets/Models/EBookModels';
+import { NovelBook, NovelChapter } from 'manxia_core/src/main/ets/Models/NovelModels';
+import { DataManager, OnlinePageInfo } from '../Data/DataManager';
+import { getNovelDataManager } from '../Novel/NovelDataManager';
+import { getNovelChapterCacheManager } from '../Novel/NovelChapterCacheManager';
+import {
+  ContinuationBundleReceiveResult,
+  ContinuationChapterContent,
+  ContinuationContentType,
+  ContinuationTransferFile,
+  ContinuationTransferManifest,
+  ContinuationTransferMode,
+  ContinuationTransferRequest
+} from './ContinuationReadingTypes';
+import {
+  ContinuationTransferArchive,
+  ContinuationTransferPackageBuilder
+} from './ContinuationTransferPackageBuilder';
+import {
+  isContinuationManifestCompatible,
+  normalizeContinuationPackagePath
+} from './ContinuationTransferManifestValidator';
 import {
   MangaTransferBundle,
   MangaTransferFileEntry,
@@ -70,8 +97,16 @@ export interface RemoteControlSocketMessage {
 
 /** 文件流协议头（独立第二条 TCP 连接上使用，'\n' 结尾的单行 JSON） */
 interface RemoteFileStreamHeader {
-  kind: 'file_request' | 'file_start' | 'file_error';
+  kind: 'file_request' | 'file_start' | 'file_error' | 'continuation_request';
   bookId: string;
+  schemaVersion?: number;
+  sessionId?: string;
+  mode?: ContinuationTransferMode;
+  contentType?: ContinuationContentType;
+  isLocal?: boolean;
+  chapterIndex?: number;
+  pageIndex?: number;
+  offset?: number;
   fileName?: string;
   totalBytes?: number;
   fileHash?: string;
@@ -90,10 +125,24 @@ export interface RemoteFileRequestOptions {
   onProgress?: (receivedBytes: number, totalBytes: number) => void;
 }
 
+export interface ContinuationBundleRequestOptions {
+  timeoutMs?: number;
+  onProgress?: (receivedBytes: number, totalBytes: number) => void;
+  onPhase?: (phase: string) => void;
+}
+
 /** 漫画流协议头（与文件流共用第二条 TCP 连接，'\n' 结尾的 JSON 行） */
 interface RemoteMangaStreamHeader {
-  kind: 'file_request' | 'file_start' | 'file_error' | 'manga_request' | 'manga_start' | 'file_part' | 'manga_end';
+  kind: 'file_request' | 'file_start' | 'file_error' | 'manga_request' | 'manga_start' | 'file_part' | 'manga_end' | 'continuation_request';
   bookId?: string;
+  schemaVersion?: number;
+  sessionId?: string;
+  mode?: ContinuationTransferMode;
+  contentType?: ContinuationContentType;
+  isLocal?: boolean;
+  chapterIndex?: number;
+  pageIndex?: number;
+  offset?: number;
   totalBytes?: number;
   bundle?: MangaTransferBundle;
   relPath?: string;
@@ -117,6 +166,12 @@ export class RemoteControlSocketChannel {
   private remoteIp: string = '';
   private remotePort: number = 0;
   private fileRequestEpoch: number = 0;
+  private activeFileRequestEpoch: number = -1;
+  private activeFileClient: socket.TCPSocket | null = null;
+  private activeFileRequestCancel: (() => void) | null = null;
+  private versionedContinuationRequired: boolean = false;
+  private lastContinuationRequestError: string = '';
+  private readonly continuationPackageBuilder: ContinuationTransferPackageBuilder = new ContinuationTransferPackageBuilder();
   private onMessageCallback: ((message: RemoteControlSocketMessage) => void) | null = null;
   private onStatusCallback: ((connected: boolean, detail: string) => void) | null = null;
   private readonly decoder: util.TextDecoder = new util.TextDecoder('utf-8');
@@ -141,6 +196,31 @@ export class RemoteControlSocketChannel {
 
   public isConnected(): boolean {
     return this.connected;
+  }
+
+  public requireVersionedContinuationProtocol(): void {
+    this.versionedContinuationRequired = true;
+  }
+
+  public getLastContinuationRequestError(): string {
+    return this.lastContinuationRequestError;
+  }
+
+  public cancelFileRequest(): void {
+    const cancel = this.activeFileRequestCancel;
+    const client = this.activeFileClient;
+    this.activeFileRequestCancel = null;
+    this.activeFileClient = null;
+    this.activeFileRequestEpoch = -1;
+    this.fileRequestEpoch += 1;
+    if (cancel) {
+      cancel();
+    }
+    if (client) {
+      void client.close().catch((error: Error) => {
+        logger.debug(TAG, `取消接续传输时关闭连接失败: ${String(error)}`);
+      });
+    }
   }
 
   /**
@@ -362,8 +442,35 @@ export class RemoteControlSocketChannel {
       requestHandled = true;
       try {
         const header = JSON.parse(headerText) as RemoteMangaStreamHeader;
+        if (header.kind === 'continuation_request' && header.bookId && header.bookId.length > 0) {
+          if (header.schemaVersion !== 1 || !header.sessionId || !header.mode || !header.contentType) {
+            void this.sendFileErrorAndClose(clientConnection, '接续传输协议版本或请求参数不兼容');
+            return;
+          }
+          const request: ContinuationTransferRequest = {
+            schemaVersion: header.schemaVersion,
+            sessionId: header.sessionId,
+            mode: header.mode,
+            contentType: header.contentType,
+            sourceBookId: header.bookId,
+            isLocal: header.isLocal === true,
+            chapterIndex: Math.max(0, header.chapterIndex || 0),
+            pageIndex: Math.max(0, header.pageIndex || 0),
+            offset: Math.max(0, header.offset || 0)
+          };
+          void this.streamContinuationBundleTo(clientConnection, request);
+          return;
+        }
         if (header.kind === 'manga_request' && header.bookId && header.bookId.length > 0) {
+          if (this.versionedContinuationRequired) {
+            void this.sendFileErrorAndClose(clientConnection, '对端不支持版本化接续传输协议');
+            return;
+          }
           void this.streamMangaBundleTo(clientConnection, header.bookId);
+          return;
+        }
+        if (header.kind === 'file_request' && this.versionedContinuationRequired) {
+          void this.sendFileErrorAndClose(clientConnection, '对端不支持版本化接续传输协议');
           return;
         }
         if (header.kind !== 'file_request' || !header.bookId || header.bookId.length <= 0) {
@@ -469,6 +576,59 @@ export class RemoteControlSocketChannel {
     }
   }
 
+  private async streamContinuationBundleTo(
+    conn: socket.TCPSocketConnection,
+    request: ContinuationTransferRequest
+  ): Promise<void> {
+    let archive: ContinuationTransferArchive | null = null;
+    try {
+      archive = await this.continuationPackageBuilder.build(
+        request,
+        async (): Promise<MangaTransferBundle | null> => await this.buildMangaTransferBundle(request.sourceBookId)
+      );
+      if (!archive) {
+        await this.sendFileErrorAndClose(conn, `源设备无法准备完整接续数据: ${request.contentType}`);
+        return;
+      }
+      const startHeader: RemoteFileStreamHeader = {
+        kind: 'file_start',
+        bookId: request.sourceBookId,
+        fileName: archive.fileName,
+        totalBytes: archive.totalBytes,
+        fileHash: archive.sha256
+      };
+      await this.sendTextLine(conn, JSON.stringify(startHeader));
+      const file = SafeFileUtils.openSyncStrict(archive.archivePath, fileIo.OpenMode.READ_ONLY);
+      try {
+        const buffer = new ArrayBuffer(FILE_STREAM_CHUNK_SIZE);
+        let sentBytes = 0;
+        let readBytes = 0;
+        while ((readBytes = SafeFileUtils.readSyncStrict(file.fd, buffer)) > 0) {
+          await conn.send({ data: buffer.slice(0, readBytes) });
+          sentBytes += readBytes;
+        }
+        logger.info(
+          TAG,
+          `版本化接续包发送完成: type=${request.contentType}, mode=${request.mode}, bytes=${sentBytes}/${archive.totalBytes}`
+        );
+      } finally {
+        SafeFileUtils.closeSync(file);
+      }
+    } catch (error) {
+      logger.warn(TAG, `发送版本化接续包失败: ${String(error)}`);
+      await this.sendFileErrorAndClose(conn, `接续数据准备失败: ${String(error)}`);
+    } finally {
+      if (archive) {
+        this.continuationPackageBuilder.cleanup(archive);
+      }
+      try {
+        await conn.close();
+      } catch (closeError) {
+        logger.debug(TAG, `关闭接续数据包连接失败: ${String(closeError)}`);
+      }
+    }
+  }
+
   private extractFileName(filePath: string): string {
     const lastSlashIndex = filePath.lastIndexOf('/');
     if (lastSlashIndex >= 0) {
@@ -479,19 +639,16 @@ export class RemoteControlSocketChannel {
 
   /**
    * 源端：组装漫画接续传输元数据包（漫画行 + 章节 + 页面 + 文件清单）。
-   * 本地漫画（comic_info）附带封面与各章节目录下的图片文件；在线漫画仅携带元数据，
-   * 目标端按 sourceId/externalId 联网恢复章节。
+   * 本地漫画读取 comic_info/chapter/page；在线漫画读取 online_comic_info/online_chapter/online_page，
+   * 并将页面记录中已落盘的图片加入文件清单，供接续包按模式传输。
    */
   private async buildMangaTransferBundle(comicId: string): Promise<MangaTransferBundle | null> {
     try {
       const dataManager = DataManager.getInstance();
       let comicMeta: RemoteComicMetadata | null = null;
-      // 先用简单查询（comic_info 单表），部分数据形态下 UNION 查询存在查不到的情况；
-      // 再用 UNION 查询兜底，最后诊断输出各表命中情况。
-      let localComic = await dataManager.getComicInfo(comicId);
-      if (!localComic) {
-        localComic = await dataManager.getComicById(comicId);
-      }
+      let isOnlineComic = false;
+      // 保留本地/在线表来源信息，避免 getComicById 将在线记录转换成本地类型后选错章节表。
+      const localComic = await dataManager.getComicInfo(comicId);
       if (localComic) {
         comicMeta = {
           id: localComic.id,
@@ -515,7 +672,8 @@ export class RemoteControlSocketChannel {
       } else {
         const onlineComic = await dataManager.getOnlineComicInfoById(comicId);
         if (onlineComic) {
-          comicMeta = {
+          isOnlineComic = true;
+          const onlineComicMeta: RemoteComicMetadata = {
             id: onlineComic.id,
             title: onlineComic.title,
             author: onlineComic.author,
@@ -534,6 +692,29 @@ export class RemoteControlSocketChannel {
             isNSFW: onlineComic.isNSFW === 1 ? 1 : 0,
             isPrivate: onlineComic.isPrivate === 1 ? 1 : 0
           };
+          comicMeta = onlineComicMeta;
+          const onlineSourceId = Number(onlineComic.sourceId);
+          if (Number.isFinite(onlineSourceId) && onlineSourceId > 0) {
+            try {
+              const coverCache = CoverCacheManager.getInstance();
+              const coverExternalId = onlineComic.externalId || onlineComic.id;
+              let cachedCoverPath = await coverCache.getLocalCoverPath(onlineSourceId, coverExternalId);
+              if ((!cachedCoverPath || !SafeFileUtils.accessSync(cachedCoverPath)) &&
+                (onlineComic.coverUrl.startsWith('http://') || onlineComic.coverUrl.startsWith('https://'))) {
+                cachedCoverPath = await coverCache.downloadAndCacheCover(
+                  onlineSourceId,
+                  coverExternalId,
+                  onlineComic.coverUrl
+                );
+              }
+              if (cachedCoverPath && SafeFileUtils.accessSync(cachedCoverPath)) {
+                onlineComicMeta.coverLocalPath = cachedCoverPath;
+                logger.info(TAG, `在线漫画封面加入接续包: comicId=${comicId}, path=${cachedCoverPath}`);
+              }
+            } catch (coverError) {
+              logger.warn(TAG, `在线漫画本地封面不可用，继续传输漫画内容: comicId=${comicId}, error=${String(coverError)}`);
+            }
+          }
         } else {
           const diagnostics = await dataManager.getMangaLookupDiagnostics(comicId);
           logger.warn(TAG, `漫画父记录缺失诊断: comicId=${comicId}, ${diagnostics}`);
@@ -542,82 +723,118 @@ export class RemoteControlSocketChannel {
       if (!comicMeta) {
         return null;
       }
+      const transferComicMeta: RemoteComicMetadata = comicMeta;
 
-      const chapters = await dataManager.getChaptersByMangaId(comicId);
       const chapterMetas: RemoteChapterMetadata[] = [];
       const chapterPages: MangaChapterPagesEntry[] = [];
       const files: MangaTransferFileEntry[] = [];
       const seenPaths = new Set<string>();
 
       // 封面文件
-      const coverPath = comicMeta.coverLocalPath.length > 0 ? comicMeta.coverLocalPath : comicMeta.coverUrl;
-      if (coverPath.length > 0 && !coverPath.startsWith('http') && SafeFileUtils.accessSync(coverPath)) {
-        const coverStat = SafeFileUtils.statSync(coverPath);
-        if (coverStat.isFile()) {
-          const coverHash = await this.computeFileHash(coverPath);
-          files.push({
-            originalPath: coverPath,
-            relPath: `cover/${this.extractFileName(coverPath)}`,
-            size: coverStat.size,
-            hash: coverHash
+      const coverPath = transferComicMeta.coverLocalPath.length > 0
+        ? transferComicMeta.coverLocalPath
+        : transferComicMeta.coverUrl;
+      await this.addMangaTransferFile(
+        coverPath,
+        `cover/${this.sanitizePathSegment(this.extractFileName(coverPath))}`,
+        files,
+        seenPaths
+      );
+      if (coverPath.length > 0 && !coverPath.startsWith('http') && seenPaths.has(coverPath)) {
+        transferComicMeta.coverLocalPath = coverPath;
+      }
+
+      if (isOnlineComic) {
+        const onlineChapters = await dataManager.getOnlineComicChapters(comicId);
+        for (const chapter of onlineChapters) {
+          chapterMetas.push({
+            id: chapter.id,
+            title: chapter.title,
+            index: chapter.index,
+            pageCount: chapter.pageCount,
+            isDownloaded: chapter.isDownloaded,
+            downloadPath: chapter.downloadPath || '',
+            publishTime: chapter.publishTime,
+            addTime: chapter.addTime || Date.now(),
+            externalId: chapter.externalId || chapter.id
           });
+          const onlinePages: OnlinePageInfo[] = await dataManager.getOnlineChapterPages(chapter.id);
+          const pageMetas: RemotePageMetadata[] = [];
+          for (const page of onlinePages) {
+            pageMetas.push({
+              id: page.id,
+              index: page.pageNumber,
+              imageUrl: page.imageUrl,
+              localPath: page.localPath || '',
+              width: page.width,
+              height: page.height,
+              fileSize: page.fileSize
+            });
+          }
+          chapterPages.push({ chapterId: chapter.id, pages: pageMetas });
+        }
+      } else {
+        const localChapters = await dataManager.getChaptersByMangaId(comicId);
+        for (const chapter of localChapters) {
+          chapterMetas.push({
+            id: chapter.id,
+            title: chapter.title,
+            index: chapter.index,
+            pageCount: chapter.pageCount,
+            isDownloaded: chapter.isDownloaded,
+            downloadPath: chapter.downloadPath || '',
+            publishTime: chapter.publishTime,
+            addTime: chapter.addTime || Date.now(),
+            externalId: chapter.externalId || chapter.id
+          });
+          const pages = await dataManager.getChapterPages(chapter.id);
+          const pageMetas: RemotePageMetadata[] = [];
+          for (const page of pages) {
+            pageMetas.push({
+              id: page.id,
+              index: page.index,
+              imageUrl: page.imageUrl,
+              localPath: page.localPath || '',
+              width: page.width,
+              height: page.height,
+              fileSize: page.fileSize
+            });
+          }
+          chapterPages.push({ chapterId: chapter.id, pages: pageMetas });
         }
       }
 
-      for (const chapter of chapters) {
-        chapterMetas.push({
-          id: chapter.id,
-          title: chapter.title,
-          index: chapter.index,
-          pageCount: chapter.pageCount,
-          isDownloaded: chapter.isDownloaded,
-          downloadPath: chapter.downloadPath || '',
-          publishTime: chapter.publishTime,
-          addTime: chapter.addTime || Date.now(),
-          externalId: chapter.externalId || chapter.id
-        });
-        const pages = await dataManager.getChapterPages(chapter.id);
-        const pageMetas: RemotePageMetadata[] = [];
-        for (const page of pages) {
-          pageMetas.push({
-            id: page.id,
-            index: page.index,
-            imageUrl: page.imageUrl,
-            localPath: page.localPath || '',
-            width: page.width,
-            height: page.height,
-            fileSize: page.fileSize
-          });
-        }
-        chapterPages.push({ chapterId: chapter.id, pages: pageMetas });
-
-        // 本地章节：遍历下载目录收集图片文件
-        const dir = chapter.downloadPath || '';
+      // 同时收集章节目录和页面记录中单独保存的本地图片。
+      for (const chapter of chapterMetas) {
+        const dir = chapter.downloadPath;
         if (dir.length > 0 && SafeFileUtils.accessSync(dir)) {
           const relFiles = SafeFileUtils.listFileSync(dir, { recursion: true });
           for (const rel of relFiles) {
             const absPath = `${dir}${rel}`;
-            if (seenPaths.has(absPath)) {
-              continue;
-            }
-            const stat = SafeFileUtils.statSync(absPath);
-            if (!stat.isFile()) {
-              continue;
-            }
-            seenPaths.add(absPath);
-            const fileHash = await this.computeFileHash(absPath);
-            files.push({
-              originalPath: absPath,
-              relPath: `chapter_${chapter.id}${rel}`,
-              size: stat.size,
-              hash: fileHash
-            });
+            await this.addMangaTransferFile(
+              absPath,
+              `chapter_${this.sanitizePathSegment(chapter.id)}${rel}`,
+              files,
+              seenPaths
+            );
           }
         }
       }
+      for (const pageGroup of chapterPages) {
+        for (const page of pageGroup.pages) {
+          if (page.localPath.length <= 0) {
+            continue;
+          }
+          const pageFileName = this.sanitizePathSegment(this.extractFileName(page.localPath));
+          const relativePath = `chapter_${this.sanitizePathSegment(pageGroup.chapterId)}/page_${page.index}_${pageFileName}`;
+          await this.addMangaTransferFile(page.localPath, relativePath, files, seenPaths);
+        }
+      }
+
+      transferComicMeta.chapterCount = chapterMetas.length;
 
       const bundle: MangaTransferBundle = {
-        comic: comicMeta,
+        comic: transferComicMeta,
         chapters: chapterMetas,
         chapterPages: chapterPages,
         files: files
@@ -774,6 +991,122 @@ export class RemoteControlSocketChannel {
     });
   }
 
+  private async addMangaTransferFile(
+    sourcePath: string,
+    relativePath: string,
+    files: MangaTransferFileEntry[],
+    seenPaths: Set<string>
+  ): Promise<void> {
+    if (sourcePath.length <= 0 || sourcePath.startsWith('http') || seenPaths.has(sourcePath) ||
+      !SafeFileUtils.accessSync(sourcePath)) {
+      return;
+    }
+    const stat = SafeFileUtils.statSyncStrict(sourcePath);
+    if (!stat.isFile()) {
+      return;
+    }
+    seenPaths.add(sourcePath);
+    files.push({
+      originalPath: sourcePath,
+      relPath: relativePath,
+      size: stat.size,
+      hash: await this.computeFileHash(sourcePath)
+    });
+  }
+
+  public async requestContinuationBundle(
+    request: ContinuationTransferRequest,
+    options?: ContinuationBundleRequestOptions
+  ): Promise<ContinuationBundleReceiveResult | null> {
+    const timeoutMs = options?.timeoutMs !== undefined ? options.timeoutMs : FILE_REQUEST_TIMEOUT_MS;
+    this.lastContinuationRequestError = '';
+    this.cleanTempTransferDir();
+    const received = await new Promise<RemoteFileReceiveResult | null>((resolve) => {
+      this.fileRequestEpoch += 1;
+      const epoch = this.fileRequestEpoch;
+      let settled = false;
+      let timer = -1;
+      const settle = (result: RemoteFileReceiveResult | null): void => {
+        if (settled) {
+          return;
+        }
+        settled = true;
+        if (timer >= 0) {
+          clearTimeout(timer);
+        }
+        resolve(result);
+      };
+      timer = setTimeout(() => {
+        logger.warn(TAG, `版本化接续包请求超时: bookId=${request.sourceBookId}`);
+        this.lastContinuationRequestError = '等待源设备传输接续数据超时';
+        settle(null);
+      }, timeoutMs);
+      void this.performFileRequest(
+        epoch,
+        request.sourceBookId,
+        settle,
+        options?.onProgress,
+        request
+      ).catch((error: Error) => {
+        logger.warn(TAG, `版本化接续包请求失败: ${String(error)}`);
+        settle(null);
+      });
+    });
+    if (!received) {
+      return null;
+    }
+
+    const stagingRoot = `${getContext().cacheDir}/continuation_incoming`;
+    const stagingDirectory = `${stagingRoot}/${this.sanitizePathSegment(request.sessionId)}_${Date.now()}`;
+    try {
+      SafeFileUtils.mkdirSync(stagingDirectory, true);
+      options?.onPhase?.('数据已接收，正在解压并校验…');
+      await getTarPackager().extractTarArchive(received.tempPath, stagingDirectory);
+      const manifestPath = `${stagingDirectory}/manifest.json`;
+      const manifest = JSON.parse(SafeFileUtils.readTextSync(manifestPath)) as ContinuationTransferManifest;
+      if (!isContinuationManifestCompatible(manifest, request)) {
+        throw new Error('接续数据包版本或身份信息不匹配');
+      }
+      for (let index = 0; index < manifest.files.length; index++) {
+        const file = manifest.files[index];
+        options?.onPhase?.(`正在校验文件 ${index + 1}/${manifest.files.length}…`);
+        const relativePath = normalizeContinuationPackagePath(file.relativePath);
+        const filePath = `${stagingDirectory}/${relativePath}`;
+        const stat = SafeFileUtils.statSyncStrict(filePath);
+        if (!stat.isFile() || stat.size !== file.size) {
+          throw new Error(`接续数据文件大小校验失败: ${relativePath}`);
+        }
+        const actualHash = await this.computeFileHash(filePath);
+        if (actualHash.length <= 0 || actualHash.toLowerCase() !== file.sha256.toLowerCase()) {
+          throw new Error(`接续数据文件哈希校验失败: ${relativePath}`);
+        }
+        file.relativePath = relativePath;
+        file.sourcePath = '';
+      }
+      logger.info(
+        TAG,
+        `版本化接续包校验通过: type=${manifest.contentType}, mode=${manifest.mode}, files=${manifest.files.length}`
+      );
+      return {
+        manifest: manifest,
+        stagingDirectory: stagingDirectory
+      };
+    } catch (error) {
+      this.deleteDirectoryTree(stagingDirectory);
+      this.lastContinuationRequestError = error instanceof Error ? error.message : String(error);
+      logger.warn(TAG, `接续数据包解压或校验失败: ${String(error)}`);
+      return null;
+    } finally {
+      if (SafeFileUtils.accessSync(received.tempPath)) {
+        SafeFileUtils.unlinkSync(received.tempPath);
+      }
+    }
+  }
+
+  public cleanupContinuationBundle(bundle: ContinuationBundleReceiveResult): void {
+    this.deleteDirectoryTree(bundle.stagingDirectory);
+  }
+
   private cleanTempTransferDir(): void {
     try {
       const filesDir = getContext().filesDir;
@@ -791,13 +1124,39 @@ export class RemoteControlSocketChannel {
     epoch: number,
     bookId: string,
     settle: (result: RemoteFileReceiveResult | null) => void,
-    onProgress?: (receivedBytes: number, totalBytes: number) => void
+    onProgress?: (receivedBytes: number, totalBytes: number) => void,
+    continuationRequest?: ContinuationTransferRequest
   ): Promise<void> {
     let client: socket.TCPSocket | null = null;
     let settled = false;
+    let outputFd = -1;
+    let receivedTempPath = '';
+    const closeOutputFile = (): void => {
+      if (outputFd >= 0) {
+        SafeFileUtils.closeSync(outputFd);
+        outputFd = -1;
+      }
+    };
+    const deletePartialFile = (): void => {
+      closeOutputFile();
+      if (receivedTempPath.length > 0 && SafeFileUtils.accessSync(receivedTempPath)) {
+        SafeFileUtils.unlinkSync(receivedTempPath);
+      }
+      receivedTempPath = '';
+    };
     const settleOnce = (result: RemoteFileReceiveResult | null): void => {
       if (!settled) {
         settled = true;
+        if (result === null) {
+          deletePartialFile();
+        } else {
+          closeOutputFile();
+        }
+        if (this.activeFileRequestEpoch === epoch) {
+          this.activeFileRequestEpoch = -1;
+          this.activeFileRequestCancel = null;
+          this.activeFileClient = null;
+        }
         settle(result);
       }
     };
@@ -808,56 +1167,28 @@ export class RemoteControlSocketChannel {
         return;
       }
       client = socket.constructTCPSocketInstance();
+      this.activeFileRequestEpoch = epoch;
+      this.activeFileClient = client;
+      this.activeFileRequestCancel = (): void => {
+        settleOnce(null);
+      };
       let phase: 'header' | 'data' = 'header';
       let headerBuffer = '';
       const decoder = new util.TextDecoder('utf-8');
-      const dataChunks: Uint8Array[] = [];
       let dataBytes = 0;
       let expectedBytes = 0;
       let expectedHash = '';
       let receivedFileName = '';
       let hashVerifying = false;
-      // [修复] 幂等落盘：'close' 事件可能重复触发，且 writeTempFile 作为 settleOnce 实参会被急切求值，
-      // 因此只允许真正写入一次，后续调用直接返回缓存结果，避免重复写出多个 88MB 临时文件。
-      let writeAttempted = false;
-      let writtenResult: RemoteFileReceiveResult | null = null;
-      const writeTempFile = (): RemoteFileReceiveResult | null => {
-        if (writeAttempted) {
-          return writtenResult;
-        }
-        writeAttempted = true;
-        try {
-          const filesDir = getContext().filesDir;
-          const tempDir = `${filesDir}/remote_transfer`;
-          SafeFileUtils.mkdirSync(tempDir, true);
-          const tempFilePath = `${tempDir}/received_${bookId}_${Date.now()}.part`;
-          const outFile = SafeFileUtils.openSync(tempFilePath, fileIo.OpenMode.CREATE | fileIo.OpenMode.WRITE_ONLY | fileIo.OpenMode.TRUNC);
-          if (typeof outFile.fd !== 'number' || outFile.fd < 0) {
-            logger.warn(TAG, '创建临时接收文件失败');
-            return null;
-          }
-          for (const chunk of dataChunks) {
-            // [修复] 严禁传 WriteOptions：fileIo.writeSync 的 options.offset 是文件内偏移
-            // （filePointer + offset，pwrite 语义，写后不推进文件指针）。此前传 {offset:0} 导致
-            // 每个分块都覆盖写回文件位置 0，最终文件只剩最后一个分块（字节计数却正常），
-            // 这是传输文件“字节数对但内容损坏”的根因。这里用精确大小的独立缓冲区顺序写。
-            const exactBuffer = new ArrayBuffer(chunk.length);
-            const exactView = new Uint8Array(exactBuffer);
-            exactView.set(chunk);
-            SafeFileUtils.writeSync(outFile.fd, exactBuffer);
-          }
-          SafeFileUtils.closeSync(outFile.fd);
-          logger.info(TAG, `书籍文件接收完成: bookId=${bookId}, bytes=${dataBytes}, path=${tempFilePath}`);
-          const result: RemoteFileReceiveResult = {
-            tempPath: tempFilePath,
-            fileName: receivedFileName.length > 0 ? receivedFileName : `received_${bookId}.epub`
-          };
-          writtenResult = result;
-          return result;
-        } catch (error) {
-          logger.warn(TAG, `写入临时接收文件失败: ${String(error)}`);
+      const createReceiveResult = (): RemoteFileReceiveResult | null => {
+        closeOutputFile();
+        if (receivedTempPath.length <= 0) {
           return null;
         }
+        return {
+          tempPath: receivedTempPath,
+          fileName: receivedFileName.length > 0 ? receivedFileName : `received_${bookId}.epub`
+        };
       };
       const closeClientQuietly = (): void => {
         if (client !== null) {
@@ -866,7 +1197,30 @@ export class RemoteControlSocketChannel {
           } catch (closeError) {
             logger.debug(TAG, `关闭文件客户端失败: ${String(closeError)}`);
           }
+          if (this.activeFileClient === client) {
+            this.activeFileClient = null;
+          }
         }
+      };
+      const finishReceiving = (): void => {
+        if (settled || hashVerifying) {
+          return;
+        }
+        const result = createReceiveResult();
+        if (!result) {
+          settleOnce(null);
+          closeClientQuietly();
+          return;
+        }
+        logger.info(TAG, `书籍文件接收完成: bookId=${bookId}, bytes=${dataBytes}, path=${result.tempPath}`);
+        if (expectedHash.length > 0) {
+          hashVerifying = true;
+          void this.verifyReceivedFileAndSettle(bookId, result, expectedHash, settleOnce);
+          closeClientQuietly();
+          return;
+        }
+        settleOnce(result);
+        closeClientQuietly();
       };
       client.on('message', (messageInfo: socket.SocketMessageInfo) => {
         if (epoch !== this.fileRequestEpoch || settled) {
@@ -889,6 +1243,9 @@ export class RemoteControlSocketChannel {
             try {
               const header = JSON.parse(headerText) as RemoteFileStreamHeader;
               if (header.kind === 'file_error') {
+                if (continuationRequest) {
+                  this.lastContinuationRequestError = header.reason || '源设备无法准备接续数据';
+                }
                 logger.warn(TAG, `源端文件传输失败: ${header.reason}`);
                 settleOnce(null);
                 closeClientQuietly();
@@ -907,6 +1264,18 @@ export class RemoteControlSocketChannel {
               if (header.fileHash && header.fileHash.length > 0) {
                 expectedHash = header.fileHash;
               }
+              const filesDir = getContext().filesDir;
+              const tempDir = `${filesDir}/remote_transfer`;
+              SafeFileUtils.mkdirSync(tempDir, true);
+              receivedTempPath = `${tempDir}/received_${this.sanitizePathSegment(bookId)}_${Date.now()}.part`;
+              const outputFile = SafeFileUtils.openSync(
+                receivedTempPath,
+                fileIo.OpenMode.CREATE | fileIo.OpenMode.WRITE_ONLY | fileIo.OpenMode.TRUNC
+              );
+              if (outputFile.fd < 0) {
+                throw new Error('创建临时接收文件失败');
+              }
+              outputFd = outputFile.fd;
               phase = 'data';
             } catch (error) {
               logger.warn(TAG, `解析文件流响应失败: ${String(error)}`);
@@ -916,27 +1285,31 @@ export class RemoteControlSocketChannel {
             }
             continue;
           }
-          // [修复] slice() 为拷贝而非 subarray() 视图：部分平台会复用 socket 消息缓冲区，
-          // 视图会在后续消息到达时被覆盖，导致落盘文件内容错乱（字节数一致但数据损坏）。
-          const slice = chunk.slice(pos);
-          if (slice.length > 0) {
-            dataChunks.push(slice);
-            dataBytes += slice.length;
-            if (onProgress) {
-              onProgress(dataBytes, expectedBytes > 0 ? expectedBytes : 0);
-            }
-          }
-          pos = chunk.length;
-          if (expectedBytes > 0 && dataBytes >= expectedBytes) {
-            const result = writeTempFile();
-            if (result !== null && expectedHash.length > 0) {
-              hashVerifying = true;
-              void this.verifyReceivedFileAndSettle(bookId, result, expectedHash, settleOnce);
-              closeClientQuietly();
-              return;
-            }
-            settleOnce(result);
+          const availableBytes = chunk.length - pos;
+          const remainingBytes = expectedBytes > 0 ? expectedBytes - dataBytes : availableBytes;
+          const takeBytes = Math.min(availableBytes, remainingBytes);
+          if (takeBytes <= 0 || outputFd < 0) {
+            settleOnce(null);
             closeClientQuietly();
+            return;
+          }
+          const slice = chunk.slice(pos, pos + takeBytes);
+          const exactBuffer = new ArrayBuffer(slice.length);
+          new Uint8Array(exactBuffer).set(slice);
+          const writtenBytes = SafeFileUtils.writeSync(outputFd, exactBuffer);
+          if (writtenBytes !== exactBuffer.byteLength) {
+            logger.warn(TAG, `书籍文件临时写入不完整: expected=${exactBuffer.byteLength}, actual=${writtenBytes}`);
+            settleOnce(null);
+            closeClientQuietly();
+            return;
+          }
+          dataBytes += writtenBytes;
+          pos += takeBytes;
+          if (onProgress) {
+            onProgress(dataBytes, expectedBytes > 0 ? expectedBytes : 0);
+          }
+          if (expectedBytes > 0 && dataBytes === expectedBytes) {
+            finishReceiving();
             return;
           }
         }
@@ -949,9 +1322,8 @@ export class RemoteControlSocketChannel {
         if (hashVerifying) {
           return;
         }
-        // 服务端正常流式传输结束会主动关闭：若尚未完成则按已收数据落盘（totalBytes=0 场景）
-        if (phase === 'data' && dataBytes > 0 && expectedBytes > 0 && dataBytes >= expectedBytes) {
-          settleOnce(writeTempFile());
+        if (phase === 'data' && dataBytes > 0 && (expectedBytes <= 0 || dataBytes === expectedBytes)) {
+          finishReceiving();
           return;
         }
         logger.warn(TAG, `书籍文件连接提前关闭: bookId=${bookId}, received=${dataBytes}/${expectedBytes}`);
@@ -972,10 +1344,20 @@ export class RemoteControlSocketChannel {
         timeout: SOCKET_CONNECT_TIMEOUT_MS
       };
       await client.connect(connectOptions);
-      const requestHeader: RemoteFileStreamHeader = {
-        kind: 'file_request',
-        bookId: bookId
-      };
+      const requestHeader: RemoteMangaStreamHeader = continuationRequest
+        ? {
+            kind: 'continuation_request',
+            bookId: continuationRequest.sourceBookId,
+            schemaVersion: continuationRequest.schemaVersion,
+            sessionId: continuationRequest.sessionId,
+            mode: continuationRequest.mode,
+            contentType: continuationRequest.contentType,
+            isLocal: continuationRequest.isLocal,
+            chapterIndex: continuationRequest.chapterIndex,
+            pageIndex: continuationRequest.pageIndex,
+            offset: continuationRequest.offset
+          }
+        : { kind: 'file_request', bookId: bookId };
       const requestOptions: socket.TCPSendOptions = {
         data: `${JSON.stringify(requestHeader)}\n`,
         encoding: 'UTF-8'
@@ -1422,6 +1804,26 @@ export class RemoteControlSocketChannel {
       logger.warn(TAG, '通道接收缓冲过大，已清空');
       this.receiveBuffer = '';
     }
+  }
+
+  private sanitizePathSegment(value: string): string {
+    const safe = value.replace(/[^A-Za-z0-9_-]/g, '_');
+    return safe.length > 0 ? safe : 'session';
+  }
+
+  private deleteDirectoryTree(path: string): void {
+    if (!SafeFileUtils.accessSync(path)) {
+      return;
+    }
+    const stat = SafeFileUtils.lstatSyncStrict(path);
+    if (!stat.isDirectory()) {
+      SafeFileUtils.unlinkSyncStrict(path);
+      return;
+    }
+    for (const entry of SafeFileUtils.listFileSync(path)) {
+      this.deleteDirectoryTree(`${path}/${entry}`);
+    }
+    SafeFileUtils.rmdirSync(path);
   }
 
   private dispatchLine(line: string): void {

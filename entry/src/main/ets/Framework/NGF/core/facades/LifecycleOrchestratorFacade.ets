@@ -2,7 +2,7 @@ import {
   AppInitializationManager,
   InitPhase,
   InitializationState
-} from '../../../Managers/AppInitializationManager';
+} from 'manxia_core/src/main/ets/Framework/Managers/AppInitializationManager';
 import { ILifecycleOrchestrator, NGFPhaseState } from '../contracts/ILifecycleOrchestrator';
 
 export class LifecycleOrchestratorFacade implements ILifecycleOrchestrator {

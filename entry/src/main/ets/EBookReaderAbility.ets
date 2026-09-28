@@ -1,14 +1,15 @@
 import { AbilityConstant, UIAbility, Want, common } from '@kit.AbilityKit';
 import { window } from '@kit.ArkUI';
-import { logger } from './Utils/Logger';
+import { logger } from 'manxia_core/src/main/ets/Utils/Logger';
+import { OrientationLockManager } from 'manxia_core/src/main/ets/Utils/OrientationLockManager';
 import { continuationStateHelper } from './Framework/Distributed/ContinuationStateHelper';
 import { EBookReaderParams } from './pages/EBookReaderRouteTypes';
 import {
   EBOOK_READER_ABILITY_INSTANCE_ID_KEY,
   EBOOK_READER_ABILITY_PAGE
-} from './Framework/Reader/MangaReaderAbilityConstants';
+} from 'manxia_reader_ui/src/main/ets/Framework/Reader/MangaReaderAbilityConstants';
 import { EBookReaderAbilityParamStore } from './Framework/Reader/EBookReaderAbilityParamStore';
-import { ReaderAbilityWindowLifecycleController } from './Framework/Reader/ReaderAbilityWindowLifecycleController';
+import { ReaderAbilityWindowLifecycleController } from 'manxia_reader_ui/src/main/ets/Framework/Reader/ReaderAbilityWindowLifecycleController';
 import { ContinuationBootstrap } from './Framework/Initialization/ContinuationBootstrap';
 
 const TAG: string = 'EBookReaderAbility';
@@ -24,6 +25,8 @@ export default class EBookReaderAbility extends UIAbility {
   private windowLifecycleController: ReaderAbilityWindowLifecycleController | null = null;
   /** 跨端接续恢复使用的 LocalStorage（restoreWindowStage 传入，onWindowStageRestore 中随 loadContent 传递） */
   private continuationWindowStorage: LocalStorage = new LocalStorage();
+  /** 本实例主窗口 ID：用于窗口销毁时清理方向锁请求，避免残留污染其它阅读器实例 */
+  private orientationWindowId: number = -1;
 
   onCreate(want: Want, launchParam: AbilityConstant.LaunchParam): void {
     // [修复] 自举全局依赖：接续冷启动时进程内可能没有 EntryAbility，
@@ -90,6 +93,7 @@ export default class EBookReaderAbility extends UIAbility {
   onWindowStageCreate(windowStage: window.WindowStage): void {
     const readerParams: EBookReaderParams | null = EBookReaderAbilityParamStore.getInstance().getParams(this.instanceId);
     const windowId = this.resolveMainWindowId(windowStage);
+    this.orientationWindowId = windowId;
     EBookReaderAbilityParamStore.getInstance().bindWindowPayload(windowId, this.instanceId, readerParams);
 
     if (!readerParams) {
@@ -124,6 +128,8 @@ export default class EBookReaderAbility extends UIAbility {
     const readerParams: EBookReaderParams | null = EBookReaderAbilityParamStore.getInstance().getParams(this.instanceId);
     const windowId = this.resolveMainWindowId(windowStage);
     EBookReaderAbilityParamStore.getInstance().bindWindowPayload(windowId, this.instanceId, readerParams);
+
+    this.orientationWindowId = windowId;
 
     if (!readerParams) {
       logger.error(TAG, `接续落地独立电子书阅读器参数缺失: instanceId=${this.instanceId}`);
@@ -166,6 +172,7 @@ export default class EBookReaderAbility extends UIAbility {
   }
 
   onWindowStageDestroy(): void {
+    this.releaseOrientationWindowLock();
     this.detachWindowLifecycleController();
     EBookReaderAbilityParamStore.getInstance().remove(this.instanceId);
     logger.lifecycle(TAG, 'onWindowStageDestroy', `独立电子书阅读器实例销毁: instanceId=${this.instanceId}`);
@@ -190,9 +197,28 @@ export default class EBookReaderAbility extends UIAbility {
   }
 
   onDestroy(): void {
+    this.releaseOrientationWindowLock();
     this.detachWindowLifecycleController();
     EBookReaderAbilityParamStore.getInstance().remove(this.instanceId);
     logger.lifecycle(TAG, 'onDestroy', `独立电子书阅读器实例结束: instanceId=${this.instanceId}`);
+  }
+
+  /**
+   * 窗口销毁前清理本窗口的方向锁请求。
+   * 官方文档说明 context.windowStage 在 onWindowStageDestroy 已不可用，
+   * 因此此处使用 onWindowStageCreate 阶段缓存的窗口 ID。
+   */
+  private releaseOrientationWindowLock(): void {
+    try {
+      const released: number = OrientationLockManager.releaseWindowById(this.orientationWindowId);
+      if (released > 0) {
+        logger.info(TAG, `已释放阅读器窗口方向锁请求: windowId=${this.orientationWindowId}, count=${released}`);
+      }
+    } catch (error) {
+      logger.warn(TAG, `释放阅读器窗口方向锁请求失败: ${String(error)}`);
+    } finally {
+      this.orientationWindowId = -1;
+    }
   }
 
   private detachWindowLifecycleController(): void {

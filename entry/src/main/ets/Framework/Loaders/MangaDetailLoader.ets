@@ -5,8 +5,8 @@
  * 文件路径: entry/src/main/ets/Framework/Loaders/MangaDetailLoader.ets
  */
 
-import { logger } from '../../Utils/Logger';
-import { SafeUtils } from '../../Utils/SafeUtils';
+import { logger } from 'manxia_core/src/main/ets/Utils/Logger';
+import { SafeUtils } from 'manxia_core/src/main/ets/Utils/SafeUtils';
 import {
   Manga,
   MangaChapter,
@@ -15,9 +15,9 @@ import {
   ImageSourceType,
   MangaMetadata,
   MangaImageRequestHeader
-} from '../../Models/MangaModels';
-import { DEFAULT_READING_SETTINGS, ReadingSettings } from '../../Models/MangaModels';
-import { DownloadStatus, MangaStatus, ReadingStatus } from '../Types/StatusEnums';
+} from 'manxia_core/src/main/ets/Models/MangaModels';
+import { DEFAULT_READING_SETTINGS, ReadingSettings } from 'manxia_core/src/main/ets/Models/MangaModels';
+import { DownloadStatus, MangaStatus, ReadingStatus } from 'manxia_core/src/main/ets/Framework/Types/StatusEnums';
 import { ComicConverter } from '../Utils/ComicConverter';
 import { 
   DataManager, 
@@ -32,8 +32,8 @@ import {
 import { DataService } from '../Services/DataService';
 import { WebViewSourceManager } from '../WebView/WebViewSourceManager';
 import { MangaSourceEngine, EngineResult, MangaDetailWithChapters } from '../WebView/MangaSourceEngine';
-import { MangaInfo, ChapterInfo as WebViewChapterInfo, PageInfo as SourcePageInfo, PageRequestHeader } from '../WebView/MangaSourceTypes';
-import { WebViewDataCacheManager } from '../Cache/WebViewDataCacheManager';
+import { MangaInfo, ChapterInfo as WebViewChapterInfo, PageInfo as SourcePageInfo, PageRequestHeader } from 'manxia_source_engine/src/main/ets/Framework/WebView/MangaSourceTypes';
+import { WebViewDataCacheManager } from 'manxia_network/src/main/ets/Framework/Cache/WebViewDataCacheManager';
 import { getLegadoMangaSourceBridge, LegadoMangaDetailResult } from '../Novel/LegadoMangaSourceBridge';
 import { MangaIdentityResolver, MangaIdentityResolveResult } from '../Reader/MangaIdentityResolver';
 import webview from '@ohos.web.webview';

@@ -1,15 +1,15 @@
 ﻿import { HdsNavDestination } from '@kit.UIDesignKit';
 import { promptAction } from '@kit.ArkUI';
-import { ThemeAwareHelper, ThemeAwareState } from '../../Framework/Components/ThemeAware';
-import { FontAwareHelper, FontAwareState } from '../../Framework/Components/FontAware';
-import { ThemeType } from '../../Framework/Managers/ThemeManager';
-import { logger } from '../../Utils/Logger';
-import { SharedPageBackgroundLayer } from '../../Framework/Components/SharedPageBackgroundLayer';
-import { GlobalBackgroundLayerMode } from '../../Framework/Components/GlobalBackgroundLayer';
+import { ThemeAwareHelper, ThemeAwareState } from 'manxia_theme/src/main/ets/Framework/Components/ThemeAware';
+import { FontAwareHelper, FontAwareState } from 'manxia_theme/src/main/ets/Framework/Components/FontAware';
+import { ThemeType } from 'manxia_theme/src/main/ets/Framework/Managers/ThemeManager';
+import { logger } from 'manxia_core/src/main/ets/Utils/Logger';
+import { SharedPageBackgroundLayer } from 'manxia_theme/src/main/ets/Framework/Components/SharedPageBackgroundLayer';
+import { GlobalBackgroundLayerMode } from 'manxia_theme/src/main/ets/Framework/Components/GlobalBackgroundLayer';
 import { SettingsImmersiveTitleBar } from './SettingsImmersiveTitleBar';
-import { SettingsPageTitleBarManager } from './SettingsPageTitleBarManager';
-import { SettingsPanelSurfaceHelper } from './SettingsPanelSurfaceHelper';
-import { getAppInitializationManager, InitPhase, InitializationState } from '../../Framework/Managers/AppInitializationManager';
+import { SettingsPageTitleBarManager } from 'manxia_features_ui/src/main/ets/pages/settings/SettingsPageTitleBarManager';
+import { SettingsPanelSurfaceHelper } from 'manxia_features_ui/src/main/ets/pages/settings/SettingsPanelSurfaceHelper';
+import { getAppInitializationManager, InitPhase, InitializationState } from 'manxia_core/src/main/ets/Framework/Managers/AppInitializationManager';
 import {
   NGFDisplayMode,
   NGFEventPayload,

@@ -1,6 +1,6 @@
 import { DataManager } from '../Data/DataManager';
-import { logCollector, LogEntry, LogFilter } from './LogCollector';
-import { LogLevel } from '../../Utils/Logger';
+import { logCollector, LogEntry, LogFilter } from 'manxia_core/src/main/ets/Framework/Debug/LogCollector';
+import { LogLevel } from 'manxia_core/src/main/ets/Utils/Logger';
 
 const DEFAULT_SOURCE_DEBUG_MODE_KEY = 'detail_debug_mode';
 

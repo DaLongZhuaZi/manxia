@@ -3,23 +3,23 @@
  */
 
 import { HdsNavDestination } from '@kit.UIDesignKit';
-import { logger } from '../Utils/Logger';
-import { ThemeAwareHelper, ThemeAwareState } from '../Framework/Components/ThemeAware';
-import { ThemeManager, ThemeType } from '../Framework/Managers/ThemeManager';
-import { FontAwareHelper, FontAwareState } from '../Framework/Components/FontAware';
-import { SharedPageBackgroundLayer } from '../Framework/Components/SharedPageBackgroundLayer';
-import { GlobalBackgroundLayerMode } from '../Framework/Components/GlobalBackgroundLayer';
+import { logger } from 'manxia_core/src/main/ets/Utils/Logger';
+import { ThemeAwareHelper, ThemeAwareState } from 'manxia_theme/src/main/ets/Framework/Components/ThemeAware';
+import { ThemeManager, ThemeType } from 'manxia_theme/src/main/ets/Framework/Managers/ThemeManager';
+import { FontAwareHelper, FontAwareState } from 'manxia_theme/src/main/ets/Framework/Components/FontAware';
+import { SharedPageBackgroundLayer } from 'manxia_theme/src/main/ets/Framework/Components/SharedPageBackgroundLayer';
+import { GlobalBackgroundLayerMode } from 'manxia_theme/src/main/ets/Framework/Components/GlobalBackgroundLayer';
 import { SettingsImmersiveTitleBar } from './settings/SettingsImmersiveTitleBar';
-import { SettingsImmersiveTitleActionItem, SettingsPageTitleBarManager } from './settings/SettingsPageTitleBarManager';
-import { SettingsPanelSurfaceHelper } from './settings/SettingsPanelSurfaceHelper';
-import { sourceDiagnosticManager } from '../Framework/SourceEditor/SourceDiagnosticManager';
+import { SettingsImmersiveTitleActionItem, SettingsPageTitleBarManager } from 'manxia_features_ui/src/main/ets/pages/settings/SettingsPageTitleBarManager';
+import { SettingsPanelSurfaceHelper } from 'manxia_features_ui/src/main/ets/pages/settings/SettingsPanelSurfaceHelper';
+import { sourceDiagnosticManager } from 'manxia_source_engine/src/main/ets/Framework/SourceEditor/SourceDiagnosticManager';
 import {
   ActionExecutionTrace,
   SourceDiagnosticEvent,
   SourceExecutionTrace,
   WorkflowExecutionTrace
-} from '../Framework/SourceEditor/SourceDiagnosticTypes';
-import { SourceDiagnosticPageParams } from '../Framework/SourceEditor/SourceEditorTypes';
+} from 'manxia_source_engine/src/main/ets/Framework/SourceEditor/SourceDiagnosticTypes';
+import { SourceDiagnosticPageParams } from 'manxia_source_engine/src/main/ets/Framework/SourceEditor/SourceEditorTypes';
 
 const TAG = 'SourceDiagnosticPage';
 

@@ -1,12 +1,12 @@
 import { common } from '@kit.AbilityKit';
 import { FrameCallback, UIContext } from '@kit.ArkUI';
-import { logger } from '../Utils/Logger';
-import { DisplayMode, WindowManager } from '../Utils/WindowManager';
+import { logger } from 'manxia_core/src/main/ets/Utils/Logger';
+import { DisplayMode, WindowManager } from 'manxia_theme/src/main/ets/Utils/WindowManager';
 import { EBookReaderPage } from './EBookReaderPage';
 import { EBookImageReaderPage } from './EBookImageReaderPage';
 import { EpubWebViewReaderPage } from './EpubWebViewReaderPage';
 import { EBookReaderParams } from './EBookReaderRouteTypes';
-import { EBookDataManager } from '../Framework/Data/EBookDataManager';
+import { EBookDataManager } from 'manxia_core/src/main/ets/Framework/Data/EBookDataManager';
 import { resolveEBookReaderRouteName } from '../Framework/Adapters/EBookImageReaderAdapter';
 import { EBookParserFactory } from '../Framework/Parsers/EBookParser';
 import {
@@ -14,18 +14,25 @@ import {
   EBookChapter,
   EBookFormat,
   EBookReaderEngine
-} from '../Models/EBookModels';
-import { createUserManualEBookFromRawFile, isUserManualId } from '../Data/UserManualData';
-import { READER_ABILITY_HOST_MULTITON } from '../Framework/Reader/MangaReaderAbilityConstants';
-import { RemoteControlSocketChannel, RemoteFileRequestOptions } from '../Framework/Distributed/RemoteControlSocketChannel';
+} from 'manxia_core/src/main/ets/Models/EBookModels';
+import { createUserManualEBookFromRawFile, isUserManualId } from 'manxia_core/src/main/ets/Framework/Data/UserManualData';
+import { READER_ABILITY_HOST_MULTITON } from 'manxia_reader_ui/src/main/ets/Framework/Reader/MangaReaderAbilityConstants';
+import { RemoteControlSocketChannel, ContinuationBundleRequestOptions } from '../Framework/Distributed/RemoteControlSocketChannel';
+import { ContinuationCacheManager } from '../Framework/Distributed/ContinuationCacheManager';
+import {
+  ContinuationBundleReceiveResult,
+  ContinuationTransferMode,
+  ContinuationTransferRequest
+} from '../Framework/Distributed/ContinuationReadingTypes';
 import { OnlineEBookImportService } from '../Framework/Services/OnlineEBookImportService';
-import { SafeFileUtils } from '../Utils/SafeFileUtils';
+import { SafeFileUtils } from 'manxia_core/src/main/ets/Utils/SafeFileUtils';
 import { ReaderAbilityBackgroundBlurOverlay } from '../Framework/Reader/ReaderAbilityBackgroundBlurOverlay';
 import {
   EBookReaderAbilityParamStore,
   EBookReaderAbilityWindowPayload
 } from '../Framework/Reader/EBookReaderAbilityParamStore';
 import { ContinuationBootstrap } from '../Framework/Initialization/ContinuationBootstrap';
+import { BasePayload, eventBus, GameEvent } from '../Framework/EventBus';
 
 const TAG: string = 'EBookReaderAbilityPage';
 
@@ -55,10 +62,14 @@ class EBookReaderNavigationFrameCallback extends FrameCallback {
 struct EBookReaderAbilityPage {
   private pathStack: NavPathStack = new NavPathStack();
   @State private readerParams: EBookReaderParams | null = null;
+  @State private bootstrapFailureMessage: string = '';
   // [跨端接续] 本地书籍从源设备传输期间的加载动画状态
   @State private transferProgressVisible: boolean = false;
   @State private transferProgressPercent: number = 0;
   @State private transferProgressText: string = '';
+  @State private transferCancelled: boolean = false;
+  @State private transferCancelable: boolean = false;
+  private resolvedContinuationCacheId: string = '';
   private readerInstanceId: string = '';
   private hasOpenedReader: boolean = false;
   private hasScheduledInitialReaderOpen: boolean = false;
@@ -173,18 +184,23 @@ struct EBookReaderAbilityPage {
     }
   }
 
-  private async ensureReaderBootstrapReady(): Promise<void> {
+  private async ensureReaderBootstrapReady(): Promise<boolean> {
     try {
       const hostContext = this.getUIContext()?.getHostContext() as common.UIAbilityContext;
       if (!hostContext) {
-        logger.warn(TAG, '等待全局依赖就绪：无法获取宿主上下文，跳过等待');
-        return;
+        this.bootstrapFailureMessage = '无法获取应用上下文';
+        logger.error(TAG, '等待全局依赖就绪失败：无法获取宿主上下文');
+        return false;
       }
       const startTime = Date.now();
       await ContinuationBootstrap.getInstance().ensureReady(hostContext);
-      logger.info(TAG, `全局依赖已就绪（GlobalContext + 数据库），等待耗时${Date.now() - startTime}ms`);
+      this.bootstrapFailureMessage = '';
+      logger.info(TAG, `全局依赖已就绪（GlobalContext + 数据系统 + SettingsManager），等待耗时${Date.now() - startTime}ms`);
+      return true;
     } catch (error) {
-      logger.warn(TAG, `等待全局依赖就绪失败，继续尝试打开阅读器: ${String(error)}`);
+      this.bootstrapFailureMessage = '阅读器初始化失败，请返回后重试';
+      logger.error(TAG, `等待阅读器依赖就绪失败，已取消页面导航: ${String(error)}`);
+      return false;
     }
   }
 
@@ -204,9 +220,11 @@ struct EBookReaderAbilityPage {
     this.isOpeningReader = true;
     this.openingScheduleGeneration = scheduleGeneration;
     try {
-      // [修复] 接续冷启动落地时，等待 GlobalContext + 数据库就绪后再解析 bookId，
+      // 接续冷启动落地时，等待 GlobalContext、数据系统和阅读器依赖就绪后再解析 bookId，
       // 避免“数据库未初始化 / 电子书不存在”；正常应用内打开时此处立即返回。
-      await this.ensureReaderBootstrapReady();
+      if (!(await this.ensureReaderBootstrapReady())) {
+        return;
+      }
       const params = this.buildIsolatedReaderParams(this.readerParams);
       const routeName = await this.resolveInitialRouteName(params);
       if (scheduleGeneration !== this.navigationScheduleGeneration ||
@@ -239,7 +257,8 @@ struct EBookReaderAbilityPage {
       readerTitle: source.readerTitle,
       originImportId: source.originImportId,
       originImportKind: source.originImportKind,
-      readerOpenFlowId: source.readerOpenFlowId
+      readerOpenFlowId: source.readerOpenFlowId,
+      continuationCacheId: source.continuationCacheId || this.resolvedContinuationCacheId
     };
     return params;
   }
@@ -255,7 +274,9 @@ struct EBookReaderAbilityPage {
         return 'EBookReaderPage';
       }
       const resolvedEBook: EBook = ebook;
-      const repairedEBook = await this.repairKindleWebViewRouteIfNeeded(resolvedEBook);
+      const repairedEBook = params.continuationCacheId && params.continuationCacheId.length > 0
+        ? resolvedEBook
+        : await this.repairKindleWebViewRouteIfNeeded(resolvedEBook);
       const routeName = resolveEBookReaderRouteName(repairedEBook);
       logger.info(TAG, `独立电子书阅读路由判定: bookId=${repairedEBook.id}, route=${routeName}`);
       return routeName;
@@ -266,6 +287,20 @@ struct EBookReaderAbilityPage {
   }
 
   private async resolveInitialEBook(params: EBookReaderParams): Promise<EBook | null> {
+    if (params.continuationCacheId && params.continuationCacheId.length > 0) {
+      return await ContinuationCacheManager.getInstance().getEBook(params.continuationCacheId);
+    }
+    if (this.isContinuationRestoreActive()) {
+      const mode = AppStorage.get<ContinuationTransferMode>('continuationTransferMode') ??
+        ContinuationTransferMode.READ_ONLY;
+      if (mode === ContinuationTransferMode.READ_ONLY || mode === ContinuationTransferMode.IMPORT_TO_LIBRARY) {
+        const transferred = await this.recoverLocalEBookViaSocket(params.bookId);
+        if (transferred && mode === ContinuationTransferMode.READ_ONLY) {
+          params.continuationCacheId = this.resolvedContinuationCacheId;
+        }
+        return transferred;
+      }
+    }
     let ebook: EBook | null = await this.ebookDataManager.getEBookById(params.bookId);
     if (!ebook && isUserManualId(params.bookId)) {
       ebook = await this.recoverUserManualEBook(params.bookId);
@@ -285,9 +320,6 @@ struct EBookReaderAbilityPage {
       ebook = null;
     }
     // [修复] 本地书跨端接续：目标端没有该书时，经独立连接通道向源端拉取文件并自动导入（保留源端 bookId）
-    if (!ebook) {
-      ebook = await this.recoverLocalEBookViaSocket(params.bookId);
-    }
     return ebook;
   }
 
@@ -331,44 +363,92 @@ struct EBookReaderAbilityPage {
     if (!continuationSessionId || continuationSessionId.length <= 0) {
       return null;
     }
+    const mode = AppStorage.get<ContinuationTransferMode>('continuationTransferMode') ??
+      ContinuationTransferMode.READ_ONLY;
+    if (mode === ContinuationTransferMode.DISABLED) {
+      this.getUIContext().getPromptAction().showToast({ message: '接续数据传输已关闭，目标设备没有此书籍' });
+      return null;
+    }
     this.transferProgressVisible = true;
+    this.transferCancelled = false;
+    this.transferCancelable = true;
     this.transferProgressPercent = 0;
-    this.transferProgressText = '正在从源设备同步本地书籍…';
-    let receivedTempPath = '';
+    this.transferProgressText = mode === ContinuationTransferMode.READ_ONLY
+      ? '正在准备并接收仅阅读内容…'
+      : '正在准备并接收完整书籍…';
+    const request: ContinuationTransferRequest = {
+      schemaVersion: 1,
+      sessionId: continuationSessionId,
+      mode: mode,
+      contentType: 'ebook',
+      sourceBookId: bookId,
+      isLocal: AppStorage.get<boolean>('continuationIsLocal') ?? true,
+      chapterIndex: AppStorage.get<number>('continuationChapterIndex') ?? 0,
+      pageIndex: AppStorage.get<number>('continuationPageIndex') ?? 0,
+      offset: AppStorage.get<number>('continuationOffset') ?? 0
+    };
+    let receiveResult: ContinuationBundleReceiveResult | null = null;
     try {
-      const options: RemoteFileRequestOptions = {
+      const hostContext = this.getUIContext().getHostContext() as common.UIAbilityContext;
+      await ContinuationCacheManager.getInstance().initialize(hostContext);
+      const options: ContinuationBundleRequestOptions = {
+        timeoutMs: 30 * 60 * 1000,
         onProgress: (receivedBytes: number, totalBytes: number): void => {
           const percent = totalBytes > 0 ? Math.min(100, Math.round(receivedBytes * 100 / totalBytes)) : 0;
           this.transferProgressPercent = percent;
-          this.transferProgressText = `正在从源设备同步本地书籍… ${percent}%`;
+          this.transferProgressText = `正在接收接续数据… ${percent}%`;
+        },
+        onPhase: (phase: string): void => {
+          this.transferProgressText = phase;
         }
       };
-      const receiveResult = await RemoteControlSocketChannel.getInstance().requestBookFile(bookId, options);
-      if (!receiveResult) {
-        logger.warn(TAG, `从源设备传输书籍文件失败: bookId=${bookId}`);
-        this.getUIContext().getPromptAction().showToast({ message: '本地书籍传输失败，请确认源设备遥控通道正常' });
+      receiveResult = await RemoteControlSocketChannel.getInstance().requestContinuationBundle(request, options);
+      if (this.transferCancelled) {
+        this.getUIContext().getPromptAction().showToast({ message: '已取消电子书接续' });
         return null;
       }
-      receivedTempPath = receiveResult.tempPath;
-      this.transferProgressText = '正在导入本地书籍…';
-      const imported = await OnlineEBookImportService.getInstance().importTransferredBook(
-        receiveResult.tempPath,
-        bookId,
-        receiveResult.fileName
+      if (!receiveResult) {
+        logger.warn(TAG, `从源设备传输电子书数据包失败: bookId=${bookId}, mode=${mode}`);
+        const detail = RemoteControlSocketChannel.getInstance().getLastContinuationRequestError();
+        const isIncompatible = detail.includes('版本') || detail.includes('不兼容');
+        this.getUIContext().getPromptAction().showToast({
+          message: isIncompatible
+            ? '接续协议不兼容，请更新两端应用后重试'
+            : '电子书接续传输失败'
+        });
+        return null;
+      }
+      this.transferCancelable = false;
+      if (mode === ContinuationTransferMode.READ_ONLY) {
+        this.transferProgressText = '正在保存接续缓存…';
+        const cacheManager = ContinuationCacheManager.getInstance();
+        const cacheId = cacheManager.createCacheId();
+        const record = await cacheManager.commitReadOnlyPackage(
+          cacheId,
+          receiveResult.manifest,
+          receiveResult.stagingDirectory
+        );
+        this.resolvedContinuationCacheId = record.cacheId;
+        this.getUIContext().getPromptAction().showToast({ message: '已保存为仅阅读接续缓存' });
+        return await cacheManager.getEBook(record.cacheId);
+      }
+      this.transferProgressText = '正在导入书库…';
+      const imported = await OnlineEBookImportService.getInstance().importContinuationPackage(
+        receiveResult.manifest,
+        receiveResult.stagingDirectory
       );
-      this.getUIContext().getPromptAction().showToast({ message: '本地书籍已从源设备同步完成' });
+      eventBus.publish(GameEvent.EBOOK_LIST_REFRESH_NEEDED, new BasePayload());
+      this.getUIContext().getPromptAction().showToast({ message: '电子书已导入并接续' });
       return imported;
     } catch (error) {
-      logger.warn(TAG, `恢复本地书籍失败（经独立通道传输）: bookId=${bookId}, error=${String(error)}`);
+      logger.warn(TAG, `恢复电子书接续失败: bookId=${bookId}, error=${String(error)}`);
+      this.getUIContext().getPromptAction().showToast({ message: '电子书接续失败，未打开不完整内容' });
       return null;
     } finally {
       this.transferProgressVisible = false;
-      if (receivedTempPath.length > 0) {
-        try {
-          SafeFileUtils.unlinkSync(receivedTempPath);
-        } catch (cleanupError) {
-          logger.debug(TAG, `清理传输临时文件失败: ${String(cleanupError)}`);
-        }
+      this.transferCancelable = false;
+      if (receiveResult) {
+        RemoteControlSocketChannel.getInstance().cleanupContinuationBundle(receiveResult);
       }
     }
   }
@@ -474,12 +554,12 @@ struct EBookReaderAbilityPage {
   }
 
   @Builder
-  private buildFallbackContent() {
+  private buildFallbackContent(message: string = '未获取到电子书阅读参数') {
     Column() {
       Text('阅读器启动失败')
         .fontSize(18)
         .fontColor(Color.White)
-      Text('未获取到电子书阅读参数')
+      Text(message)
         .fontSize(13)
         .fontColor(Color.White)
         .opacity(0.6)
@@ -494,7 +574,9 @@ struct EBookReaderAbilityPage {
   build() {
     Stack() {
       Navigation(this.pathStack) {
-        if (!this.readerParams) {
+        if (this.bootstrapFailureMessage.length > 0) {
+          this.buildFallbackContent(this.bootstrapFailureMessage)
+        } else if (!this.readerParams) {
           this.buildFallbackContent()
         } else {
           Column() {
@@ -527,6 +609,18 @@ struct EBookReaderAbilityPage {
             .fontColor(Color.White)
             .opacity(0.85)
             .margin({ top: 18 })
+          Progress({ value: this.transferProgressPercent, total: 100 })
+            .width('76%')
+            .margin({ top: 10 })
+          Button(this.transferCancelable ? '取消接续' : '正在处理…')
+            .margin({ top: 12 })
+            .enabled(this.transferCancelable)
+            .onClick(() => {
+              if (this.transferCancelable) {
+                this.transferCancelled = true;
+                RemoteControlSocketChannel.getInstance().cancelFileRequest();
+              }
+            })
         }
         .width('100%')
         .height('100%')

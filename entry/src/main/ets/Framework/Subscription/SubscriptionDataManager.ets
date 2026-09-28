@@ -1,7 +1,7 @@
-﻿import { SafeUtils } from '../../Utils/SafeUtils';
+﻿import { SafeUtils } from 'manxia_core/src/main/ets/Utils/SafeUtils';
 import { relationalStore } from '@kit.ArkData';
 import { common } from '@kit.AbilityKit';
-import { logger } from '../../Utils/Logger';
+import { logger } from 'manxia_core/src/main/ets/Utils/Logger';
 import {
   SubscriptionAction,
   SubscriptionActionType,
@@ -14,7 +14,7 @@ import {
   SubscriptionProviderType,
   SubscriptionRule,
   SubscriptionTargetType
-} from '../../Models/SubscriptionModels';
+} from 'manxia_core/src/main/ets/Models/SubscriptionModels';
 import {
   SUBSCRIPTION_CREATE_INDEX_SQL,
   SUBSCRIPTION_CREATE_TABLE_SQL

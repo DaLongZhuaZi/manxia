@@ -1,27 +1,27 @@
-﻿import { SafeFileUtils } from '../../Utils/SafeFileUtils';
+﻿import { SafeFileUtils } from 'manxia_core/src/main/ets/Utils/SafeFileUtils';
 /**
  * 下载管理器
  * 负责漫画章节的下载任务管理、队列控制、断点续传
  */
 
 import request from '@ohos.request';
-import { logger } from '../../Utils/Logger';
+import { logger } from 'manxia_core/src/main/ets/Utils/Logger';
 import { common } from '@kit.AbilityKit';
 import fs from '@ohos.file.fs';
-import { DownloadDirManager } from '../Storage/DownloadDirManager';
+import { DownloadDirManager } from 'manxia_core/src/main/ets/Framework/Storage/DownloadDirManager';
 import http from '@ohos.net.http';
 import { BusinessError } from '@kit.BasicServicesKit';
-import { AppNotificationManager, NotificationType } from '../Managers/NotificationManager';
+import { AppNotificationManager, NotificationType } from 'manxia_core/src/main/ets/Framework/Managers/NotificationManager';
 import { DataManager, DownloadTask, DownloadTaskInput, DownloadTaskUpdate, OnlineComicInfo, OnlineChapterInfo } from '../Data/DataManager';
-import { DatabaseManager } from '../Database/DatabaseManager';
-import { ComicSourceDatabaseRecord, GenericQueryRecord, UpdateRecordData } from '../Database/DatabaseTypes';
-import { DownloadStatus } from '../Types/StatusEnums';
-import { BackgroundTaskHelper } from '../Task/BackgroundTaskHelper';
+import { DatabaseManager } from 'manxia_core/src/main/ets/Framework/Database/DatabaseManager';
+import { ComicSourceDatabaseRecord, GenericQueryRecord, UpdateRecordData } from 'manxia_core/src/main/ets/Framework/Database/DatabaseTypes';
+import { DownloadStatus } from 'manxia_core/src/main/ets/Framework/Types/StatusEnums';
+import { BackgroundTaskHelper } from 'manxia_network/src/main/ets/Framework/Task/BackgroundTaskHelper';
 import { OnlineArchiveCreateResult, OnlineArchiveMetadata, OnlineArchivePageFile, OnlineMangaArchiveService } from './OnlineMangaArchiveService';
 import { eventBus, GameEvent, MangaCacheUpdatedPayload } from '../EventBus';
-import { CookieManager } from '../Managers/CookieManager';
+import { CookieManager } from 'manxia_core/src/main/ets/Framework/Managers/CookieManager';
 import util from '@ohos.util';
-import { DownloadCacheFlowMonitor, getDownloadCacheFlowMonitor } from './DownloadCacheFlowMonitor';
+import { DownloadCacheFlowMonitor, getDownloadCacheFlowMonitor } from 'manxia_network/src/main/ets/Framework/Download/DownloadCacheFlowMonitor';
 import {
   DownloadCacheContentType,
   DownloadCacheEntrySource,
@@ -30,7 +30,7 @@ import {
   DownloadCacheFlowSessionInfo,
   DownloadCacheFlowSeverity,
   DownloadCacheFlowStage
-} from './DownloadCacheFlowTypes';
+} from 'manxia_network/src/main/ets/Framework/Download/DownloadCacheFlowTypes';
 
 const TAG = 'DownloadManager';
 const DOWNLOAD_BACKGROUND_TASK_OWNER = 'download_manager_queue';
@@ -2226,7 +2226,7 @@ export class MangaDownloadManager {
 
       // 解码 base64 并写入文件
       const base64Helper: util.Base64Helper = new util.Base64Helper();
-      const fileBytes: Uint8Array = base64Helper.decodeSync(base64Data);
+      const fileBytes: Uint8Array = await base64Helper.decode(base64Data);
       await this.writeArrayBufferToFile(filePath, fileBytes.buffer as ArrayBuffer);
 
       logger.info(TAG, `WebView 数据下载完成: ${filePath}, 大小: ${fileBytes.length} bytes`);

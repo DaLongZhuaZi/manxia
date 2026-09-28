@@ -1,4 +1,4 @@
-﻿import { SafeUtils } from '../../Utils/SafeUtils';
+﻿import { SafeUtils } from 'manxia_core/src/main/ets/Utils/SafeUtils';
 /**
  * EPUB Bridge JS Builder
  * Extracted from EpubWebViewReaderComponent to reduce component state explosion.
@@ -16,6 +16,20 @@ export class BridgeJsBuilder {
     return `
       window.__mnxAnnotationLayerId = '__mnx_epub_highlight_layer';
       window.__mnxHighlightHitRects = [];
+      window.SafeUtils = (function() {
+        function parseObj(raw) {
+          try {
+            var text = String(raw == null ? '' : raw).trim();
+            if (!text || text.length <= 0) {
+              return null;
+            }
+            return JSON.parse(text);
+          } catch (_error) {
+            return null;
+          }
+        }
+        return { parseObj: parseObj };
+      })();
       window.__mnxIsAnnotationIgnoredNode = function(node) {
         var current = node;
         while (current) {

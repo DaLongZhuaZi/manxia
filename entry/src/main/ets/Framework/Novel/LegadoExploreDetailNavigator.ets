@@ -1,6 +1,6 @@
-import { logger } from '../../Utils/Logger';
-import { NovelSearchResult } from '../../Models/NovelModels';
-import { UnifiedContentType, UnifiedDetailPageParams } from '../../Models/UnifiedContentModels';
+import { logger } from 'manxia_core/src/main/ets/Utils/Logger';
+import { NovelSearchResult } from 'manxia_core/src/main/ets/Models/NovelModels';
+import { UnifiedContentType, UnifiedDetailPageParams } from 'manxia_core/src/main/ets/Models/UnifiedContentModels';
 import { MangaDetailPageParams } from '../../pages/MangaDetailPage';
 import { NovelDetailPageParams } from '../../pages/NovelBookshelfPage';
 import { DetailPageType, PageSettingsHelper } from '../../pages/settings/PageSettingsSubPage';
@@ -11,8 +11,8 @@ import {
   LegadoExploreDetailRouteKind,
   LegadoExploreDetailRouteReason,
   LegadoExploreDetailRouteResolver
-} from './LegadoExploreDetailRouteResolver';
-import { LegadoBookSource } from './LegadoSourceTypes';
+} from 'manxia_novel/src/main/ets/Framework/Novel/LegadoExploreDetailRouteResolver';
+import { LegadoBookSource } from 'manxia_novel/src/main/ets/Framework/Novel/LegadoSourceTypes';
 import { getNovelSourceManager } from './NovelSourceManager';
 
 const TAG: string = 'LegadoExploreDetailNavigator';

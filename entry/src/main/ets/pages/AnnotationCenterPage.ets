@@ -1,5 +1,5 @@
-import { SafeFileUtils } from '../Utils/SafeFileUtils';
-import { SafeUtils } from '../Utils/SafeUtils';
+import { SafeFileUtils } from 'manxia_core/src/main/ets/Utils/SafeFileUtils';
+import { SafeUtils } from 'manxia_core/src/main/ets/Utils/SafeUtils';
 import { LengthMetrics, promptAction, UIContext } from '@kit.ArkUI';
 import { pasteboard } from '@kit.BasicServicesKit';
 import { common } from '@kit.AbilityKit';
@@ -7,18 +7,18 @@ import { systemShare } from '@kit.ShareKit';
 import { uniformTypeDescriptor as utd } from '@kit.ArkData';
 import { HdsNavDestination } from '@kit.UIDesignKit';
 import fs from '@ohos.file.fs';
-import { logger } from '../Utils/Logger';
-import { GlobalBackgroundLayerMode } from '../Framework/Components/GlobalBackgroundLayer';
-import { SharedPageBackgroundLayer } from '../Framework/Components/SharedPageBackgroundLayer';
-import { ThemeAwareHelper, ThemeAwareState } from '../Framework/Components/ThemeAware';
-import { ThemeManager } from '../Framework/Managers/ThemeManager';
-import { WindowManager, DisplayMode } from '../Utils/WindowManager';
-import { PageWindowCoordinator } from '../Utils/PageWindowCoordinator';
-import { getUnifiedAnnotationManager, UnifiedAnnotationManager } from '../Framework/Annotations/UnifiedAnnotationManager';
-import { getHelpPanelManagerV2 } from '../Framework/Components/HelpPanelV2';
+import { logger } from 'manxia_core/src/main/ets/Utils/Logger';
+import { GlobalBackgroundLayerMode } from 'manxia_theme/src/main/ets/Framework/Components/GlobalBackgroundLayer';
+import { SharedPageBackgroundLayer } from 'manxia_theme/src/main/ets/Framework/Components/SharedPageBackgroundLayer';
+import { ThemeAwareHelper, ThemeAwareState } from 'manxia_theme/src/main/ets/Framework/Components/ThemeAware';
+import { ThemeManager } from 'manxia_theme/src/main/ets/Framework/Managers/ThemeManager';
+import { WindowManager, DisplayMode } from 'manxia_theme/src/main/ets/Utils/WindowManager';
+import { PageWindowCoordinator } from 'manxia_theme/src/main/ets/Utils/PageWindowCoordinator';
+import { getUnifiedAnnotationManager, UnifiedAnnotationManager } from 'manxia_core/src/main/ets/Framework/Annotations/UnifiedAnnotationManager';
+import { getHelpPanelManagerV2 } from 'manxia_features_ui/src/main/ets/Framework/Components/HelpPanelV2';
 import { DataManager } from '../Framework/Data/DataManager';
 import { NovelDataManager } from '../Framework/Novel/NovelDataManager';
-import { EBookDataManager } from '../Framework/Data/EBookDataManager';
+import { EBookDataManager } from 'manxia_core/src/main/ets/Framework/Data/EBookDataManager';
 import {
   collectImageEntries,
   isImagePageEBook,
@@ -26,15 +26,15 @@ import {
   resolveRuntimePageIndexFromLegacyAnchor
 } from '../Framework/Adapters/EBookImageReaderAdapter';
 import { buildNovelReaderParamsFromTxtEBook } from '../Framework/Adapters/LocalTextNovelAdapter';
-import { UnifiedContentType } from '../Models/UnifiedContentModels';
-import { UnifiedAnnotationRecord, UnifiedAnnotationType, HighlightLineType, AnnotationAnchor } from '../Models/AnnotationModels';
-import { EBookFormat, EBookReadingProgress } from '../Models/EBookModels';
-import { AppGuideOverlay, GuideHighlightRect } from '../Framework/Components/AppGuideOverlay';
+import { UnifiedContentType } from 'manxia_core/src/main/ets/Models/UnifiedContentModels';
+import { UnifiedAnnotationRecord, UnifiedAnnotationType, HighlightLineType, AnnotationAnchor } from 'manxia_core/src/main/ets/Models/AnnotationModels';
+import { EBookFormat, EBookReadingProgress } from 'manxia_core/src/main/ets/Models/EBookModels';
+import { AppGuideOverlay, GuideHighlightRect } from 'manxia_theme/src/main/ets/Framework/Components/AppGuideOverlay';
 import { ensureGuideAnchorVisibleInScroller, resolveGuideHighlightRectInRoot } from '../Framework/Components/AppGuideSupport';
-import { AppGuideManager, AppGuidePageId, AppGuideStep } from '../Framework/Managers/AppGuideManager';
+import { AppGuideManager, AppGuidePageId, AppGuideStep } from 'manxia_core/src/main/ets/Framework/Managers/AppGuideManager';
 import { SettingsImmersiveTitleBar } from './settings/SettingsImmersiveTitleBar';
-import { SettingsImmersiveTitleActionItem, SettingsPageTitleBarManager } from './settings/SettingsPageTitleBarManager';
-import { SettingsPanelSurfaceHelper } from './settings/SettingsPanelSurfaceHelper';
+import { SettingsImmersiveTitleActionItem, SettingsPageTitleBarManager } from 'manxia_features_ui/src/main/ets/pages/settings/SettingsPageTitleBarManager';
+import { SettingsPanelSurfaceHelper } from 'manxia_features_ui/src/main/ets/pages/settings/SettingsPanelSurfaceHelper';
 import { MangaReaderPageParams } from './MangaReaderPage';
 import { NovelReaderPageParams } from './NovelBookshelfPage';
 import { EBookReaderParams } from './EBookReaderRouteTypes';

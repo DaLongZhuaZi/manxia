@@ -1,7 +1,7 @@
 // 文件路径: entry/src/main/ets/Framework/Animation/ItemTransitionAnimator.ets
 // 职责: 通用的条目过渡动画引擎，使用Canvas绘制平滑的位置变换动画
 
-import { logger } from '../../Utils/Logger';
+import { logger } from 'manxia_core/src/main/ets/Utils/Logger';
 import { curves } from '@kit.ArkUI';
 
 const TAG = 'ItemTransitionAnimator';

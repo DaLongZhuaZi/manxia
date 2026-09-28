@@ -7,20 +7,20 @@
 import { UIExtensionAbility, UIExtensionContentSession, Want } from '@kit.AbilityKit';
 import { window } from '@kit.ArkUI';
 import { fileUri } from '@kit.CoreFileKit';
-import { logger } from '../Utils/Logger';
-import { openExternalFileTaskInIsolatedAbilityByContext } from '../Framework/ExternalFile/ExternalFileTaskLauncher';
+import { logger } from 'manxia_core/src/main/ets/Utils/Logger';
+import { openExternalFileTaskInIsolatedAbilityByContext } from 'manxia_network/src/main/ets/Framework/ExternalFile/ExternalFileTaskLauncher';
 import {
   ExternalFileTaskFactory,
   ExternalFileTaskKind,
   ExternalFileTaskParams,
   ExternalFileTaskSource
-} from '../Framework/ExternalFile/ExternalFileTaskTypes';
+} from 'manxia_network/src/main/ets/Framework/ExternalFile/ExternalFileTaskTypes';
 import {
   NETWORK_FOLDER_CODE_EXTENSIONS,
   NETWORK_FOLDER_FONT_EXTENSIONS,
   NETWORK_FOLDER_IMAGE_EXTENSIONS,
   NETWORK_FOLDER_JSON_EXTENSIONS
-} from '../Models/NetworkFolderModels';
+} from 'manxia_core/src/main/ets/Models/NetworkFolderModels';
 
 const TAG = 'ShareExtAbility';
 // 应用包名（与AppScope/app.json5中的bundleName保持一致）

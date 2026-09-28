@@ -1,0 +1,10 @@
+{
+  "schemaVersion": 1,
+  "contract": "hypium_activity_run_reuse",
+  "previousRunId": "fixture-old-run",
+  "currentRunId": "fixture-new-run",
+  "previousEvidencePath": "full-source-v2-hypium-device-run-fixture-old/source-old.json",
+  "sameRunEvidencePath": "full-source-v2-hypium-device-run-fixture-new/source-new.json",
+  "differentRunMustClear": true,
+  "sameRunMustPreserve": true
+}

@@ -1,0 +1,7 @@
+{
+  "module": {
+    "name": "manxia_theme",
+    "type": "har",
+    "deviceTypes": [ "phone", "tablet", "2in1" ]
+  }
+}

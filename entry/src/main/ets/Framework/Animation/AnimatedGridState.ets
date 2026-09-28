@@ -1,7 +1,7 @@
 // 文件路径: entry/src/main/ets/Framework/Animation/AnimatedGridState.ets
 // 职责: 动画网格状态管理，跟踪条目变化并触发动画
 
-import { logger } from '../../Utils/Logger';
+import { logger } from 'manxia_core/src/main/ets/Utils/Logger';
 import { ItemPosition, AnimationType } from './ItemTransitionAnimator';
 
 const TAG = 'AnimatedGridState';

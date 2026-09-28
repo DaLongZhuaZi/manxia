@@ -6,23 +6,23 @@
  */
 
 import { HdsNavDestination } from '@kit.UIDesignKit';
-import { ThemeAwareState, ThemeAwareHelper } from '../../Framework/Components/ThemeAware';
-import { ThemeManager, ThemeType, GlassLevel, GlassStyleToken } from '../../Framework/Managers/ThemeManager';
-import { FontAwareHelper, FontAwareState } from '../../Framework/Components/FontAware';
-import { logger } from '../../Utils/Logger';
-import { PageLifecycleManager } from '../../Framework/Lifecycle';
-import { DeviceAdaptationManager, DeviceInfo, DeviceChangeListener, Breakpoint } from '../../Framework/Managers/DeviceAdaptationManager';
-import { ResponsiveLayoutHelper } from '../../Framework/Utils/ResponsiveLayout';
-import { SettingsSearchSupport, SettingsSearchResult } from './SettingsSearchSupport';
-import { AppGuideOverlay, GuideHighlightRect } from '../../Framework/Components/AppGuideOverlay';
+import { ThemeAwareState, ThemeAwareHelper } from 'manxia_theme/src/main/ets/Framework/Components/ThemeAware';
+import { ThemeManager, ThemeType, GlassLevel, GlassStyleToken } from 'manxia_theme/src/main/ets/Framework/Managers/ThemeManager';
+import { FontAwareHelper, FontAwareState } from 'manxia_theme/src/main/ets/Framework/Components/FontAware';
+import { logger } from 'manxia_core/src/main/ets/Utils/Logger';
+import { PageLifecycleManager } from 'manxia_core/src/main/ets/Framework/Lifecycle/index';
+import { DeviceAdaptationManager, DeviceInfo, DeviceChangeListener, Breakpoint } from 'manxia_theme/src/main/ets/Framework/Managers/DeviceAdaptationManager';
+import { ResponsiveLayoutHelper } from 'manxia_theme/src/main/ets/Framework/Utils/ResponsiveLayout';
+import { SettingsSearchSupport, SettingsSearchResult } from 'manxia_features_ui/src/main/ets/pages/settings/SettingsSearchSupport';
+import { AppGuideOverlay, GuideHighlightRect } from 'manxia_theme/src/main/ets/Framework/Components/AppGuideOverlay';
 import { ensureGuideAnchorVisibleInScroller, resolveGuideHighlightRectInRoot } from '../../Framework/Components/AppGuideSupport';
-import { AppGuideManager, AppGuidePageId, AppGuideStep } from '../../Framework/Managers/AppGuideManager';
-import { GlobalBackgroundLayerMode } from '../../Framework/Components/GlobalBackgroundLayer';
-import { SharedPageBackgroundLayer } from '../../Framework/Components/SharedPageBackgroundLayer';
-import { PageWindowCoordinator } from '../../Utils/PageWindowCoordinator';
+import { AppGuideManager, AppGuidePageId, AppGuideStep } from 'manxia_core/src/main/ets/Framework/Managers/AppGuideManager';
+import { GlobalBackgroundLayerMode } from 'manxia_theme/src/main/ets/Framework/Components/GlobalBackgroundLayer';
+import { SharedPageBackgroundLayer } from 'manxia_theme/src/main/ets/Framework/Components/SharedPageBackgroundLayer';
+import { PageWindowCoordinator } from 'manxia_theme/src/main/ets/Utils/PageWindowCoordinator';
 import { SettingsImmersiveTitleBar } from './SettingsImmersiveTitleBar';
-import { SettingsPageTitleBarManager } from './SettingsPageTitleBarManager';
-import { SettingsPageSurfaceManager, SettingsPageSurfaceStyle, SettingsPageRowVisualStyle } from './SettingsPageSurfaceManager';
+import { SettingsPageTitleBarManager } from 'manxia_features_ui/src/main/ets/pages/settings/SettingsPageTitleBarManager';
+import { SettingsPageSurfaceManager, SettingsPageSurfaceStyle, SettingsPageRowVisualStyle } from 'manxia_features_ui/src/main/ets/pages/settings/SettingsPageSurfaceManager';
 
 const TAG = 'GlobalSettingsPage';
 const TITLE_BAR_HEIGHT_MINI: number = 56;
@@ -76,6 +76,13 @@ export struct GlobalSettingsPage {
       targetPage: 'ReadingSettingsSubPage'
     },
     {
+      id: 'continuation_reading',
+      title: '接续阅读',
+      subtitle: '管理接续方式、默认模式和接续缓存',
+      icon: $r('sys.symbol.book_open_fill'),
+      targetPage: 'ContinuationReadingSettingsPage'
+    },
+    {
       id: 'page',
       title: '页面设置',
       subtitle: '详情页类型选择、页面显示偏好',
@@ -113,7 +120,7 @@ export struct GlobalSettingsPage {
     {
       id: 'interaction',
       title: '交互设置',
-      subtitle: '震动反馈、触觉体验',
+      subtitle: '震动反馈、智感握姿',
       icon: $r('sys.symbol.hand_tap'),
       targetPage: 'InteractionSettingsSubPage'
     },
@@ -467,6 +474,8 @@ export struct GlobalSettingsPage {
     switch (pageName) {
       case 'ReadingSettingsSubPage':
         return '阅读设置';
+      case 'ContinuationReadingSettingsPage':
+        return '接续阅读';
       case 'PageSettingsSubPage':
         return '页面设置';
       case 'ShortcutSettingsSubPage':

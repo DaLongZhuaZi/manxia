@@ -1,20 +1,20 @@
-﻿import { SafeFileUtils } from '../../Utils/SafeFileUtils';
+﻿import { SafeFileUtils } from 'manxia_core/src/main/ets/Utils/SafeFileUtils';
 // 文件路径: entry/src/main/ets/Framework/Components/BatchMangaImportDialog.ets
 /**
  * 批量漫画导入配置对话框
  * 支持智能分组、批量配置、章节识别等功能
  */
 
-import { ThemeAwareState, ThemeAwareHelper } from './ThemeAware';
-import { DialogSurfaceStyleHelper } from './DialogSurfaceStyleHelper';
-import { FontAwareHelper, FontAwareState } from './FontAware';
-import { logger } from '../../Utils/Logger';
-import { AppColors } from '../Theme/AppColors';
+import { ThemeAwareState, ThemeAwareHelper } from 'manxia_theme/src/main/ets/Framework/Components/ThemeAware';
+import { DialogSurfaceStyleHelper } from 'manxia_features_ui/src/main/ets/Framework/Components/DialogSurfaceStyleHelper';
+import { FontAwareHelper, FontAwareState } from 'manxia_theme/src/main/ets/Framework/Components/FontAware';
+import { logger } from 'manxia_core/src/main/ets/Utils/Logger';
+import { AppColors } from 'manxia_theme/src/main/ets/Framework/Theme/AppColors';
 import { fileIo } from '@kit.CoreFileKit';
 import { MangaImportMode, ChapterInfo, ParsedArchiveStructure, PrefilledComicInfo, ExistingMangaCandidate } from './MangaImportDialog';
 import { ScraperDialog, ScraperDialogConfig, ScraperDialogResult } from './ScraperDialog';
-import { ScraperContentType } from '../Scraper/ScraperTypes';
-import { ImportFlowContentType, ImportFlowEvent, ImportFlowEventType, ImportFlowSeverity } from '../Import/ImportFlowTypes';
+import { ScraperContentType } from 'manxia_core/src/main/ets/Framework/Scraper/ScraperTypes';
+import { ImportFlowContentType, ImportFlowEvent, ImportFlowEventType, ImportFlowSeverity } from 'manxia_core/src/main/ets/Framework/Import/ImportFlowTypes';
 
 const TAG = 'BatchMangaImportDialog';
 

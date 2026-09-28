@@ -1,4 +1,4 @@
-import { SafeUtils } from '../../Utils/SafeUtils';
+import { SafeUtils } from 'manxia_core/src/main/ets/Utils/SafeUtils';
 /**
  * 小说数据管理器
  * 独立管理小说相关数据，不影响现有数据库
@@ -8,9 +8,9 @@ import { SafeUtils } from '../../Utils/SafeUtils';
 
 import { relationalStore } from '@kit.ArkData';
 import { common } from '@kit.AbilityKit';
-import { logger } from '../../Utils/Logger';
-import { NOVEL_CREATE_TABLE_SQL, NOVEL_CREATE_INDEX_SQL } from './NovelDatabaseSchema';
-import { LegadoBookSource } from './LegadoSourceTypes';
+import { logger } from 'manxia_core/src/main/ets/Utils/Logger';
+import { NOVEL_CREATE_TABLE_SQL, NOVEL_CREATE_INDEX_SQL } from 'manxia_novel/src/main/ets/Framework/Novel/NovelDatabaseSchema';
+import { LegadoBookSource } from 'manxia_novel/src/main/ets/Framework/Novel/LegadoSourceTypes';
 import {
   LegadoCompatibilityEngineMode,
   LegadoCompatibilityStatus,
@@ -23,13 +23,13 @@ import {
   LegadoSourceVerificationRecord,
   LegadoTransportKind,
   LegadoWorkflowKind
-} from './LegadoCompatibilityTypes';
-import { NovelBook, NovelChapter, NovelReadProgress, NovelReaderSettings, DEFAULT_NOVEL_READER_SETTINGS, NovelReadStatus } from '../../Models/NovelModels';
+} from 'manxia_novel/src/main/ets/Framework/Novel/LegadoCompatibilityTypes';
+import { NovelBook, NovelChapter, NovelReadProgress, NovelReaderSettings, DEFAULT_NOVEL_READER_SETTINGS, NovelReadStatus } from 'manxia_core/src/main/ets/Models/NovelModels';
 import { getNovelLoginManager } from './NovelLoginManager';
-import { getNovelCoverGenerator } from './NovelCoverGenerator';
-import { LibraryCoverManager } from '../Storage/LibraryCoverManager';
-import { getUnifiedAnnotationManager } from '../Annotations/UnifiedAnnotationManager';
-import { UnifiedContentType } from '../../Models/UnifiedContentModels';
+import { getNovelCoverGenerator } from 'manxia_novel/src/main/ets/Framework/Novel/NovelCoverGenerator';
+import { LibraryCoverManager } from 'manxia_core/src/main/ets/Framework/Storage/LibraryCoverManager';
+import { getUnifiedAnnotationManager } from 'manxia_core/src/main/ets/Framework/Annotations/UnifiedAnnotationManager';
+import { UnifiedContentType } from 'manxia_core/src/main/ets/Models/UnifiedContentModels';
 
 const TAG = 'NovelDataManager';
 
@@ -422,6 +422,31 @@ export class NovelDataManager {
     );
   }
 
+  /**
+   * Refresh compiler metadata without recreating a row that was deleted or
+   * replaced while a lazy restore was in flight.
+   */
+  async updateCompatibilityRecordIfRawMatches(record: LegadoCompatibilityStorageRecord): Promise<void> {
+    const store = this.getStore();
+    await store.executeSql(
+      `UPDATE novel_source_compatibility
+       SET compilerVersion = ?, compileStatus = ?, engineMode = ?, capabilityJson = ?,
+           diagnosticsJson = ?, compiledAt = ?, updateTime = ?
+       WHERE sourceUrl = ? AND rawSha256 = ?`,
+      [
+        record.compilerVersion,
+        record.status,
+        record.engineMode,
+        record.capabilityJson,
+        record.diagnosticsJson,
+        record.compiledAt,
+        record.updatedAt,
+        record.sourceUrl,
+        record.rawSha256
+      ]
+    );
+  }
+
   async getCompatibilityRecord(sourceUrl: string): Promise<LegadoCompatibilityStorageRecord | null> {
     const store = this.getStore();
     const result = await store.querySql(
@@ -810,7 +835,7 @@ export class NovelDataManager {
             // 检查书源NSFW作用域开关
             let scopeEnabled = true;
             try {
-              const cfmModule = await import('../Managers/ContentFilterManager');
+              const cfmModule = await import('manxia_core/src/main/ets/Framework/Managers/ContentFilterManager');
               scopeEnabled = cfmModule.ContentFilterManager.getInstance().isNsfwScopeBookSourceEnabled();
             } catch (_e) {
               // ContentFilterManager未初始化时默认启用

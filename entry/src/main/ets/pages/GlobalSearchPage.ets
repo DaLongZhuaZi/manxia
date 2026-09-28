@@ -4,17 +4,19 @@
  */
 import { common } from '@kit.AbilityKit';
 import { ComicInfo } from '../Framework/Data/DataManager';
-import { EBook } from '../Models/EBookModels';
-import { NovelBook, NovelSearchResult, NovelSourceInfo } from '../Models/NovelModels';
-import { ThemeAwareState, ThemeAwareHelper } from '../Framework/Components/ThemeAware';
-import { ThemeManager, ThemeType } from '../Framework/Managers/ThemeManager';
-import { SettingsManager, SettingKeys } from '../Framework/Managers/SettingsManager';
-import { FontAwareHelper, FontAwareState } from '../Framework/Components/FontAware';
-import { DeviceAdaptationManager, DeviceInfo, DeviceChangeListener, Breakpoint } from '../Framework/Managers/DeviceAdaptationManager';
-import { ResponsiveLayoutHelper } from '../Framework/Utils/ResponsiveLayout';
-import { logger } from '../Utils/Logger';
-import { SafeUtils } from '../Utils/SafeUtils';
-import { PageLifecycleManager } from '../Framework/Lifecycle';
+import { EBook } from 'manxia_core/src/main/ets/Models/EBookModels';
+import { NovelBook, NovelSearchResult, NovelSourceInfo } from 'manxia_core/src/main/ets/Models/NovelModels';
+import { ThemeAwareState, ThemeAwareHelper } from 'manxia_theme/src/main/ets/Framework/Components/ThemeAware';
+import { ThemeManager, ThemeType } from 'manxia_theme/src/main/ets/Framework/Managers/ThemeManager';
+import { ISettingsManagerFacade, SettingsManagerHolder } from 'manxia_core/src/main/ets/Framework/Contracts/ISettingsManagerFacade';
+import { SettingKeys } from 'manxia_core/src/main/ets/Framework/Contracts/SettingKeys';
+// OLD: ../Framework/Managers/SettingsManager';
+import { FontAwareHelper, FontAwareState } from 'manxia_theme/src/main/ets/Framework/Components/FontAware';
+import { DeviceAdaptationManager, DeviceInfo, DeviceChangeListener, Breakpoint } from 'manxia_theme/src/main/ets/Framework/Managers/DeviceAdaptationManager';
+import { ResponsiveLayoutHelper } from 'manxia_theme/src/main/ets/Framework/Utils/ResponsiveLayout';
+import { logger } from 'manxia_core/src/main/ets/Utils/Logger';
+import { SafeUtils } from 'manxia_core/src/main/ets/Utils/SafeUtils';
+import { PageLifecycleManager } from 'manxia_core/src/main/ets/Framework/Lifecycle/index';
 import { NovelDetailPageParams } from './NovelBookshelfPage';
 import {
   GlobalSearchService,
@@ -28,41 +30,42 @@ import {
 } from '../Framework/Services/GlobalSearchService';
 import { SourceInfo } from '../Framework/Source/SourceManager';
 import { PageSettingsHelper, DetailPageType, SceneType } from './settings/PageSettingsSubPage';
-import { UnifiedDetailPageParams, UnifiedContentType } from '../Models/UnifiedContentModels';
+import { UnifiedDetailPageParams, UnifiedContentType } from 'manxia_core/src/main/ets/Models/UnifiedContentModels';
 
 import { HdsNavDestination, HdsNavDestinationAttribute, ScrollEffectType } from '@kit.UIDesignKit';
 import { LengthMetrics } from '@kit.ArkUI';
+import { resolveMedia } from 'manxia_ui_resources/src/main/ets/ResourceCatalog';
 import { preferences } from '@kit.ArkData';
 import { webview } from '@kit.ArkWeb';
-import { WindowManager, DisplayMode } from '../Utils/WindowManager';
-import { AppGuideOverlay, GuideHighlightRect } from '../Framework/Components/AppGuideOverlay';
+import { WindowManager, DisplayMode } from 'manxia_theme/src/main/ets/Utils/WindowManager';
+import { AppGuideOverlay, GuideHighlightRect } from 'manxia_theme/src/main/ets/Framework/Components/AppGuideOverlay';
 import { resolveGuideHighlightRectInRoot } from '../Framework/Components/AppGuideSupport';
-import { AppGuideManager, AppGuidePageId, AppGuideStep } from '../Framework/Managers/AppGuideManager';
+import { AppGuideManager, AppGuidePageId, AppGuideStep } from 'manxia_core/src/main/ets/Framework/Managers/AppGuideManager';
 import { SettingsImmersiveTitleBar } from './settings/SettingsImmersiveTitleBar';
-import { SettingsPageTitleBarManager } from './settings/SettingsPageTitleBarManager';
-import { SettingsPageSurfaceManager } from './settings/SettingsPageSurfaceManager';
-import { GlobalBackgroundLayerMode } from '../Framework/Components/GlobalBackgroundLayer';
-import { SharedPageBackgroundLayer } from '../Framework/Components/SharedPageBackgroundLayer';
-import { SettingsPanelSurfaceHelper } from './settings/SettingsPanelSurfaceHelper';
+import { SettingsPageTitleBarManager } from 'manxia_features_ui/src/main/ets/pages/settings/SettingsPageTitleBarManager';
+import { SettingsPageSurfaceManager } from 'manxia_features_ui/src/main/ets/pages/settings/SettingsPageSurfaceManager';
+import { GlobalBackgroundLayerMode } from 'manxia_theme/src/main/ets/Framework/Components/GlobalBackgroundLayer';
+import { SharedPageBackgroundLayer } from 'manxia_theme/src/main/ets/Framework/Components/SharedPageBackgroundLayer';
+import { SettingsPanelSurfaceHelper } from 'manxia_features_ui/src/main/ets/pages/settings/SettingsPanelSurfaceHelper';
 import { SourceDetailSearchExecutor, getSourceDetailSearchExecutor } from '../Framework/Services/SourceDetailSearchExecutor';
 import { openSourceDetailInIsolatedAbility } from '../Framework/Source/SourceDetailAbilityLauncher';
 import { MangaDetailPageParams } from './MangaDetailPage';
 import type { SourceDetailParams } from './SourceDetailPage';
-import { GlobalSearchSessionHandle } from '../Framework/Search/GlobalSearchSessionTypes';
-import { SearchResultDataSource } from '../Framework/Search/SearchResultDataSource';
-import { GlobalSearchFlowMonitor, getGlobalSearchFlowMonitor } from '../Framework/Search/GlobalSearchFlowMonitor';
+import { GlobalSearchSessionHandle } from 'manxia_source_engine/src/main/ets/Framework/Search/GlobalSearchSessionTypes';
+import { SearchResultDataSource } from 'manxia_source_engine/src/main/ets/Framework/Search/SearchResultDataSource';
+import { GlobalSearchFlowMonitor, getGlobalSearchFlowMonitor } from 'manxia_source_engine/src/main/ets/Framework/Search/GlobalSearchFlowMonitor';
 import {
   GlobalSearchFlowEvent,
   GlobalSearchFlowEventType,
   GlobalSearchFlowSessionInfo,
   GlobalSearchFlowSeverity
-} from '../Framework/Search/GlobalSearchFlowTypes';
+} from 'manxia_source_engine/src/main/ets/Framework/Search/GlobalSearchFlowTypes';
 import {
   buildGlobalSearchCacheKey,
   createGlobalSearchCacheData,
   GlobalSearchCacheData,
   GlobalSearchCachedComicInfo
-} from '../Framework/Search/GlobalSearchCacheBridge';
+} from 'manxia_source_engine/src/main/ets/Framework/Search/GlobalSearchCacheBridge';
 
 const TAG = 'GlobalSearchPage';
 const TITLE_BAR_HEIGHT_MINI: number = 56;
@@ -191,7 +194,7 @@ export struct GlobalSearchPage {
   private searchService: GlobalSearchService = getGlobalSearchService();
   private searchFlowMonitor: GlobalSearchFlowMonitor = getGlobalSearchFlowMonitor();
   private sourceDetailSearchExecutor: SourceDetailSearchExecutor = getSourceDetailSearchExecutor();
-  private settingsManager: SettingsManager = SettingsManager.getInstance();
+  private settingsManager: ISettingsManagerFacade = SettingsManagerHolder.get();
   private pathStack: NavPathStack = new NavPathStack();
   private sourceDetailWindowSequence: number = 0;
   private lastProgressUpdate: number = 0;  // 上次进度更新时间戳
@@ -1249,6 +1252,28 @@ export struct GlobalSearchPage {
   }
 
   /**
+   * 删除单条搜索历史
+   */
+  private removeSearchHistory(keyword: string): void {
+    const trimmed: string = keyword.trim();
+    if (trimmed.length === 0) {
+      return;
+    }
+    this.searchHistory = this.searchHistory.filter((item: string) => item.trim() !== trimmed);
+    AppStorage.setOrCreate(SEARCH_HISTORY_PREF_KEY, this.searchHistory);
+    void this.persistSearchHistory(this.searchHistory);
+  }
+
+  /**
+   * 清空全部搜索历史
+   */
+  private clearAllSearchHistory(): void {
+    this.searchHistory = [];
+    AppStorage.setOrCreate(SEARCH_HISTORY_PREF_KEY, []);
+    void this.persistSearchHistory([]);
+  }
+
+  /**
    * 保存搜索历史
    */
   private saveSearchHistory(keyword: string): void {
@@ -2163,12 +2188,53 @@ export struct GlobalSearchPage {
             // 搜索历史
             Column() {
               if (this.searchHistory.length > 0) {
-                Text('搜索历史')
-                  .fontSize(16)
-                  .fontWeight(FontWeight.Medium)
-                  .fontFamily(this.appFontFamily)
-                  .padding(this.responsive_contentPadding)
-                  .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
+                // 标题行 + 清空按钮
+                Row() {
+                  Text('搜索历史')
+                    .fontSize(16)
+                    .fontWeight(FontWeight.Medium)
+                    .fontFamily(this.appFontFamily)
+                    .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
+
+                  Blank()
+
+                  Button({ type: ButtonType.Normal }) {
+                    Row({ space: 4 }) {
+                      SymbolGlyph($r('sys.symbol.trash'))
+                        .fontSize(13)
+                        .fontColor([ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme)])
+                      Text('清空')
+                        .fontSize(13)
+                        .fontFamily(this.appFontFamily)
+                        .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
+                    }
+                  }
+                  .height(30)
+                  .padding({ left: 12, right: 12 })
+                  .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('panel_background', this.themeState.currentTheme))
+                  .borderRadius(15)
+                  .border({
+                    width: 1,
+                    color: ThemeAwareHelper.getTestManagementThemedColor('panel_border', this.themeState.currentTheme)
+                  })
+                  .onClick(() => {
+                    this.getUIContext().showAlertDialog({
+                      title: '清空搜索历史',
+                      message: '确定要清空全部搜索历史吗？',
+                      primaryButton: {
+                        value: '取消',
+                        action: () => {}
+                      },
+                      secondaryButton: {
+                        value: '清空',
+                        action: () => this.clearAllSearchHistory()
+                      }
+                    });
+                  })
+                }
+                .width('100%')
+                .padding({ left: this.responsive_contentPadding, right: this.responsive_contentPadding })
+                .alignItems(VerticalAlign.Center)
 
                 Flex({ wrap: FlexWrap.Wrap }) {
                   ForEach(this.searchHistory, (keyword: string) => {
@@ -2195,7 +2261,13 @@ export struct GlobalSearchPage {
                       this.searchKeyword = keyword;
                       this.performSearch();
                     })
-                  })
+                    .gesture(
+                      LongPressGesture({ repeat: false, duration: 500 })
+                        .onAction(() => {
+                          this.removeSearchHistory(keyword);
+                        })
+                    )
+                  }, (keyword: string) => keyword)
                 }
                 .width('100%')
                 .padding({ left: this.responsive_contentPadding, right: this.responsive_contentPadding })
@@ -2958,12 +3030,7 @@ export struct GlobalSearchPage {
     }
 
     if (coverUrl.startsWith('app.media.')) {
-      const resourceName = coverUrl.substring('app.media.'.length);
-      if (resourceName === 'mangabook') return $r('app.media.mangabook');
-      if (resourceName === 'ebook') return $r('app.media.ebook');
-      if (resourceName === 'ic_ebook') return $r('app.media.ic_ebook');
-      if (resourceName === 'ic_novel') return $r('app.media.ebook');
-      return $r('app.media.mangabook');
+      return resolveMedia(coverUrl);
     }
 
     if (coverUrl.startsWith('/')) {

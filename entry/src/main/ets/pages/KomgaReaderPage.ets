@@ -1,16 +1,16 @@
-﻿import { SafeUtils } from '../Utils/SafeUtils';
+﻿import { SafeUtils } from 'manxia_core/src/main/ets/Utils/SafeUtils';
 import { preferences } from '@kit.ArkData';
 import { promptAction } from '@kit.ArkUI';
 import { common } from '@kit.AbilityKit';
-import { logger } from '../Utils/Logger';
+import { logger } from 'manxia_core/src/main/ets/Utils/Logger';
 import { ReaderSafeAreaUtils } from '../Utils/ReaderSafeAreaUtils';
-import { FontAwareHelper, FontAwareState } from '../Framework/Components/FontAware';
+import { FontAwareHelper, FontAwareState } from 'manxia_theme/src/main/ets/Framework/Components/FontAware';
 import { ChapterInfo, ComicDetailInfo, PageInfo } from '../Framework/Source/SourceExecutor';
 import { getKomgaSourceExecutor, KomgaSourceExecutor } from '../Framework/Source/KomgaSourceExecutor';
 import { KomgaContentType, KomgaReaderProgress } from '../Framework/Source/KomgaModels';
 import { KomgaImage } from '../components/KomgaImage';
-import { WindowManager, DisplayMode } from '../Utils/WindowManager';
-import { MangaReadFlowMonitor } from '../Framework/Reader/MangaReadFlowMonitor';
+import { WindowManager, DisplayMode } from 'manxia_theme/src/main/ets/Utils/WindowManager';
+import { MangaReadFlowMonitor } from 'manxia_reader_ui/src/main/ets/Framework/Reader/MangaReadFlowMonitor';
 import {
   MangaReadFlowEvent,
   MangaReadFlowEventType,
@@ -18,7 +18,7 @@ import {
   MangaReadFlowSessionInfo,
   MangaReadFlowSeverity,
   MangaReadFlowSourceKind
-} from '../Framework/Reader/MangaReadFlowTypes';
+} from 'manxia_reader_ui/src/main/ets/Framework/Reader/MangaReadFlowTypes';
 
 const TAG = 'KomgaReaderPage';
 const READING_PROGRESS_STORE: string = 'komga_reading_progress';
@@ -374,7 +374,7 @@ export struct KomgaReaderPage {
 
   private async restoreReadingProgress(): Promise<void> {
     try {
-      const store = preferences.getPreferencesSync(this.getHostContext(), { name: READING_PROGRESS_STORE });
+      const store = await preferences.getPreferences(this.getHostContext(), { name: READING_PROGRESS_STORE });
       const rawText = store.getSync(this.getProgressKey(), '') as string;
       if (!rawText) {
         this.currentPage = 0;
@@ -398,7 +398,7 @@ export struct KomgaReaderPage {
       return;
     }
     try {
-      const store = preferences.getPreferencesSync(this.getHostContext(), { name: READING_PROGRESS_STORE });
+      const store = await preferences.getPreferences(this.getHostContext(), { name: READING_PROGRESS_STORE });
       const payload: KomgaReaderProgress = {
         itemKey: this.getProgressKey(),
         bookId: this.chapterId,

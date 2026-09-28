@@ -1,9 +1,9 @@
-import { logger } from '../../Utils/Logger';
-import { DatabaseManager } from '../Database/DatabaseManager';
-import { DatabaseValue, GenericQueryRecord } from '../Database/DatabaseTypes';
+import { logger } from 'manxia_core/src/main/ets/Utils/Logger';
+import { DatabaseManager } from 'manxia_core/src/main/ets/Framework/Database/DatabaseManager';
+import { DatabaseValue, GenericQueryRecord } from 'manxia_core/src/main/ets/Framework/Database/DatabaseTypes';
 import { ChapterPreloadManager } from '../Preload/ChapterPreloadManager';
 import { WebViewSourceManager } from '../WebView/WebViewSourceManager';
-import { SourceIdentity } from './SourceIdentity';
+import { SourceIdentity } from 'manxia_source_engine/src/main/ets/Framework/Source/SourceIdentity';
 
 const TAG = 'SourceCompatibilityService';
 

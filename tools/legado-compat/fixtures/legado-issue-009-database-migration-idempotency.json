@@ -1,0 +1,84 @@
+{
+  "schemaVersion": 1,
+  "kind": "legado_issue_009_database_migration_idempotency",
+  "baseline": {
+    "sourceCount": 458,
+    "sourcePackageSha256": "473048A191DE4749FA9C15E0A2F2328A3E86B385A5FCE23EA30432D598D03A67",
+    "legadoCommit": "95973d186b147fb9ab43a9240021d688e4304fbd"
+  },
+  "rootCause": {
+    "classification": "database_migration_idempotency_and_failure_propagation",
+    "statement": "Incremental schema changes must be applied through an inspected, replayable migration boundary. Duplicate columns are a no-op only when PRAGMA confirms the column exists; unrelated SQL failures must abort initialization instead of being logged and reported as success."
+  },
+  "legadoReference": {
+    "files": [
+      "legado/app/src/main/java/io/legado/app/data/AppDatabase.kt",
+      "legado/app/src/main/java/io/legado/app/data/DatabaseMigrations.kt",
+      "legado/app/src/main/java/io/legado/app/data/entities/BookSource.kt"
+    ],
+    "semanticLocations": [
+      "AppDatabase.kt:61-64 registers DatabaseMigrations.migrations with Room",
+      "DatabaseMigrations.kt:96-100 performs a version-bounded book_sources ALTER TABLE",
+      "BookSource.kt:27-41 defines the persistent book_sources identity and type fields"
+    ]
+  },
+  "affectedSourceSet": {
+    "sourcePackageScope": "all imported Legado source records and compatibility tables",
+    "sourceCount": 458,
+    "ruleNodeCount": 0,
+    "sourceSetBinding": "all records are bound by the frozen package hash; no raw source payload is persisted in this evidence"
+  },
+  "v2Consumers": [
+    "entry/src/main/ets/Framework/Database/DatabaseManager.ets",
+    "entry/src/main/ets/Framework/Novel/NovelDataManager.ets",
+    "entry/src/main/ets/Framework/Novel/NovelInitializer.ets",
+    "entry/src/main/ets/Framework/Novel/NovelSourceManager.ets",
+    "entry/src/main/ets/Framework/Novel/NovelDatabaseSchema.ets",
+    "entry/src/main/ets/Framework/Novel/LegadoCompatibilityTypes.ets"
+  ],
+  "scenarios": [
+    {
+      "id": "existing_column",
+      "given": "PRAGMA table_info reports the target column",
+      "expected": "skip ALTER TABLE and emit no duplicate-column error"
+    },
+    {
+      "id": "missing_column",
+      "given": "PRAGMA table_info does not report the target column",
+      "expected": "execute one ADD COLUMN with the declared default"
+    },
+    {
+      "id": "replay_after_partial_upgrade",
+      "given": "the process restarts after a migration version completes",
+      "expected": "resume at the next version without replaying completed destructive work"
+    },
+    {
+      "id": "unrelated_sql_failure",
+      "given": "a non-idempotent migration statement fails for a reason other than an existing column",
+      "expected": "abort initialization and expose a blocked database state"
+    },
+    {
+      "id": "index_creation_failure",
+      "given": "CREATE INDEX IF NOT EXISTS fails because its table or column is unavailable",
+      "expected": "propagate the schema failure and do not advance database initialization"
+    },
+    {
+      "id": "version_read_failure",
+      "given": "PRAGMA user_version cannot be queried or returns no row",
+      "expected": "close the result set when available, propagate the failure, and do not restart migration from version 0"
+    },
+    {
+      "id": "saved_source_restore_failure",
+      "given": "loading persisted source JSON or V2 compatibility records fails after the database opens",
+      "expected": "propagate the failure to NovelInitializer and keep sourceManagerInitialized false instead of reporting a usable module"
+    },
+    {
+      "id": "legacy_data_preservation",
+      "given": "an existing database contains source, book, chapter or reader data",
+      "expected": "migration does not drop those tables or silently report success"
+    }
+  ],
+  "failureWitness": "tools/legado-compat/device-evidence/continuous-governance-20260730-image-sync-regression.json",
+  "closeCondition": "Static contract passes against current HEAD, all eight scenarios are represented, DatabaseManager, NovelDataManager and NovelInitializer propagate genuine migration failures, and a later build/device cold-start gate confirms no duplicate-column error. Runtime/build/device closure remains separate from this source contract.",
+  "runtimeActionsPerformed": []
+}

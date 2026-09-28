@@ -1,0 +1,60 @@
+{
+  "schemaVersion": 1,
+  "contract": "legado_explore_detail_route",
+  "cases": [
+    {
+      "name": "image_exact_identity",
+      "resultSourceId": "source-image",
+      "selectedSourceId": "source-image",
+      "resolvedSourceId": "source-image",
+      "sourceType": 2,
+      "expectedRoute": "manga",
+      "expectedReason": "image_source"
+    },
+    {
+      "name": "text_exact_identity",
+      "resultSourceId": "source-text",
+      "selectedSourceId": "source-text",
+      "resolvedSourceId": "source-text",
+      "sourceType": 0,
+      "expectedRoute": "novel",
+      "expectedReason": "non_image_source"
+    },
+    {
+      "name": "result_identity_mismatch",
+      "resultSourceId": "source-image",
+      "selectedSourceId": "source-other",
+      "resolvedSourceId": "source-image",
+      "sourceType": 2,
+      "expectedRoute": "rejected",
+      "expectedReason": "source_identity_mismatch"
+    },
+    {
+      "name": "source_lookup_missing",
+      "resultSourceId": "source-image",
+      "selectedSourceId": "source-image",
+      "resolvedSourceId": "",
+      "sourceType": -1,
+      "expectedRoute": "rejected",
+      "expectedReason": "source_lookup_missing"
+    },
+    {
+      "name": "resolved_source_identity_mismatch",
+      "resultSourceId": "source-image",
+      "selectedSourceId": "source-image",
+      "resolvedSourceId": "source-other",
+      "sourceType": 2,
+      "expectedRoute": "rejected",
+      "expectedReason": "resolved_source_identity_mismatch"
+    },
+    {
+      "name": "unsupported_source_type",
+      "resultSourceId": "source-plugin",
+      "selectedSourceId": "source-plugin",
+      "resolvedSourceId": "source-plugin",
+      "sourceType": 4,
+      "expectedRoute": "rejected",
+      "expectedReason": "unsupported_source_type"
+    }
+  ]
+}

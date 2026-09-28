@@ -5,28 +5,28 @@
  */
 
 import { webview } from '@kit.ArkWeb';
-import { logger } from '../../Utils/Logger';
-import { DatabaseManager } from '../Database/DatabaseManager';
+import { logger } from 'manxia_core/src/main/ets/Utils/Logger';
+import { DatabaseManager } from 'manxia_core/src/main/ets/Framework/Database/DatabaseManager';
 import { 
   ComicSourceDatabaseRecord,
   DatabaseValue,
   UpdateRecordData,
   WebViewSourceConfigDatabaseRecord
-} from '../Database/DatabaseTypes';
+} from 'manxia_core/src/main/ets/Framework/Database/DatabaseTypes';
 import { 
   IWebViewSourceManager,
   WebViewSourceConfig,
   WebViewConfigFactory
-} from './WebViewImageLoader';
-import { GlobalWebViewContainer, WebViewEventCallbacks } from './WebViewContainerPage';
+} from 'manxia_source_engine/src/main/ets/Framework/WebView/WebViewImageLoader';
+import { GlobalWebViewContainer, WebViewEventCallbacks } from 'manxia_source_engine/src/main/ets/Framework/WebView/WebViewContainerPage';
 import { MangaSourceEngine, EngineConfig } from './MangaSourceEngine';
-import { AntiCrawlerConfig } from './MangaSourceTypes';
+import { AntiCrawlerConfig } from 'manxia_source_engine/src/main/ets/Framework/WebView/MangaSourceTypes';
 import { DataManager } from '../Data/DataManager';
-import { WebViewDataCacheManager } from '../Cache/WebViewDataCacheManager';
+import { WebViewDataCacheManager } from 'manxia_network/src/main/ets/Framework/Cache/WebViewDataCacheManager';
 import { WebViewAuthManager } from './WebViewAuthManager';
-import { UserAgentManager } from '../Managers/UserAgentManager';
+import { UserAgentManager } from 'manxia_core/src/main/ets/Framework/Managers/UserAgentManager';
 import { LegadoMangaSourceBridge } from '../Novel/LegadoMangaSourceBridge';
-import { SourceIdentity } from '../Source/SourceIdentity';
+import { SourceIdentity } from 'manxia_source_engine/src/main/ets/Framework/Source/SourceIdentity';
 
 const TAG = 'WebViewSourceManager';
 

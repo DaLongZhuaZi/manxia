@@ -1,6 +1,6 @@
 // 职责: 漫画阅读器 LazyForEach 数据源，避免主阅读组件承载数据源实现细节。
 
-import { MangaPage } from '../Models/MangaModels';
+import { MangaPage } from 'manxia_core/src/main/ets/Models/MangaModels';
 import { WebtoonDataItem } from './MangaWebtoonTypes';
 
 export class MangaPageDataSource implements IDataSource {

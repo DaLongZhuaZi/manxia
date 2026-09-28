@@ -1,4 +1,4 @@
-﻿import { SafeUtils } from '../Utils/SafeUtils';
+﻿import { SafeUtils } from 'manxia_core/src/main/ets/Utils/SafeUtils';
 /**
  * 卡片数据同步工具
  * 用于从应用主进程向桌面卡片同步阅读目标和最近阅读数据
@@ -6,13 +6,13 @@
 import { preferences } from '@kit.ArkData';
 import { common } from '@kit.AbilityKit';
 import { formProvider, formBindingData } from '@kit.FormKit';
-import { ReadingAnalyticsManager, ReadingGoalsSettings } from '../Framework/Managers/ReadingAnalyticsManager';
+import { ReadingAnalyticsManager, ReadingGoalsSettings } from 'manxia_core/src/main/ets/Framework/Managers/ReadingAnalyticsManager';
 import { DataService } from '../Framework/Services/DataService';
-import { EBookDataManager } from '../Framework/Data/EBookDataManager';
-import { EBook } from '../Models/EBookModels';
+import { EBookDataManager } from 'manxia_core/src/main/ets/Framework/Data/EBookDataManager';
+import { EBook } from 'manxia_core/src/main/ets/Models/EBookModels';
 import { getNovelDataManager } from '../Framework/Novel/NovelDataManager';
-import { NovelBook } from '../Models/NovelModels';
-import { logger } from './Logger';
+import { NovelBook } from 'manxia_core/src/main/ets/Models/NovelModels';
+import { logger } from 'manxia_core/src/main/ets/Utils/Logger';
 import { DataManager } from '../Framework/Data/DataManager';
 import { DataInitializer } from '../Framework/Initialization/DataInitializer';
 

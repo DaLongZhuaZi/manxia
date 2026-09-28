@@ -1,0 +1,30 @@
+{
+  "schemaVersion": 1,
+  "issueId": "ISSUE-COMPAT-242-TRACE-BRIDGE-PRESERVATION",
+  "contract": "legado_trace_immutable_array_preservation",
+  "runtimePath": "entry/src/main/ets/Framework/Novel/LegadoCompatibilityTypes.ets",
+  "traceClass": "LegadoExecutionTrace",
+  "constructorMethod": "constructor",
+  "fields": [
+    {
+      "name": "variableChanges",
+      "parameter": "variableChanges",
+      "directAssignment": "this.variableChanges = variableChanges;",
+      "defensiveAssignment": "this.variableChanges = variableChanges.slice();"
+    },
+    {
+      "name": "bridgeTraces",
+      "parameter": "bridgeTraces",
+      "directAssignment": "this.bridgeTraces = bridgeTraces;",
+      "defensiveAssignment": "this.bridgeTraces = bridgeTraces.slice();"
+    }
+  ],
+  "semantics": {
+    "traceImmutability": "A persisted execution trace must not change when a producer mutates the arrays passed to its constructor.",
+    "bridgeEvidence": "JS bridge request witnesses must remain stable after recordExploreKindsScriptTrace and other direct trace construction paths.",
+    "variableEvidence": "Variable-change names must remain stable after the analyzer or script result reuses its mutable array."
+  },
+  "execution": "static_source_contract_only",
+  "runtimeRegression": "not_run",
+  "deviceRegression": "not_run"
+}

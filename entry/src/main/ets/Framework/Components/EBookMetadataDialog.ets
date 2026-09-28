@@ -5,15 +5,15 @@
  * 支持：元数据编辑、自定义封面、章节列表预览
  */
 
-import { EBookMetadata, EBookChapter } from '../../Models/EBookModels';
-import { ThemeAwareState, ThemeAwareHelper } from './ThemeAware';
-import { FontAwareHelper, FontAwareState } from './FontAware';
-import { DialogSurfaceStyleHelper } from './DialogSurfaceStyleHelper';
-import { ImportFilenameSuggestionPanel } from './ImportFilenameSuggestionPanel';
-import { logger } from '../../Utils/Logger';
+import { EBookMetadata, EBookChapter } from 'manxia_core/src/main/ets/Models/EBookModels';
+import { ThemeAwareState, ThemeAwareHelper } from 'manxia_theme/src/main/ets/Framework/Components/ThemeAware';
+import { FontAwareHelper, FontAwareState } from 'manxia_theme/src/main/ets/Framework/Components/FontAware';
+import { DialogSurfaceStyleHelper } from 'manxia_features_ui/src/main/ets/Framework/Components/DialogSurfaceStyleHelper';
+import { ImportFilenameSuggestionPanel } from 'manxia_theme/src/main/ets/Framework/Components/ImportFilenameSuggestionPanel';
+import { logger } from 'manxia_core/src/main/ets/Utils/Logger';
 import { promptAction } from '@kit.ArkUI';
 import { ScraperDialog, ScraperDialogConfig, ScraperDialogResult } from './ScraperDialog';
-import { ScraperContentType } from '../Scraper/ScraperTypes';
+import { ScraperContentType } from 'manxia_core/src/main/ets/Framework/Scraper/ScraperTypes';
 import { photoAccessHelper } from '@kit.MediaLibraryKit';
 import { common } from '@kit.AbilityKit';
 import { fileIo } from '@kit.CoreFileKit';
@@ -21,7 +21,7 @@ import {
   ImportFilenameIntelligenceService,
   ImportFilenameParseResult,
   ImportFilenameMetadataCandidate
-} from '../Services/ImportFilenameIntelligenceService';
+} from 'manxia_core/src/main/ets/Framework/Services/ImportFilenameIntelligenceService';
 
 const TAG = 'EBookMetadataDialog';
 

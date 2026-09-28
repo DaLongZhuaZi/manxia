@@ -5,30 +5,30 @@
  * 文件路径: entry/src/main/ets/Framework/Services/GlobalSearchService.ets
  */
 
-import { logger } from '../../Utils/Logger';
+import { logger } from 'manxia_core/src/main/ets/Utils/Logger';
 import { DataService } from './DataService';
 import { ComicInfo } from '../Data/DataManager';
 import { ComicInfo as OnlineComicInfo } from '../Source/SourceExecutor';
-import { EBookDataManager } from '../Data/EBookDataManager';
+import { EBookDataManager } from 'manxia_core/src/main/ets/Framework/Data/EBookDataManager';
 import { getNovelDataManager, NovelDataManager } from '../Novel/NovelDataManager';
 import { getNovelSourceManager, NovelSourceManager } from '../Novel/NovelSourceManager';
 import { SearchParseOptions } from '../Novel/NovelSourceExecutor';
 import { SourceManager, SourceInfo } from '../Source/SourceManager';
 import { SuwayomiSourceExecutor, SuwayomiExtensionSource } from '../Source/SuwayomiSourceExecutor';
-import { EBook } from '../../Models/EBookModels';
-import { NovelBook, NovelSearchResult, NovelSourceInfo } from '../../Models/NovelModels';
+import { EBook } from 'manxia_core/src/main/ets/Models/EBookModels';
+import { NovelBook, NovelSearchResult, NovelSourceInfo } from 'manxia_core/src/main/ets/Models/NovelModels';
 import { WebViewSourceManager } from '../WebView/WebViewSourceManager';
 import { SourceDetailSearchExecutor, SourceDetailSearchResult, getSourceDetailSearchExecutor } from './SourceDetailSearchExecutor';
-import { LegadoBookSourceType } from '../Novel/LegadoSourceTypes';
-import { SettingsManager } from '../Managers/SettingsManager';
-import { GlobalSearchScheduler, GlobalSearchQueuedTask } from '../Search/GlobalSearchScheduler';
-import { GlobalSearchFlowMonitor, getGlobalSearchFlowMonitor } from '../Search/GlobalSearchFlowMonitor';
+import { LegadoBookSourceType } from 'manxia_novel/src/main/ets/Framework/Novel/LegadoSourceTypes';
+import { SettingsManager } from 'manxia_core/src/main/ets/Framework/Managers/SettingsManager';
+import { GlobalSearchScheduler, GlobalSearchQueuedTask } from 'manxia_source_engine/src/main/ets/Framework/Search/GlobalSearchScheduler';
+import { GlobalSearchFlowMonitor, getGlobalSearchFlowMonitor } from 'manxia_source_engine/src/main/ets/Framework/Search/GlobalSearchFlowMonitor';
 import {
   GlobalSearchFlowEvent,
   GlobalSearchFlowEventType,
   GlobalSearchFlowSessionInfo,
   GlobalSearchFlowSeverity
-} from '../Search/GlobalSearchFlowTypes';
+} from 'manxia_source_engine/src/main/ets/Framework/Search/GlobalSearchFlowTypes';
 import {
   GlobalSearchCancelSignal,
   GlobalSearchMetrics,
@@ -38,13 +38,13 @@ import {
   GlobalSearchSessionHandle,
   GlobalSearchTaskKind,
   GlobalSearchTimeoutResult
-} from '../Search/GlobalSearchSessionTypes';
+} from 'manxia_source_engine/src/main/ets/Framework/Search/GlobalSearchSessionTypes';
 import {
   getGlobalSearchIndexManager,
   GlobalSearchIndexManager,
   GlobalSearchIndexSummary,
   GlobalSearchLocalIndexContentType
-} from '../Search/GlobalSearchIndexManager';
+} from 'manxia_source_engine/src/main/ets/Framework/Search/GlobalSearchIndexManager';
 
 const TAG = 'GlobalSearchService';
 const DEFAULT_LOCAL_TIMEOUT_MS: number = 2500;

@@ -1,12 +1,30 @@
+// =============================================================================
+// build-profile.json5 模板 / project build profile template
+// -----------------------------------------------------------------------------
+// 真实的 build-profile.json5 被 .gitignore 忽略(DevEco Studio 会把本机签名配置
+// signingConfigs 写进去,其中含 p12 路径与口令,不入库)。
+// The real build-profile.json5 is git-ignored because DevEco Studio writes
+// machine-local signingConfigs (p12 path + passwords) into it.
+//
+// 用法 / Usage
+//   本机首次克隆 / fresh clone:
+//     cp build-profile.json5.example build-profile.json5
+//     之后由 DevEco Studio 配置自动签名(会自行写回 signingConfigs)。
+//     then let DevEco Studio add signing (it writes signingConfigs back).
+//   CI(harmonyos-ci 容器)/ CI in the harmonyos-ci container:
+//     工作流在 build-profile.json5 缺失时自动由本文件生成(见
+//     .github/workflows/build.yml 的「准备工程配置」步骤),产出未签名 HAP。
+//
+// ⚠️ 增删模块 / 调整 SDK 版本后,请同步更新本文件(它是 CI 的唯一配置来源)。
+//    Keep this file in sync when modules or SDK versions change - CI reads it.
+// =============================================================================
 {
   "app": {
-    "signingConfigs": [],
     "products": [
       {
         "name": "default",
-        "signingConfig": "default",
-        "targetSdkVersion": "5.1.1(19)",
-        "compatibleSdkVersion": "5.1.0(18)",
+        "targetSdkVersion": "6.1.0(23)",
+        "compatibleSdkVersion": "6.1.0(23)",
         "runtimeOS": "HarmonyOS",
         "buildOption": {
           "strictMode": {
@@ -30,6 +48,114 @@
     {
       "name": "entry",
       "srcPath": "./entry",
+      "targets": [
+        {
+          "name": "default",
+          "applyToProducts": [
+            "default"
+          ]
+        }
+      ]
+    },
+    {
+      "name": "manxia_ui_resources",
+      "srcPath": "./manxia-ui-resources",
+      "targets": [
+        {
+          "name": "default",
+          "applyToProducts": [
+            "default"
+          ]
+        }
+      ]
+    },
+    {
+      "name": "manxia_native",
+      "srcPath": "./manxia-native",
+      "targets": [
+        {
+          "name": "default",
+          "applyToProducts": [
+            "default"
+          ]
+        }
+      ]
+    },
+    {
+      "name": "manxia_core",
+      "srcPath": "./manxia-core",
+      "targets": [
+        {
+          "name": "default",
+          "applyToProducts": [
+            "default"
+          ]
+        }
+      ]
+    },
+    {
+      "name": "manxia_source_engine",
+      "srcPath": "./manxia-source-engine",
+      "targets": [
+        {
+          "name": "default",
+          "applyToProducts": [
+            "default"
+          ]
+        }
+      ]
+    },
+    {
+      "name": "manxia_network",
+      "srcPath": "./manxia-network",
+      "targets": [
+        {
+          "name": "default",
+          "applyToProducts": [
+            "default"
+          ]
+        }
+      ]
+    },
+    {
+      "name": "manxia_novel",
+      "srcPath": "./manxia-novel",
+      "targets": [
+        {
+          "name": "default",
+          "applyToProducts": [
+            "default"
+          ]
+        }
+      ]
+    },
+    {
+      "name": "manxia_theme",
+      "srcPath": "./manxia-theme",
+      "targets": [
+        {
+          "name": "default",
+          "applyToProducts": [
+            "default"
+          ]
+        }
+      ]
+    },
+    {
+      "name": "manxia_reader_ui",
+      "srcPath": "./manxia-reader-ui",
+      "targets": [
+        {
+          "name": "default",
+          "applyToProducts": [
+            "default"
+          ]
+        }
+      ]
+    },
+    {
+      "name": "manxia_features_ui",
+      "srcPath": "./manxia-features-ui",
       "targets": [
         {
           "name": "default",

@@ -1,0 +1,48 @@
+{
+  "schemaVersion": 1,
+  "issueId": "ISSUE-COMPAT-011",
+  "contract": "legado_url_attribute_resolution",
+  "baseline": {
+    "sourceCount": 458,
+    "sourcePackageSha256": "473048A191DE4749FA9C15E0A2F2328A3E86B385A5FCE23EA30432D598D03A67",
+    "legadoCommit": "95973d186b147fb9ab43a9240021d688e4304fbd"
+  },
+  "html": "<section class=\"primary\"><a href=\"/a\">A</a><a href=\"/b\">B</a></section><img src=\"/img/cover.webp\" data-src=\"/img/lazy.webp\">",
+  "baseUrl": "https://fixture.invalid/detail/page",
+  "cases": [
+    {
+      "id": "css-attribute-raw-multi",
+      "workflow": "Search",
+      "rule": ".primary@a@href",
+      "expectedLegadoSelectorValues": ["/a", "/b"],
+      "expectedV2AnalyzerValues": ["/a", "/b"],
+      "consumerResolution": "https://fixture.invalid/a and https://fixture.invalid/b"
+    },
+    {
+      "id": "cover-raw-before-consumer-resolution",
+      "workflow": "BookInfo",
+      "rule": "img@src",
+      "expectedLegadoSelectorValue": "/img/cover.webp",
+      "expectedV2AnalyzerValue": "/img/cover.webp",
+      "consumerResolution": "https://fixture.invalid/img/cover.webp"
+    },
+    {
+      "id": "lazy-attribute-preserved",
+      "workflow": "Content",
+      "rule": "img@data-src",
+      "expectedLegadoSelectorValue": "/img/lazy.webp",
+      "expectedV2AnalyzerValue": "/img/lazy.webp",
+      "consumerResolution": "resolve only in image/request consumer"
+    },
+    {
+      "id": "url-option-remains-attached",
+      "workflow": "Toc",
+      "rule": ".primary@a@href",
+      "expectedRequestCarrier": "resolved identity plus untouched option suffix",
+      "consumerResolution": "LegadoUrlAnalyzer runs at request-owning workflow"
+    }
+  ],
+  "semanticInvariant": "Element.attr returns the source attribute value; URL resolution is applied only by the workflow that requests an URL, never by selector extraction.",
+  "runtimeActionsPerformed": [],
+  "semanticMatchAllowed": false
+}

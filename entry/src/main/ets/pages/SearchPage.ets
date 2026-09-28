@@ -3,16 +3,17 @@
 
 import { HdsNavDestination, HdsNavDestinationAttribute, ScrollEffectType } from '@kit.UIDesignKit';
 import { LengthMetrics, UIContext, NavDestinationModifier } from '@kit.ArkUI';
-import { ThemeAwareState, ThemeAwareHelper } from '../Framework/Components/ThemeAware';
-import { ThemeManager, ThemeType } from '../Framework/Managers/ThemeManager';
-import { FontAwareHelper, FontAwareState } from '../Framework/Components/FontAware';
-import { SearchHistoryManager } from '../Framework/Managers/SearchHistoryManager';
-import { logger } from '../Utils/Logger';
-import { PageLifecycleManager } from '../Framework/Lifecycle';
+import { ThemeAwareState, ThemeAwareHelper } from 'manxia_theme/src/main/ets/Framework/Components/ThemeAware';
+import { ThemeManager, ThemeType } from 'manxia_theme/src/main/ets/Framework/Managers/ThemeManager';
+import { FontAwareHelper, FontAwareState } from 'manxia_theme/src/main/ets/Framework/Components/FontAware';
+import { SearchHistoryManager } from 'manxia_core/src/main/ets/Framework/Managers/SearchHistoryManager';
+import { ISearchHistoryManager } from 'manxia_core/src/main/ets/Framework/Managers/SearchHistoryManager';
+import { logger } from 'manxia_core/src/main/ets/Utils/Logger';
+import { PageLifecycleManager } from 'manxia_core/src/main/ets/Framework/Lifecycle/index';
 import { DataManager, ComicInfo, ChapterInfo } from '../Framework/Data/DataManager';
 import { ComicConverter } from '../Framework/Utils/ComicConverter';
 import { MangaDetailPageParams } from './MangaDetailPage';
-import { DeviceAdaptationManager, DeviceInfo, DeviceChangeListener, Breakpoint } from '../Framework/Managers/DeviceAdaptationManager';
+import { DeviceAdaptationManager, DeviceInfo, DeviceChangeListener, Breakpoint } from 'manxia_theme/src/main/ets/Framework/Managers/DeviceAdaptationManager';
 
 const TAG: string = 'SearchPage';
 const TITLE_BAR_HEIGHT_MINI: number = 56;
@@ -128,7 +129,7 @@ struct SearchPage {
 
   // 数据管理器
   private dataManager: DataManager = DataManager.getInstance();
-  private searchHistoryManager: SearchHistoryManager = new SearchHistoryManager(this.dataManager);
+  private searchHistoryManager: ISearchHistoryManager = new SearchHistoryManager(this.dataManager);
 
   // 响应式布局
   private deviceManager: DeviceAdaptationManager = DeviceAdaptationManager.getInstance();

@@ -1,4 +1,4 @@
-﻿import { SafeFileUtils } from '../Utils/SafeFileUtils';
+import { SafeFileUtils } from 'manxia_core/src/main/ets/Utils/SafeFileUtils';
 // 文件路径: entry/src/main/ets/pages/EBookSettingsPage.ets
 /**
  * 电子书设置页面
@@ -10,17 +10,18 @@ import { LengthMetrics, UIContext } from '@kit.ArkUI';
 import { photoAccessHelper } from '@kit.MediaLibraryKit';
 import { common } from '@kit.AbilityKit';
 import fs from '@ohos.file.fs';
-import { logger } from '../Utils/Logger';
-import { PageLifecycleManager } from '../Framework/Lifecycle';
-import { ThemeAwareState, ThemeAwareHelper } from '../Framework/Components/ThemeAware';
-import { ThemeManager, ThemeType } from '../Framework/Managers/ThemeManager';
-import { FontAwareHelper, FontAwareState } from '../Framework/Components/FontAware';
-import { EBook, EBookReadingSettings, EBookPageMode, EBOOK_THEME_PRESETS, EBookThemePreset, EBookFormat, DEFAULT_EBOOK_READING_SETTINGS } from '../Models/EBookModels';
-import { SettingsManager, SettingKeys } from '../Framework/Managers/SettingsManager';
-import { EBookDataManager, BackgroundImageInfo } from '../Framework/Data/EBookDataManager';
+import { logger } from 'manxia_core/src/main/ets/Utils/Logger';
+import { PageLifecycleManager } from 'manxia_core/src/main/ets/Framework/Lifecycle/index';
+import { ThemeAwareState, ThemeAwareHelper } from 'manxia_theme/src/main/ets/Framework/Components/ThemeAware';
+import { ThemeManager, ThemeType } from 'manxia_theme/src/main/ets/Framework/Managers/ThemeManager';
+import { FontAwareHelper, FontAwareState } from 'manxia_theme/src/main/ets/Framework/Components/FontAware';
+import { EBook, EBookReadingSettings, EBookPageMode, EBOOK_THEME_PRESETS, EBookThemePreset, EBookFormat, DEFAULT_EBOOK_READING_SETTINGS } from 'manxia_core/src/main/ets/Models/EBookModels';
+import { ISettingsManagerFacade, SettingsManagerHolder } from 'manxia_core/src/main/ets/Framework/Contracts/ISettingsManagerFacade';
+import { SettingKeys } from 'manxia_core/src/main/ets/Framework/Contracts/SettingKeys';
+import { EBookDataManager, BackgroundImageInfo } from 'manxia_core/src/main/ets/Framework/Data/EBookDataManager';
 import { EBookSettingsPageParams } from './EBookDetailPage';
-import { DeviceAdaptationManager, DeviceChangeListener, DeviceInfo } from '../Framework/Managers/DeviceAdaptationManager';
-import { SandboxManager } from '../Framework/Storage/SandboxManager';
+import { DeviceAdaptationManager, DeviceChangeListener, DeviceInfo } from 'manxia_theme/src/main/ets/Framework/Managers/DeviceAdaptationManager';
+import { SandboxManager } from 'manxia_core/src/main/ets/Framework/Storage/SandboxManager';
 import {
   TextReaderSettings,
   TextReadingMode,
@@ -33,12 +34,13 @@ import {
   TEXT_READER_FONT_SIZE_MIN,
   TEXT_READER_FONT_SIZE_MAX,
   clampTextReaderFontSize
-} from '../Models/TextReaderModels';
+} from 'manxia_core/src/main/ets/Models/TextReaderModels';
 import { eventBus, GameEvent, BasePayload } from '../Framework/EventBus';
-import { getHelpPanelManagerV2 } from '../Framework/Components/HelpPanelV2';
-import { getFontManager, SystemFont, CustomFont } from '../Framework/Managers/FontManager';
-import { DisplayMode } from '../Utils/WindowManager';
-import { PageWindowCoordinator } from '../Utils/PageWindowCoordinator';
+import { getHelpPanelManagerV2 } from 'manxia_features_ui/src/main/ets/Framework/Components/HelpPanelV2';
+import { getFontManager, SystemFont, CustomFont } from 'manxia_theme/src/main/ets/Framework/Managers/FontManager';
+import { DisplayMode } from 'manxia_theme/src/main/ets/Utils/WindowManager';
+import { PageWindowCoordinator } from 'manxia_theme/src/main/ets/Utils/PageWindowCoordinator';
+import { resolveMedia } from 'manxia_ui_resources/src/main/ets/ResourceCatalog';
 
 const TAG = 'EBookSettingsPage';
 const TITLE_BAR_HEIGHT_MINI: number = 56;
@@ -230,7 +232,7 @@ export struct EBookSettingsPage {
       const seenPaths = new Set<string>();
       
       // 先添加全局设置的背景图片
-      const settingsManager = SettingsManager.getInstance();
+      const settingsManager: ISettingsManagerFacade = SettingsManagerHolder.get();
       const globalBgImagePath = settingsManager.getString(SettingKeys.GLOBAL_TEXT_BG_IMAGE_PATH, '');
       if (globalBgImagePath && globalBgImagePath.length > 0) {
         seenPaths.add(globalBgImagePath);
@@ -373,7 +375,7 @@ export struct EBookSettingsPage {
       this.coverImagePath = ebook.metadata.coverImagePath || '';
       
       // [修复] 先获取全局设置
-      const settingsManager = SettingsManager.getInstance();
+      const settingsManager: ISettingsManagerFacade = SettingsManagerHolder.get();
       const isTextFormat = ebook.format === EBookFormat.TXT;
       
       // 电子书全局设置
@@ -1447,8 +1449,8 @@ export struct EBookSettingsPage {
             .fontFamily(this.appFontFamily)
             .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
           Text(this.settingLockDeviceOrientation
-            ? '保持当前屏幕方向，阅读时旋转设备不会改变方向'
-            : '关闭后会跟随系统旋转策略，适合临时横屏阅读')
+            ? '保持当前屏幕方向，阅读时旋转设备不会改变方向；全局锁定方向开启时以全局设置为准'
+            : '关闭后跟随系统旋转策略；若全局锁定方向已开启，仍会按全局设置强制锁定')
             .fontSize(12)
             .fontFamily(this.appFontFamily)
             .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
@@ -1616,10 +1618,7 @@ export struct EBookSettingsPage {
     
     // 检查是否为媒体资源路径 (app.media.xxx 格式)
     if (coverPath.startsWith('app.media.')) {
-      // 提取资源名称并返回 Resource 类型
-      const resourceName = coverPath.replace('app.media.', '');
-      // 使用动态资源引用
-      return $r(`app.media.${resourceName}`);
+      return resolveMedia(coverPath);
     }
     
     // 沙箱路径需要添加 file:// 前缀
@@ -1699,8 +1698,8 @@ export struct EBookSettingsPage {
           if (this.getDisplayCoverPath().length > 0) {
             // 根据路径类型选择不同的图片加载方式
             if (this.getDisplayCoverPath().startsWith('app.media.')) {
-              // 媒体资源路径 - 使用 $r() 加载
-              Image($r(`app.media.${this.getDisplayCoverPath().replace('app.media.', '')}`))
+              // 媒体资源路径 - 使用共享资源目录解析
+              Image(resolveMedia(this.getDisplayCoverPath()))
                 .width('100%')
                 .height('100%')
                 .objectFit(ImageFit.Cover)
@@ -2668,8 +2667,8 @@ export struct EBookSettingsPage {
             .fontFamily(this.appFontFamily)
             .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
           Text(this.settingLockDeviceOrientation
-            ? '保持当前屏幕方向，阅读时旋转设备不会改变方向'
-            : '关闭后会跟随系统旋转策略，适合临时横屏阅读')
+            ? '保持当前屏幕方向，阅读时旋转设备不会改变方向；全局锁定方向开启时以全局设置为准'
+            : '关闭后跟随系统旋转策略；若全局锁定方向已开启，仍会按全局设置强制锁定')
             .fontSize(12)
             .fontFamily(this.appFontFamily)
             .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))

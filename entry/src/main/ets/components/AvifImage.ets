@@ -5,8 +5,9 @@
 
 import { image } from '@kit.ImageKit';
 import { http } from '@kit.NetworkKit';
-import { logger } from '../Utils/Logger';
+import { logger } from 'manxia_core/src/main/ets/Utils/Logger';
 import { AvifDecoder, isAvifFormat } from '../Framework/Image/AvifDecoder';
+import { getCoverImageManager } from '../Framework/Image/CoverImageManager';
 
 const TAG = 'AvifImage';
 
@@ -21,11 +22,12 @@ export struct AvifImage {
   @Prop errorHolder: Resource | undefined = undefined;
   
   @State private pixelMap: image.PixelMap | null = null;
-  @State private isLoading: boolean = false;
+  @State private isLoading: boolean = true;
   @State private loadError: boolean = false;
   @State private isAvif: boolean = false;
   
   private currentSrc: string = '';
+  private pixelMapOwnedByComponent: boolean = false;
 
   private resolveErrorText(error: Object | string | number | boolean | null | undefined): string {
     if (error === undefined || error === null) {
@@ -67,11 +69,11 @@ export struct AvifImage {
   }
   
   aboutToDisappear() {
-    // 释放PixelMap资源
-    if (this.pixelMap) {
+    if (this.pixelMap && this.pixelMapOwnedByComponent) {
       this.pixelMap.release();
-      this.pixelMap = null;
     }
+    this.pixelMap = null;
+    this.pixelMapOwnedByComponent = false;
   }
   
   onDidBuild() {
@@ -92,9 +94,14 @@ export struct AvifImage {
     this.isAvif = false;
     
     // 释放旧的PixelMap
-    if (this.pixelMap) {
+    if (this.pixelMap && this.pixelMapOwnedByComponent) {
       this.pixelMap.release();
-      this.pixelMap = null;
+    }
+    this.pixelMap = null;
+    this.pixelMapOwnedByComponent = false;
+
+    if (this.useSharedCoverPixelMap()) {
+      return;
     }
     
     try {
@@ -129,19 +136,23 @@ export struct AvifImage {
         const avifDecoder = AvifDecoder.getInstance();
         if (avifDecoder.isSupported()) {
           this.pixelMap = await avifDecoder.decode(buffer);
+          this.pixelMapOwnedByComponent = this.pixelMap !== null;
           if (this.pixelMap) {
             logger.info(TAG, `AVIF解码成功`);
           } else {
             logger.warn(TAG, `AVIF解码返回null，尝试系统解码`);
             this.pixelMap = await this.decodeWithSystem(buffer);
+            this.pixelMapOwnedByComponent = this.pixelMap !== null;
           }
         } else {
           logger.warn(TAG, `AVIF解码器不可用，尝试系统解码`);
           this.pixelMap = await this.decodeWithSystem(buffer);
+          this.pixelMapOwnedByComponent = this.pixelMap !== null;
         }
       } else {
         // 非AVIF格式，使用系统解码
         this.pixelMap = await this.decodeWithSystem(buffer);
+        this.pixelMapOwnedByComponent = this.pixelMap !== null;
       }
       
       if (!this.pixelMap) {
@@ -156,6 +167,22 @@ export struct AvifImage {
     } finally {
       this.isLoading = false;
     }
+  }
+
+  private useSharedCoverPixelMap(): boolean {
+    const cachedPixelMap = getCoverImageManager().getCachedPixelMap(this.src);
+    if (!cachedPixelMap) {
+      return false;
+    }
+    if (this.pixelMap && this.pixelMapOwnedByComponent) {
+      this.pixelMap.release();
+    }
+    this.pixelMap = cachedPixelMap;
+    this.pixelMapOwnedByComponent = false;
+    this.isAvif = false;
+    this.isLoading = false;
+    this.loadError = false;
+    return true;
   }
   
   private async downloadImage(url: string): Promise<ArrayBuffer | null> {
@@ -266,6 +293,9 @@ export struct AvifImage {
             .objectFit(this.objectFit)
             .borderRadius(this.imageBorderRadius)
             .onError(() => {
+              if (this.useSharedCoverPixelMap()) {
+                return;
+              }
               logger.warn(TAG, `Image组件加载失败: ${this.src.substring(0, 50)}...`);
               this.loadError = true;
             })

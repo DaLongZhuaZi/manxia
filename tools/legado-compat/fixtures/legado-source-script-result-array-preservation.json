@@ -1,0 +1,39 @@
+{
+  "schemaVersion": 1,
+  "contract": "legado_source_script_result_array_boundary",
+  "issueId": "ISSUE-COMPAT-242-TRACE-BRIDGE-PRESERVATION",
+  "runtimePath": "entry/src/main/ets/Framework/Novel/LegadoSourceScriptRuntime.ets",
+  "orchestratorPath": "entry/src/main/ets/Framework/Novel/LegadoWorkflowOrchestrator.ets",
+  "resultClass": "LegadoSourceScriptResult",
+  "resultConstructorCount": 5,
+  "fields": [
+    {
+      "name": "variableChanges",
+      "parameter": "variableChanges",
+      "directAssignment": "this.variableChanges = variableChanges;",
+      "defensiveAssignment": "this.variableChanges = variableChanges.slice();"
+    },
+    {
+      "name": "sourceEffectNames",
+      "parameter": "sourceEffectNames",
+      "directAssignment": "this.sourceEffectNames = sourceEffectNames;",
+      "defensiveAssignment": "this.sourceEffectNames = sourceEffectNames.slice();"
+    },
+    {
+      "name": "bridgeTraces",
+      "parameter": "bridgeTraces",
+      "directAssignment": "this.bridgeTraces = bridgeTraces;",
+      "defensiveAssignment": "this.bridgeTraces = bridgeTraces.slice();"
+    }
+  ],
+  "semantics": {
+    "resultBoundary": "A script result is a handoff object and must snapshot producer arrays before the async workflow consumer can retain it.",
+    "variableConsumer": "The orchestrator reads variableChanges to update planner variables and to build the persisted trace variable list.",
+    "sourceEffectConsumer": "The orchestrator reads sourceEffectNames when building the persisted trace variable list.",
+    "bridgeConsumer": "The orchestrator passes bridgeTraces to LegadoExecutionTrace, whose constructor owns a second snapshot.",
+    "scope": "This contract closes the transient result boundary inside ISSUE-COMPAT-242; it does not claim runtime semantic compatibility."
+  },
+  "execution": "static_source_contract_only",
+  "runtimeRegression": "not_run",
+  "deviceRegression": "not_run"
+}

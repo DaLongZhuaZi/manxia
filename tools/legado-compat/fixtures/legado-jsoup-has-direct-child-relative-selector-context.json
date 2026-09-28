@@ -1,0 +1,38 @@
+{
+  "schemaVersion": 1,
+  "contract": "legado_jsoup_has_direct_child_relative_selector_context",
+  "issueId": "ISSUE-COMPAT-243-JSOUP-STANDARD-CSS-PSEUDO-SELECTORS",
+  "baseline": {
+    "sourceCount": 458,
+    "sourcePackageSha256": "473048A191DE4749FA9C15E0A2F2328A3E86B385A5FCE23EA30432D598D03A67",
+    "legadoCommit": "95973d186b147fb9ab43a9240021d688e4304fbd"
+  },
+  "html": "<section class=\"direct\"><span class=\"target\">直接子</span></section><section class=\"nested\"><div><span class=\"target\">错误：嵌套子</span></div></section><section class=\"other\"><p><span class=\"target\">错误：间接子</span></p></section><section class=\"mixed\"><div class=\"target\"><span>后代文本</span></div></section>",
+  "cases": [
+    {
+      "id": "has-direct-child-accepts-direct-element",
+      "rule": "section:has(>span.target)@text",
+      "semantics": "relative_selector_subject_must_be_direct_child",
+      "expected": ["直接子"]
+    },
+    {
+      "id": "has-direct-child-rejects-nested-element",
+      "rule": "section:has(>span.target)@text",
+      "semantics": "relative_selector_must_not_accept_nested_span_under_direct_div",
+      "expected": ["直接子"]
+    },
+    {
+      "id": "has-direct-child-rejects-deeper-element",
+      "rule": "section:has(>span.target)@text",
+      "semantics": "relative_selector_must_not_accept_span_under_nonmatching_direct_ancestor",
+      "expected": ["直接子"]
+    },
+    {
+      "id": "has-direct-child-allows-leading-compound-with-descendant",
+      "rule": "section:has(>div.target span)@text",
+      "semantics": "relative_selector_leading_compound_is_direct_child_and_remainder_is_descendant",
+      "expected": ["后代文本"]
+    }
+  ],
+  "failureCondition": "The string fallback accepts any non-wrapper result from a direct-child iteration. For >span.target it therefore accepts a span nested under a direct div, although Jsoup requires span.target itself to be the direct child."
+}

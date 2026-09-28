@@ -4,7 +4,7 @@
  * 提供游戏错误的捕获、记录、分类和恢复机制
  */
 
-import { logger } from '../../Utils/Logger';
+import { logger } from 'manxia_core/src/main/ets/Utils/Logger';
 import { eventBus, GameEvent, IEventPayload } from '../EventBus';
 
 const ERROR_HANDLER_TAG = 'ErrorHandler';

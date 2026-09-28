@@ -3,7 +3,7 @@
  * 支持多种阅读模式、翻页动画、自定义背景和文字样式
   */
 
-import { logger } from '../Utils/Logger';
+import { logger } from 'manxia_core/src/main/ets/Utils/Logger';
 import { curves, promptAction, SymbolGlyphModifier } from '@kit.ArkUI';
 import { image } from '@kit.ImageKit';
 import { display } from '@kit.ArkUI';
@@ -14,14 +14,14 @@ import { pasteboard } from '@kit.BasicServicesKit';
 import { common } from '@kit.AbilityKit';
 import { systemShare } from '@kit.ShareKit';
 import { uniformTypeDescriptor as utd } from '@kit.ArkData';
-import { DialogSurfaceStyleHelper } from '../Framework/Components/DialogSurfaceStyleHelper';
-import { SettingsGlassStyleHelper } from '../pages/settings/SettingsGlassStyleHelper';
+import { DialogSurfaceStyleHelper } from 'manxia_features_ui/src/main/ets/Framework/Components/DialogSurfaceStyleHelper';
+import { SettingsGlassStyleHelper } from 'manxia_features_ui/src/main/ets/pages/settings/SettingsGlassStyleHelper';
 import {
   getHoldingAwarenessManager,
   HoldingAwarenessFeature,
   HoldingAwarenessManager,
   HoldingUiAnchor
-} from '../Framework/Managers/HoldingAwarenessManager';
+} from 'manxia_core/src/main/ets/Framework/Managers/HoldingAwarenessManager';
 import {
   TextReaderSettings,
   TextReaderParams,
@@ -37,11 +37,11 @@ import {
   BackgroundType,
   DEFAULT_TEXT_READER_SETTINGS,
   clampTextReaderFontSize
-} from '../Models/TextReaderModels';
-import { HighlightLineType } from '../Models/AnnotationModels';
+} from 'manxia_core/src/main/ets/Models/TextReaderModels';
+import { HighlightLineType } from 'manxia_core/src/main/ets/Models/AnnotationModels';
 import { PageCurlEffectV2, PageCurlConfigV2, CurlStartPosition } from './PageCurlEffectV2';
 import { DualPageCurlEffect } from './DualPageCurlEffect';
-import { InteractionManager, VibrationScene } from '../Framework/Managers/InteractionManager';
+import { InteractionManager, VibrationScene } from 'manxia_core/src/main/ets/Framework/Managers/InteractionManager';
 
 
 const TAG = 'TextReaderComponent';

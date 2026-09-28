@@ -1,8 +1,8 @@
 import { HdsNavDestination } from '@kit.UIDesignKit';
 import { common } from '@kit.AbilityKit';
-import { logger } from '../Utils/Logger';
-import { FontAwareHelper, FontAwareState } from '../Framework/Components/FontAware';
-import { ThemeAwareHelper, ThemeAwareState } from '../Framework/Components/ThemeAware';
+import { logger } from 'manxia_core/src/main/ets/Utils/Logger';
+import { FontAwareHelper, FontAwareState } from 'manxia_theme/src/main/ets/Framework/Components/FontAware';
+import { ThemeAwareHelper, ThemeAwareState } from 'manxia_theme/src/main/ets/Framework/Components/ThemeAware';
 import {
   StorageBucketId,
   StorageBucketSummary,
@@ -14,12 +14,12 @@ import {
   StorageSectionSummary
 } from '../Framework/Storage/StorageDashboardService';
 import { StorageOperationRecord } from '../Framework/Storage/StorageUsageMonitor';
-import { getHelpPanelManagerV2 } from '../Framework/Components/HelpPanelV2';
+import { getHelpPanelManagerV2 } from 'manxia_features_ui/src/main/ets/Framework/Components/HelpPanelV2';
 import { SettingsImmersiveTitleBar } from './settings/SettingsImmersiveTitleBar';
-import { SettingsImmersiveTitleActionItem, SettingsPageTitleBarManager } from './settings/SettingsPageTitleBarManager';
-import { GlobalBackgroundLayerMode } from '../Framework/Components/GlobalBackgroundLayer';
-import { SharedPageBackgroundLayer } from '../Framework/Components/SharedPageBackgroundLayer';
-import { SettingsPanelSurfaceHelper } from './settings/SettingsPanelSurfaceHelper';
+import { SettingsImmersiveTitleActionItem, SettingsPageTitleBarManager } from 'manxia_features_ui/src/main/ets/pages/settings/SettingsPageTitleBarManager';
+import { GlobalBackgroundLayerMode } from 'manxia_theme/src/main/ets/Framework/Components/GlobalBackgroundLayer';
+import { SharedPageBackgroundLayer } from 'manxia_theme/src/main/ets/Framework/Components/SharedPageBackgroundLayer';
+import { SettingsPanelSurfaceHelper } from 'manxia_features_ui/src/main/ets/pages/settings/SettingsPanelSurfaceHelper';
 
 const TAG = 'StorageManagementPage';
 const STORAGE_AUTO_REFRESH_INTERVAL_MS: number = 3500;

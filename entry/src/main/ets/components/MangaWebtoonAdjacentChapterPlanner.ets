@@ -1,6 +1,6 @@
 // Responsibility: plan side effects when adjacent webtoon chapters arrive.
 
-import { MangaChapter } from '../Models/MangaModels';
+import { MangaChapter } from 'manxia_core/src/main/ets/Models/MangaModels';
 import { ChapterBoundary } from './MangaWebtoonTypes';
 
 export class MangaWebtoonAdjacentChapterInput {

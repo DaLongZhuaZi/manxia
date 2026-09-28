@@ -1,3 +1,4 @@
+import { ISettingsManagerFacade, SettingsManagerHolder } from 'manxia_core/src/main/ets/Framework/Contracts/ISettingsManagerFacade';
 import { UIContext } from '@ohos.arkui.UIContext';
 /**
  * Suwayomi 设置页面
@@ -7,19 +8,19 @@ import { UIContext } from '@ohos.arkui.UIContext';
 import { HdsNavDestination, HdsNavDestinationAttribute, ScrollEffectType } from '@kit.UIDesignKit';
 import { LengthMetrics } from '@kit.ArkUI';
 import { http } from '@kit.NetworkKit';
-import { logger } from '../../Utils/Logger';
-import { SafeUtils } from '../../Utils/SafeUtils';
-import { base64Encode } from '../../Utils/CryptoUtils';
-import { ThemeAwareState, ThemeAwareHelper } from '../../Framework/Components/ThemeAware';
-import { FontAwareState } from '../../Framework/Components/FontAware';
-import { ThemeType } from '../../Framework/Managers/ThemeManager';
+import { logger } from 'manxia_core/src/main/ets/Utils/Logger';
+import { SafeUtils } from 'manxia_core/src/main/ets/Utils/SafeUtils';
+import { base64Encode } from 'manxia_core/src/main/ets/Utils/CryptoUtils';
+import { ThemeAwareState, ThemeAwareHelper } from 'manxia_theme/src/main/ets/Framework/Components/ThemeAware';
+import { FontAwareState } from 'manxia_theme/src/main/ets/Framework/Components/FontAware';
+import { ThemeType } from 'manxia_theme/src/main/ets/Framework/Managers/ThemeManager';
 import { getSuwayomiTracker, SuwayomiTracker, SuwayomiConfig } from '../../Framework/Tracking/trackers/SuwayomiTracker';
-import { SettingsManager } from '../../Framework/Managers/SettingsManager';
-import { SettingsPanelSurfaceHelper } from './SettingsPanelSurfaceHelper';
-import { GlobalBackgroundLayerMode } from '../../Framework/Components/GlobalBackgroundLayer';
-import { SharedPageBackgroundLayer } from '../../Framework/Components/SharedPageBackgroundLayer';
+
+import { SettingsPanelSurfaceHelper } from 'manxia_features_ui/src/main/ets/pages/settings/SettingsPanelSurfaceHelper';
+import { GlobalBackgroundLayerMode } from 'manxia_theme/src/main/ets/Framework/Components/GlobalBackgroundLayer';
+import { SharedPageBackgroundLayer } from 'manxia_theme/src/main/ets/Framework/Components/SharedPageBackgroundLayer';
 import { SettingsImmersiveTitleBar } from './SettingsImmersiveTitleBar';
-import { SettingsPageTitleBarManager } from './SettingsPageTitleBarManager';
+import { SettingsPageTitleBarManager } from 'manxia_features_ui/src/main/ets/pages/settings/SettingsPageTitleBarManager';
 import { getSuwayomiSourceExecutor } from '../../Framework/Source/SuwayomiSourceExecutor';
 import { TabContentCacheManager } from '../../Framework/Cache/TabContentCacheManager';
 import SuwayomiCacheManager from '../../Framework/Source/SuwayomiCacheManager';
@@ -76,7 +77,7 @@ export struct SuwayomiSettingsPage {
   @State showPassword: boolean = false;
 
   private suwayomiTracker: SuwayomiTracker = getSuwayomiTracker();
-  private settingsManager: SettingsManager = SettingsManager.getInstance();
+  private settingsManager: ISettingsManagerFacade = SettingsManagerHolder.get();
   private componentId: string = 'SuwayomiSettingsPage';
 
   private markSettingsScrolling(): void {

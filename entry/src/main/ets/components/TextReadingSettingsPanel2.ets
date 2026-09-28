@@ -13,11 +13,11 @@ import {
   DEFAULT_READ_ALOUD_SETTINGS,
   mergeRemoteReadAloudSettings,
   normalizeReadAloudSettings
-} from '../Models/TextReaderModels';
-import { logger } from '../Utils/Logger';
-import { ThemeManager } from '../Framework/Managers/ThemeManager';
-import { ThemeAwareState, ThemeAwareHelper } from '../Framework/Components/ThemeAware';
-import { ThemeType } from '../Framework/Managers/ThemeManager';
+} from 'manxia_core/src/main/ets/Models/TextReaderModels';
+import { logger } from 'manxia_core/src/main/ets/Utils/Logger';
+import { ThemeManager } from 'manxia_theme/src/main/ets/Framework/Managers/ThemeManager';
+import { ThemeAwareState, ThemeAwareHelper } from 'manxia_theme/src/main/ets/Framework/Components/ThemeAware';
+import { ThemeType } from 'manxia_theme/src/main/ets/Framework/Managers/ThemeManager';
 import { curves, UIContext, display } from '@kit.ArkUI';
 import { ReadAloudAvailability, ReadAloudEngineAvailabilityMap } from '../Framework/ReadAloud/ReadAloudAvailability';
 import { ReadAloudController } from '../Framework/ReadAloud/ReadAloudController';

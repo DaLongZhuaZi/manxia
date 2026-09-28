@@ -1,5 +1,6 @@
-import { SafeFileUtils } from '../Utils/SafeFileUtils';
-import { SafeUtils } from '../Utils/SafeUtils';
+import { ISettingsManagerFacade, SettingsManagerHolder } from 'manxia_core/src/main/ets/Framework/Contracts/ISettingsManagerFacade';
+import { SafeFileUtils } from 'manxia_core/src/main/ets/Utils/SafeFileUtils';
+import { SafeUtils } from 'manxia_core/src/main/ets/Utils/SafeUtils';
 // 文件路径: entry/src/main/ets/pages/UnifiedDetailPage.ets
 /**
  * 统一详情页
@@ -17,18 +18,20 @@ import { http } from '@kit.NetworkKit';
 import { systemShare } from '@kit.ShareKit';
 import { uniformTypeDescriptor as utd, preferences } from '@kit.ArkData';
 import { util } from '@kit.ArkTS';
-import { logger } from '../Utils/Logger';
-import { WindowManager, DisplayMode } from '../Utils/WindowManager';
-import { PageWindowCoordinator } from '../Utils/PageWindowCoordinator';
-import { PageLifecycleManager } from '../Framework/Lifecycle';
-import { ThemeAwareState, ThemeAwareHelper } from '../Framework/Components/ThemeAware';
-import { ThemeManager, ThemeType } from '../Framework/Managers/ThemeManager';
-import { FontAwareHelper, FontAwareState } from '../Framework/Components/FontAware';
-import { DeviceAdaptationManager, DeviceInfo, DeviceChangeListener, Breakpoint } from '../Framework/Managers/DeviceAdaptationManager';
-import { ResponsiveLayoutHelper } from '../Framework/Utils/ResponsiveLayout';
-import { ContentFilterManager } from '../Framework/Managers/ContentFilterManager';
-import { SettingsManager, SettingKeys } from '../Framework/Managers/SettingsManager';
-import CookieManager from '../Framework/Managers/CookieManager';
+import { logger } from 'manxia_core/src/main/ets/Utils/Logger';
+import { WindowManager, DisplayMode } from 'manxia_theme/src/main/ets/Utils/WindowManager';
+import { PageWindowCoordinator } from 'manxia_theme/src/main/ets/Utils/PageWindowCoordinator';
+import { PageLifecycleManager } from 'manxia_core/src/main/ets/Framework/Lifecycle/index';
+import { ThemeAwareState, ThemeAwareHelper } from 'manxia_theme/src/main/ets/Framework/Components/ThemeAware';
+import { ThemeManager, ThemeType } from 'manxia_theme/src/main/ets/Framework/Managers/ThemeManager';
+import { FontAwareHelper, FontAwareState } from 'manxia_theme/src/main/ets/Framework/Components/FontAware';
+import { DeviceAdaptationManager, DeviceInfo, DeviceChangeListener, Breakpoint } from 'manxia_theme/src/main/ets/Framework/Managers/DeviceAdaptationManager';
+import { ResponsiveLayoutHelper } from 'manxia_theme/src/main/ets/Framework/Utils/ResponsiveLayout';
+import { ContentFilterManager } from 'manxia_core/src/main/ets/Framework/Managers/ContentFilterManager';
+import { SettingKeys } from 'manxia_core/src/main/ets/Framework/Contracts/SettingKeys';
+// ../Framework/Managers/SettingsManager';
+import CookieManager from 'manxia_core/src/main/ets/Framework/Managers/CookieManager';
+import { resolveMedia } from 'manxia_ui_resources/src/main/ets/ResourceCatalog';
 import {
   ContentTrackingCardCallbacks,
   ContentTrackingCardState,
@@ -53,7 +56,7 @@ import {
   ChapterDisplayMode,
   OriginalBookInfo,
   ChapterOrderPersistResult
-} from '../Models/UnifiedContentModels';
+} from 'manxia_core/src/main/ets/Models/UnifiedContentModels';
 
 import {
   UnifiedContentAdapterFactory,
@@ -61,7 +64,7 @@ import {
   EBookAdapter,
   NovelAdapter,
   AdapterOptions
-} from '../Framework/Adapters/UnifiedContentAdapter';
+} from 'manxia_novel/src/main/ets/Framework/Adapters/UnifiedContentAdapter';
 import {
   inspectEBookImagePageSignals,
   resolveEBookReaderRouteName
@@ -76,12 +79,12 @@ import { OnlineEBookDetailPageParams } from './OnlineEBookDetailPage';
 
 // 数据管理器导入
 import { DataManager, ComicInfo, ChapterInfo, PageInfo, OnlineChapterInfo, OnlineComicInfo, OnlinePageInfo, OnlinePageInfoInput } from '../Framework/Data/DataManager';
-import { DatabaseRecord } from '../Framework/Database/DatabaseTypes';
+import { DatabaseRecord } from 'manxia_core/src/main/ets/Framework/Database/DatabaseTypes';
 import { DataService } from '../Framework/Services/DataService';
 import { MangaDetailLoader, MangaDetailLoadParams, MangaDetailLoadResult, MangaLoadProgressCallback, ChapterProgressInfo } from '../Framework/Loaders/MangaDetailLoader';
 import { MangaIdentityResolver, MangaIdentityResolveResult } from '../Framework/Reader/MangaIdentityResolver';
 import webview from '@ohos.web.webview';
-import { EBookDataManager } from '../Framework/Data/EBookDataManager';
+import { EBookDataManager } from 'manxia_core/src/main/ets/Framework/Data/EBookDataManager';
 import { SourceManager, SourceInfo } from '../Framework/Source/SourceManager';
 import { SourceDetailReturnCoordinator } from '../Framework/Source/SourceDetailReturnCoordinator';
 import { RemoteLibraryMangaBridge } from '../Framework/Source/RemoteLibraryMangaBridge';
@@ -89,7 +92,7 @@ import { getRemoteLibraryShelfManager, RemoteLibraryShelfManager } from '../Fram
 import { MangaSourceEngine, EngineConfig, EngineResult } from '../Framework/WebView/MangaSourceEngine';
 import { WebViewSourceManager } from '../Framework/WebView/WebViewSourceManager';
 import { WebViewAuthManager } from '../Framework/WebView/WebViewAuthManager';
-import { AntiCrawlerConfig, PageRequestHeader, PageInfo as SourcePageInfo } from '../Framework/WebView/MangaSourceTypes';
+import { AntiCrawlerConfig, PageRequestHeader, PageInfo as SourcePageInfo } from 'manxia_source_engine/src/main/ets/Framework/WebView/MangaSourceTypes';
 import { getNovelSourceManager } from '../Framework/Novel/NovelSourceManager';
 import { getNovelDataManager } from '../Framework/Novel/NovelDataManager';
 import { getNovelChapterCacheManager } from '../Framework/Novel/NovelChapterCacheManager';
@@ -105,7 +108,7 @@ import {
   LegadoExecutionTraceSummary,
   LegadoV2ExecutionPolicy,
   LegadoWorkflowKind
-} from '../Framework/Novel/LegadoCompatibilityTypes';
+} from 'manxia_novel/src/main/ets/Framework/Novel/LegadoCompatibilityTypes';
 
 import { getCacheStatusService, CacheStatusService, ContentCacheStats, CacheContentType } from '../Framework/Services/CacheStatusService';
 import { getChapterOrderService, ChapterOrderService } from '../Framework/Services/ChapterOrderService';
@@ -122,13 +125,13 @@ import {
   PageListFetcher,
   DownloadPageItem
 } from '../Framework/Download/UnifiedDownloadManager';
-import { CoverCacheManager } from '../Framework/Cache/CoverCacheManager';
+import { CoverCacheManager } from 'manxia_theme/src/main/ets/Framework/Cache/CoverCacheManager';
 import { getCoverImageManager, CoverImageManager } from '../Framework/Image/CoverImageManager';
 import { OnlineLoadOptions, RequestHeaders } from '../Framework/Cache/OnlineImageLoader';
-import { LibraryCoverManager, LibraryCoverType } from '../Framework/Storage/LibraryCoverManager';
+import { LibraryCoverManager, LibraryCoverType } from 'manxia_core/src/main/ets/Framework/Storage/LibraryCoverManager';
 import { image } from '@kit.ImageKit';
-import { LabelUtils } from '../Utils/LabelUtils';
-import { getNovelCoverGenerator, NovelCoverGenerator } from '../Framework/Novel/NovelCoverGenerator';
+import { LabelUtils } from 'manxia_core/src/main/ets/Utils/LabelUtils';
+import { getNovelCoverGenerator, NovelCoverGenerator } from 'manxia_novel/src/main/ets/Framework/Novel/NovelCoverGenerator';
 import { ZLibraryReaderParams } from './ZLibraryReaderPage';
 import { AvifImage } from '../components/AvifImage';
 import {
@@ -176,14 +179,14 @@ import {
   toggleRemoteReadAloudStylePrompt,
   XIAOMI_MIMO_REMOTE_READ_ALOUD_STYLE_CATEGORIES,
   XIAOMI_MIMO_REMOTE_READ_ALOUD_VOICE_OPTIONS
-} from '../Models/TextReaderModels';
+} from 'manxia_core/src/main/ets/Models/TextReaderModels';
 
 // 模型导入
-import { Manga, MangaChapter, MangaPage, ReadingProgress, ReadingSettings, MangaBookmark, MangaMetadata, ImageSourceType, DEFAULT_READING_SETTINGS } from '../Models/MangaModels';
-import { DownloadStatus, MangaStatus, ReadingStatus } from '../Framework/Types/StatusEnums';
-import { EBook, EBookChapter, EBookFormat, EBookStatus, EBookMetadata } from '../Models/EBookModels';
-import { LegadoBook, LegadoChapter, LegadoBookSource, LegadoBookSourceType } from '../Framework/Novel/LegadoSourceTypes';
-import { NovelBook, NovelReadStatus, NovelSearchResult } from '../Models/NovelModels';
+import { Manga, MangaChapter, MangaPage, ReadingProgress, ReadingSettings, MangaBookmark, MangaMetadata, ImageSourceType, DEFAULT_READING_SETTINGS } from 'manxia_core/src/main/ets/Models/MangaModels';
+import { DownloadStatus, MangaStatus, ReadingStatus } from 'manxia_core/src/main/ets/Framework/Types/StatusEnums';
+import { EBook, EBookChapter, EBookFormat, EBookStatus, EBookMetadata } from 'manxia_core/src/main/ets/Models/EBookModels';
+import { LegadoBook, LegadoChapter, LegadoBookSource, LegadoBookSourceType } from 'manxia_novel/src/main/ets/Framework/Novel/LegadoSourceTypes';
+import { NovelBook, NovelReadStatus, NovelSearchResult } from 'manxia_core/src/main/ets/Models/NovelModels';
 
 // 阅读器参数导入
 import { MangaReaderPageParams, MangaReaderContentType } from './MangaReaderPage';
@@ -196,20 +199,20 @@ import { openEBookReaderRouterPage } from '../Framework/Adapters/EBookReaderRout
 import { openEBookReaderInIsolatedAbility } from '../Framework/Reader/EBookReaderAbilityLauncher';
 import { openNovelReaderInIsolatedAbility } from '../Framework/Reader/NovelReaderAbilityLauncher';
 import { openReadAloudPlayerInIsolatedAbility } from '../Framework/ReadAloud/ReadAloudPlayerAbilityLauncher';
-import { DetailOpenFlowMonitor } from '../Framework/Reader/DetailOpenFlowMonitor';
+import { DetailOpenFlowMonitor } from 'manxia_reader_ui/src/main/ets/Framework/Reader/DetailOpenFlowMonitor';
 import {
   DetailOpenFlowEventType,
   DetailOpenFlowSeverity,
   DetailOpenFlowSessionInfo,
   DetailOpenFlowTargetKind
-} from '../Framework/Reader/DetailOpenFlowTypes';
+} from 'manxia_reader_ui/src/main/ets/Framework/Reader/DetailOpenFlowTypes';
 
 import { startBookOpenTransitionWithComponentId, EBookBackgroundSettings } from '../components/BookTransitionOverlay';
-import { AppGuideOverlay, GuideHighlightRect } from '../Framework/Components/AppGuideOverlay';
+import { AppGuideOverlay, GuideHighlightRect } from 'manxia_theme/src/main/ets/Framework/Components/AppGuideOverlay';
 import { ensureGuideAnchorVisibleInScroller, resolveGuideHighlightRectInRoot } from '../Framework/Components/AppGuideSupport';
-import { AppGuideManager, AppGuidePageId, AppGuideStep } from '../Framework/Managers/AppGuideManager';
-import { SettingsGlassStyleHelper } from './settings/SettingsGlassStyleHelper';
-import { SettingsPageSurfaceManager, SettingsPageSurfaceStyle } from './settings/SettingsPageSurfaceManager';
+import { AppGuideManager, AppGuidePageId, AppGuideStep } from 'manxia_core/src/main/ets/Framework/Managers/AppGuideManager';
+import { SettingsGlassStyleHelper } from 'manxia_features_ui/src/main/ets/pages/settings/SettingsGlassStyleHelper';
+import { SettingsPageSurfaceManager, SettingsPageSurfaceStyle } from 'manxia_features_ui/src/main/ets/pages/settings/SettingsPageSurfaceManager';
 import { ReadAloudCacheDialogComponent } from '../Framework/Components/ReadAloudCacheDialogComponent';
 import { TrackingSettingsDialogComponent, UnifiedDetailTrackingTargetInfo } from '../Framework/Components/TrackingSettingsDialogComponent';
 import { NovelSettingsDialogComponent } from '../Framework/Components/NovelSettingsDialogComponent';
@@ -2384,7 +2387,7 @@ export struct UnifiedDetailPage {
   private onlineEBookRecoveryTimer: number = -1;
   
   // 设置管理器
-  private settingsManager: SettingsManager = SettingsManager.getInstance();
+  private settingsManager: ISettingsManagerFacade = SettingsManagerHolder.get();
   
   // 智能推荐状态
   @State recommendedItems: RecommendationItem[] = [];
@@ -7505,23 +7508,7 @@ export struct UnifiedDetailPage {
   }
 
   private resolveAppMediaCoverResource(raw: string): Resource {
-    const resourceName = raw.substring('app.media.'.length);
-    if (resourceName === 'mangabook') {
-      return $r('app.media.mangabook');
-    }
-    if (resourceName === 'ebook') {
-      return $r('app.media.ebook');
-    }
-    if (resourceName === 'ic_ebook') {
-      return $r('app.media.ic_ebook');
-    }
-    if (resourceName === 'icon') {
-      return $r('app.media.icon');
-    }
-    if (resourceName === 'ic_source_novel' || resourceName === 'ic_novel') {
-      return $r('app.media.ic_source_novel');
-    }
-    return $r('app.media.ebook');
+    return resolveMedia(raw);
   }
   
   /**
@@ -7743,8 +7730,6 @@ export struct UnifiedDetailPage {
         }
 
         this.buildNovelV2TraceDisclosure()
-
-        Blank()
 
         // 操作按钮
         Column({ space: 8 }) {
@@ -11393,7 +11378,6 @@ export struct UnifiedDetailPage {
     .borderRadius(30)
     .border({ width: this.getFloatingBorderWidth(), color: this.getFloatingBorderColor() })
     .shadow({ radius: this.getFloatingRadius() + 6, color: this.getFloatingShadowColor(), offsetX: 0, offsetY: 8 })
-    .align(Alignment.BottomEnd)
     .margin({
       left: 24,
       right: 24,
@@ -11490,8 +11474,15 @@ export struct UnifiedDetailPage {
       .width('100%')
       .height('100%')
 
-      // 横屏阅读动作悬浮在屏幕角落，避免占用章节列表高度。
-      this.buildLandscapeReadActions()
+      // 横屏阅读动作悬浮在屏幕右下角，避免占用章节列表高度。
+      Column() {
+        this.buildLandscapeReadActions()
+      }
+      .width('100%')
+      .height('100%')
+      .justifyContent(FlexAlign.End)
+      .alignItems(HorizontalAlign.End)
+      .hitTestBehavior(HitTestMode.Transparent)
     }
     .width('100%')
     .height('100%')

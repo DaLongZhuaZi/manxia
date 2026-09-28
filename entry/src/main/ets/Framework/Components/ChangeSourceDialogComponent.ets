@@ -2,12 +2,12 @@
 // 职责: 换源对话框组件，从UnifiedDetailPage提取的独立组件
 
 import { promptAction } from '@kit.ArkUI';
-import { logger } from '../../Utils/Logger';
-import { ThemeAwareState, ThemeAwareHelper } from './ThemeAware';
+import { logger } from 'manxia_core/src/main/ets/Utils/Logger';
+import { ThemeAwareState, ThemeAwareHelper } from 'manxia_theme/src/main/ets/Framework/Components/ThemeAware';
 import { SourceDialogScaffold } from './SourceDialogScaffold';
-import { UnifiedContent, UnifiedContentType } from '../../Models/UnifiedContentModels';
+import { UnifiedContent, UnifiedContentType } from 'manxia_core/src/main/ets/Models/UnifiedContentModels';
 import { getNovelSourceSearchService, SourceSearchResult, SearchTaskHandle } from '../Novel/NovelSourceSearchService';
-import { NovelSearchResult } from '../../Models/NovelModels';
+import { NovelSearchResult } from 'manxia_core/src/main/ets/Models/NovelModels';
 
 const TAG = 'ChangeSourceDialogComponent';
 

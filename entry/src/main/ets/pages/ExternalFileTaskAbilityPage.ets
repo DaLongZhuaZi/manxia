@@ -3,8 +3,8 @@ import { promptAction } from '@kit.ArkUI';
 import fs from '@ohos.file.fs';
 import { fileUri as coreFileUri } from '@kit.CoreFileKit';
 import { util } from '@kit.ArkTS';
-import { logger } from '../Utils/Logger';
-import { SafeFileUtils } from '../Utils/SafeFileUtils';
+import { logger } from 'manxia_core/src/main/ets/Utils/Logger';
+import { SafeFileUtils } from 'manxia_core/src/main/ets/Utils/SafeFileUtils';
 import { DataManagementPage, DataManagementExternalFileParams } from './DataManagementPage';
 import { BackupPage, BackupExternalImportParams } from './BackupPage';
 import { AvifTestPage, AvifTestPageParams } from './AvifTestPage';
@@ -12,7 +12,7 @@ import { FileEditorPage } from './FileEditorPage';
 import { SourceManager } from '../Framework/Source/SourceManager';
 import { getNovelSourceManager } from '../Framework/Novel/NovelSourceManager';
 import { getNovelInitializer } from '../Framework/Novel/NovelInitializer';
-import { FontManager, CustomFont } from '../Framework/Managers/FontManager';
+import { FontManager, CustomFont } from 'manxia_theme/src/main/ets/Framework/Managers/FontManager';
 import {
   fileEditorService,
   FileEditorOpenParams,
@@ -24,26 +24,26 @@ import { FILE_EDITOR_ABILITY_HOST_MODE } from '../Framework/Editor/FileEditorAbi
 import {
   ExternalFileTaskParamStore,
   ExternalFileTaskWindowPayload
-} from '../Framework/ExternalFile/ExternalFileTaskParamStore';
+} from 'manxia_network/src/main/ets/Framework/ExternalFile/ExternalFileTaskParamStore';
 import {
   ExternalFileTaskFactory,
   ExternalFileTaskKind,
   ExternalFileTaskParams,
   ExternalFileTaskSource
-} from '../Framework/ExternalFile/ExternalFileTaskTypes';
+} from 'manxia_network/src/main/ets/Framework/ExternalFile/ExternalFileTaskTypes';
 import {
   ExternalImportNavigationCoordinator,
   ExternalImportNavigationRequest,
   ExternalImportNavigationSource,
   ExternalImportNavigationTarget
-} from '../Framework/ExternalFile/ExternalImportNavigationCoordinator';
-import { ImportFlowMonitor, getImportFlowMonitor } from '../Framework/Import/ImportFlowMonitor';
+} from 'manxia_network/src/main/ets/Framework/ExternalFile/ExternalImportNavigationCoordinator';
+import { ImportFlowMonitor, getImportFlowMonitor } from 'manxia_core/src/main/ets/Framework/Import/ImportFlowMonitor';
 import {
   ImportFlowEntrySource,
   ImportFlowEvent,
   ImportFlowEventType,
   ImportFlowSeverity
-} from '../Framework/Import/ImportFlowTypes';
+} from 'manxia_core/src/main/ets/Framework/Import/ImportFlowTypes';
 
 const TAG: string = 'ExternalFileTaskAbilityPage';
 const APP_STORAGE_TRANSFER_RECORD_ID: string = 'pendingTransferRecordId';

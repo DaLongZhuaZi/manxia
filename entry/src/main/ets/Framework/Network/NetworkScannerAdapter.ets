@@ -5,13 +5,13 @@
 
 import { connection } from '@kit.NetworkKit';
 import { taskpool } from '@kit.ArkTS';
-import { logger } from '../../Utils/Logger';
+import { logger } from 'manxia_core/src/main/ets/Utils/Logger';
 import {
   NetworkScanHost,
   NetworkSMBShare,
   NetworkSMBEnumResult,
   ProtocolPort
-} from '../../Models/NetworkFolderModels';
+} from 'manxia_core/src/main/ets/Models/NetworkFolderModels';
 import webdavNativeModuleImport from 'libwebdav_native.so';
 
 const TAG = 'NetScannerAdapter';

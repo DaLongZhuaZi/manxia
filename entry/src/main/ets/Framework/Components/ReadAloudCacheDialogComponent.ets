@@ -3,18 +3,18 @@
 
 
 import { promptAction } from '@kit.ArkUI';
-import { logger } from '../../Utils/Logger';
-import { ThemeAwareState, ThemeAwareHelper } from './ThemeAware';
+import { logger } from 'manxia_core/src/main/ets/Utils/Logger';
+import { ThemeAwareState, ThemeAwareHelper } from 'manxia_theme/src/main/ets/Framework/Components/ThemeAware';
 import { SourceDialogScaffold } from './SourceDialogScaffold';
-import { SettingsPageSurfaceManager, SettingsPageSurfaceStyle } from '../../pages/settings/SettingsPageSurfaceManager';
-import { SettingsGlassStyleHelper } from '../../pages/settings/SettingsGlassStyleHelper';
+import { SettingsPageSurfaceManager, SettingsPageSurfaceStyle } from 'manxia_features_ui/src/main/ets/pages/settings/SettingsPageSurfaceManager';
+import { SettingsGlassStyleHelper } from 'manxia_features_ui/src/main/ets/pages/settings/SettingsGlassStyleHelper';
 import { eventBus, GameEvent, IEventPayload, ReadAloudCacheUpdatedPayload } from '../EventBus';
 import {
   UnifiedContent,
   UnifiedContentType,
   UnifiedReadStatus
-} from '../../Models/UnifiedContentModels';
-import { EBookAdapter } from '../Adapters/UnifiedContentAdapter';
+} from 'manxia_core/src/main/ets/Models/UnifiedContentModels';
+import { EBookAdapter } from 'manxia_novel/src/main/ets/Framework/Adapters/UnifiedContentAdapter';
 import { buildLocalTextNovelBookId } from '../Adapters/LocalTextNovelAdapter';
 import {
   RemoteReadAloudCacheChapterSummary,
@@ -46,10 +46,10 @@ import {
   toggleRemoteReadAloudStylePrompt,
   XIAOMI_MIMO_REMOTE_READ_ALOUD_STYLE_CATEGORIES,
   XIAOMI_MIMO_REMOTE_READ_ALOUD_VOICE_OPTIONS
-} from '../../Models/TextReaderModels';
-import { EBookFormat } from '../../Models/EBookModels';
-import { AppGuideStep } from '../Managers/AppGuideManager';
-import { GuideHighlightRect } from './AppGuideOverlay';
+} from 'manxia_core/src/main/ets/Models/TextReaderModels';
+import { EBookFormat } from 'manxia_core/src/main/ets/Models/EBookModels';
+import { AppGuideStep } from 'manxia_core/src/main/ets/Framework/Managers/AppGuideManager';
+import { GuideHighlightRect } from 'manxia_theme/src/main/ets/Framework/Components/AppGuideOverlay';
 
 const TAG = 'ReadAloudCacheDialogComponent';
 
