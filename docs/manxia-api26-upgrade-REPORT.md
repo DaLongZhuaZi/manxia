@@ -13,7 +13,7 @@
 | 项目 | 结果 |
 |---|---|
 | 目标 API | 已从 `6.1.0(23)` 升到 **`26.0.0`**（API 26 / HarmonyOS 7） |
-| 构建 | **通过**：清理后全量 `assembleHap` 成功（3m40s）；剥离签名后的 CI 路径也成功（45s） |
+| 构建 | **通过**：清理后全量 `assembleHap` 成功（3m40s）；提交后默认配置重建成功（3m40s）；剥离签名后的 CI 路径也成功（45s） |
 | 破坏性变更 | 未发现仓库使用被移除 API；已修复 5 处全局 `promptAction.*` 废弃调用；其余为视觉/行为默认值风险，见 §3 |
 | 新能力已实现 | 3 项：PDF 深色渲染模式、中文标点悬挂、EPUB 视频全屏覆盖层 |
 | 反馈入口 | 已移到**一级页面**（全标签页可见的悬浮按钮）；原“关于应用→问题反馈”入口移除；反馈页/服务/缓存未改 |
@@ -263,7 +263,8 @@ $env:TEMP='F:\manxia-build\temp'; $env:TMP='F:\manxia-build\temp'
 
 | 构建 | 结果 | 日志 |
 |---|---|---|
-| 清理后全量 signed 构建 | **BUILD SUCCESSFUL in 3m40s**，105 tasks（95 executed） | `F:\manxia-build\logs\build_api26_final.log` |
+| 清理后全量 signed 构建（F: 重定向） | **BUILD SUCCESSFUL in 3m40s**，105 tasks（95 executed） | `F:\manxia-build\logs\build_api26_final.log` |
+| 提交后默认配置重建（无重定向） | **BUILD SUCCESSFUL in 3m40s**，115 tasks（115 executed） | `F:\manxia-build\logs\build_api26_committed_tree.log` |
 | 剥离签名（CI 路径）unsigned 构建 | **BUILD SUCCESSFUL in 45s**，105 tasks（89 executed） | `F:\manxia-build\logs\build_api26_unsigned.log` |
 
 产物元数据（`entry-default-signed.hap` / `module.json`）：
@@ -284,10 +285,11 @@ $env:TEMP='F:\manxia-build\temp'; $env:TMP='F:\manxia-build\temp'
 
 `pack.info` 亦确认：`"apiVersion":{"compatible":26,"target":26}`。
 
-> 本地 C: 盘在构建时仅剩约 58–276MB，首次构建因 `ENOSPC` 失败。
-> 本次通过**仅本机、未提交**的 `hvigor/hvigor-config.json5` `properties.ohos.buildDir`
-> 把产物重定向到 `F:\manxia-build\api26\build`，并把 `TEMP/TMP` 指向 F: 盘。
-> 该临时配置已在提交前还原；复现构建时请确保构建盘有 ≥2GB 空间，或自行加同样的重定向。
+> 本地 C: 盘在首次构建时仅剩约 58–276MB，因 `ENOSPC` 失败；当时通过**仅本机、未提交**的
+> `hvigor/hvigor-config.json5` `properties.ohos.buildDir` 把产物重定向到
+> `F:\manxia-build\api26\build`，并把 `TEMP/TMP` 指向 F: 盘。
+> 提交前已还原该临时配置；随后用**默认配置重建提交后的树**也成功（115 tasks），
+> 说明最终提交不依赖该重定向。复现时仍建议构建盘保留 ≥2GB 空间。
 
 ---
 
