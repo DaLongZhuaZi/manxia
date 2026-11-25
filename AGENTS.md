@@ -29,7 +29,7 @@
 ## 2. 项目定位
 
 - 这是一个 HarmonyOS Next 项目，主要使用 ArkTS 开发。
-- 当前仓库配置已升级到更高 API，现以仓库中的实际配置为准；例如根目录 `build-profile.json5` 当前目标版本已是 `targetSdkVersion: 6.1.0(23)` / `compatibleSdkVersion: 6.1.0(23)`。
+- 当前仓库配置已升级到更高 API，现以仓库中的实际配置为准；例如根目录 `build-profile.json5` 当前目标版本已是 `targetSdkVersion: 26.0.0` / `compatibleSdkVersion: 26.0.0`（API 26 / HarmonyOS 7）。
 - 历史规则中提到 API 18，这些内容只能作为背景参考，不能再作为当前开发约束；涉及 API 21、API 23 及之后的能力时，必须以最新官方文档和当前仓库实现为准。
 - 历史规则中提到 ECS 架构；实际仓库中也存在 managers、services、pages、EventBus、WebView 引擎、WindowManager、主题系统等实现方式。修改代码时应优先保持目标目录现有模式，不要强行按单一架构重写。
 - 项目当前定位为纯应用软件，不再包含游戏相关的 C++ 底层逻辑。

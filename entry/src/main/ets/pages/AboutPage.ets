@@ -687,15 +687,6 @@ struct AboutPage {
         }
       })
 
-      this.buildButtonItem('问题反馈', () => {
-        try {
-          logger.info(TAG, '导航到反馈中心');
-          this.pathStack.pushPath({ name: 'MangaFeedbackPage' });
-        } catch (error) {
-          logger.error(TAG, '导航到反馈中心失败', String(error));
-        }
-      }, 'about_action_feedback')
-
       this.buildButtonItem('用户协议', () => {
         try {
           logger.info(TAG, '导航到用户协议页面');

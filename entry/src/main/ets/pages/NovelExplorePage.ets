@@ -7,7 +7,6 @@
  */
 
 import { HdsNavDestination } from '@kit.UIDesignKit';
-import { promptAction } from '@kit.ArkUI';
 import { logger } from 'manxia_core/src/main/ets/Utils/Logger';
 import { PageLifecycleManager } from 'manxia_core/src/main/ets/Framework/Lifecycle/index';
 import { getNovelSourceManager, NovelSourceManager } from '../Framework/Novel/NovelSourceManager';
@@ -381,14 +380,14 @@ export struct NovelExplorePage {
         TAG,
         '拒绝打开跨书源发现结果: selected=' + this.selectedSourceId + ';result=' + book.sourceId
       );
-      promptAction.showToast({ message: '书源结果已过期，请刷新后重试' });
+      this.getUIContext().getPromptAction().showToast({ message: '书源结果已过期，请刷新后重试' });
       return;
     }
     const selectedSourceIdAtOpen = this.selectedSourceId;
     const result: LegadoExploreDetailOpenResult =
       await openLegadoExploreDetail(this.pathStack, selectedSourceIdAtOpen, book);
     if (result.status === LegadoExploreDetailOpenStatus.REJECTED) {
-      promptAction.showToast({ message: result.userMessage });
+      this.getUIContext().getPromptAction().showToast({ message: result.userMessage });
     }
   }
   build() {

@@ -2,8 +2,8 @@ name: Build HAP (构建 / Build)
 
 # -----------------------------------------------------------------------------
 # 本仓库适配说明 / Manxia adaptation
-#   - CI_IMAGE 用 :api23 —— 本工程 compatibleSdkVersion/targetSdkVersion = 6.1.0(23)
-#     (command-line-tools 6.1.0.818); 模板默认的 api26r 与本工程 SDK 不匹配。
+#   - CI_IMAGE 用 :api26 —— 本工程 compatibleSdkVersion/targetSdkVersion = 26.0.0
+#     (API 26 / HarmonyOS 7，DevEco Studio 26.0.0 配套 command-line-tools)。
 #   - 无 git 子模块依赖(4 个 submodule 未被任何 oh-package.json5 引用),
 #     故 checkout 不开 submodules: recursive。
 #   - build-profile.json5 被 .gitignore 忽略(DevEco Studio 会把本机签名材料写进去),
@@ -59,7 +59,7 @@ defaults:
 
 env:
   # ← 唯一需要按项目修改的地方 / the only line to adapt per project
-  CI_IMAGE: ghcr.io/dalongzhuazi/harmonyos-ci:api23
+  CI_IMAGE: ghcr.io/dalongzhuazi/harmonyos-ci:api26
 
 jobs:
   # 防呆 / Guard: 本 workflow 属于「HarmonyOS 应用工程仓库」。

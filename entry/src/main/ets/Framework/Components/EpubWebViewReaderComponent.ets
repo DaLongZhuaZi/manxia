@@ -5534,6 +5534,8 @@ export struct EpubWebViewReaderComponent {
         .domStorageAccess(true)
         .javaScriptAccess(true)
         .imageAccess(true)
+        // API 26：EPUB 内嵌视频全屏时使用系统级覆盖层，避免被阅读器容器裁剪
+        .enableFullscreenVideoOverlay(true)
         .mixedMode(MixedMode.All)
         .cacheMode(CacheMode.Default)
         .overScrollMode(OverScrollMode.NEVER)

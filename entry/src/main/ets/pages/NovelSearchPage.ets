@@ -7,7 +7,6 @@
  */
 
 import { HdsNavDestination } from '@kit.UIDesignKit';
-import { promptAction } from '@kit.ArkUI';
 import { common } from '@kit.AbilityKit';
 import { logger } from 'manxia_core/src/main/ets/Utils/Logger';
 import { PageLifecycleManager } from 'manxia_core/src/main/ets/Framework/Lifecycle/index';
@@ -903,7 +902,7 @@ export struct NovelSearchPage {
       const virtualSource: LegadoMangaVirtualSource | null =
         await getLegadoMangaSourceBridge().ensureVirtualComicSource(source);
       if (!virtualSource || virtualSource.sourceId <= 0) {
-        promptAction.showToast({ message: '漫画书源桥接失败，请稍后重试' });
+        this.getUIContext().getPromptAction().showToast({ message: '漫画书源桥接失败，请稍后重试' });
         return;
       }
 

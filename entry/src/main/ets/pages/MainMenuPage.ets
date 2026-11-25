@@ -4634,6 +4634,42 @@ struct MainMenuPage {
     return !this.isSideTabNavigationActive();
   }
 
+  private shouldShowFloatingFeedbackButton(): boolean {
+    return !this.showCategoryDetail;
+  }
+
+  /**
+   * 反馈入口与搜索按钮共用一套停靠/避让规则：
+   * - 底部导航模式：紧邻搜索按钮排列，并在书架“管理/添加”按钮之后让位；
+   * - 平板侧栏模式：搜索按钮已收进侧栏，反馈按钮占用原搜索悬浮位。
+   */
+  private getFloatingFeedbackButtonX(): number {
+    if (!this.shouldShowFloatingSearchButton()) {
+      return this.getFloatingSearchButtonX();
+    }
+    const anchorLeft: boolean = this.shouldAnchorFloatingSearchButtonToLeft();
+    const privacySameSideOffset: number = this.shouldShowPrivacyExitButton()
+      && this.shouldAnchorFloatingPrivacyExitButtonToLeft() === anchorLeft ? 1 : 0;
+    const shelfActionSlotCount: number = this.shouldShowShelfFloatingActionButtons() ? 2 : 0;
+    const slotIndex: number = 1 + privacySameSideOffset + shelfActionSlotCount;
+    const direction: number = anchorLeft ? 1 : -1;
+    const step: number = this.FLOAT_SEARCH_BUTTON_SIZE + this.getShelfFloatingActionButtonGap();
+    const rawX: number = this.getFloatingSearchButtonX() + direction * slotIndex * step;
+    const minX: number = this.FLOAT_SEARCH_BUTTON_MARGIN;
+    const maxX: number = this.getMainMenuViewportWidth() - this.FLOAT_SEARCH_BUTTON_SIZE - this.FLOAT_SEARCH_BUTTON_MARGIN;
+    if (rawX < minX) {
+      return minX;
+    }
+    if (rawX > maxX) {
+      return maxX;
+    }
+    return rawX;
+  }
+
+  private getFloatingFeedbackButtonY(): number {
+    return this.getFloatingSearchButtonY();
+  }
+
   private shouldShowShelfFloatingActionButtons(): boolean {
     return this.currentTabIndex === TabIndex.LIBRARY
       && this.libraryViewMode === LibraryViewMode.CATEGORY
@@ -4680,6 +4716,17 @@ struct MainMenuPage {
       const message: string = error instanceof Error ? error.message : String(error);
       logger.error(TAG, '导航到搜索页面失败', message);
       this.showToast('打开搜索页面失败');
+    }
+  }
+
+  private openFeedbackCenter(): void {
+    try {
+      this.pathStack.pushPath({ name: 'MangaFeedbackPage' });
+      logger.info(TAG, '导航到反馈中心（一级页入口）');
+    } catch (error) {
+      const message: string = error instanceof Error ? error.message : String(error);
+      logger.error(TAG, '导航到反馈中心失败', message);
+      this.showToast('打开反馈中心失败');
     }
   }
 
@@ -15990,6 +16037,52 @@ struct MainMenuPage {
     .accessibilityDescription('打开全局搜索页面')
     .onClick(() => {
       this.openGlobalSearchPage();
+    })
+  }
+
+  /**
+   * 一级页面反馈中心入口：与搜索按钮同排的玻璃拟态悬浮按钮。
+   * 用户无需进入“管理/我的”或“关于应用”即可直接打开反馈中心。
+   */
+  @Builder
+  buildFloatingFeedbackButton() {
+    Stack({ alignContent: Alignment.Center }) {
+      Image($r('app.media.ic_feedback'))
+        .width(24)
+        .height(24)
+        .fillColor(this.getFloatingSearchButtonIconColor())
+        .draggable(false)
+        .accessibilityLevel('no')
+    }
+    .width(this.FLOAT_SEARCH_BUTTON_SIZE)
+    .height(this.FLOAT_SEARCH_BUTTON_SIZE)
+    .backgroundColor(this.getMainMenuSearchButtonGlassBackground())
+    .backgroundBlurStyle(this.getMainMenuSearchButtonGlassBlurStyle(), this.getMainMenuSearchButtonGlassBlurOptions())
+    .borderRadius(this.FLOAT_SEARCH_BUTTON_SIZE / 2)
+    .clip(true)
+    .border({
+      width: 1,
+      color: this.getFloatingSearchButtonBorderColor()
+    })
+    .stateStyles({
+      pressed: {
+        .scale({ x: 0.94, y: 0.94 })
+        .opacity(0.86)
+      }
+    })
+    .animation({ duration: 160, curve: Curve.EaseOut })
+    .shadow({
+      radius: 10,
+      color: this.getMainMenuSearchButtonGlassShadowColor(),
+      offsetX: 0,
+      offsetY: 2
+    })
+    .hitTestBehavior(HitTestMode.Default)
+    .id('main_menu_feedback_entry')
+    .accessibilityText('反馈中心')
+    .accessibilityDescription('打开反馈中心，提交问题与建议')
+    .onClick(() => {
+      this.openFeedbackCenter();
     })
   }
 
@@ -35336,6 +35429,18 @@ struct MainMenuPage {
           .animation({ duration: 220, curve: Curve.EaseInOut })
           .zIndex(20)
           .key(`floatingSearch_${this.barRenderKey}`)
+        }
+
+        if (this.shouldShowFloatingFeedbackButton()) {
+          Column() {
+            this.buildFloatingFeedbackButton()
+          }
+          .width(this.FLOAT_SEARCH_BUTTON_SIZE)
+          .height(this.FLOAT_SEARCH_BUTTON_SIZE)
+          .position({ x: this.getFloatingFeedbackButtonX(), y: this.getFloatingFeedbackButtonY() })
+          .animation({ duration: 220, curve: Curve.EaseInOut })
+          .zIndex(20)
+          .key(`floatingFeedback_${this.barRenderKey}`)
         }
 
         if (this.shouldAttachLibraryFloatingBar()) {

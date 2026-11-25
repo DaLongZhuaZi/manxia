@@ -3,7 +3,6 @@
 
 import { logger } from 'manxia_core/src/main/ets/Utils/Logger';
 import { common } from '@kit.AbilityKit';
-import { promptAction, curves } from '@kit.ArkUI';
 import { ThemeAwareState, ThemeAwareHelper } from 'manxia_theme/src/main/ets/Framework/Components/ThemeAware';
 import { ThemeType } from 'manxia_theme/src/main/ets/Framework/Managers/ThemeManager';
 import { TabContentCacheManager, BookSourceCacheData } from '../Cache/TabContentCacheManager';
@@ -961,13 +960,13 @@ export struct BookSourceTabContent {
         TAG,
         `拒绝打开跨书源结果: selected=${this.selectedBookSourceId};result=${book.sourceId}`
       );
-      promptAction.showToast({ message: '书源结果已过期，请刷新后重试' });
+      this.getUIContext().getPromptAction().showToast({ message: '书源结果已过期，请刷新后重试' });
       return;
     }
     const result: LegadoExploreDetailOpenResult =
       await openLegadoExploreDetail(this.pathStack, this.selectedBookSourceId, book);
     if (result.status === LegadoExploreDetailOpenStatus.REJECTED) {
-      promptAction.showToast({ message: result.userMessage });
+      this.getUIContext().getPromptAction().showToast({ message: result.userMessage });
     }
   }
 

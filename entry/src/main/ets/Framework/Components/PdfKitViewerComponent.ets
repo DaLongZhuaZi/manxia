@@ -275,6 +275,37 @@ export struct PdfKitViewerComponent {
     this.nightOverlayEnabled = enabled;
     this.tintColorValue = enabled ? '#8C000000' : '#00000000';
     logger.info(TAG, 'nightOverlay=' + enabled + ', tint=' + this.tintColorValue);
+    this.applyPdfRenderMode();
+  }
+
+  /**
+   * API 26 PDF Kit 新增能力：按阅读主题切换 PDF 页面渲染模式。
+   * 深色主题/夜间模式下使用 DARKMODE 做反差增强，其余使用 DEFAULT。
+   * setRenderMode 必须在 loadDocument 成功后调用，且需容忍渲染线程忙碌。
+   */
+  private applyPdfRenderMode(): void {
+    if (!this.isDocumentLoaded) {
+      return;
+    }
+    let backgroundColor: string = this.themeBgColor;
+    if (this.readingSettings !== null && this.readingSettings.backgroundColor.length > 0) {
+      backgroundColor = this.readingSettings.backgroundColor;
+    }
+    const normalizedBackground: string = backgroundColor.toUpperCase();
+    const isDark: boolean = this.nightOverlayEnabled
+      || (this.readingSettings !== null && this.readingSettings.nightMode)
+      || normalizedBackground === '#1E1E1E'
+      || normalizedBackground === '#1B3B2F'
+      || normalizedBackground === '#000000';
+    const renderMode: pdfViewManager.PresetRenderMode = isDark
+      ? pdfViewManager.PresetRenderMode.DARKMODE
+      : pdfViewManager.PresetRenderMode.DEFAULT;
+    try {
+      this.pdfController.setRenderMode(renderMode);
+      logger.info(TAG, 'PDF 渲染模式已切换: ' + (isDark ? 'DARKMODE' : 'DEFAULT'));
+    } catch (renderModeError) {
+      logger.warn(TAG, 'setRenderMode 失败: ' + String(renderModeError));
+    }
   }
 
   /**
@@ -451,6 +482,7 @@ export struct PdfKitViewerComponent {
       + ', horizontal=' + horizontal
       + ', bg=' + bg + ', brightness=' + brightness
       + ', tint=' + this.tintColorValue + ', init=' + isInit);
+    this.applyPdfRenderMode();
   }
   private highlightCurrentSelection(color: number): boolean {
     if (this.lastSelectedRects.length <= 0) {
@@ -668,7 +700,8 @@ export struct PdfKitViewerComponent {
         logger.info(TAG, `PDF 加载成功: ${JSON.stringify(loadResult)}`);
         this.isDocumentLoaded = true;
         this.isLoading = false;
-        
+        this.applyPdfRenderMode();
+
         // 恢复阅读进度 - 延迟执行以确保文档完全加载
         setTimeout(() => {
           if (this.ebook && this.ebook.readingProgress && this.ebook.readingProgress.currentChapterIndex > 0) {
