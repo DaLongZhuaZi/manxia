@@ -2,6 +2,7 @@
 
 > 分支：`manxia-api26-upgrade`（worktree：`C:\Users\13359\.paseo\worktrees\35047gzq\manxia-api26-upgrade`）
 > 基线提交：`08ef5b26 Merge branch 'agent/supporters-json'`
+> 代码提交：`459e1127 feat(api26): 升级到 API 26 并将反馈中心入口移到一级页`
 > 工程：`com.dlzz.manxia`，版本 `0.1.4`（versionCode `105402300`）
 > 报告生成：2026-11-25
 
