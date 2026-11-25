@@ -311,7 +311,7 @@ $env:TEMP='F:\manxia-build\temp'; $env:TMP='F:\manxia-build\temp'
 |---|---|
 | 主工程 release 签名（`manxiaRelease.p7b`） | `code:9568322 signature verification failed due to not trusted app source` |
 | 旧 debug profile 签名（`manxiaDebug.p7b`） | `code:9568423 device is unauthorized, UDID not configured in the signing profile` |
-| 当前自动签名 profile（`default_manxia...p7b`） | UDID 列表**包含**两台设备，但该 p12 的当前口令不可得；旧备份口令已失效（`11014003 Init keystore failed`）。为避免把签名口令写入 worktree，未继续尝试 |
+| 当前自动签名 profile（`default_manxia...p7b`） | 当时 worktree 里的旧配置口令失效（`11014003 Init keystore failed`）；主工作树 19:38 更新 debug 签名后，已用其 `build-profile.json5` 成功签名并安装（见 §12），未把口令写入分支文件或报告 |
 
 - 本机存在 API 26 模拟器“Pura X Max”，但命令行启动需要先接受 2 份许可协议；
   未在未获授权的情况下自动接受。
