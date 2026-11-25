@@ -120,7 +120,6 @@ registerMedia('app.media.ic_empty', $r('app.media.ic_empty'));
 registerMedia('app.media.ic_error', $r('app.media.ic_error'));
 registerMedia('app.media.ic_favorite_filled', $r('app.media.ic_favorite_filled'));
 registerMedia('app.media.ic_favorite_outline', $r('app.media.ic_favorite_outline'));
-registerMedia('app.media.ic_feedback', $r('app.media.ic_feedback'));
 registerMedia('app.media.ic_filter', $r('app.media.ic_filter'));
 registerMedia('app.media.ic_guide_import', $r('app.media.ic_guide_import'));
 registerMedia('app.media.ic_guide_library', $r('app.media.ic_guide_library'));

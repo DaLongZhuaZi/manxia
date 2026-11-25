@@ -568,6 +568,23 @@ export struct SettingsTabContent {
             }
           }, 'guide_main_setting_help')
 
+          this.buildSettingItem('问题反馈', '反馈问题与建议，或加入已有 Issue', $r('sys.symbol.exclamationmark_message'), () => {
+            try {
+              const navigationPath: NavigationPath = {
+                name: 'MangaFeedbackPage',
+                param: {
+                  fromPage: 'MainMenuPage',
+                  timestamp: Date.now()
+                }
+              };
+              this.pathStack.pushPath(navigationPath);
+              logger.info(TAG, '导航到反馈中心');
+            } catch (error) {
+              logger.error(TAG, '导航到反馈中心失败', String(error));
+              this.showToast('打开反馈中心失败');
+            }
+          }, 'guide_main_setting_feedback')
+
           this.buildSettingItem('关于应用', '版本信息', $r('sys.symbol.info_circle'), () => {
             try {
               const navigationPath: NavigationPath = {
