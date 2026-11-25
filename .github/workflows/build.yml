@@ -2,7 +2,7 @@ name: Build HAP (构建 / Build)
 
 # -----------------------------------------------------------------------------
 # 本仓库适配说明 / Manxia adaptation
-#   - CI_IMAGE 用 :api26 —— 本工程 compatibleSdkVersion/targetSdkVersion = 26.0.0
+#   - CI_IMAGE 用 :api26r —— 本工程 compatibleSdkVersion/targetSdkVersion = 26.0.0
 #     (API 26 / HarmonyOS 7，DevEco Studio 26.0.0 配套 command-line-tools)。
 #   - 无 git 子模块依赖(4 个 submodule 未被任何 oh-package.json5 引用),
 #     故 checkout 不开 submodules: recursive。
@@ -20,7 +20,7 @@ name: Build HAP (构建 / Build)
 #
 # 用法 / Usage
 #   1. 改下面 env.CI_IMAGE 的 tag, 与你工程 compatibleSdkVersion 匹配
-#      (api26 / api26b2 / api24 / api23, 见 harmonyos-ci 仓库 README)。
+#      (api26r / api26 / api26b2 / api24 / api23, 见 harmonyos-ci 仓库 README)。
 #      Set env.CI_IMAGE below to the tag matching your compatibleSdkVersion.
 #   2. 若你的工程 build-profile.json5 带本机 signingConfigs, 一并复制
 #      .github/scripts/strip_signing.py 到同路径(本模板已自动调用; 文件不存在
@@ -59,7 +59,7 @@ defaults:
 
 env:
   # ← 唯一需要按项目修改的地方 / the only line to adapt per project
-  CI_IMAGE: ghcr.io/dalongzhuazi/harmonyos-ci:api26
+  CI_IMAGE: ghcr.io/dalongzhuazi/harmonyos-ci:api26r
 
 jobs:
   # 防呆 / Guard: 本 workflow 属于「HarmonyOS 应用工程仓库」。
