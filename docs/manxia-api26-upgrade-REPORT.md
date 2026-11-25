@@ -4,7 +4,8 @@
 > 基线提交：`08ef5b26 Merge branch 'agent/supporters-json'`
 > 代码提交：`459e1127`（API 26 升级初始提交）；`7908dc9d`（反馈入口改到设置页 + 系统图标）
 > 真机重验证：§11 / §12（2026-11-25 晚，新 debug 签名）
-> 工程：`com.dlzz.manxia`，版本 `0.1.4`（versionCode `105402300`）
+> 工程：`com.dlzz.manxia`；升级时版本 `0.1.4`，合并后 `0.1.5`（versionCode `105502300`）
+> 合并：main 快进 `08ef5b26 -> d309be67`；版本提交 `d0ba02e6`（详见 §13）
 > 报告生成：2026-11-25
 
 ---
@@ -381,7 +382,8 @@ debug 签名后，两台设备均安装成功并完成主要回归；§12 保留
 ## 9. 提交与复现
 
 - 分支：`manxia-api26-upgrade`；代码改动与报告更新分别提交（报告为单独提交）。
-- 未执行：`git merge main`、`git push`、归档、修改 main 工作树。
+- 分支阶段未执行：`git merge main`、`git push`、归档、修改 main 工作树；
+  合并到 main 的实际记录见 §13。
 - 复现构建：
   1. 确保 `G:\DevEco Studio 26\DevEco Studio` 与 SDK 26 可用；
   2. 由 `build-profile.json5.example` 生成本地 `build-profile.json5`，配置本机签名；
@@ -516,4 +518,99 @@ EXIT=0
   `hdc -t <deviceId> install -r entry\build\default\outputs\default\entry-default-signed.hap`
 - UI 验证使用设备自带 `uitest dumpLayout / uiInput click / screenCap`；截图与布局文件位于
   `F:\manxia-build\evidence\`。
-- 未执行：`git merge main`、`git push`、归档、修改 main 工作树。
+- 分支阶段未执行：`git merge main`、`git push`、归档、修改 main 工作树；
+  合并到 main 的实际记录见 §13。
+
+---
+
+## 13. 合并到 main 记录（2026-11-25）
+
+### 13.1 合并与 stash
+
+| 项 | 值 |
+|---|---|
+| 主工作树 | `F:\DevEcoStudioProject\manxia`，分支 `main` |
+| 合并前 HEAD | `08ef5b26`（与分支基底一致） |
+| 分支 HEAD | `d309be67` |
+| 合并方式 | `git merge --ff-only manxia-api26-upgrade`，快进成功 `08ef5b26 -> d309be67` |
+| 暂存标签 | `api26-merge-20261125-205139` |
+| 暂存 SHA | `9b4e76480469404050c314f4b84dfd5b465604e0` |
+| 暂存范围 | 622 个改动（607 删除、15 修改、6 新增） |
+| 恢复方式 | `git stash apply <SHA>`（未使用裸 `stash pop`，避免共享 stash 栈误伤）；确认后只 drop 本标签条目，另一个既有 stash 保留 |
+| 冲突 | **无冲突**；`EpubWebViewReaderComponent.ets` 与 `TextReaderComponent.ets` 均由 git 自动合并 |
+
+两个阅读器文件的校验：
+
+- merge 前保存了 main 未提交 diff；apply 后再取 diff，去掉 `index`/`@@` 行后**内容逐字一致**。
+- 应用后 `git diff --stat` 与原始一致：
+  - `EpubWebViewReaderComponent.ets`：204 行（202 insertions / 2 deletions）
+  - `TextReaderComponent.ets`：244 行（235 insertions / 9 deletions）
+- 分支的 14 处 `.punctuationOverflow(true)` 与 1 处 `.enableFullscreenVideoOverlay(true)`
+  仍在文件中（`grep -c` 分别为 14 / 1），未重复、未丢失。
+
+### 13.2 版本号与 changelog
+
+**versionCode 递增口径（依据 `git log -p -- AppScope/app.json5`）**：
+
+| 提交 | versionCode 变化 | versionName |
+|---|---|---|
+| `479d707f` | `105002301 -> 105102300` | 0.1.3 -> 0.1.4 |
+| `3bccb0e1` | `105102300 -> 105202300` | 0.1.4 |
+| `04ed280d` | `105202300 -> 105302300` | 0.1.4 |
+| `103261ce` | `105302300 -> 105402300` | 0.1.4 |
+| 本次 | `105402300 -> 105502300` | **0.1.4 -> 0.1.5** |
+
+结论：历史口径为每个 0.1.x 小版本 `+100000`；用户已改好的 `105502300` 正好对应 0.1.5，
+因此**保持 versionCode 105502300**，只把 versionName 改为 0.1.5。
+
+**changelog**：
+
+- `entry/src/main/resources/rawfile/changelog.md` 与 `changelog_brief.md` 在主工作树
+  已有未提交的 v0.1.5 段（阅读注释/音量键修复）。本次在该段内追加
+  “API 26 与反馈入口”小节，未新建重复的 v0.1.5 标题。
+- 版本提交 `d0ba02e6 chore(release): 0.1.5` 只包含：
+  - `AppScope/app.json5`（versionName 0.1.5，versionCode 105502300）
+  - 上述两个 changelog 文件（含主工作树已预置的 v0.1.5 段与本次追加小节）
+- 未提交任何其他源码/工具改动。
+
+### 13.3 构建与单机冒烟
+
+| 项 | 结果 |
+|---|---|
+| 全量构建 | `clean` + `assembleHap` **BUILD SUCCESSFUL in 3m52s**，105 tasks（105 executed） |
+| 构建日志 | `F:\manxia-build\logs\main_merge_build.log` |
+| HAP | `entry/build/default/outputs/default/entry-default-signed.hap` |
+| HAP 元数据 | `versionName=0.1.5`、`versionCode=105502300`、`target/minAPIVersion=260000026`、`compileSdkVersion=26.0.0.105` |
+| 安装 | `2UCUT24724009680`：`msg:install bundle successfully.` |
+| 启动 | `aa start` 成功，`pidof` 返回进程号 |
+| 更新日志弹窗 | 首次启动显示 v0.1.5 更新日志，关闭正常 |
+| 设置页反馈入口 | 在“帮助中心”与“关于应用”之间，图标同款；点击进入“反馈中心” |
+| 漫画 | 打开至 `2 / 142` |
+| EPUB | 打开至 `16 / 209` |
+| 文本 | 打开“漫匣使用手册”，正文正常渲染 |
+
+冒烟证据（设备 A）：
+
+- `F:\manxia-build\evidence\merge_manga.jpeg` / `merge_manga.json`
+- `F:\manxia-build\evidence\merge_epub.jpeg` / `merge_epub.json`
+- `F:\manxia-build\evidence\merge_text.jpeg` / `merge_text.json`
+- `F:\manxia-build\evidence\merge_settings_item.jpeg`（设置页反馈项）
+- `F:\manxia-build\evidence\merge_feedback.json`（反馈中心布局）
+
+### 13.4 合并后仍未提交的内容
+
+版本提交后，主工作树仍保留 625 个未提交条目：
+
+- 607 个删除（`tools/legado-compat/*` 历史工具）
+- 12 个修改（含两个阅读器文件：main 改动 + 分支的 14/1 行；以及 BridgeJsBuilder、
+  EpubCssBuilder、EPUB/Text 设置面板、EBookReaderPage、MangaReaderPage、SettingKeys 等）
+- 6 个新增（ReaderFootnote*、VolumeKeyTurnGuard 等）
+
+这些均属于主工作树既有 WIP，本次**未提交**。两个阅读器文件的 diff 仍与合并前
+内容一致（204 / 244 行）。
+
+### 13.5 边界
+
+- 未 push、未归档、未删除 worktree。
+- 本机 `build-profile.json5` 为 gitignore 文件，仅把 target/compatible 改为 26.0.0 以构建；
+  签名配置保持主工作树的新 debug 签名，未写入报告或分支文件。
